@@ -80,6 +80,10 @@ fn write_hex_line<W: Write>(
 }
 
 /// Print a raw hex+ASCII dump of `[start_offset, start_offset + length)`.
+///
+/// Inputs are user-supplied (`--offset`, `--length`); both default to
+/// `usize::MAX`-tolerant arithmetic. A start beyond EOF or a length
+/// that would overflow simply yields an empty dump rather than panicking.
 pub fn hex_dump_raw(
     path: &Path,
     start_offset: usize,
@@ -87,24 +91,35 @@ pub fn hex_dump_raw(
     mut out: impl Write,
 ) -> MieResult<()> {
     let data = read_file(path)?;
+    let file_len = data.len();
+
+    // Clamp start to [0, file_len] up-front; reads at start >= file_len
+    // produce an empty chunk.
+    let chunk_start = start_offset.min(file_len);
+    // saturating_add clamps to usize::MAX on overflow; .min(file_len)
+    // then bounds it. .max(chunk_start) handles the case where length=0
+    // or arithmetic produced an end before start.
     let end = match length {
-        Some(n) => (start_offset + n).min(data.len()),
-        None => data.len(),
-    };
-    let chunk = &data[start_offset.min(data.len())..end];
+        Some(n) => start_offset.saturating_add(n).min(file_len),
+        None => file_len,
+    }
+    .max(chunk_start);
+    let chunk = &data[chunk_start..end];
 
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let _ = writeln!(out, "File: {name} ({} bytes)", data.len());
-    let _ = writeln!(out, "Range: 0x{:08X}-0x{:08X}", start_offset, end);
+    let _ = writeln!(out, "File: {name} ({} bytes)", file_len);
+    let _ = writeln!(out, "Range: 0x{:08X}-0x{:08X}", chunk_start, end);
     let _ = writeln!(out);
 
     let mut i = 0;
     while i < chunk.len() {
         let line = &chunk[i..(i + 16).min(chunk.len())];
-        let _ = write_hex_line(&mut out, "  ", start_offset + i, line);
+        // chunk_start is bounded by file_len; i is bounded by chunk.len()
+        // which is bounded by file_len - chunk_start. Sum can't overflow.
+        let _ = write_hex_line(&mut out, "  ", chunk_start.saturating_add(i), line);
         i += 16;
     }
     Ok(())
@@ -131,7 +146,13 @@ pub fn hex_dump_records(
     let _ = writeln!(out, "Record dump starting at offset 0x{:08X}", start_offset);
     let _ = writeln!(out);
 
-    while offset + MIN_RECORD_BYTES <= file_len {
+    // Loop guard uses checked_add so a start_offset of usize::MAX (or a
+    // file shorter than MIN_RECORD_BYTES) exits cleanly instead of
+    // wrapping arithmetic and panicking.
+    while let Some(min_end) = offset.checked_add(MIN_RECORD_BYTES) {
+        if min_end > file_len {
+            break;
+        }
         if let Some(max) = max_records {
             if record_num >= max {
                 break;
@@ -153,7 +174,20 @@ pub fn hex_dump_records(
             break;
         }
         let record_bytes = usize::from(tw.word_count) * 2;
-        if offset + record_bytes > file_len {
+        // record_bytes maxes at 63 * 2 = 126; offset is bounded by the
+        // loop guard. checked_add belt-and-suspenders.
+        let record_end = match offset.checked_add(record_bytes) {
+            Some(v) => v,
+            None => {
+                let _ = writeln!(
+                    out,
+                    "  !! Offset overflow at 0x{:08X} (record_bytes={}), stopping",
+                    offset, record_bytes
+                );
+                break;
+            }
+        };
+        if record_end > file_len {
             let _ = writeln!(
                 out,
                 "  !! Truncated record at 0x{:08X} ({} bytes needed, {} available)",
@@ -208,16 +242,21 @@ pub fn hex_dump_records(
             cmd.raw, cmd.rt, cmd.subaddress, dir_char, cmd.data_word_count
         );
 
-        let record_data = &data[offset..offset + record_bytes];
+        // record_end was already checked above; reuse it.
+        let record_data = &data[offset..record_end];
         let mut i = 0;
         while i < record_data.len() {
             let line = &record_data[i..(i + 16).min(record_data.len())];
-            let _ = write_hex_line(&mut out, "    ", offset + i, line);
+            // offset + i: offset is bounded by loop guard, i by
+            // record_bytes (≤ 126). saturating_add as belt-and-suspenders.
+            let _ = write_hex_line(&mut out, "    ", offset.saturating_add(i), line);
             i += 16;
         }
         let _ = writeln!(out);
 
-        offset += record_bytes;
+        // offset can advance to record_end; checked again at the top of
+        // the next iteration.
+        offset = record_end;
         record_num += 1;
     }
 
@@ -299,5 +338,61 @@ mod tests {
         let mut out = Vec::new();
         let err = hex_dump_raw(Path::new("/no/such/file.bin"), 0, None, &mut out).unwrap_err();
         assert_eq!(err.kind(), crate::error::MieErrorKind::FileNotFound);
+    }
+
+    /// Regression test: `--raw --offset usize::MAX --length 1` must not
+    /// panic on the `start_offset + n` computation. The fix uses
+    /// saturating_add and clamps to file_len; the result is an empty
+    /// dump rather than a crash.
+    #[test]
+    fn raw_dump_offset_max_length_one_does_not_panic() {
+        let f = TempFile::write(b"AB\x00\x01\x02\x03");
+        let mut out = Vec::new();
+        hex_dump_raw(f.path(), usize::MAX, Some(1), &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        // Header is still printed; the data range is empty.
+        assert!(s.contains("File:"));
+    }
+
+    #[test]
+    fn raw_dump_offset_max_length_max_does_not_panic() {
+        let f = TempFile::write(b"AB\x00\x01");
+        let mut out = Vec::new();
+        hex_dump_raw(f.path(), usize::MAX, Some(usize::MAX), &mut out).unwrap();
+        // No assertion on contents; the test passes if no panic.
+    }
+
+    #[test]
+    fn raw_dump_offset_beyond_eof_yields_empty() {
+        let f = TempFile::write(b"AB\x00\x01");
+        let mut out = Vec::new();
+        hex_dump_raw(f.path(), 1000, Some(16), &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        // No hex line in the body; only the header.
+        assert!(!s.contains("41 42"));
+    }
+
+    /// Regression test for the record-mode loop guard.
+    /// `offset + MIN_RECORD_BYTES <= file_len` overflows if offset is
+    /// near usize::MAX; the fix uses checked_add so the loop simply
+    /// doesn't enter.
+    #[test]
+    fn record_dump_offset_max_does_not_panic() {
+        let f = TempFile::write(b"AB\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09");
+        let mut out = Vec::new();
+        hex_dump_records(f.path(), Some(1), usize::MAX, &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("0 records dumped"));
+    }
+
+    #[test]
+    fn record_dump_offset_just_short_of_max_does_not_panic() {
+        let f = TempFile::write(b"AB\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09");
+        let mut out = Vec::new();
+        // offset large enough that offset + MIN_RECORD_BYTES overflows
+        // but offset itself does not.
+        hex_dump_records(f.path(), Some(1), usize::MAX - 4, &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("0 records dumped"));
     }
 }
