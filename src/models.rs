@@ -161,7 +161,10 @@ pub fn is_known_ddc_error_code(code: u16) -> bool {
 /// True if `code` is a decoder-assigned spurious code (0x20xx range).
 #[inline]
 pub fn is_known_custom_error_code(code: u16) -> bool {
-    matches!(code, ERROR_SPURIOUS_CONTINUATION | ERROR_SPURIOUS_STANDALONE)
+    matches!(
+        code,
+        ERROR_SPURIOUS_CONTINUATION | ERROR_SPURIOUS_STANDALONE
+    )
 }
 
 /// True if `code` is in either known set.

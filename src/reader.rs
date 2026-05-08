@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use memmap2::Mmap;
 
 use crate::decode::{
-    MIN_RECORD_BYTES_STANDARD, classify_message_format, decode_command_word,
-    decode_irig_timestamp, decode_standard_timestamp, decode_type_word, detect_timestamp_format,
-    message_type_is_valid, read_u16, read_u16_array,
+    MIN_RECORD_BYTES_STANDARD, classify_message_format, decode_command_word, decode_irig_timestamp,
+    decode_standard_timestamp, decode_type_word, detect_timestamp_format, message_type_is_valid,
+    read_u16, read_u16_array,
 };
 use crate::error::{MieError, MieResult};
 use crate::models::{
@@ -225,12 +225,8 @@ impl<'a> Iterator for RecordIter<'a> {
             // look-ahead. A weaker inline check would let corrupt-but-
             // plausible records slip through and be emitted as garbage
             // rows.
-            let is_valid = crate::sync::validate_record(
-                self.data,
-                self.offset,
-                self.file_len,
-                Some(resolved),
-            );
+            let is_valid =
+                crate::sync::validate_record(self.data, self.offset, self.file_len, Some(resolved));
 
             if !is_valid {
                 self.sync_losses += 1;
@@ -448,7 +444,7 @@ impl<'a> Iterator for RecordIter<'a> {
             self.advance_after_yield(record_bytes);
             self.prev_was_error = false;
 
-            if self.msg_count.is_multiple_of(100_000) && self.msg_count > 0 {
+            if self.msg_count > 0 && self.msg_count % 100_000 == 0 {
                 log_info!(
                     "decoded {} messages (0x{:X} / 0x{:X})",
                     self.msg_count,

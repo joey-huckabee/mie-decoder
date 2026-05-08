@@ -71,9 +71,12 @@ EXAMPLES:
 
 #[derive(Debug)]
 enum Command {
-    Decode(DecodeArgs),
+    // Boxed because DecodeArgs is much larger than the other variants
+    // (clippy::large_enum_variant). Heap-allocating the rare path keeps
+    // the common variants cheap.
+    Decode(Box<DecodeArgs>),
     Count(PathBuf),
-    Dump(DumpArgs),
+    Dump(Box<DumpArgs>),
 }
 
 #[derive(Debug, Default)]
@@ -166,7 +169,7 @@ pub fn run(argv: Vec<String>) -> ExitCode {
     // Parse subcommand-specific args.
     let command = match cmd_token.as_str() {
         "decode" => match parse_decode(&mut iter) {
-            Ok(c) => Command::Decode(c),
+            Ok(c) => Command::Decode(Box::new(c)),
             Err(e) => return die(&e),
         },
         "count" => match parse_count(&mut iter) {
@@ -174,7 +177,7 @@ pub fn run(argv: Vec<String>) -> ExitCode {
             Err(e) => return die(&e),
         },
         "dump" => match parse_dump(&mut iter) {
-            Ok(c) => Command::Dump(c),
+            Ok(c) => Command::Dump(Box::new(c)),
             Err(e) => return die(&e),
         },
         "-h" | "--help" => {
@@ -196,9 +199,9 @@ pub fn run(argv: Vec<String>) -> ExitCode {
     log_info!("mie-decoder v{VERSION}");
 
     let result = match command {
-        Command::Decode(args) => run_decode(globals, args),
+        Command::Decode(args) => run_decode(globals, *args),
         Command::Count(input) => run_count(input),
-        Command::Dump(args) => run_dump(args),
+        Command::Dump(args) => run_dump(*args),
     };
 
     match result {
@@ -282,12 +285,14 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, String> {
             }
             "--exclude-types" => {
                 for v in collect_multi(iter) {
-                    args.exclude_types.push(parse_type_name(&v).map_err(|e| e.0)?);
+                    args.exclude_types
+                        .push(parse_type_name(&v).map_err(|e| e.0)?);
                 }
             }
             "--include-types" => {
                 for v in collect_multi(iter) {
-                    args.include_types.push(parse_type_name(&v).map_err(|e| e.0)?);
+                    args.include_types
+                        .push(parse_type_name(&v).map_err(|e| e.0)?);
                 }
             }
             "--exclude-rts" => {
@@ -302,12 +307,14 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, String> {
             }
             "--exclude-buses" => {
                 for v in collect_multi(iter) {
-                    args.exclude_buses.push(parse_bus_name(&v).map_err(|e| e.0)?);
+                    args.exclude_buses
+                        .push(parse_bus_name(&v).map_err(|e| e.0)?);
                 }
             }
             "--include-buses" => {
                 for v in collect_multi(iter) {
-                    args.include_buses.push(parse_bus_name(&v).map_err(|e| e.0)?);
+                    args.include_buses
+                        .push(parse_bus_name(&v).map_err(|e| e.0)?);
                 }
             }
             "--exclude-subaddresses" => {
@@ -345,7 +352,7 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, String> {
 
 fn parse_count(iter: &mut ArgIter<'_>) -> Result<PathBuf, String> {
     let mut path: Option<PathBuf> = None;
-    while let Some(arg) = iter.next() {
+    for arg in iter.by_ref() {
         match arg.as_str() {
             "-h" | "--help" => {
                 print!("{HELP}");
@@ -389,8 +396,7 @@ fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, String> {
                 args.records = Some(parse_int_value(&v, "--records")? as u64);
             }
             s if s.starts_with("--records=") => {
-                args.records =
-                    Some(parse_int_value(&s["--records=".len()..], "--records")? as u64);
+                args.records = Some(parse_int_value(&s["--records=".len()..], "--records")? as u64);
             }
             "-h" | "--help" => {
                 print!("{HELP}");
@@ -474,7 +480,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
             time_format: cfg.time_format,
         },
     )
-    .map_err(|e| format_mie_error(e))?;
+    .map_err(format_mie_error)?;
 
     log_info!(
         "opened {} ({} bytes)",

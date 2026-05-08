@@ -85,12 +85,18 @@ impl DecoderConfig {
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
         merge_unique(&mut self.filters.exclude_rts, ov.exclude_rts);
         merge_unique(&mut self.filters.exclude_buses, ov.exclude_buses);
-        merge_unique(&mut self.filters.exclude_subaddresses, ov.exclude_subaddresses);
+        merge_unique(
+            &mut self.filters.exclude_subaddresses,
+            ov.exclude_subaddresses,
+        );
 
         merge_unique(&mut self.filters.include_types, ov.include_types);
         merge_unique(&mut self.filters.include_rts, ov.include_rts);
         merge_unique(&mut self.filters.include_buses, ov.include_buses);
-        merge_unique(&mut self.filters.include_subaddresses, ov.include_subaddresses);
+        merge_unique(
+            &mut self.filters.include_subaddresses,
+            ov.include_subaddresses,
+        );
 
         self
     }
@@ -158,7 +164,9 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     }
     if let Some(rts) = toml.get_array("filter", "exclude_rts")? {
         for v in rts {
-            cfg.filters.exclude_rts.push(parse_int_u8(v, "exclude_rts")?);
+            cfg.filters
+                .exclude_rts
+                .push(parse_int_u8(v, "exclude_rts")?);
         }
     }
     if let Some(buses) = toml.get_array("filter", "exclude_buses")? {
@@ -203,8 +211,9 @@ fn parse_error_mode(s: &str) -> Result<ErrorMode, ConfigError> {
 pub fn parse_type_value(v: &TomlValue) -> Result<u8, ConfigError> {
     match v {
         TomlValue::String(s) => parse_type_name(s),
-        TomlValue::Int(i) => u8::try_from(*i)
-            .map_err(|_| ConfigError(format!("Type code out of range: {i}"))),
+        TomlValue::Int(i) => {
+            u8::try_from(*i).map_err(|_| ConfigError(format!("Type code out of range: {i}")))
+        }
         _ => Err(ConfigError(
             "exclude_types entries must be strings or integers".into(),
         )),
@@ -251,9 +260,7 @@ pub fn parse_bus_name(s: &str) -> Result<Bus, ConfigError> {
     match s.trim().to_ascii_uppercase().as_str() {
         "A" => Ok(Bus::A),
         "B" => Ok(Bus::B),
-        other => Err(ConfigError(format!(
-            "Invalid bus: {other:?}. Valid: A, B"
-        ))),
+        other => Err(ConfigError(format!("Invalid bus: {other:?}. Valid: A, B"))),
     }
 }
 
@@ -292,27 +299,21 @@ impl TomlDoc {
         match self.get(section, key) {
             None => Ok(None),
             Some(TomlValue::String(s)) => Ok(Some(s)),
-            Some(_) => Err(ConfigError(format!(
-                "[{section}] {key} must be a string"
-            ))),
+            Some(_) => Err(ConfigError(format!("[{section}] {key} must be a string"))),
         }
     }
     pub fn get_bool(&self, section: &str, key: &str) -> Result<Option<bool>, ConfigError> {
         match self.get(section, key) {
             None => Ok(None),
             Some(TomlValue::Bool(b)) => Ok(Some(*b)),
-            Some(_) => Err(ConfigError(format!(
-                "[{section}] {key} must be a boolean"
-            ))),
+            Some(_) => Err(ConfigError(format!("[{section}] {key} must be a boolean"))),
         }
     }
     pub fn get_array(&self, section: &str, key: &str) -> Result<Option<&[TomlValue]>, ConfigError> {
         match self.get(section, key) {
             None => Ok(None),
             Some(TomlValue::Array(a)) => Ok(Some(a)),
-            Some(_) => Err(ConfigError(format!(
-                "[{section}] {key} must be an array"
-            ))),
+            Some(_) => Err(ConfigError(format!("[{section}] {key} must be an array"))),
         }
     }
 }
@@ -329,9 +330,9 @@ pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
         }
 
         if let Some(stripped) = line.strip_prefix('[') {
-            let inner = stripped.strip_suffix(']').ok_or_else(|| {
-                format!("line {}: unterminated section header", lineno + 1)
-            })?;
+            let inner = stripped
+                .strip_suffix(']')
+                .ok_or_else(|| format!("line {}: unterminated section header", lineno + 1))?;
             section = inner.trim().to_string();
             if section.is_empty() {
                 return Err(format!("line {}: empty section name", lineno + 1));
@@ -370,12 +371,10 @@ fn strip_comment(line: &str) -> &str {
                 in_quote = false;
             }
             prev_backslash = false;
-        } else {
-            if b == b'"' {
-                in_quote = true;
-            } else if b == b'#' {
-                return &line[..i];
-            }
+        } else if b == b'"' {
+            in_quote = true;
+        } else if b == b'#' {
+            return &line[..i];
         }
     }
     line

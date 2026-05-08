@@ -40,10 +40,11 @@ fn read_file(path: &Path) -> MieResult<Vec<u8>> {
         source,
     })?;
     let mut buf = Vec::new();
-    file.read_to_end(&mut buf).map_err(|source| MieError::FileIo {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    file.read_to_end(&mut buf)
+        .map_err(|source| MieError::FileIo {
+            path: path.to_path_buf(),
+            source,
+        })?;
     if buf.is_empty() {
         return Err(MieError::FileEmpty {
             path: path.to_path_buf(),
@@ -52,7 +53,12 @@ fn read_file(path: &Path) -> MieResult<Vec<u8>> {
     Ok(buf)
 }
 
-fn write_hex_line<W: Write>(out: &mut W, indent: &str, addr: usize, chunk: &[u8]) -> std::io::Result<()> {
+fn write_hex_line<W: Write>(
+    out: &mut W,
+    indent: &str,
+    addr: usize,
+    chunk: &[u8],
+) -> std::io::Result<()> {
     write!(out, "{indent}{addr:08X}  ")?;
     let mut hex_part = String::with_capacity(48);
     for b in chunk {
@@ -63,7 +69,11 @@ fn write_hex_line<W: Write>(out: &mut W, indent: &str, addr: usize, chunk: &[u8]
     }
     write!(out, "{hex_part:<48}  |")?;
     for &b in chunk {
-        let c = if (32..127).contains(&b) { b as char } else { '.' };
+        let c = if (32..127).contains(&b) {
+            b as char
+        } else {
+            '.'
+        };
         out.write_all(&[c as u8])?;
     }
     out.write_all(b"|\n")
@@ -83,7 +93,10 @@ pub fn hex_dump_raw(
     };
     let chunk = &data[start_offset.min(data.len())..end];
 
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let _ = writeln!(out, "File: {name} ({} bytes)", data.len());
     let _ = writeln!(out, "Range: 0x{:08X}-0x{:08X}", start_offset, end);
     let _ = writeln!(out);
@@ -110,7 +123,10 @@ pub fn hex_dump_records(
     let mut offset = start_offset;
     let mut record_num: u64 = 0;
 
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let _ = writeln!(out, "File: {name} ({file_len} bytes)");
     let _ = writeln!(out, "Record dump starting at offset 0x{:08X}", start_offset);
     let _ = writeln!(out);
@@ -141,7 +157,9 @@ pub fn hex_dump_records(
             let _ = writeln!(
                 out,
                 "  !! Truncated record at 0x{:08X} ({} bytes needed, {} available)",
-                offset, record_bytes, file_len - offset
+                offset,
+                record_bytes,
+                file_len - offset
             );
             break;
         }

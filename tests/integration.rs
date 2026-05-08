@@ -253,7 +253,10 @@ fn corrupt_irig_record_skipped_by_per_record_validation() {
     // The corrupt record should be dropped via sync recovery; only the
     // valid one is emitted.
     assert_eq!(msgs.len(), 1, "expected corrupt-IRIG record to be skipped");
-    assert_eq!(msgs[0].file_offset, 72, "expected the valid record at offset 72");
+    assert_eq!(
+        msgs[0].file_offset, 72,
+        "expected the valid record at offset 72"
+    );
 }
 
 #[test]

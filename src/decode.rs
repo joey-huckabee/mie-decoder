@@ -158,19 +158,23 @@ fn classify_mode_code(cmd: &CommandWord, word_count: u16) -> MessageFormat {
 
 /// Probe the first record at both candidate Command Word offsets and
 /// return whichever scoring layout matches better. Defaults to IRIG on tie.
-pub fn detect_timestamp_format(data: &[u8], offset: usize, type_word: &TypeWord) -> TimestampFormat {
+pub fn detect_timestamp_format(
+    data: &[u8],
+    offset: usize,
+    type_word: &TypeWord,
+) -> TimestampFormat {
     let mut irig_score: i32 = 0;
     let mut std_score: i32 = 0;
 
     // IRIG candidate: Cmd at offset+8 (Type + 3 TS words)
     if let Some(irig_cmd_raw) = read_u16(data, offset + 8) {
         let irig_cmd = decode_command_word(irig_cmd_raw);
-        if type_word.message_type == MessageType::BcToRt as u8
-            && irig_cmd.direction == Direction::Receive
-        {
-            irig_score += 2;
-        } else if type_word.message_type == MessageType::RtToBc as u8
-            && irig_cmd.direction == Direction::Transmit
+        // T/R consistency with the Type Word: receive code expects Receive
+        // direction, transmit code expects Transmit. Either match adds 2.
+        if (type_word.message_type == MessageType::BcToRt as u8
+            && irig_cmd.direction == Direction::Receive)
+            || (type_word.message_type == MessageType::RtToBc as u8
+                && irig_cmd.direction == Direction::Transmit)
         {
             irig_score += 2;
         }
@@ -195,12 +199,10 @@ pub fn detect_timestamp_format(data: &[u8], offset: usize, type_word: &TypeWord)
     // Standard candidate: Cmd at offset+6 (Type + 2 TS words)
     if let Some(std_cmd_raw) = read_u16(data, offset + 6) {
         let std_cmd = decode_command_word(std_cmd_raw);
-        if type_word.message_type == MessageType::BcToRt as u8
-            && std_cmd.direction == Direction::Receive
-        {
-            std_score += 2;
-        } else if type_word.message_type == MessageType::RtToBc as u8
-            && std_cmd.direction == Direction::Transmit
+        if (type_word.message_type == MessageType::BcToRt as u8
+            && std_cmd.direction == Direction::Receive)
+            || (type_word.message_type == MessageType::RtToBc as u8
+                && std_cmd.direction == Direction::Transmit)
         {
             std_score += 2;
         }
