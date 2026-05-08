@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — runs before each `git commit`.
+#
+# Activate by running `scripts/install-hooks.sh` once per clone, which
+# sets `core.hooksPath` to `.githooks/`. Bypass with `--no-verify` (CI
+# will run the same checks regardless).
+#
+# Checks, in order — fails fast:
+#   1. cargo fmt --check          (formatting consistency)
+#   2. cargo clippy -D warnings   (lint with warnings as errors)
+#   3. cargo test                 (unit + integration tests)
+#   4. dbg!() scan in staged .rs  (forgotten debug macros)
+#
+# Skipped entirely when no `.rs` or `.toml` files are staged so that
+# doc-only commits stay fast.
+
+set -euo pipefail
+
+# Colors for output (no-op when not a TTY).
+if [ -t 2 ]; then
+    RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
+else
+    RED=''; GREEN=''; YELLOW=''; RESET=''
+fi
+
+step() { printf '%spre-commit:%s %s\n' "$YELLOW" "$RESET" "$1" >&2; }
+fail() { printf '%spre-commit FAILED:%s %s\n' "$RED" "$RESET" "$1" >&2; exit 1; }
+ok()   { printf '%spre-commit:%s %s\n' "$GREEN" "$RESET" "$1" >&2; }
+
+# Skip if no Rust/TOML files staged.
+if ! git diff --cached --name-only --diff-filter=ACM | grep -qE '\.(rs|toml)$'; then
+    step "no Rust/TOML changes; skipping cargo checks"
+    exit 0
+fi
+
+step "cargo fmt --check"
+if ! cargo fmt --check; then
+    fail "formatting issues — run 'cargo fmt' to fix, then re-stage"
+fi
+
+step "cargo clippy --all-targets -- -D warnings"
+if ! cargo clippy --all-targets -- -D warnings; then
+    fail "clippy lint failed — fix warnings or justify with #[allow(...)]"
+fi
+
+step "cargo test"
+if ! cargo test --all-targets; then
+    fail "tests failed"
+fi
+
+# Forbidden-token scan over staged .rs files. Looks at the *staged*
+# blob (`git show :path`) so unstaged edits don't mask issues.
+step "scanning staged .rs files for dbg!()"
+forbidden=()
+while IFS= read -r file; do
+    case "$file" in
+        *.rs)
+            if git show ":$file" | grep -nE '^\s*dbg!' >/dev/null; then
+                forbidden+=("$file")
+            fi
+            ;;
+    esac
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+if (( ${#forbidden[@]} > 0 )); then
+    printf '%s\n' "${forbidden[@]}" >&2
+    fail "dbg!() found in staged files"
+fi
+
+ok "all checks passed"
