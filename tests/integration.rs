@@ -330,6 +330,41 @@ fn payload_extraction_does_not_overrun_into_next_record() {
 }
 
 #[test]
+fn non_mie_file_surfaces_error_not_silent_zero_messages() {
+    // Regression test for the team's "Cargo.toml" reproducer: passing a
+    // non-MIE file (this fixture mimics a TOML manifest) used to silently
+    // produce zero messages and exit successfully. The fix surfaces a
+    // NoValidRecords error from the iterator so `count` and `decode`
+    // return non-zero exit codes and tell the user what went wrong.
+    let toml = b"[package]\nname = \"mie-decoder\"\nversion = \"1.0.0\"\nedition = \"2024\"\n\n[dependencies]\nmemmap2 = \"0.9\"\n";
+    // Pad with 0xFF so the rest of the file can't coincidentally form
+    // a valid Type Word (low byte 0xFF & 0x7F = 0x7F, not in the
+    // valid type set). Padding with spaces would not work — pairs of
+    // 0x20 0x20 happen to parse as valid SPURIOUS_DATA Type Words with
+    // word_count=32, which is a real surprise about how permissive the
+    // 5-check heuristic is on highly regular inputs.
+    let mut bytes = toml.to_vec();
+    bytes.resize(1024, 0xFF);
+    let f = TempFile::new(&bytes);
+
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let collected: Result<Vec<_>, _> = reader.iter().collect();
+
+    match collected {
+        Err(e) => {
+            assert!(
+                e.to_string().contains("No valid MIE records"),
+                "expected NoValidRecords-shaped error, got: {e}"
+            );
+        }
+        Ok(msgs) => panic!(
+            "expected an error on a non-MIE file, but got {} message(s)",
+            msgs.len()
+        ),
+    }
+}
+
+#[test]
 fn header_skip_via_proprietary_prefix() {
     let mut bytes = Vec::with_capacity(32 + 72);
     bytes.extend_from_slice(b"DDC-EQUIPMENT-NAME\0\0PADD\0\0\0\0\0\0"); // 28 bytes — 14 words

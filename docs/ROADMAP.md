@@ -92,6 +92,33 @@ here so they don't get dropped.
   `#[allow]` + comment, which is paperwork that doesn't fit a
   feature commit.
 
+### Output cosmetics
+
+- **Defer `decode` output-file creation until after first record
+  validates.** Today `write_csv(messages, Some(path))` opens the
+  output file and writes the CSV header BEFORE the iterator yields
+  its first item. If the very first item is an error (e.g.
+  `MieError::NoValidRecords` on a non-MIE input), the program
+  correctly returns exit 1 and prints a clear error, but a
+  header-only CSV is still left on disk. Cosmetic, not a correctness
+  bug, but mildly confusing. Fix: peek the iterator (or capture the
+  first item) before opening the output file; on Err, return without
+  touching the filesystem. Same applies to `write_csv_split`.
+
+### Validation strength (cont.)
+
+- **Reject pathological-regular inputs that pass the 5-check
+  heuristic.** Surfaced while writing the no-valid-records regression
+  test: a file padded with 0x20 (ASCII space) bytes parses as a
+  contiguous stream of "valid" SPURIOUS_DATA records. The byte pair
+  `0x20 0x20` is a Type Word with `message_type = 0x20`
+  (SPURIOUS_DATA, valid), `word_count = 32` (valid), and the
+  two-record look-ahead sees more identical bytes ahead and accepts
+  them too. Possible mitigations: detect homogeneous byte patterns
+  in the first N records, require some entropy in payload bytes, or
+  add a stronger initial header-detection heuristic for the file
+  start specifically.
+
 ### Diagnostics
 
 - **Negative DELTA reporting.** Per-RT/MSG delta is a signed `f64`

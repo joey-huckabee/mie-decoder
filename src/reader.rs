@@ -122,19 +122,32 @@ impl MieFileReader {
 
         let start_offset = find_first_record(data, file_len, resolved_format, MAX_SCAN_BYTES);
 
-        if let Some(hit) = start_offset {
-            if hit.offset == 0 {
-                log_debug!("first record at offset 0 (no header)");
-            } else {
-                log_info!(
-                    "file header detected: {} bytes before first record at 0x{:X}",
-                    hit.offset,
-                    hit.offset
-                );
+        let pending_error = match start_offset {
+            Some(hit) => {
+                if hit.offset == 0 {
+                    log_debug!("first record at offset 0 (no header)");
+                } else {
+                    log_info!(
+                        "file header detected: {} bytes before first record at 0x{:X}",
+                        hit.offset,
+                        hit.offset
+                    );
+                }
+                None
             }
-        } else {
-            log_error!("no valid records found in {}", self.path.display());
-        }
+            None => {
+                let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
+                log_error!(
+                    "no valid records found in first {} bytes of {}",
+                    scan_bytes,
+                    self.path.display()
+                );
+                Some(MieError::NoValidRecords {
+                    path: self.path.clone(),
+                    scan_bytes,
+                })
+            }
+        };
 
         log_info!("beginning decode of {}", self.path.display());
 
@@ -142,7 +155,8 @@ impl MieFileReader {
             data,
             file_len,
             offset: start_offset.map(|h| h.offset).unwrap_or(file_len),
-            done: start_offset.is_none(),
+            done: false,
+            pending_error,
             strict: self.strict,
             resolved_format,
             prev_was_error: false,
@@ -167,6 +181,11 @@ pub struct RecordIter<'a> {
     file_len: usize,
     offset: usize,
     done: bool,
+    /// If set, the very next call to `next()` returns `Some(Err(_))` and
+    /// then transitions to `done = true`. Used to surface conditions
+    /// detected at iterator construction (e.g. no valid records in the
+    /// scan window) without silently yielding an empty stream.
+    pending_error: Option<MieError>,
     strict: bool,
     resolved_format: Option<TimestampFormat>,
     prev_was_error: bool,
@@ -189,6 +208,13 @@ impl<'a> Iterator for RecordIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {
             return None;
+        }
+        // Surface a pending construction-time error exactly once, then
+        // transition to Done. This makes "no valid records" a real Err
+        // item rather than a silent empty stream.
+        if let Some(err) = self.pending_error.take() {
+            self.done = true;
+            return Some(Err(err));
         }
 
         loop {
@@ -761,5 +787,39 @@ mod tests {
         let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].file_offset, 20);
+    }
+
+    /// Regression: a non-empty file with no decodable records must
+    /// surface MieError::NoValidRecords on the first iter() call,
+    /// then return None forever after. Previously the iterator was
+    /// silently marked done so callers like `count` and `decode` saw
+    /// zero messages and exited successfully — producing a header-only
+    /// CSV for a TOML file passed as input.
+    #[test]
+    fn no_valid_records_surfaces_as_iter_error() {
+        // 1 KB of 0xFF — definitely no valid Type Word (message_type
+        // bits = 0x7F) and no chance of a coincidental valid record.
+        let bytes = vec![0xFFu8; 1024];
+        let f = write_temp(&bytes);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        let mut it = reader.iter();
+
+        // First call: Err(NoValidRecords).
+        match it.next() {
+            Some(Err(e)) => {
+                assert_eq!(e.kind(), crate::error::MieErrorKind::NoValidRecords);
+                if let crate::error::MieError::NoValidRecords { scan_bytes, .. } = e {
+                    assert!(scan_bytes > 0);
+                    assert!(scan_bytes <= 1024);
+                } else {
+                    unreachable!()
+                }
+            }
+            other => panic!("expected Some(Err(NoValidRecords)), got {other:?}"),
+        }
+
+        // Subsequent calls: None forever.
+        assert!(it.next().is_none());
+        assert!(it.next().is_none());
     }
 }

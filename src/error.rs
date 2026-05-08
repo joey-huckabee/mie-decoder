@@ -47,6 +47,12 @@ pub enum MieError {
     /// Errored record contains an unrecognized error code.
     UnknownErrorCode { offset: u64, error_code: u16 },
 
+    /// File exists and is non-empty but contains no decodable MIE records
+    /// within the initial 64 KB scan window. Typically means the file
+    /// isn't an MIE recording at all (e.g., a TOML file mistakenly passed
+    /// as input).
+    NoValidRecords { path: PathBuf, scan_bytes: u64 },
+
     /// Output writer failed (CSV row, flush, etc).
     WriterError {
         destination: String,
@@ -65,6 +71,7 @@ pub enum MieErrorKind {
     RecordTruncated,
     PayloadError,
     UnknownErrorCode,
+    NoValidRecords,
     WriterError,
 }
 
@@ -79,6 +86,7 @@ impl MieError {
             Self::RecordTruncated { .. } => MieErrorKind::RecordTruncated,
             Self::PayloadError { .. } => MieErrorKind::PayloadError,
             Self::UnknownErrorCode { .. } => MieErrorKind::UnknownErrorCode,
+            Self::NoValidRecords { .. } => MieErrorKind::NoValidRecords,
             Self::WriterError { .. } => MieErrorKind::WriterError,
         }
     }
@@ -153,6 +161,12 @@ impl fmt::Display for MieError {
                  Unknown error code 0x{error_code:04X}. \
                  Known DDC codes: 0x011E, 0x0120, 0x0136, 0x0140, 0x0150. \
                  Known decoder codes: 0x2000, 0x2001."
+            ),
+            Self::NoValidRecords { path, scan_bytes } => write!(
+                f,
+                "No valid MIE records found in {} (scanned first {scan_bytes} bytes). \
+                 The file may not be an MIE recording, or the records may begin past the scan window.",
+                path.display()
             ),
             Self::WriterError {
                 destination,
