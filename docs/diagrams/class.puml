@@ -1,0 +1,156 @@
+@startuml MIE-Decoder Class Diagram
+!theme plain
+title MIE-Decoder v1.1 — Class Diagram
+
+package models {
+    enum Bus { A=0, B=1 }
+    enum Direction { RECEIVE=0, TRANSMIT=1 }
+    enum MessageType {
+        MODE_COMMAND=0x01
+        BC_TO_RT=0x02
+        RT_TO_BC=0x04
+        RT_TO_RT=0x08
+        BROADCAST_BC_TO_RT=0x10
+        BROADCAST_RT_TO_RT=0x18
+        SPURIOUS_DATA=0x20
+    }
+    enum MessageFormat {
+        RECEIVE=1 .. SPURIOUS_DATA=11
+    }
+    enum TimestampFormat { AUTO=0, IRIG=1, STANDARD=2 }
+    enum ErrorMode { SEPARATE=0, INLINE=1 }
+
+    class IrigTimestamp <<frozen>> <<slots>> {
+        +day, hour, minute, second: int
+        +microsecond: int
+        +freerun: bool
+        +to_total_microseconds(): int
+        +format(): str
+    }
+    class StandardTimestamp <<frozen>> <<slots>> {
+        +raw_value, upper_word, lower_word: int
+        +to_total_microseconds(): int
+        +format(): str
+    }
+
+    class TypeWord <<frozen>> <<slots>> {
+        +message_type: int
+        +bus: Bus
+        +word_count: int
+        +error: bool
+        +raw: int
+    }
+    class CommandWord <<frozen>> <<slots>> {
+        +rt: int
+        +direction: Direction
+        +subaddress: int
+        +data_word_count: int
+        +raw: int
+        +is_broadcast: bool
+        +is_mode_code: bool
+    }
+    class MieMessage <<frozen>> <<slots>> {
+        +timestamp: Timestamp
+        +type_word: TypeWord
+        +message_format: MessageFormat
+        +command_word: CommandWord | None
+        +command_word_2: CommandWord | None
+        +status_word: int | None
+        +status_word_2: int | None
+        +data_words: tuple[int, ...]
+        +error_word: int | None
+        +delta: float
+        +file_offset: int
+        --
+        +rt: int | None
+        +bus: Bus
+        +msg_label: str
+        +delta_key: str
+        +is_error: bool
+        +is_spurious: bool
+        +error_label: str
+    }
+}
+
+package config {
+    class FilterConfig {
+        +exclude_types: set[int]
+        +exclude_rts: set[int]
+        +exclude_buses: set[Bus]
+        +exclude_subaddresses: set[int]
+        +is_active: bool
+        +should_exclude(...): bool
+    }
+    class DecoderConfig {
+        +log_level: str
+        +time_format: TimestampFormat
+        +strict: bool
+        +error_mode: ErrorMode
+        +filters: FilterConfig
+        +output_format: str
+        +with_overrides(**kwargs): DecoderConfig
+    }
+}
+
+package sync {
+    class "<<module>>" as sync_mod {
+        +MAX_SCAN_BYTES: int = 65536
+        +validate_record(data, offset, ...): bool
+        +find_first_record(data, ...): int | None
+        +recover_sync(data, offset, ...): int | None
+    }
+}
+
+package exceptions {
+    class MieDecoderError
+    class MieFileError
+    class MieFileNotFoundError
+    class MieFileEmptyError
+    class MieRecordError
+    class MieInvalidTypeWordError
+    class MieUnknownTypeWordError
+    class MieRecordTruncatedError
+    class MiePayloadError
+    class MieUnknownErrorCodeError
+    class MieWriterError
+
+    MieDecoderError <|-- MieFileError
+    MieDecoderError <|-- MieRecordError
+    MieDecoderError <|-- MieWriterError
+    MieFileError <|-- MieFileNotFoundError
+    MieFileError <|-- MieFileEmptyError
+    MieRecordError <|-- MieInvalidTypeWordError
+    MieRecordError <|-- MieUnknownTypeWordError
+    MieRecordError <|-- MieRecordTruncatedError
+    MieRecordError <|-- MiePayloadError
+    MieRecordError <|-- MieUnknownErrorCodeError
+}
+
+package reader {
+    class MieFileReader {
+        -_path: Path
+        -_file_size: int
+        -_strict: bool
+        -_time_format: TimestampFormat
+        +path: Path
+        +file_size: int
+        +__iter__(): Iterator[MieMessage]
+    }
+}
+
+package writer {
+    class "<<module>>" as writer_mod {
+        +CSV_COLUMNS, CSV_HEADER
+        +message_to_row(msg): dict
+        +messages_to_dataframe(msgs): DataFrame
+        +dataframe_to_csv(df, output)
+        +write_csv(msgs, output): int
+        +write_csv_split(msgs, output): (int, int)
+    }
+}
+
+MieFileReader ..> sync_mod : uses
+MieFileReader ..> MieMessage : yields
+DecoderConfig --> FilterConfig
+DecoderConfig --> ErrorMode
+@enduml

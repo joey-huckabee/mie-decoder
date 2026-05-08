@@ -1,0 +1,78 @@
+@startuml MIE-Decoder Component Diagram
+!theme plain
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+title MIE-Decoder v1.1 — Component Architecture
+
+package "CLI Layer" {
+    [__main__.py] as main
+    [cli.py] as cli
+    [logger.py] as logmod
+    [config.py] as config
+}
+
+package "Core Decode Pipeline" {
+    [reader.py\n(MieFileReader)] as reader
+    [decode.py\n(Pure Functions)] as decode
+    [sync.py\n(Validate/Recover)] as sync
+}
+
+package "Filtering" {
+    [filters.py\n(apply_filters)] as filters
+}
+
+package "Data Model" {
+    [models.py] as models
+    [exceptions.py] as exceptions
+}
+
+package "Output Layer" {
+    [writer.py\n(Pandas CSV)] as writer
+    [dump.py\n(Hex Dump)] as dump
+}
+
+package "External" {
+    database "MIE Binary\nFile (.mie)" as mie_file
+    file "CSV Output" as csv_file
+    file "Errors CSV" as err_file
+    component "pandas" as pandas
+}
+
+main --> cli : delegates
+cli --> logmod : configure_logging()
+cli --> config : load_config() + with_overrides()
+cli --> reader : MieFileReader(path, time_format, strict)
+cli --> filters : apply_filters(messages, config.filters)
+cli --> writer : write_csv() / write_csv_split()
+cli --> dump : hex_dump_raw() / hex_dump_records()
+
+reader --> sync : find_first_record()\nvalidate_record()\nrecover_sync()
+reader --> decode : decode_type_word()\ndecode_irig/standard_timestamp()\ndecode_command_word()\nclassify_message_format()
+reader --> models : yields MieMessage
+reader --> exceptions : raises on strict
+
+sync --> decode : decode_type_word()\nis_valid_message_type()
+decode --> models : TypeWord, CommandWord,\nIrigTimestamp, StandardTimestamp
+
+filters --> models : reads MieMessage fields
+writer --> models : reads MieMessage
+writer --> pandas : DataFrame.to_csv()
+writer ..> csv_file : main output
+writer ..> err_file : error output (separate mode)
+reader ..> mie_file : mmap read
+
+note right of sync
+  Four-phase sync:
+  1. Header detection (find_first_record)
+  2. Continuous validation (validate_record)
+  3. Look-ahead confirmation (next record check)
+  4. Recovery scan (recover_sync)
+end note
+
+note right of config
+  Sources (priority order):
+  1. CLI arguments
+  2. TOML config file
+  3. Built-in defaults
+end note
+@enduml

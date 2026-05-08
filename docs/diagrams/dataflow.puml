@@ -1,0 +1,86 @@
+@startuml MIE-Decoder Data Flow
+!theme plain
+title MIE-Decoder v1.1 — Data Flow
+
+|CLI|
+start
+:Parse CLI arguments\n(argparse: decode/dump subcommands);
+:Load TOML config\n(config.load_config);
+:Merge CLI overrides\n(config.with_overrides);
+:Configure logging\n(logger.configure_logging);
+
+|Sync|
+:Open MIE binary file\n(mmap.ACCESS_READ);
+:find_first_record()\nScan from offset 0 for first valid record;
+note right
+  Handles:
+  • No header (offset 0)
+  • Proprietary DDC headers
+  • ASCII equipment names
+  Scans in 2-byte steps
+  Caps at 64 KB
+end note
+
+if (Valid record found?) then (no)
+  :Log ERROR\n"No valid records found";
+  stop
+endif
+
+:detect_timestamp_format()\nIRIG (3 words) vs Standard (2 words);
+
+|Reader|
+repeat
+  :validate_record()\nType + WC + look-ahead;
+
+  if (Valid?) then (no)
+    |Sync|
+    :recover_sync()\nScan forward in 2-byte steps;
+    if (Recovered?) then (no)
+      :Log ERROR\n"Unrecoverable sync loss";
+      break
+    endif
+    :Resume at recovered offset;
+    |Reader|
+  endif
+
+  :Decode Type Word\n(bits 0-6: type, bit 7: bus,\nbits 8-13: WC, bit 14: error);
+
+  if (Type == 0x20\nSPURIOUS_DATA?) then (yes)
+    :Extract raw bus words\n(no Command Word);
+    :Assign error code:\n0x2000 (continuation) or\n0x2001 (standalone);
+  elseif (Bit 14 set\n(ERROR)?) then (yes)
+    :Decode Command Word;
+    :Extract truncated payload;
+    :Extract Error Word\n(last word of record);
+    :Validate error code\nvs KNOWN_DDC_ERROR_CODES;
+  else (normal)
+    :Decode timestamp\n(IRIG or Standard);
+    :Decode Command Word;
+    :classify_message_format()\n→ 1 of 10 formats;
+    :Extract payload per format\n(cmd2, status, status2, data);
+  endif
+
+  :Compute per-RT/MSG DELTA;
+
+|Filters|
+  :apply_filters()\nExclude by type/RT/bus/SA;
+
+|Writer|
+  :message_to_row()\n→ dict[str, str];
+
+|Reader|
+repeat while (more records?) is (yes)
+-> no;
+
+|Writer|
+if (error_mode == SEPARATE\nand output is file?) then (yes)
+  :write_csv_split()\nNormal → main.csv\nErrors → main_errors.csv;
+else (INLINE or stdout)
+  :write_csv()\nAll messages → single output;
+endif
+
+|CLI|
+:Log summary\n(count, sync recoveries, elapsed);
+stop
+
+@enduml
