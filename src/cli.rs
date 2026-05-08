@@ -166,19 +166,33 @@ pub fn run(argv: Vec<String>) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    // Parse subcommand-specific args.
+    // Parse subcommand-specific args. Process control (printing help,
+    // selecting an exit code) is decided HERE — the parse helpers only
+    // signal "user wanted help" via ParseError::HelpRequested.
     let command = match cmd_token.as_str() {
         "decode" => match parse_decode(&mut iter) {
             Ok(c) => Command::Decode(Box::new(c)),
-            Err(e) => return die(&e),
+            Err(ParseError::HelpRequested) => {
+                print!("{HELP}");
+                return ExitCode::SUCCESS;
+            }
+            Err(ParseError::Other(e)) => return die(&e),
         },
         "count" => match parse_count(&mut iter) {
             Ok(p) => Command::Count(p),
-            Err(e) => return die(&e),
+            Err(ParseError::HelpRequested) => {
+                print!("{HELP}");
+                return ExitCode::SUCCESS;
+            }
+            Err(ParseError::Other(e)) => return die(&e),
         },
         "dump" => match parse_dump(&mut iter) {
             Ok(c) => Command::Dump(Box::new(c)),
-            Err(e) => return die(&e),
+            Err(ParseError::HelpRequested) => {
+                print!("{HELP}");
+                return ExitCode::SUCCESS;
+            }
+            Err(ParseError::Other(e)) => return die(&e),
         },
         "-h" | "--help" => {
             print!("{HELP}");
@@ -223,6 +237,25 @@ fn die(msg: &str) -> ExitCode {
 
 type ArgIter<'a> = std::iter::Peekable<std::iter::Skip<std::vec::IntoIter<String>>>;
 
+/// Outcome of parsing subcommand arguments.
+///
+/// `HelpRequested` is a control-flow signal, not a failure: the user
+/// passed `-h`/`--help` and the caller (`run`) is responsible for
+/// printing help text and returning the appropriate exit code. Library
+/// helpers MUST NOT call `std::process::exit` directly; that decision
+/// belongs to the binary entry point.
+#[derive(Debug)]
+pub enum ParseError {
+    HelpRequested,
+    Other(String),
+}
+
+impl From<String> for ParseError {
+    fn from(s: String) -> Self {
+        Self::Other(s)
+    }
+}
+
 fn next_value(name: &str, iter: &mut ArgIter<'_>) -> Result<String, String> {
     iter.next()
         .ok_or_else(|| format!("{name} requires a value"))
@@ -256,7 +289,7 @@ fn collect_multi(iter: &mut ArgIter<'_>) -> Vec<String> {
     out
 }
 
-fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, String> {
+fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
     let mut args = DecodeArgs::default();
     let mut input_seen = false;
 
@@ -329,14 +362,13 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, String> {
                         .push(parse_u8_value(&v, "--include-subaddresses")?);
                 }
             }
-            "-h" | "--help" => {
-                print!("{HELP}");
-                std::process::exit(0);
+            "-h" | "--help" => return Err(ParseError::HelpRequested),
+            s if s.starts_with('-') => {
+                return Err(format!("unknown decode option: {s}").into());
             }
-            s if s.starts_with('-') => return Err(format!("unknown decode option: {s}")),
             _ => {
                 if input_seen {
-                    return Err(format!("unexpected positional argument: {arg}"));
+                    return Err(format!("unexpected positional argument: {arg}").into());
                 }
                 args.input = PathBuf::from(arg);
                 input_seen = true;
@@ -345,32 +377,31 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, String> {
     }
 
     if !input_seen {
-        return Err("decode requires an input file".to_string());
+        return Err("decode requires an input file".to_string().into());
     }
     Ok(args)
 }
 
-fn parse_count(iter: &mut ArgIter<'_>) -> Result<PathBuf, String> {
+fn parse_count(iter: &mut ArgIter<'_>) -> Result<PathBuf, ParseError> {
     let mut path: Option<PathBuf> = None;
     for arg in iter.by_ref() {
         match arg.as_str() {
-            "-h" | "--help" => {
-                print!("{HELP}");
-                std::process::exit(0);
+            "-h" | "--help" => return Err(ParseError::HelpRequested),
+            s if s.starts_with('-') => {
+                return Err(format!("unknown count option: {s}").into());
             }
-            s if s.starts_with('-') => return Err(format!("unknown count option: {s}")),
             _ => {
                 if path.is_some() {
-                    return Err(format!("unexpected positional argument: {arg}"));
+                    return Err(format!("unexpected positional argument: {arg}").into());
                 }
                 path = Some(PathBuf::from(arg));
             }
         }
     }
-    path.ok_or_else(|| "count requires an input file".to_string())
+    path.ok_or_else(|| ParseError::Other("count requires an input file".to_string()))
 }
 
-fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, String> {
+fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, ParseError> {
     let mut args = DumpArgs::default();
     let mut input_seen = false;
 
@@ -398,14 +429,13 @@ fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, String> {
             s if s.starts_with("--records=") => {
                 args.records = Some(parse_int_value(&s["--records=".len()..], "--records")? as u64);
             }
-            "-h" | "--help" => {
-                print!("{HELP}");
-                std::process::exit(0);
+            "-h" | "--help" => return Err(ParseError::HelpRequested),
+            s if s.starts_with('-') => {
+                return Err(format!("unknown dump option: {s}").into());
             }
-            s if s.starts_with('-') => return Err(format!("unknown dump option: {s}")),
             _ => {
                 if input_seen {
-                    return Err(format!("unexpected positional argument: {arg}"));
+                    return Err(format!("unexpected positional argument: {arg}").into());
                 }
                 args.input = PathBuf::from(arg);
                 input_seen = true;
@@ -414,7 +444,7 @@ fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, String> {
     }
 
     if !input_seen {
-        return Err("dump requires an input file".to_string());
+        return Err("dump requires an input file".to_string().into());
     }
     Ok(args)
 }
@@ -533,4 +563,74 @@ fn run_dump(args: DumpArgs) -> Result<(), String> {
 
 fn format_mie_error(e: MieError) -> String {
     e.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> ArgIter<'static> {
+        let v: Vec<String> = values.iter().map(|s| s.to_string()).collect();
+        // skip(0) is required to match the ArgIter alias's
+        // Skip<IntoIter<...>> shape; clippy can't see past the alias.
+        #[allow(clippy::iter_skip_zero)]
+        v.into_iter().skip(0).peekable()
+    }
+
+    /// `--help` must propagate as `ParseError::HelpRequested`, never as
+    /// `process::exit`. The whole point of the refactor.
+    #[test]
+    fn parse_decode_help_returns_help_requested() {
+        let mut it = args(&["--help"]);
+        match parse_decode(&mut it) {
+            Err(ParseError::HelpRequested) => {}
+            other => panic!("expected HelpRequested, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_count_help_returns_help_requested() {
+        let mut it = args(&["-h"]);
+        match parse_count(&mut it) {
+            Err(ParseError::HelpRequested) => {}
+            other => panic!("expected HelpRequested, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dump_help_returns_help_requested() {
+        let mut it = args(&["--help"]);
+        match parse_dump(&mut it) {
+            Err(ParseError::HelpRequested) => {}
+            other => panic!("expected HelpRequested, got {other:?}"),
+        }
+    }
+
+    /// Parse errors should still surface as ParseError::Other, not panics
+    /// or exits.
+    #[test]
+    fn parse_decode_unknown_flag_returns_other() {
+        let mut it = args(&["--nope"]);
+        match parse_decode(&mut it) {
+            Err(ParseError::Other(msg)) => assert!(msg.contains("--nope")),
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_decode_missing_input_returns_other() {
+        let mut it = args(&[]);
+        match parse_decode(&mut it) {
+            Err(ParseError::Other(msg)) => assert!(msg.contains("input file")),
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    /// Happy path still produces a value.
+    #[test]
+    fn parse_decode_minimal_ok() {
+        let mut it = args(&["recording.mie"]);
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("recording.mie"));
+    }
 }
