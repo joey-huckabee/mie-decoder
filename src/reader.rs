@@ -218,14 +218,34 @@ impl<'a> Iterator for RecordIter<'a> {
             let record_bytes = usize::from(tw.word_count) * 2;
 
             // ── Validate this record ────────────────────────────────
-            let is_valid = message_type_is_valid(tw.message_type)
-                && tw.word_count >= min_wc
-                && self.offset + record_bytes <= self.file_len;
+            // Delegate to sync::validate_record so the per-record path
+            // matches the header-skip and recovery paths exactly. This
+            // applies all five heuristics: valid type, plausible word
+            // count, fits in file, IRIG field ranges, and two-record
+            // look-ahead. A weaker inline check would let corrupt-but-
+            // plausible records slip through and be emitted as garbage
+            // rows.
+            let is_valid = crate::sync::validate_record(
+                self.data,
+                self.offset,
+                self.file_len,
+                Some(resolved),
+            );
 
             if !is_valid {
                 self.sync_losses += 1;
                 if self.strict {
-                    let err = if tw.word_count < min_wc {
+                    // Classify in priority order. The first three arms
+                    // mirror the three coarse checks; if validation fails
+                    // for an IRIG-range or look-ahead reason, fall through
+                    // to PayloadError with descriptive detail.
+                    let err = if !message_type_is_valid(tw.message_type) {
+                        MieError::UnknownTypeWord {
+                            offset: self.offset as u64,
+                            raw_type_word: type_raw,
+                            message_type: tw.message_type,
+                        }
+                    } else if tw.word_count < min_wc {
                         MieError::InvalidTypeWord {
                             offset: self.offset as u64,
                             raw_type_word: type_raw,
@@ -238,10 +258,13 @@ impl<'a> Iterator for RecordIter<'a> {
                             available_bytes: (self.file_len - self.offset) as u64,
                         }
                     } else {
-                        MieError::UnknownTypeWord {
+                        MieError::PayloadError {
                             offset: self.offset as u64,
-                            raw_type_word: type_raw,
-                            message_type: tw.message_type,
+                            detail: format!(
+                                "record fails IRIG-range or look-ahead validation \
+                                 (raw_type=0x{:04X})",
+                                type_raw
+                            ),
                         }
                     };
                     self.done = true;

@@ -3,6 +3,17 @@
 **Document ID:** MIE-REQ-001
 **Version:** 1.0.0
 
+> **Status note:** This document was authored against the v1.1 Python
+> implementation and references Python-specific tooling (Poetry, pandas,
+> tomli, dataclasses, struct). The semantic requirements (decode behavior,
+> sync recovery, output format, error handling) carry across to the Rust
+> port unchanged; the implementation-flavored items (L1-010 pandas, L1-014
+> Poetry/Python, L2-DEC-005 struct, L2-CFG-002 tomllib, L2-WRT-005/006
+> DataFrame, L3-001/002/009/010 Python tooling) are stale relative to the
+> Rust crate. A comprehensive requirements refresh is tracked in
+> `docs/ROADMAP.md`. New requirements added during the Rust port are
+> marked accordingly (see L2-RDR-015).
+
 ---
 
 ## L1 — System-Level Requirements
@@ -77,6 +88,7 @@ L2 requirements allocate L1 capabilities to specific modules.
 | L2-RDR-012 | L1-011 | MieFileReader SHALL log decode start/complete with message counts at INFO level. |
 | L2-RDR-013 | L1-011 | MieFileReader SHALL log progress every 100,000 messages at INFO level. |
 | L2-RDR-014 | L1-011 | MieFileReader SHALL log freerun timestamps at WARNING level. |
+| L2-RDR-015 | L1-008 | MieFileReader SHALL validate every record using the full `sync::validate_record` path (type, word count, fit, IRIG range, two-record look-ahead) before decoding it. The per-record validation SHALL NOT be a weaker subset of the path used for header detection or sync recovery. |
 
 ### L2-WRT: writer.py — CSV Output
 

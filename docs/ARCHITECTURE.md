@@ -81,20 +81,28 @@ The scan advances in 2-byte (word-aligned) steps and caps at 64 KB.
 
 ### Phase 2: Continuous Validation
 
-At each record boundary, the reader validates before decoding:
+At each record boundary, the reader validates before decoding **using the
+same `sync::validate_record()` function as Phases 1 and 4**. There is one
+validation path; the per-record loop, the header-skip scan, and the
+recovery walk all share it. The full check set (see "Validation
+Heuristics" below) is applied to every record, not just on first-record
+discovery and post-recovery.
 
-1. Type Word message type is in the known set (0x01–0x20).
-2. Word count >= minimum for the timestamp format.
-3. Record fits within the file.
-
-This catches corruption that occurs mid-file.
+This is load-bearing: a weaker per-record check (e.g., type + word_count +
+fit only) lets corrupt-but-plausible records — a record with valid Type
+Word framing but an out-of-range IRIG hour, or one whose word count points
+to garbage instead of the next valid Type Word — pass through and emit
+garbage rows. The reader must use the strongest available heuristic on
+every record.
 
 ### Phase 3: Look-Ahead Confirmation
 
 \`validate_record()\` uses a two-record look-ahead: a candidate is
 confirmed valid only if the NEXT record (at offset + word_count × 2)
 also starts with a valid Type Word. This dramatically reduces false
-positives from coincidental byte patterns.
+positives from coincidental byte patterns. Because Phase 2 shares this
+validator, look-ahead is applied to every record in normal forward
+decode, not only when re-acquiring sync.
 
 ### Phase 4: Sync Recovery (Walk Forward)
 

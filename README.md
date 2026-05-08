@@ -162,7 +162,8 @@ MIE-Decoder automatically handles:
 
 - **File headers**: Scans from offset 0 to find the first valid record, skipping proprietary headers.
 - **Mid-file corruption**: If a record fails validation, scans forward in 2-byte steps to find the next valid record.
-- **Two-record look-ahead**: A candidate record is confirmed only if the next record's Type Word is also valid, reducing false positives.
+- **Unified validation**: The same five-check `validate_record` path is used for header skip, normal forward decode, and post-loss recovery. Every record passes through the same heuristics — there is no weaker fast path that could let corrupt-but-plausible records through.
+- **Validation checks** (in order): valid message type → plausible word count → record fits in file → IRIG timestamp fields in range (hour < 24, minute < 60, second < 60) → two-record look-ahead (next record's Type Word also looks valid).
 - **Error records maintain sync**: Error records (bit 14) and SPURIOUS_DATA continuations are valid records with valid Type Words.
 
 ## Configuration

@@ -228,6 +228,35 @@ fn csv_output_has_one_row_per_message_plus_header() {
 }
 
 #[test]
+fn corrupt_irig_record_skipped_by_per_record_validation() {
+    // Regression test for the validation-parity fix: a record that
+    // passes the coarse 3-check filter (valid type, valid word_count,
+    // fits in file) but has an out-of-range IRIG hour (31 > 23) must
+    // be rejected by per-record validation and skipped via sync
+    // recovery — not emitted as a garbage row.
+    let mut corrupt = record_rt15_sa11_rcv();
+    // Byte 2 is the low byte of the IRIG upper word (LE). The hour
+    // field is bits 0..4 of that word. Setting it to 0x1F makes
+    // hour = 31, which violates `hour < 24`. The two-record look-ahead
+    // would still pass (the next record is valid), so the IRIG range
+    // check is the sole discriminator here.
+    corrupt[2] = (corrupt[2] & 0xE0) | 0x1F;
+
+    let mut bytes = Vec::new();
+    bytes.extend(corrupt); // corrupt-IRIG record (offset 0)
+    bytes.extend(record_rt15_sa11_rcv()); // valid record (offset 72)
+    let f = TempFile::new(&bytes);
+
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+
+    // The corrupt record should be dropped via sync recovery; only the
+    // valid one is emitted.
+    assert_eq!(msgs.len(), 1, "expected corrupt-IRIG record to be skipped");
+    assert_eq!(msgs[0].file_offset, 72, "expected the valid record at offset 72");
+}
+
+#[test]
 fn header_skip_via_proprietary_prefix() {
     let mut bytes = Vec::with_capacity(32 + 72);
     bytes.extend_from_slice(b"DDC-EQUIPMENT-NAME\0\0PADD\0\0\0\0\0\0"); // 28 bytes — 14 words
