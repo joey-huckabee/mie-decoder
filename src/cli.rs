@@ -218,8 +218,8 @@ pub fn run(argv: Vec<String>) -> ExitCode {
 
     let result = match command {
         Command::Decode(args) => run_decode(globals, *args),
-        Command::Count(input) => run_count(input),
-        Command::Dump(args) => run_dump(*args),
+        Command::Count(input) => run_count(globals, input),
+        Command::Dump(args) => run_dump(globals, *args),
     };
 
     match result {
@@ -601,10 +601,38 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
     Ok(())
 }
 
-fn run_count(input: PathBuf) -> Result<(), String> {
-    let reader = MieFileReader::new(&input).map_err(format_mie_error)?;
+fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), String> {
+    // Load config first — a malformed config file should error out
+    // regardless of which subcommand was run. count was previously
+    // ignoring --config entirely, which masked config errors.
+    let cfg = load_config(globals.config.as_deref()).map_err(|e| e.0)?;
+
+    // Log level precedence: CLI > config > default. The default was
+    // applied at run() entry; here we layer the config and the CLI
+    // re-application on top.
+    if let Some(lvl) = Level::parse(&cfg.log_level) {
+        log::set_level(lvl);
+    }
+    if let Some(s) = &globals.log_level {
+        if let Some(lvl) = Level::parse(s) {
+            log::set_level(lvl);
+        }
+    }
+
+    let reader = MieFileReader::with_options(
+        &input,
+        ReaderOptions {
+            strict: cfg.strict,
+            time_format: cfg.time_format,
+        },
+    )
+    .map_err(format_mie_error)?;
+
+    // Apply config's filters to the count, matching decode's behavior.
+    // A user who wants raw counts can omit [filter] from their config.
+    let filter_cfg = cfg.filters.clone();
     let mut count: u64 = 0;
-    for item in reader.iter() {
+    for item in reader.iter().filter_messages(filter_cfg) {
         match item {
             Ok(_) => count += 1,
             Err(e) => return Err(format_mie_error(e)),
@@ -614,7 +642,20 @@ fn run_count(input: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-fn run_dump(args: DumpArgs) -> Result<(), String> {
+fn run_dump(globals: GlobalArgs, args: DumpArgs) -> Result<(), String> {
+    // Load config so a malformed file errors out (consistent with the
+    // other subcommands). Only log_level is meaningful for dump output;
+    // time_format / strict / filters don't apply to a hex view.
+    let cfg = load_config(globals.config.as_deref()).map_err(|e| e.0)?;
+    if let Some(lvl) = Level::parse(&cfg.log_level) {
+        log::set_level(lvl);
+    }
+    if let Some(s) = &globals.log_level {
+        if let Some(lvl) = Level::parse(s) {
+            log::set_level(lvl);
+        }
+    }
+
     if args.raw {
         hex_dump_raw_to_stdout(&args.input, args.offset, args.length).map_err(format_mie_error)
     } else {
@@ -767,6 +808,83 @@ mod tests {
                 assert!(msg.contains("unexpected positional"));
             }
             other => panic!("expected Other(unexpected positional...), got {other:?}"),
+        }
+    }
+
+    // ── --config plumbing through count/dump ──────────────────────────
+    //
+    // Regression: before, count and dump ignored --config entirely so a
+    // malformed config file passed alongside those subcommands silently
+    // succeeded. After the fix, all three subcommands load the config
+    // up-front and surface parse errors uniformly.
+
+    fn write_temp_file(suffix: &str, content: &[u8]) -> PathBuf {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static C: AtomicU64 = AtomicU64::new(0);
+        let n = C.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let p = std::env::temp_dir().join(format!("mie-cli-test-{pid}-{n}{suffix}"));
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(content).unwrap();
+        f.flush().unwrap();
+        p
+    }
+
+    #[test]
+    fn run_count_propagates_config_load_error() {
+        let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
+        let globals = GlobalArgs {
+            log_level: None,
+            config: Some(bad.clone()),
+        };
+        // Input doesn't matter: config error fires before the file is opened.
+        let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
+        let _ = std::fs::remove_file(&bad);
+        match result {
+            Err(msg) => assert!(
+                msg.contains("Invalid time_format"),
+                "expected config error, got: {msg}"
+            ),
+            Ok(()) => panic!("expected config error, got Ok"),
+        }
+    }
+
+    #[test]
+    fn run_dump_propagates_config_load_error() {
+        let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
+        let globals = GlobalArgs {
+            log_level: None,
+            config: Some(bad.clone()),
+        };
+        let dump_args = DumpArgs {
+            input: PathBuf::from("/no/such/recording.mie"),
+            ..Default::default()
+        };
+        let result = run_dump(globals, dump_args);
+        let _ = std::fs::remove_file(&bad);
+        match result {
+            Err(msg) => assert!(
+                msg.contains("Invalid time_format"),
+                "expected config error, got: {msg}"
+            ),
+            Ok(()) => panic!("expected config error, got Ok"),
+        }
+    }
+
+    #[test]
+    fn run_count_propagates_missing_config_file() {
+        let globals = GlobalArgs {
+            log_level: None,
+            config: Some(PathBuf::from("/no/such/config.toml")),
+        };
+        let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
+        match result {
+            Err(msg) => assert!(
+                msg.contains("Config file not found"),
+                "expected 'Config file not found' error, got: {msg}"
+            ),
+            Ok(()) => panic!("expected error, got Ok"),
         }
     }
 }
