@@ -2,14 +2,86 @@
 
 | Version | Feature |
 |---------|---------|
-| **v1.1** | Sync recovery, error handling, config, filtering _(Python, current)_ |
-| **v1.0.0** | Rust port. CLI redesign (`--inline-errors`, `--include-*` filters, `count` subcommand, `--format csv` forward-compat). Streaming CSV writer (constant memory). Static musl build for SLES 12. |
-| v2.1 | Multi-file input, time-sorted merge to single CSV |
-| v3.0 | Data word decoders, additional per-message-type CSVs |
-| v4.0 | Apache Parquet output |
+| Python v1.1 | Sync recovery, error handling, config, filtering _(historical, frozen at `python-reference/`)_ |
+| **Rust v1.0.0** | Rust port. CLI redesign (`--inline-errors`, `--include-*` filters, `count` subcommand, `--format csv` forward-compat). Streaming CSV writer (constant memory). Static musl build for SLES 12. _(current)_ |
+| Rust v1.1 | Multi-file input, time-sorted merge to single CSV |
+| Rust v2.0 | Data word decoders, additional per-message-type CSVs |
+| Rust v3.0 | Apache Parquet output |
 
 ## Commitments carried through the Rust port
 
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.
 - **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including currently-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`).
 - **Sync recovery semantics preserved.** Two-record look-ahead, 64 KB scan cap, error records and SPURIOUS_DATA continuations remain valid records that pass validation.
+- **One validation path.** Header skip, normal forward decode, and post-loss recovery all share `sync::validate_record`. There is no weaker fast path.
+
+## Robustness & validation backlog
+
+Items surfaced during the Rust v1.0.0 review. These are not regressions —
+they are known gaps that could harden decode quality further. Tracked
+here so they don't get dropped.
+
+### Documentation
+
+- **Comprehensive `docs/REQUIREMENTS.md` refresh.** The doc was authored
+  against the Python implementation and references Python-specific tooling
+  (Poetry, pandas, tomli, struct, dataclasses) and module names
+  (`writer.py`, etc.). Semantic requirements are still correct; the
+  implementation-level rows (L1-010, L1-014, L2-DEC-005, L2-CFG-002,
+  L2-WRT-005/006, L3-001/002/009/010) need rewriting against the Rust
+  crate. New Rust-port requirements (e.g., `L2-RDR-015`) are added inline
+  rather than as a wholesale rewrite.
+- **Refresh `docs/diagrams/*.puml`.** Class, dataflow, and component
+  diagrams still reference Python module names (`__main__.py`, `cli.py`,
+  `pandas`, etc.). Need redrawing against the Rust module layout.
+
+### Validation strength
+
+- **Stronger timestamp-format auto-detection.** Today's scoring uses T/R
+  consistency, word-count plausibility, and IRIG range checks against
+  only the first record. On ambiguous recordings a wrong choice produces
+  garbage timestamps for the whole file. Possible improvements: probe
+  more than the first record, expose a per-format confidence score, or
+  add a hard-fail "format mismatch detected mid-file" diagnostic.
+- **Multi-record look-ahead.** Today's two-record look-ahead can be
+  defeated by two consecutive same-shape corruptions. An N-record
+  (configurable) look-ahead would catch a wider class of failures at the
+  cost of small additional per-record reads.
+- **T/R consistency check during decode.** For Type Word 0x02 (BC→RT),
+  the Command Word direction bit should be Receive; for 0x04, Transmit.
+  Today this is used during auto-detect but not enforced afterwards.
+  Adding it as a sixth validation check would catch additional corruption
+  modes.
+- **Header-detection look-ahead depth.** `find_first_record` shares the
+  same two-record look-ahead as continuous validation. For files with
+  deeply embedded headers that contain valid-looking byte patterns, an
+  N-record confirmation could reduce false-positive header endpoints.
+
+### Decode correctness
+
+- **IRIG day-field decoding across DDC card models.** Known limitation in
+  v1.0.0 (carried from Python). The bit layout for the day-of-year field
+  appears to vary between firmware versions; needs reverse-engineering
+  across a sample set with cross-references against vendor CSV.
+- **Standard-timestamp tick calibration.** The Standard format is a
+  free-running counter; tick rate is card-dependent and not encoded in
+  the file. Today `to_total_microseconds()` returns raw counter ticks.
+  A future option could accept an external calibration constant (TMATS
+  field or CLI flag) and emit true microseconds.
+
+### Diagnostics
+
+- **Negative DELTA reporting.** Per-RT/MSG delta is a signed `f64`
+  difference. Out-of-order timestamps produce negative deltas silently.
+  Worth a WARN-level log when this occurs, gated to avoid log-flooding
+  on a chronically out-of-order file.
+- **Strict-mode error classification for IRIG-range and look-ahead
+  failures.** When per-record validation fails for an IRIG-range or
+  look-ahead reason, strict mode currently surfaces a `PayloadError`
+  with a string detail. A dedicated `MieValidationError` variant with a
+  structured "which check failed" enum field would be more consumable.
+- **Verbose sync-loss diagnostic.** Today a sync-loss WARN line prints
+  the failing offset, type, and word count. A complementary mode could
+  hex-dump 32 bytes of context around the failure, similar to the
+  Python `_print_unknown_type_diagnostic` helper that didn't make the
+  port.
