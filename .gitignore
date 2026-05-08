@@ -34,3 +34,6 @@ __pycache__/
 
 # Sample binary recordings
 *.mie
+
+# Coverage artifacts (HTML reports go under target/, ignored by /target)
+lcov.info

@@ -1,0 +1,23 @@
+# Cargo aliases for cargo-llvm-cov coverage workflows.
+#
+# Single quotes (TOML literal strings) keep the regex verbatim — no
+# backslash escape processing — so [\\/] matches a Windows backslash
+# OR a Unix forward-slash. Match the binary entry shim by exact
+# basename to avoid accidentally excluding any future file.
+#
+# Run order in normal use:
+#   cargo cov         → local: HTML report, opens browser
+#   cargo cov-lcov    → CI/IDE: writes lcov.info
+#   cargo cov-ci      → enforces the gate; non-zero exit if below
+#                       --fail-under-lines or --fail-under-regions
+#
+# Thresholds match the agreed-upon floors. Baseline at integration
+# time was 74.81% lines / 71.55% regions, so the 70/70 gate gives
+# ~5 percentage points of headroom for refactor drift before the
+# build starts failing. Bump up after a few weeks of stable readings
+# if we want stricter.
+
+[alias]
+cov      = 'llvm-cov --html --open --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
+cov-lcov = 'llvm-cov --lcov --output-path lcov.info --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
+cov-ci   = 'llvm-cov --fail-under-lines 70 --fail-under-regions 70 --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'

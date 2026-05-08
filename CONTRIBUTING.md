@@ -148,6 +148,65 @@ cargo fmt --check                          # CI-style check (no rewrites)
 cargo clippy --all-targets -- -D warnings  # Lint manually
 ```
 
+## Coverage
+
+We use [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)
+for source-based code coverage. It works on stable Rust (no nightly
+needed — `-C instrument-coverage` has been stable since Rust 1.60).
+
+### One-time install
+
+```bash
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov
+```
+
+### Daily use
+
+Three cargo aliases are pre-wired in `.cargo/config.toml`:
+
+```bash
+cargo cov         # Local: build instrumented, run tests, open HTML report
+cargo cov-lcov    # Generate target-relative lcov.info (for IDE / CI tooling)
+cargo cov-ci      # Enforced gate: --fail-under-lines 70 --fail-under-regions 70
+```
+
+Or via the script wrapper, equivalent to `cargo cov`:
+
+```bash
+bash scripts/coverage.sh
+```
+
+### Thresholds
+
+`cargo cov-ci` enforces:
+
+- **Lines: 70%** floor
+- **Regions: 70%** floor
+
+These were set with ~5 percentage points of headroom below the
+integration-time baseline (74.81% / 71.55%) so routine refactors
+don't trip the gate. Ratchet up by editing the `cov-ci` alias if
+we want stricter — do it in increments after watching baseline
+readings stabilize.
+
+### Why coverage is NOT in the pre-commit hook
+
+Building an instrumented test binary takes much longer than a normal
+`cargo test`. The pre-commit hook is meant to be fast (under a few
+seconds for a small change). Coverage runs are a `pre-push`-shaped
+operation, or a CI step. Run `cargo cov-ci` manually before pushing
+material changes.
+
+### Line-level exclusions
+
+cargo-llvm-cov supports file-level exclusion via `--ignore-filename-regex`
+(used in our aliases to skip the binary entry shim). **Line-level
+exclusion** (the `#[coverage(off)]` attribute) is **nightly-only** at
+present, so `unreachable!()` arms and other defensive branches show as
+uncovered on stable. Either accept the percentage hit or refactor the
+defensive arm out — don't try to game the threshold.
+
 ## Production build (SLES 12 / static musl)
 
 The deployment target is SLES 12 (glibc 2.22). Native release builds on
