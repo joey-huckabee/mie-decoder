@@ -1,7 +1,7 @@
 # MIE-Decoder Architecture
 
 **Document ID:** MIE-ARCH-001
-**Version:** 2.0 (Rust)
+**Version:** 1.0.0
 
 ---
 

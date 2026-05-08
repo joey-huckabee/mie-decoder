@@ -4,7 +4,7 @@ Decoder for DDC MIL-STD-1553 MIE binary recording files.
 
 MIE-Decoder reads proprietary binary files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI recording cards and outputs decoded messages in CSV format compatible with DDC's own recording software output.
 
-**v2.0** — Rust port. Streaming CSV writer (constant memory), CLI redesign (`--inline-errors`, `--include-*` filters, `count` subcommand), single static-musl binary for SLES 12 deployment. The original Python implementation is preserved at [`python-reference/`](python-reference/) as historical documentation.
+**v1.0.0** — Rust port. Streaming CSV writer (constant memory), CLI redesign (`--inline-errors`, `--include-*` filters, `count` subcommand), single static-musl binary for SLES 12 deployment. The original Python implementation is preserved at [`python-reference/`](python-reference/) as historical documentation.
 
 ## Build
 
@@ -258,7 +258,7 @@ cargo clippy --all-targets  # Lint (if installed)
 ## Known Limitations
 
 - The Day field in IRIG timestamps may not decode correctly on all DDC card models.
-- `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but empty in v2.0.
+- `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but empty in v1.0.0.
 - Standard timestamp tick-to-microsecond conversion requires external calibration.
 - SPURIOUS_DATA payload structure is raw words with no further interpretation.
 

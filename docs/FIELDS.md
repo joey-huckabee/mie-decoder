@@ -144,14 +144,14 @@ Raw 16-bit MIL-STD-1553 Command Word in uppercase 4-character hexadecimal.
 
 Multiplexer label or subchannel identifier. Derived from external
 configuration (TMATS or recording software setup). Not present in the
-binary record data. Empty in v1.1.
+binary record data. Empty in v1.0.0.
 
 ### TERM_NAME
 
 Terminal or equipment name associated with the RT/SA combination. Derived
 from external configuration (filename conventions, TMATS setup files, or
 recording software database). Not present in the binary record data.
-Empty in v1.1.
+Empty in v1.0.0.
 
 ### BUS
 
@@ -226,12 +226,12 @@ These codes are assigned by the decoder, not the DDC hardware. The
 
 ### IM_GAP
 
-Inter-message gap. Not decoded from the binary record in v1.1. Empty.
+Inter-message gap. Not decoded from the binary record in v1.0.0. Empty.
 
 ### RCV_GAP
 
-Receive gap. Not decoded from the binary record in v1.1. Empty.
+Receive gap. Not decoded from the binary record in v1.0.0. Empty.
 
 ### XMT_GAP
 
-Transmit gap. Not decoded from the binary record in v1.1. Empty.
+Transmit gap. Not decoded from the binary record in v1.0.0. Empty.

@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MIE-Decoder (v2.0) is a Rust library + CLI that decodes proprietary binary recording files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI cards. CSV output is column-compatible with DDC's own recording software so a decoded file can be diffed against vendor output for validation.
+MIE-Decoder (v1.0.0) is a Rust library + CLI that decodes proprietary binary recording files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI cards. CSV output is column-compatible with DDC's own recording software so a decoded file can be diffed against vendor output for validation.
 
-The Rust port replaces a Python implementation that lives at `python-reference/` for historical reference (do **not** maintain or modify it). v2.0 was a clean rewrite, not a transliteration: the CLI was redesigned, the writer is now streaming (constant memory), and the data-words container is an inline `[u16; 32]` buffer.
+The Rust port replaces a Python implementation that lives at `python-reference/` for historical reference (do **not** maintain or modify it). v1.0.0 was a clean rewrite, not a transliteration: the CLI was redesigned, the writer is now streaming (constant memory), and the data-words container is an inline `[u16; 32]` buffer.
 
 Edition 2024, MSRV 1.85. The crate has exactly one external dependency: `memmap2`. Argument parsing, CSV writing, TOML config, logging, and error types are all hand-rolled — preserve this property when adding features.
 
@@ -84,6 +84,6 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - **Streaming CSV.** Rows must flow through a `Write` impl as they are produced. Do not introduce `Vec<MieMessage>` or `Vec<Row>` buffering in the writer — constant memory is the design point.
 - **Two-record look-ahead in `sync.rs`.** Don't remove it. Removing the look-ahead reintroduces false-positive resyncs.
 - **`DataWords` is fixed-capacity by design.** MIL-STD-1553B caps a single transaction at 32 data words. Don't switch to `Vec<u16>` "for flexibility."
-- **CSV column names and order are dictated by DDC vendor output.** Don't "clean up" `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` even though they're empty in v2.0 — they're columns by spec.
+- **CSV column names and order are dictated by DDC vendor output.** Don't "clean up" `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` even though they're empty in v1.0.0 — they're columns by spec.
 - **`sync.rs` is pure** (no logging, no I/O). The reader handles any user-facing messaging based on returned values. Don't move logging into validation helpers.
 - **Test fixtures are byte-exact** translations of records that have been cross-referenced against vendor CSV output. Treat them as oracles; if a test fails, suspect the code, not the fixture.
