@@ -8,10 +8,10 @@
 //!
 //! Commands: `decode`, `count`, `dump`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::config::{ConfigOverrides, load_config, parse_bus_name, parse_type_name};
+use crate::config::{ConfigOverrides, DecoderConfig, load_config, parse_bus_name, parse_type_name};
 use crate::dump::{hex_dump_raw_to_stdout, hex_dump_records_to_stdout};
 use crate::error::MieError;
 use crate::filter::FilterIterExt;
@@ -523,11 +523,14 @@ fn parse_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
 
 // ── Subcommand runners ────────────────────────────────────────────────
 
-fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
-    // Load config (with file precedence < CLI overrides).
+/// Load `--config` (or the built-in defaults if none was specified) and
+/// apply log-level precedence: config overrides the run() default; CLI
+/// overrides config. Used by every subcommand so a malformed config
+/// file is rejected uniformly regardless of whether you ran `decode`,
+/// `count`, or `dump`.
+fn resolve_config(globals: &GlobalArgs) -> Result<DecoderConfig, String> {
     let cfg = load_config(globals.config.as_deref()).map_err(|e| e.0)?;
 
-    // Re-apply log level: config overrides default; CLI overrides config.
     if let Some(lvl) = Level::parse(&cfg.log_level) {
         log::set_level(lvl);
     }
@@ -536,6 +539,26 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
             log::set_level(lvl);
         }
     }
+
+    Ok(cfg)
+}
+
+/// Open the input file and configure the reader from `cfg`. The
+/// String-flavored error type is what every subcommand runner returns,
+/// so the conversion is folded in here.
+fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String> {
+    MieFileReader::with_options(
+        path,
+        ReaderOptions {
+            strict: cfg.strict,
+            time_format: cfg.time_format,
+        },
+    )
+    .map_err(format_mie_error)
+}
+
+fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
+    let cfg = resolve_config(&globals)?;
 
     let cfg = cfg.with_overrides(ConfigOverrides {
         time_format: args.time_format,
@@ -564,37 +587,27 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
         ));
     }
 
-    let reader = MieFileReader::with_options(
-        &args.input,
-        ReaderOptions {
-            strict: cfg.strict,
-            time_format: cfg.time_format,
-        },
-    )
-    .map_err(format_mie_error)?;
-
+    let reader = open_reader(&args.input, &cfg)?;
     log_info!(
         "opened {} ({} bytes)",
         reader.path().display(),
         reader.file_size()
     );
 
-    // Build the iterator chain: reader → filter
-    let filter_cfg = cfg.filters.clone();
+    // Build the iterator chain once. Exactly one of the three branches
+    // below consumes it.
+    let messages = reader.iter().filter_messages(cfg.filters.clone());
 
     if cfg.error_mode == ErrorMode::Separate {
         let Some(ref output) = args.output else {
-            // Stdout cannot be split; force inline behavior with a warning.
+            // Stdout can't be split; force inline behavior with a warning.
             crate::log_warn!("stdout output forces inline error mode");
-            let messages = reader.iter().filter_messages(filter_cfg);
             write_csv(messages, None).map_err(format_mie_error)?;
             return Ok(());
         };
-        let messages = reader.iter().filter_messages(filter_cfg);
         let (n, e) = write_csv_split(messages, output).map_err(format_mie_error)?;
         log_info!("wrote {n} messages + {e} errors to {}", output.display());
     } else {
-        let messages = reader.iter().filter_messages(filter_cfg);
         write_csv(messages, args.output.as_deref()).map_err(format_mie_error)?;
     }
 
@@ -602,31 +615,8 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
 }
 
 fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), String> {
-    // Load config first — a malformed config file should error out
-    // regardless of which subcommand was run. count was previously
-    // ignoring --config entirely, which masked config errors.
-    let cfg = load_config(globals.config.as_deref()).map_err(|e| e.0)?;
-
-    // Log level precedence: CLI > config > default. The default was
-    // applied at run() entry; here we layer the config and the CLI
-    // re-application on top.
-    if let Some(lvl) = Level::parse(&cfg.log_level) {
-        log::set_level(lvl);
-    }
-    if let Some(s) = &globals.log_level {
-        if let Some(lvl) = Level::parse(s) {
-            log::set_level(lvl);
-        }
-    }
-
-    let reader = MieFileReader::with_options(
-        &input,
-        ReaderOptions {
-            strict: cfg.strict,
-            time_format: cfg.time_format,
-        },
-    )
-    .map_err(format_mie_error)?;
+    let cfg = resolve_config(&globals)?;
+    let reader = open_reader(&input, &cfg)?;
 
     // Apply config's filters to the count, matching decode's behavior.
     // A user who wants raw counts can omit [filter] from their config.
@@ -643,18 +633,11 @@ fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), String> {
 }
 
 fn run_dump(globals: GlobalArgs, args: DumpArgs) -> Result<(), String> {
-    // Load config so a malformed file errors out (consistent with the
-    // other subcommands). Only log_level is meaningful for dump output;
-    // time_format / strict / filters don't apply to a hex view.
-    let cfg = load_config(globals.config.as_deref()).map_err(|e| e.0)?;
-    if let Some(lvl) = Level::parse(&cfg.log_level) {
-        log::set_level(lvl);
-    }
-    if let Some(s) = &globals.log_level {
-        if let Some(lvl) = Level::parse(s) {
-            log::set_level(lvl);
-        }
-    }
+    // dump only consumes log_level from config; time_format / strict /
+    // filters don't apply to a hex view. We still call resolve_config
+    // so a malformed config errors out consistently with the other
+    // subcommands.
+    let _cfg = resolve_config(&globals)?;
 
     if args.raw {
         hex_dump_raw_to_stdout(&args.input, args.offset, args.length).map_err(format_mie_error)
