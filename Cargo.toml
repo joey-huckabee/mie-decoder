@@ -1,0 +1,25 @@
+[package]
+name = "mie-decoder"
+version = "1.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Decoder for DDC MIL-STD-1553 MIE binary recording files"
+license = "MIT"
+authors = ["Joey"]
+readme = "README.md"
+
+[lib]
+name = "mie_decoder"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mie-decoder"
+path = "src/bin/mie-decoder.rs"
+
+[dependencies]
+memmap2 = "0.9"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
