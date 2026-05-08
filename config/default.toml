@@ -1,0 +1,168 @@
+# ============================================================================
+# MIE-Decoder Configuration File
+# ============================================================================
+#
+# This file controls the behavior of mie-decoder. Copy it and customize
+# as needed, then pass it to the CLI with:
+#
+#     mie-decoder decode recording.mie --config my-config.toml
+#
+# CLI arguments take precedence over values in this file. For example,
+# --log-level DEBUG will override the level set here.
+#
+# File format: TOML (https://toml.io)
+# ============================================================================
+
+
+[logging]
+# ──────────────────────────────────────────────────────────────────────────
+# Logging verbosity level.
+#
+# Controls how much diagnostic output is written to stderr. Higher levels
+# produce less output.
+#
+#   DEBUG    — Per-record decode details, DataFrame construction progress,
+#              CLI parsed arguments, truncation events.
+#   INFO     — File open/close, decode start/complete with counts and
+#              elapsed time, auto-detected timestamp format, CSV row counts,
+#              progress checkpoints every 100,000 messages.
+#   WARNING  — Invalid records (non-fatal), freerun timestamps, unknown
+#              message types encountered.
+#   ERROR    — File not found, empty file, write failures.
+#   CRITICAL — Reserved for future use.
+#
+# Default: "WARNING"
+# ──────────────────────────────────────────────────────────────────────────
+level = "WARNING"
+
+
+[decode]
+# ──────────────────────────────────────────────────────────────────────────
+# Timestamp format used in the binary file.
+#
+# DDC recording cards support two timestamp formats, configured at
+# recording time. All records in a single file use the same format.
+#
+#   auto     — Auto-detect from the first record by probing the Command
+#              Word at both possible offsets and scoring which produces
+#              a valid MIL-STD-1553 command. This is the recommended
+#              setting for most workflows.
+#   irig     — 48-bit IRIG-B timestamp (3 × 16-bit words). Provides
+#              absolute wall-clock time: day-of-year, hour, minute,
+#              second, microsecond. Requires an external IRIG time source.
+#   standard — 32-bit free-running counter (2 × 16-bit words). Provides
+#              relative timing only. Tick rate is card-dependent and not
+#              encoded in the file.
+#
+# Default: "auto"
+# ──────────────────────────────────────────────────────────────────────────
+time_format = "auto"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Strict decoding mode.
+#
+# When true, the decoder raises exceptions on invalid or unknown records
+# instead of logging warnings and continuing. Useful for data validation
+# and debugging, but will abort on the first problem encountered.
+#
+# Default: false
+# ──────────────────────────────────────────────────────────────────────────
+strict = false
+
+# ──────────────────────────────────────────────────────────────────────────
+# Error handling mode.
+#
+# Controls how errored messages (Type Word bit 14 set) and spurious data
+# records (type 0x20) appear in output.
+#
+#   separate — Errored and spurious messages are written to a separate
+#              file named ``<output_stem>_errors<output_suffix>``.
+#              The main CSV contains only clean messages. This is the
+#              default and recommended setting for most workflows.
+#   inline   — Errored and spurious messages are included in the main
+#              CSV alongside normal messages. The ERROR column contains
+#              "ERROR" or "SPURIOUS", and the ERROR_CODE column contains
+#              the DDC hardware code (0x01xx) or decoder code (0x20xx).
+#
+# Default: "separate"
+# ──────────────────────────────────────────────────────────────────────────
+error_mode = "separate"
+
+
+[filter]
+# ──────────────────────────────────────────────────────────────────────────
+# Message filtering.
+#
+# Filters are applied after decoding and before CSV output. Filtered
+# messages are silently dropped — they do not appear in the output CSV
+# and are not counted in the message count.
+#
+# All filter lists use OR logic: a message is excluded if it matches
+# ANY exclude criterion.
+# ──────────────────────────────────────────────────────────────────────────
+
+# Exclude messages by Type Word message type name.
+#
+# Valid names (case-insensitive):
+#   MODE_COMMAND        — Mode code messages (type 0x01)
+#   BC_TO_RT            — Bus Controller to Remote Terminal (type 0x02)
+#   RT_TO_BC            — Remote Terminal to Bus Controller (type 0x04)
+#   RT_TO_RT            — Terminal-to-Terminal transfers (type 0x08)
+#   BROADCAST_BC_TO_RT  — Broadcast BC→RT (type 0x10)
+#   BROADCAST_RT_TO_RT  — Broadcast RT→RT (type 0x18)
+#   SPURIOUS_DATA       — Spurious bus noise (type 0x20)
+#
+# Example: exclude only spurious data and mode codes
+#   exclude_types = ["SPURIOUS_DATA", "MODE_COMMAND"]
+#
+# Default: [] (no types excluded)
+# ──────────────────────────────────────────────────────────────────────────
+exclude_types = []
+
+# Exclude messages by Remote Terminal address.
+#
+# RT addresses are integers 0–31. Address 31 is the broadcast address.
+#
+# Example: exclude broadcast messages and RT 0 (often unused)
+#   exclude_rts = [0, 31]
+#
+# Default: [] (no RTs excluded)
+# ──────────────────────────────────────────────────────────────────────────
+exclude_rts = []
+
+# Exclude messages by bus.
+#
+# Valid values: "A", "B" (case-insensitive)
+#
+# Example: decode only Bus A, ignoring Bus B
+#   exclude_buses = ["B"]
+#
+# Default: [] (no buses excluded)
+# ──────────────────────────────────────────────────────────────────────────
+exclude_buses = []
+
+# Exclude messages by subaddress.
+#
+# Subaddresses are integers 0–31. SA 0 and SA 31 are mode code
+# subaddresses per MIL-STD-1553B.
+#
+# Example: exclude mode code subaddresses
+#   exclude_subaddresses = [0, 31]
+#
+# Default: [] (no subaddresses excluded)
+# ──────────────────────────────────────────────────────────────────────────
+exclude_subaddresses = []
+
+
+[output]
+# ──────────────────────────────────────────────────────────────────────────
+# Output format settings.
+#
+# These settings control CSV output behavior. Future versions will add
+# support for Parquet (v4.0) and decoded data word CSVs (v3.0).
+# ──────────────────────────────────────────────────────────────────────────
+
+# Output file format.
+# Options: csv (more formats in future versions)
+# Default: "csv"
+format = "csv"

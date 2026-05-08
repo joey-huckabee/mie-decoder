@@ -3,6 +3,7 @@
 //! See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the module
 //! diagram and synchronization strategy.
 
+pub mod config;
 pub mod decode;
 pub mod dump;
 pub mod error;
