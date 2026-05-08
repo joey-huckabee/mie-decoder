@@ -5,66 +5,229 @@
 # sets `core.hooksPath` to `.githooks/`. Bypass with `--no-verify` (CI
 # will run the same checks regardless).
 #
-# Checks, in order — fails fast:
-#   1. cargo fmt --check          (formatting consistency)
-#   2. cargo clippy -D warnings   (lint with warnings as errors)
-#   3. cargo test                 (unit + integration tests)
-#   4. dbg!() scan in staged .rs  (forgotten debug macros)
+# Cheap checks first, expensive last; fails fast.
 #
-# Skipped entirely when no `.rs` or `.toml` files are staged so that
-# doc-only commits stay fast.
+#   File-level (always on):
+#     1. Whitespace + missing-final-newline   (git diff --cached --check)
+#     2. CRLF line endings in text files
+#     3. Merge conflict markers in staged blobs
+#     4. Large staged files (> 1 MB)
+#     5. *.mie binary recordings
+#     6. Cargo.lock parity with Cargo.toml
+#     7. shellcheck on .githooks/* and scripts/* (if shellcheck installed)
+#
+#   Rust-only (skipped if no .rs / .toml staged):
+#     8. cargo fmt --check
+#     9. cargo clippy --all-targets -- -D warnings
+#    10. cargo test --all-targets
+#    11. dbg!() scan in staged .rs
+#    12. unsafe blocks require `// SAFETY:` comment
 
 set -euo pipefail
 
-# Colors for output (no-op when not a TTY).
+# ── Output helpers ────────────────────────────────────────────────────
 if [ -t 2 ]; then
     RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
 else
     RED=''; GREEN=''; YELLOW=''; RESET=''
 fi
-
 step() { printf '%spre-commit:%s %s\n' "$YELLOW" "$RESET" "$1" >&2; }
-fail() { printf '%spre-commit FAILED:%s %s\n' "$RED" "$RESET" "$1" >&2; exit 1; }
-ok()   { printf '%spre-commit:%s %s\n' "$GREEN" "$RESET" "$1" >&2; }
+fail() { printf '%spre-commit FAILED:%s %s\n' "$RED"    "$RESET" "$1" >&2; exit 1; }
+ok()   { printf '%spre-commit:%s %s\n' "$GREEN"  "$RESET" "$1" >&2; }
 
-# Skip if no Rust/TOML files staged.
-if ! git diff --cached --name-only --diff-filter=ACM | grep -qE '\.(rs|toml)$'; then
-    step "no Rust/TOML changes; skipping cargo checks"
+# Run from repo root so all paths are unambiguous.
+cd "$(git rev-parse --show-toplevel)"
+
+# Cache the staged-file list once.
+mapfile -t STAGED < <(git diff --cached --name-only --diff-filter=ACM)
+if (( ${#STAGED[@]} == 0 )); then
+    ok "nothing staged"
     exit 0
 fi
 
+# ── 1. Whitespace + missing-final-newline ─────────────────────────────
+step "git diff --cached --check (trailing whitespace, missing final newline)"
+if ! git diff --cached --check; then
+    fail "whitespace issues — fix and re-stage"
+fi
+
+# ── 2. CRLF line endings ──────────────────────────────────────────────
+# Reject \r in text files. .gitattributes can override per-pattern if
+# needed, but at present every file in the repo should be LF-only.
+step "scanning for CRLF in staged text files"
+crlf_files=()
+for file in "${STAGED[@]}"; do
+    case "$file" in
+        *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf|*.bin|*.mie) continue ;;
+    esac
+    # Use `git show :file` to read the staged blob, not the worktree.
+    if git show ":$file" 2>/dev/null | grep -qU $'\r'; then
+        crlf_files+=("$file")
+    fi
+done
+if (( ${#crlf_files[@]} > 0 )); then
+    printf '  %s\n' "${crlf_files[@]}" >&2
+    fail "CRLF line endings detected. Convert to LF (e.g., \`dos2unix\` or \`sed -i 's/\\r\$//'\`)"
+fi
+
+# ── 3. Merge conflict markers ─────────────────────────────────────────
+step "scanning for merge conflict markers"
+conflict_files=()
+for file in "${STAGED[@]}"; do
+    if git show ":$file" 2>/dev/null \
+        | grep -nE '^(<{7}|={7}|>{7})( |$)' >/dev/null; then
+        conflict_files+=("$file")
+    fi
+done
+if (( ${#conflict_files[@]} > 0 )); then
+    printf '  %s\n' "${conflict_files[@]}" >&2
+    fail "merge conflict markers in staged content"
+fi
+
+# ── 4. Large staged files (> 1 MB) ────────────────────────────────────
+step "checking staged file sizes (limit: 1 MB)"
+LIMIT=$((1024 * 1024))
+oversize=()
+for file in "${STAGED[@]}"; do
+    # Size of the staged blob in bytes.
+    size=$(git cat-file -s ":$file" 2>/dev/null || echo 0)
+    if (( size > LIMIT )); then
+        oversize+=("$file ($size bytes)")
+    fi
+done
+if (( ${#oversize[@]} > 0 )); then
+    printf '  %s\n' "${oversize[@]}" >&2
+    fail "files over 1 MB staged. Use git-lfs or add to .gitignore."
+fi
+
+# ── 5. No *.mie recordings staged (defense-in-depth on top of gitignore) ─
+step "checking for staged *.mie binary recordings"
+mie_files=()
+for file in "${STAGED[@]}"; do
+    case "$file" in
+        *.mie) mie_files+=("$file") ;;
+    esac
+done
+if (( ${#mie_files[@]} > 0 )); then
+    printf '  %s\n' "${mie_files[@]}" >&2
+    fail "*.mie files should not be committed (already in .gitignore — looks like \`git add -f\` was used)"
+fi
+
+# ── 6. Cargo.lock parity ──────────────────────────────────────────────
+# If Cargo.toml is staged, Cargo.lock must be staged too (or already
+# committed in a state that matches). This catches the common
+# "bumped a dep version, forgot to commit lock update" mistake.
+step "Cargo.lock parity with Cargo.toml"
+toml_staged=0
+lock_staged=0
+for file in "${STAGED[@]}"; do
+    [[ "$file" == "Cargo.toml" ]] && toml_staged=1
+    [[ "$file" == "Cargo.lock" ]] && lock_staged=1
+done
+if (( toml_staged == 1 && lock_staged == 0 )); then
+    # Confirm worktree Cargo.lock is in sync. `--locked` makes cargo
+    # refuse to update the lock; `--offline` avoids network.
+    if ! cargo metadata --locked --offline --format-version 1 >/dev/null 2>&1; then
+        fail "Cargo.toml staged but Cargo.lock is out of sync. Run \`cargo update --workspace\` (or just \`cargo build\`) and stage Cargo.lock."
+    fi
+fi
+
+# ── 7. shellcheck (optional) ──────────────────────────────────────────
+if command -v shellcheck >/dev/null 2>&1; then
+    sh_files=()
+    for file in "${STAGED[@]}"; do
+        case "$file" in
+            .githooks/*|scripts/*.sh) sh_files+=("$file") ;;
+        esac
+    done
+    if (( ${#sh_files[@]} > 0 )); then
+        step "shellcheck on staged hook/script files"
+        if ! shellcheck "${sh_files[@]}"; then
+            fail "shellcheck issues"
+        fi
+    fi
+fi
+
+# ── Skip cargo checks if no Rust/TOML changes ─────────────────────────
+need_cargo=0
+for file in "${STAGED[@]}"; do
+    case "$file" in
+        *.rs|*.toml) need_cargo=1; break ;;
+    esac
+done
+if (( need_cargo == 0 )); then
+    ok "file-level checks passed; no Rust changes — skipping cargo"
+    exit 0
+fi
+
+# ── 8. cargo fmt --check ──────────────────────────────────────────────
 step "cargo fmt --check"
 if ! cargo fmt --check; then
     fail "formatting issues — run 'cargo fmt' to fix, then re-stage"
 fi
 
+# ── 9. cargo clippy --all-targets -- -D warnings ──────────────────────
 step "cargo clippy --all-targets -- -D warnings"
 if ! cargo clippy --all-targets -- -D warnings; then
     fail "clippy lint failed — fix warnings or justify with #[allow(...)]"
 fi
 
-step "cargo test"
+# ── 10. cargo test ────────────────────────────────────────────────────
+step "cargo test --all-targets"
 if ! cargo test --all-targets; then
     fail "tests failed"
 fi
 
-# Forbidden-token scan over staged .rs files. Looks at the *staged*
-# blob (`git show :path`) so unstaged edits don't mask issues.
+# ── 11. dbg!() scan ───────────────────────────────────────────────────
 step "scanning staged .rs files for dbg!()"
-forbidden=()
-while IFS= read -r file; do
+dbg_files=()
+for file in "${STAGED[@]}"; do
     case "$file" in
         *.rs)
             if git show ":$file" | grep -nE '^\s*dbg!' >/dev/null; then
-                forbidden+=("$file")
+                dbg_files+=("$file")
             fi
             ;;
     esac
-done < <(git diff --cached --name-only --diff-filter=ACM)
-
-if (( ${#forbidden[@]} > 0 )); then
-    printf '%s\n' "${forbidden[@]}" >&2
+done
+if (( ${#dbg_files[@]} > 0 )); then
+    printf '  %s\n' "${dbg_files[@]}" >&2
     fail "dbg!() found in staged files"
+fi
+
+# ── 12. unsafe blocks require // SAFETY: ──────────────────────────────
+# Each `unsafe {` or `unsafe fn` in a staged file should be preceded by
+# a comment line containing `SAFETY:` within the previous 3 lines.
+# Catches new unsafe code added without justification.
+step "checking unsafe blocks for // SAFETY: comments"
+missing_safety=()
+for file in "${STAGED[@]}"; do
+    case "$file" in
+        *.rs) ;;
+        *) continue ;;
+    esac
+    # Pull line numbers where unsafe blocks/fns start in the staged blob.
+    unsafe_lines=$(git show ":$file" \
+        | grep -nE '^[[:space:]]*unsafe[[:space:]]*([{(]|fn[[:space:]])' \
+        | cut -d: -f1 || true)
+    [ -z "$unsafe_lines" ] && continue
+
+    for ln in $unsafe_lines; do
+        start=$(( ln > 3 ? ln - 3 : 1 ))
+        end=$(( ln - 1 ))
+        # Skip the "unsafe at line 1" edge case — no preceding lines exist.
+        if (( end < start )); then
+            missing_safety+=("$file:$ln")
+            continue
+        fi
+        if ! git show ":$file" | sed -n "${start},${end}p" | grep -q "SAFETY:"; then
+            missing_safety+=("$file:$ln")
+        fi
+    done
+done
+if (( ${#missing_safety[@]} > 0 )); then
+    printf '  %s\n' "${missing_safety[@]}" >&2
+    fail "unsafe block without preceding // SAFETY: comment. Document the invariant before merging."
 fi
 
 ok "all checks passed"

@@ -69,6 +69,20 @@ here so they don't get dropped.
   A future option could accept an external calibration constant (TMATS
   field or CLI flag) and emit true microseconds.
 
+### Lint policy
+
+- **Adopt `clippy::unwrap_used = "warn"` and
+  `clippy::expect_used = "warn"`.** Surface every `.unwrap()` and
+  `.expect()` so each site is forced to either be rewritten with `?`
+  or annotated with `#[allow(clippy::unwrap_used)]` plus a one-line
+  rationale. The current crate has only structurally-safe unwraps
+  (e.g., `iter.next().unwrap()` immediately after `iter.peek()`
+  returning `Some`), but enforcing the lint converts that property
+  from "true today" to "true and verified on every commit." Tracked
+  here because flipping the lint requires touching ~6 sites with
+  `#[allow]` + comment, which is paperwork that doesn't fit a
+  feature commit.
+
 ### Diagnostics
 
 - **Negative DELTA reporting.** Per-RT/MSG delta is a signed `f64`

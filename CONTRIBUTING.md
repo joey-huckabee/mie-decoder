@@ -42,23 +42,75 @@ git config core.hooksPath .githooks
 
 ## What the hook checks
 
-On every `git commit` with at least one `.rs` or `.toml` file staged,
-the hook runs (in order, failing fast):
+On every `git commit`, the hook runs (in order, failing fast). The
+checks are split into a file-level group that runs on every commit
+and a Rust group that runs only when `.rs` or `.toml` files are
+staged.
 
-1. **`cargo fmt --check`** — formatting is consistent. Fix locally with
-   `cargo fmt`, then re-stage.
-2. **`cargo clippy --all-targets -- -D warnings`** — all clippy lints
+### File-level (always)
+
+1. **Whitespace + missing-final-newline** — `git diff --cached --check`.
+   Reports `file:line` for trailing whitespace, missing trailing
+   newline, and (as a side-effect) leftover merge conflict markers.
+2. **CRLF line endings** — staged text files must be LF-only.
+   Belt-and-suspenders alongside `.gitattributes` if you add one.
+3. **Merge conflict markers** — explicit scan for `<<<<<<<`, `=======`,
+   `>>>>>>>` in staged blobs. (`git diff --cached --check` also
+   catches these; the dedicated check is in case `--check` is ever
+   bypassed for one path.)
+4. **Large file guard** — staged files over 1 MB are rejected.
+   Catches accidental binary commits (`git add -f` on a `*.mie`
+   recording, etc.). Use git-lfs or extend `.gitignore` if you
+   genuinely need a large file.
+5. **`*.mie` recordings** — defense-in-depth on top of `.gitignore`.
+   Sample binaries shouldn't be committed.
+6. **`Cargo.lock` parity** — if `Cargo.toml` is staged, `Cargo.lock`
+   must also be staged (or already match). Catches the common
+   "bumped a dep version, forgot to commit the lock update" mistake.
+   Uses `cargo metadata --locked --offline` to confirm.
+7. **`shellcheck` on hooks/scripts** — runs only if `shellcheck` is
+   installed. Lints the hook itself and `scripts/*.sh`. Skipped
+   silently if the tool isn't on `$PATH`.
+
+### Rust-only (skipped if no `.rs`/`.toml` staged)
+
+8. **`cargo fmt --check`** — formatting is consistent. Fix locally
+   with `cargo fmt`, then re-stage.
+9. **`cargo clippy --all-targets -- -D warnings`** — all clippy lints
    pass with warnings treated as errors. Either fix the lint or
-   justify the suppression with a scoped `#[allow(...)]` and a comment
-   explaining why.
-3. **`cargo test --all-targets`** — all unit + integration tests pass.
-4. **`dbg!()` scan** — staged `.rs` files do not contain forgotten
-   `dbg!` macros. (`todo!` and `unimplemented!` are sometimes
-   intentional placeholders, so they're not blocked — but you'll see
-   them in code review.)
+   justify the suppression with a scoped `#[allow(...)]` and a
+   comment explaining why.
+10. **`cargo test --all-targets`** — all unit + integration tests
+    pass.
+11. **`dbg!()` scan** — staged `.rs` files do not contain forgotten
+    `dbg!` macros. (`todo!` and `unimplemented!` are sometimes
+    intentional placeholders, so they're not blocked — but you'll
+    see them in code review.)
+12. **`unsafe` blocks require `// SAFETY:`** — every `unsafe { ... }`
+    or `unsafe fn` in a staged `.rs` file must have a comment
+    containing `SAFETY:` within the three preceding lines. Catches
+    new unsafe code added without justifying its invariants.
 
-If only docs are staged (no `.rs` or `.toml` files), the hook exits
-early — doc-only commits are fast.
+If only docs are staged (no `.rs` or `.toml` files), the cargo group
+is skipped — doc-only commits are fast.
+
+### A note on `unwrap()` / `expect()`
+
+We don't currently grep for `.unwrap()` calls in pre-commit. There
+are two reasons:
+
+1. **False-positive heavy in tests.** Test code legitimately uses
+   `unwrap()` because panic-on-failure *is* the desired behavior.
+2. **Better tool exists.** The clippy lints `clippy::unwrap_used`
+   and `clippy::expect_used` flag every call and force a per-site
+   `#[allow(clippy::unwrap_used)]` annotation, which doubles as
+   documentation of *why* the unwrap is safe.
+
+Production code in this crate currently uses `unwrap()` only in
+sites that are structurally proven safe (e.g., immediately after a
+`peek()` that returned `Some`, or after assigning `Some(x)` two lines
+above). Adopting the clippy-warn approach is tracked in
+`docs/ROADMAP.md`.
 
 ### Bypassing the hook
 
