@@ -49,15 +49,28 @@ mie-decoder decode <input> [options]
   --time-format auto|irig|standard Default auto
   --strict                         Raise on invalid records
   --format csv                     Output format (csv only at present)
-  --exclude-types T1 [T2 ...]      Names or 0xNN hex codes
-  --exclude-rts N1 [N2 ...]
-  --exclude-buses A|B [...]
-  --exclude-subaddresses N1 [N2 ...]
-  --include-types T1 [T2 ...]
-  --include-rts N1 [N2 ...]
-  --include-buses A|B [...]
-  --include-subaddresses N1 [N2 ...]
+  --exclude-types VAL              Comma-separated names or 0xNN hex codes
+  --exclude-rts VAL                Comma-separated RT addresses
+  --exclude-buses VAL              Comma-separated A|B
+  --exclude-subaddresses VAL       Comma-separated subaddresses
+  --include-types VAL              (same syntax as --exclude-types)
+  --include-rts VAL
+  --include-buses VAL
+  --include-subaddresses VAL
 ```
+
+Filter flags accept ONE value, which may be comma-separated. Repeating
+the flag accumulates. The `--flag=VAL` form is equivalent to `--flag VAL`.
+
+```bash
+mie-decoder decode rec.mie --include-rts 15,20,31    # single flag, comma list
+mie-decoder decode rec.mie --include-rts 15 --include-rts 31   # repeat
+mie-decoder decode rec.mie --include-rts=15,31       # = form
+```
+
+The previous space-separated greedy form (`--include-rts 15 31 file.mie`)
+is no longer accepted — it would consume `file.mie` as another RT
+value.
 
 ### count
 
@@ -92,7 +105,7 @@ mie-decoder dump <input> [options]
 ```bash
 # Drop spurious + broadcast traffic
 mie-decoder decode rec.mie -o clean.csv \
-  --exclude-types SPURIOUS_DATA BROADCAST_BC_TO_RT
+  --exclude-types SPURIOUS_DATA,BROADCAST_BC_TO_RT
 
 # Only Bus A, only RT 15 (positive filters)
 mie-decoder decode rec.mie -o rt15.csv \

@@ -47,14 +47,18 @@ DECODE OPTIONS:
   --time-format auto|irig|standard      Default auto
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
-  --exclude-types T1 [T2 ...]           Names or 0xNN hex codes
-  --exclude-rts N1 [N2 ...]
-  --exclude-buses A|B [...]
-  --exclude-subaddresses N1 [N2 ...]
-  --include-types T1 [T2 ...]
-  --include-rts N1 [N2 ...]
-  --include-buses A|B [...]
-  --include-subaddresses N1 [N2 ...]
+  --exclude-types VAL                   Comma-separated names or 0xNN
+  --exclude-rts VAL                     Comma-separated RT addresses
+  --exclude-buses VAL                   Comma-separated A|B
+  --exclude-subaddresses VAL            Comma-separated subaddresses
+  --include-types VAL                   (same syntax as --exclude-types)
+  --include-rts VAL
+  --include-buses VAL
+  --include-subaddresses VAL
+
+  Filter flags accept ONE value (comma-separable). Repeat the flag to
+  accumulate. `--include-rts 15,31` and `--include-rts 15 --include-rts 31`
+  are equivalent. The `--flag=value` form also works.
 
 DUMP OPTIONS:
   --raw                                 Raw hex dump (no record parsing)
@@ -277,16 +281,19 @@ fn parse_u8_value(s: &str, name: &str) -> Result<u8, String> {
     })
 }
 
-/// Collect a multi-value arg until we hit something that starts with `-`.
-fn collect_multi(iter: &mut ArgIter<'_>) -> Vec<String> {
-    let mut out = Vec::new();
-    while let Some(p) = iter.peek() {
-        if p.starts_with('-') {
-            break;
-        }
-        out.push(iter.next().unwrap());
-    }
-    out
+/// Split a single value on commas (trimmed, empties dropped).
+///
+/// Replaces the old greedy "consume tokens until next flag" helper, which
+/// produced surprising behavior when a positional argument followed a
+/// filter flag (`--include-rts 15 file.mie` ate `file.mie` as another RT).
+/// Filter flags now take one value; pass multiple with commas
+/// (`--include-rts 15,31`) or by repeating the flag
+/// (`--include-rts 15 --include-rts 31`).
+fn split_csv(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
 }
 
 fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
@@ -316,48 +323,102 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--format=") => {
                 args.output_format = Some(s["--format=".len()..].to_string());
             }
+            // Filter flags: each takes ONE value. Multiple values either
+            // repeat the flag or comma-separate within one value:
+            //   --include-rts 15
+            //   --include-rts 15,20,31
+            //   --include-rts 15 --include-rts 31
+            // Any of those leaves a trailing positional like `file.mie`
+            // free to bind to `args.input`. Both space- and `=`-form
+            // value syntax are accepted.
             "--exclude-types" => {
-                for v in collect_multi(iter) {
+                for v in split_csv(&next_value("--exclude-types", iter)?) {
+                    args.exclude_types
+                        .push(parse_type_name(&v).map_err(|e| e.0)?);
+                }
+            }
+            s if s.starts_with("--exclude-types=") => {
+                for v in split_csv(&s["--exclude-types=".len()..]) {
                     args.exclude_types
                         .push(parse_type_name(&v).map_err(|e| e.0)?);
                 }
             }
             "--include-types" => {
-                for v in collect_multi(iter) {
+                for v in split_csv(&next_value("--include-types", iter)?) {
+                    args.include_types
+                        .push(parse_type_name(&v).map_err(|e| e.0)?);
+                }
+            }
+            s if s.starts_with("--include-types=") => {
+                for v in split_csv(&s["--include-types=".len()..]) {
                     args.include_types
                         .push(parse_type_name(&v).map_err(|e| e.0)?);
                 }
             }
             "--exclude-rts" => {
-                for v in collect_multi(iter) {
+                for v in split_csv(&next_value("--exclude-rts", iter)?) {
+                    args.exclude_rts.push(parse_u8_value(&v, "--exclude-rts")?);
+                }
+            }
+            s if s.starts_with("--exclude-rts=") => {
+                for v in split_csv(&s["--exclude-rts=".len()..]) {
                     args.exclude_rts.push(parse_u8_value(&v, "--exclude-rts")?);
                 }
             }
             "--include-rts" => {
-                for v in collect_multi(iter) {
+                for v in split_csv(&next_value("--include-rts", iter)?) {
+                    args.include_rts.push(parse_u8_value(&v, "--include-rts")?);
+                }
+            }
+            s if s.starts_with("--include-rts=") => {
+                for v in split_csv(&s["--include-rts=".len()..]) {
                     args.include_rts.push(parse_u8_value(&v, "--include-rts")?);
                 }
             }
             "--exclude-buses" => {
-                for v in collect_multi(iter) {
+                for v in split_csv(&next_value("--exclude-buses", iter)?) {
+                    args.exclude_buses
+                        .push(parse_bus_name(&v).map_err(|e| e.0)?);
+                }
+            }
+            s if s.starts_with("--exclude-buses=") => {
+                for v in split_csv(&s["--exclude-buses=".len()..]) {
                     args.exclude_buses
                         .push(parse_bus_name(&v).map_err(|e| e.0)?);
                 }
             }
             "--include-buses" => {
-                for v in collect_multi(iter) {
+                for v in split_csv(&next_value("--include-buses", iter)?) {
+                    args.include_buses
+                        .push(parse_bus_name(&v).map_err(|e| e.0)?);
+                }
+            }
+            s if s.starts_with("--include-buses=") => {
+                for v in split_csv(&s["--include-buses=".len()..]) {
                     args.include_buses
                         .push(parse_bus_name(&v).map_err(|e| e.0)?);
                 }
             }
             "--exclude-subaddresses" => {
-                for v in collect_multi(iter) {
+                for v in split_csv(&next_value("--exclude-subaddresses", iter)?) {
+                    args.exclude_subaddresses
+                        .push(parse_u8_value(&v, "--exclude-subaddresses")?);
+                }
+            }
+            s if s.starts_with("--exclude-subaddresses=") => {
+                for v in split_csv(&s["--exclude-subaddresses=".len()..]) {
                     args.exclude_subaddresses
                         .push(parse_u8_value(&v, "--exclude-subaddresses")?);
                 }
             }
             "--include-subaddresses" => {
-                for v in collect_multi(iter) {
+                for v in split_csv(&next_value("--include-subaddresses", iter)?) {
+                    args.include_subaddresses
+                        .push(parse_u8_value(&v, "--include-subaddresses")?);
+                }
+            }
+            s if s.starts_with("--include-subaddresses=") => {
+                for v in split_csv(&s["--include-subaddresses=".len()..]) {
                     args.include_subaddresses
                         .push(parse_u8_value(&v, "--include-subaddresses")?);
                 }
@@ -632,5 +693,80 @@ mod tests {
         let mut it = args(&["recording.mie"]);
         let parsed = parse_decode(&mut it).unwrap();
         assert_eq!(parsed.input, PathBuf::from("recording.mie"));
+    }
+
+    /// Regression test for the team's exact reproducer:
+    /// `decode --include-rts 15 file.mie` previously consumed `file.mie`
+    /// as another RT value (greedy multi-value). Now filter flags take
+    /// exactly one value, so the positional input binds correctly.
+    #[test]
+    fn filter_flag_does_not_eat_positional_input() {
+        let mut it = args(&["--include-rts", "15", "file.mie"]);
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("file.mie"));
+        assert_eq!(parsed.include_rts, vec![15]);
+    }
+
+    /// Comma-separated values within a single flag.
+    #[test]
+    fn filter_flag_accepts_comma_separated_values() {
+        let mut it = args(&["--include-rts", "15,20,31", "file.mie"]);
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("file.mie"));
+        assert_eq!(parsed.include_rts, vec![15, 20, 31]);
+    }
+
+    /// Repeating a filter flag accumulates values.
+    #[test]
+    fn filter_flag_repeats_accumulate() {
+        let mut it = args(&["--include-rts", "15", "--include-rts", "31", "file.mie"]);
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("file.mie"));
+        assert_eq!(parsed.include_rts, vec![15, 31]);
+    }
+
+    /// `--flag=value` syntax with comma-separation.
+    #[test]
+    fn filter_flag_accepts_eq_form() {
+        let mut it = args(&["--include-rts=15,20", "file.mie"]);
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("file.mie"));
+        assert_eq!(parsed.include_rts, vec![15, 20]);
+    }
+
+    /// Sanity-check the same property for the other filter flags.
+    #[test]
+    fn all_filter_flags_take_single_value() {
+        let mut it = args(&[
+            "--exclude-types",
+            "SPURIOUS_DATA",
+            "--include-buses",
+            "A",
+            "--exclude-subaddresses",
+            "0,31",
+            "rec.mie",
+        ]);
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("rec.mie"));
+        assert_eq!(parsed.exclude_types, vec![0x20]);
+        assert_eq!(parsed.include_buses, vec![crate::models::Bus::A]);
+        assert_eq!(parsed.exclude_subaddresses, vec![0, 31]);
+    }
+
+    /// Old greedy-form usage now produces a clear error rather than
+    /// silently misbinding the filename.
+    #[test]
+    fn filter_flag_old_greedy_form_fails_loudly() {
+        // `--include-rts 15 31 file.mie` used to put 15+31 in include
+        // and "file.mie" as input. Now: 15 binds to include, "31" gets
+        // taken as the positional input, "file.mie" is unexpected.
+        // The user gets an error instead of silent miswiring.
+        let mut it = args(&["--include-rts", "15", "31", "file.mie"]);
+        match parse_decode(&mut it) {
+            Err(ParseError::Other(msg)) => {
+                assert!(msg.contains("unexpected positional"));
+            }
+            other => panic!("expected Other(unexpected positional...), got {other:?}"),
+        }
     }
 }
