@@ -3,6 +3,7 @@
 //! See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the module
 //! diagram and synchronization strategy.
 
+pub mod cli;
 pub mod config;
 pub mod decode;
 pub mod dump;
@@ -14,9 +15,10 @@ pub mod reader;
 pub mod sync;
 pub mod writer;
 
+pub use reader::{MieFileReader, ReaderOptions};
+
 pub use error::{MieError, MieErrorKind, MieResult};
 pub use models::{
     Bus, CommandWord, DataWords, Direction, ErrorMode, IrigTimestamp, MessageFormat, MessageType,
     MieMessage, StandardTimestamp, Timestamp, TimestampFormat, TypeWord,
 };
-pub use reader::{MieFileReader, ReaderOptions};

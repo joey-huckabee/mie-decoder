@@ -1,5 +1,6 @@
-// Binary entry point. Filled in once cli.rs is ported.
-fn main() {
-    eprintln!("mie-decoder: CLI not yet implemented");
-    std::process::exit(2);
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().collect();
+    mie_decoder::cli::run(argv)
 }
