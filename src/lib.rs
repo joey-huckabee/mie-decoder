@@ -4,12 +4,18 @@
 //! diagram and synchronization strategy.
 
 pub mod decode;
+pub mod dump;
 pub mod error;
+pub mod filter;
+pub mod log;
 pub mod models;
+pub mod reader;
 pub mod sync;
+pub mod writer;
 
 pub use error::{MieError, MieErrorKind, MieResult};
 pub use models::{
     Bus, CommandWord, DataWords, Direction, ErrorMode, IrigTimestamp, MessageFormat, MessageType,
     MieMessage, StandardTimestamp, Timestamp, TimestampFormat, TypeWord,
 };
+pub use reader::{MieFileReader, ReaderOptions};
