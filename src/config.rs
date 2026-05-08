@@ -142,7 +142,16 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     let mut cfg = DecoderConfig::default();
 
     if let Some(level) = toml.get_string("logging", "level")? {
-        cfg.log_level = level.to_uppercase();
+        let upper = level.to_uppercase();
+        // Validate at load time so the error points at the config file
+        // rather than surfacing later as a silent no-op.
+        if crate::log::Level::parse(&upper).is_none() {
+            return Err(ConfigError(format!(
+                "Invalid logging.level: {level:?}. \
+                 Valid: DEBUG, INFO, WARNING, ERROR, CRITICAL"
+            )));
+        }
+        cfg.log_level = upper;
     }
     if let Some(tf) = toml.get_string("decode", "time_format")? {
         cfg.time_format = parse_time_format(tf)?;
@@ -565,6 +574,31 @@ time_format = "potato"
 exclude_types = ["UNICORN"]
 "#;
         assert!(parse_into_config(text).is_err());
+    }
+
+    #[test]
+    fn unknown_log_level_rejected_at_parse_time() {
+        // Regression: previously the config parser accepted any string
+        // as logging.level and the bad value was silently dropped at
+        // apply time. Now the parser fails fast with a value-level
+        // diagnostic.
+        let text = "[logging]\nlevel = \"NOPE\"\n";
+        let err = parse_into_config(text).unwrap_err();
+        assert!(
+            err.0.contains("logging.level"),
+            "error should mention the field: {}",
+            err.0
+        );
+        assert!(err.0.contains("NOPE"));
+    }
+
+    #[test]
+    fn known_log_levels_accepted_case_insensitively() {
+        for level in ["DEBUG", "info", "Warning", "WARN", "error"] {
+            let text = format!("[logging]\nlevel = \"{level}\"\n");
+            parse_into_config(&text)
+                .unwrap_or_else(|e| panic!("expected {level:?} to parse, got: {}", e.0));
+        }
     }
 
     #[test]

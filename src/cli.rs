@@ -205,13 +205,17 @@ pub fn run(argv: Vec<String>) -> ExitCode {
         other => return die(&format!("Unknown command: {other:?}")),
     };
 
-    // Apply log level (CLI > config > default).
-    let level_str = globals.log_level.clone().unwrap_or_else(|| {
-        // Default applied if no config or CLI sets it.
-        "WARNING".to_string()
-    });
-    if let Some(lvl) = Level::parse(&level_str) {
-        log::set_level(lvl);
+    // Apply log level early so the version banner respects it. CLI
+    // value if provided, else WARN default. An invalid CLI value
+    // (e.g. `--log-level NOPE`) fails fast here with exit 2 instead
+    // of being silently ignored. The config file's level is layered
+    // on top later inside resolve_config.
+    if let Some(s) = globals.log_level.as_deref() {
+        if let Err(msg) = apply_log_level("--log-level", s) {
+            return die(&msg);
+        }
+    } else {
+        log::set_level(Level::Warn);
     }
 
     log_info!("mie-decoder v{VERSION}");
@@ -523,6 +527,25 @@ fn parse_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
 
 // ── Subcommand runners ────────────────────────────────────────────────
 
+/// Apply a log-level string. Returns Err on an unrecognized name so the
+/// caller can surface the failure instead of silently no-op'ing.
+///
+/// `source` is included in the error for diagnosability (it'll be
+/// `--log-level` for CLI-supplied values, `[logging].level` for config
+/// file values). Validated names are DEBUG, INFO, WARNING, ERROR,
+/// CRITICAL (CRITICAL maps to OFF).
+fn apply_log_level(source: &str, value: &str) -> Result<(), String> {
+    match Level::parse(value) {
+        Some(lvl) => {
+            log::set_level(lvl);
+            Ok(())
+        }
+        None => Err(format!(
+            "invalid {source}: {value:?}; valid: DEBUG, INFO, WARNING, ERROR, CRITICAL"
+        )),
+    }
+}
+
 /// Load `--config` (or the built-in defaults if none was specified) and
 /// apply log-level precedence: config overrides the run() default; CLI
 /// overrides config. Used by every subcommand so a malformed config
@@ -531,13 +554,14 @@ fn parse_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
 fn resolve_config(globals: &GlobalArgs) -> Result<DecoderConfig, String> {
     let cfg = load_config(globals.config.as_deref()).map_err(|e| e.0)?;
 
-    if let Some(lvl) = Level::parse(&cfg.log_level) {
-        log::set_level(lvl);
-    }
+    // The config file's log_level is validated at load time (see
+    // config::parse_into_config), so apply_log_level cannot fail here
+    // unless someone constructed a DecoderConfig manually with a bogus
+    // string. Treat that case the same as an invalid CLI value.
+    apply_log_level("[logging].level (in config)", &cfg.log_level)?;
+
     if let Some(s) = &globals.log_level {
-        if let Some(lvl) = Level::parse(s) {
-            log::set_level(lvl);
-        }
+        apply_log_level("--log-level", s)?;
     }
 
     Ok(cfg)
@@ -866,6 +890,83 @@ mod tests {
             Err(msg) => assert!(
                 msg.contains("Config file not found"),
                 "expected 'Config file not found' error, got: {msg}"
+            ),
+            Ok(()) => panic!("expected error, got Ok"),
+        }
+    }
+
+    // ── Log-level validation ─────────────────────────────────────────
+    //
+    // Regression: --log-level NOPE used to be silently ignored (the
+    // code did `if let Some(lvl) = Level::parse(s)` and never bothered
+    // with the None branch). Now invalid values fail loudly:
+    //   - CLI input fails at run() entry with exit 2 (usage error)
+    //   - Config-file value fails at config load time with exit 1
+    //     (runtime error)
+
+    #[test]
+    fn apply_log_level_accepts_known_names() {
+        for name in [
+            "DEBUG", "INFO", "WARNING", "WARN", "ERROR", "CRITICAL", "off",
+        ] {
+            apply_log_level("--log-level", name)
+                .unwrap_or_else(|e| panic!("expected {name} to parse, got: {e}"));
+        }
+    }
+
+    #[test]
+    fn apply_log_level_rejects_unknown_names() {
+        match apply_log_level("--log-level", "NOPE") {
+            Err(msg) => {
+                assert!(msg.contains("--log-level"));
+                assert!(msg.contains("NOPE"));
+                assert!(msg.contains("valid:"));
+            }
+            Ok(()) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[test]
+    fn apply_log_level_includes_source_in_error() {
+        let err = apply_log_level("[logging].level (in config)", "WHATEVER")
+            .err()
+            .unwrap();
+        assert!(err.contains("[logging].level"));
+        assert!(err.contains("WHATEVER"));
+    }
+
+    #[test]
+    fn run_count_with_invalid_config_log_level_fails() {
+        let bad = write_temp_file(".toml", b"[logging]\nlevel = \"NOPE\"\n");
+        let globals = GlobalArgs {
+            log_level: None,
+            config: Some(bad.clone()),
+        };
+        let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
+        let _ = std::fs::remove_file(&bad);
+        match result {
+            Err(msg) => assert!(
+                msg.contains("Invalid logging.level"),
+                "expected config-level error, got: {msg}"
+            ),
+            Ok(()) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[test]
+    fn run_count_with_invalid_cli_log_level_fails_via_resolve_config() {
+        // The run() entry-point catches bad CLI levels first (exit 2),
+        // but resolve_config — which is what the runners use — also
+        // re-validates the CLI value. Test that path directly.
+        let globals = GlobalArgs {
+            log_level: Some("NOPE".to_string()),
+            config: None,
+        };
+        let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
+        match result {
+            Err(msg) => assert!(
+                msg.contains("invalid --log-level"),
+                "expected CLI-level error, got: {msg}"
             ),
             Ok(()) => panic!("expected error, got Ok"),
         }
