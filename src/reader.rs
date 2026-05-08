@@ -334,7 +334,13 @@ impl<'a> Iterator for RecordIter<'a> {
                     let n = raw_word_count as usize;
                     let mut buf = [0u16; crate::models::MAX_DATA_WORDS];
                     let n_capped = n.min(crate::models::MAX_DATA_WORDS);
-                    if read_u16_array(self.data, cmd_byte_offset, n_capped, &mut buf) {
+                    // Bound the read to the current record. raw_word_count is
+                    // computed from tw.word_count so this is structurally safe
+                    // already; bounding is defense-in-depth in case the math
+                    // is refactored later.
+                    let record_end = self.offset + record_bytes;
+                    let record_data = &self.data[..record_end];
+                    if read_u16_array(record_data, cmd_byte_offset, n_capped, &mut buf) {
                         data_words = DataWords::from_slice(&buf[..n_capped]);
                     }
                 }
@@ -412,9 +418,17 @@ impl<'a> Iterator for RecordIter<'a> {
                 cmd.subaddress
             );
 
+            // Bound the slice to the current record's byte range so
+            // payload reads can never spill into the next record. The
+            // Type Word's word_count defines the record length; a
+            // Command Word that *claims* a larger data_word_count than
+            // the record can hold must NOT cause us to read those
+            // extra words from whatever follows.
+            let record_end = self.offset + record_bytes;
+            let record_data = &self.data[..record_end];
             let payload_offset = cmd_byte_offset + 2;
             let (cmd2, status, status2, data_words) =
-                extract_payload(self.data, payload_offset, msg_fmt, &cmd);
+                extract_payload(record_data, payload_offset, msg_fmt, &cmd);
 
             let key = delta_key(
                 cmd.rt,
@@ -514,7 +528,12 @@ impl<'a> RecordIter<'a> {
             let n = payload_words as usize;
             let n_capped = n.min(crate::models::MAX_DATA_WORDS);
             let mut buf = [0u16; crate::models::MAX_DATA_WORDS];
-            if read_u16_array(self.data, cmd_byte_offset + 2, n_capped, &mut buf) {
+            // Bound to the current record's bytes. payload_words is
+            // already derived from tw.word_count, so this is structurally
+            // safe; bounding makes it explicit.
+            let record_end = self.offset + usize::from(tw.word_count) * 2;
+            let record_data = &self.data[..record_end];
+            if read_u16_array(record_data, cmd_byte_offset + 2, n_capped, &mut buf) {
                 data_words = DataWords::from_slice(&buf[..n_capped]);
             }
         }

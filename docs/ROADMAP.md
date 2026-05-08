@@ -52,6 +52,15 @@ here so they don't get dropped.
   Today this is used during auto-detect but not enforced afterwards.
   Adding it as a sixth validation check would catch additional corruption
   modes.
+- **Type Word ↔ Command Word capacity consistency.** A record whose
+  Type Word claims `word_count = N` but whose Command Word claims
+  `data_word_count = M` such that the implied payload can't fit in
+  `N` words is internally inconsistent. Today this is mitigated by
+  bounding payload reads to the Type Word's record extent (so we
+  don't leak past the record), but the resulting CSV row has empty
+  data words rather than being flagged as malformed. A future
+  validation pass could detect the inconsistency in both lenient
+  mode (log + skip) and strict mode (raise `MieValidationError`).
 - **Header-detection look-ahead depth.** `find_first_record` shares the
   same two-record look-ahead as continuous validation. For files with
   deeply embedded headers that contain valid-looking byte patterns, an

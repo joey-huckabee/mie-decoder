@@ -260,6 +260,76 @@ fn corrupt_irig_record_skipped_by_per_record_validation() {
 }
 
 #[test]
+fn payload_extraction_does_not_overrun_into_next_record() {
+    // Regression test: a record whose Type Word claims a small word
+    // count but whose Command Word claims a large data_word_count must
+    // not cause payload extraction to read past the record boundary
+    // into the next record. Before the fix, extract_payload was passed
+    // the whole file slice and would happily consume bytes from the
+    // following record as "data words", producing a garbage CSV row.
+    //
+    // Record A: wc=5 (10 bytes total: Type + 3 IRIG TS + Cmd, no data,
+    //   no status), Cmd claims data_word_count=30.
+    // Record B: a clean rt15_sa11_rcv (72 bytes).
+    //
+    // With the bug, Record A's CSV row would contain 30 "data words"
+    // sourced from Record B's bytes. With the fix, payload extraction
+    // is bounded to Record A's 10 bytes and returns 0 data words.
+    let mut record_a = Vec::with_capacity(10);
+    // Type Word LE: type=0x02, bus=A, wc=5, error=0  →  0x0502
+    record_a.extend_from_slice(&0x0502u16.to_le_bytes());
+    // IRIG TS upper: hour=10, day=0, freerun=0  →  0x000A
+    record_a.extend_from_slice(&0x000Au16.to_le_bytes());
+    // IRIG TS middle: minute=20<<10 | second=30<<4 | us_hi=0  →  0x51E0
+    record_a.extend_from_slice(&0x51E0u16.to_le_bytes());
+    // IRIG TS lower (microsecond low): 0
+    record_a.extend_from_slice(&0u16.to_le_bytes());
+    // Command Word: rt=5<<11 | dir=Recv=0 | sa=1<<5 | dwc=30  →  0x283E
+    record_a.extend_from_slice(&0x283Eu16.to_le_bytes());
+    assert_eq!(record_a.len(), 10);
+
+    let mut bytes = Vec::new();
+    bytes.extend(&record_a);
+    bytes.extend(record_rt15_sa11_rcv());
+    assert_eq!(bytes.len(), 82);
+
+    let f = TempFile::new(&bytes);
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+
+    // Both records pass validation (Record A has all five 5-check
+    // heuristics satisfied: valid type, plausible wc, fits in file,
+    // valid IRIG fields, valid look-ahead at offset 10).
+    assert_eq!(msgs.len(), 2);
+
+    // Record A: command word fields decoded, but no payload bytes
+    // exist within the record's 10-byte budget. The fix should yield
+    // ZERO data words; the bug would have yielded up to 30 from
+    // Record B's bytes.
+    let m0 = &msgs[0];
+    assert_eq!(m0.file_offset, 0);
+    assert_eq!(m0.command_word.unwrap().rt, 5);
+    assert_eq!(m0.command_word.unwrap().subaddress, 1);
+    assert_eq!(m0.command_word.unwrap().data_word_count, 30);
+    assert_eq!(
+        m0.data_words.len(),
+        0,
+        "payload extraction leaked from next record: data_words={:?}",
+        m0.data_words.as_slice()
+    );
+    assert_eq!(m0.status_word, None);
+
+    // Record B: still decodes correctly — the bug would have left it
+    // intact on its own (it's the leak SOURCE, not victim).
+    let m1 = &msgs[1];
+    assert_eq!(m1.file_offset, 10);
+    assert_eq!(m1.command_word.unwrap().rt, 15);
+    assert_eq!(m1.command_word.unwrap().subaddress, 11);
+    assert_eq!(m1.data_words.len(), 30);
+    assert_eq!(m1.status_word, Some(0x7800));
+}
+
+#[test]
 fn header_skip_via_proprietary_prefix() {
     let mut bytes = Vec::with_capacity(32 + 72);
     bytes.extend_from_slice(b"DDC-EQUIPMENT-NAME\0\0PADD\0\0\0\0\0\0"); // 28 bytes — 14 words
