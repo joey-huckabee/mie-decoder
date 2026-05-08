@@ -1,0 +1,269 @@
+"""Record synchronization and alignment for MIE binary files.
+
+This module provides functions for detecting valid record boundaries,
+recovering from sync loss, and detecting file headers. It is the first
+line of defense against corrupted data, unexpected file layouts, and
+mid-file sync loss caused by error records or truncated writes.
+
+Synchronization Strategy:
+
+    1. **Initial Alignment (Header Detection):**
+       Before decoding begins, the reader must find the first valid
+       record. Some files start immediately with records (e.g., the
+       ``aa`` file), while others have a proprietary header (e.g.,
+       the ``s4`` file with embedded ASCII identifiers like equipment
+       names). The :func:`find_first_record` function scans from offset
+       0 looking for the first position that passes multi-point
+       validation.
+
+    2. **Continuous Validation:**
+       At each record boundary during iteration, :func:`validate_record`
+       confirms the current position is a valid record before committing
+       to decode it. This catches corruption that occurs mid-file.
+
+    3. **Sync Recovery (Walk Forward):**
+       If a record fails validation, :func:`recover_sync` scans forward
+       from the current position in 2-byte (word-aligned) increments
+       looking for the next valid record. This handles:
+       - Corrupted records in the middle of a file
+       - Unexpected padding or filler bytes
+       - Error record sequences that produced unusual layouts
+       - Partial writes from recording termination
+
+    4. **Look-Ahead Confirmation:**
+       A single valid-looking Type Word is not sufficient — random data
+       can coincidentally match. :func:`validate_record` uses a
+       **two-record look-ahead**: a candidate is confirmed valid only
+       if the NEXT record (at offset + word_count * 2) also starts
+       with a valid Type Word. This dramatically reduces false positives.
+
+Validation Heuristics (applied in order, fast checks first):
+
+    1. Type Word message type (bits 0–6) must be in VALID_MESSAGE_TYPES.
+    2. Word count (bits 8–13) must be >= minimum for the timestamp
+       format (4 for Standard, 5 for IRIG) and <= 63 (6-bit field max).
+    3. The record must not extend past the end of file.
+    4. If IRIG timestamp: hour < 24, minute < 60, second < 60.
+    5. Look-ahead: the next record's Type Word must also have a valid
+       message type and plausible word count.
+
+Performance Considerations:
+
+    - All checks use O(1) bit operations on already-read 16-bit words.
+    - No string allocations or complex parsing during scanning.
+    - Look-ahead reads only 2 bytes (the next Type Word), not the full
+      next record.
+    - The scan in :func:`recover_sync` advances 2 bytes per step
+      (word-aligned) and caps at a configurable maximum distance to
+      prevent scanning entire multi-gigabyte files.
+    - :func:`find_first_record` uses the same capped scan, defaulting
+      to 4096 bytes — sufficient for any known DDC file header.
+
+Error Records and Sync:
+
+    Error records (Type Word bit 14 set) and their SPURIOUS_DATA
+    continuations are valid records with valid Type Words. They pass
+    sync validation normally. The sync machinery does not need special
+    error-aware logic — the reader's error handling (in ``reader.py``)
+    processes them after sync validation confirms the record boundary.
+
+    The one exception is if an error causes the DDC card to write a
+    corrupt record (e.g., truncated mid-word). In that case, the word
+    count will point past valid data, and the look-ahead check on the
+    NEXT record will fail, triggering sync recovery. This is the
+    correct behavior: skip the corrupt record, find the next good one.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Final
+
+from mie_decoder.decode import (
+    MIN_RECORD_WORDS,
+    MIN_RECORD_WORDS_STANDARD,
+    decode_irig_timestamp,
+    decode_type_word,
+    is_valid_message_type,
+    read_u16,
+)
+from mie_decoder.models import TimestampFormat, TIMESTAMP_WORD_COUNTS
+
+logger = logging.getLogger(__name__)
+
+#: Maximum number of bytes to scan when searching for sync.
+#: 64 KB covers any reasonable header or corruption gap.
+MAX_SCAN_BYTES: Final[int] = 65_536
+
+#: Maximum plausible record size in bytes. The word count field is 6 bits
+#: (max 63), so the absolute maximum record is 63 × 2 = 126 bytes.
+MAX_RECORD_BYTES: Final[int] = 126
+
+
+def validate_record(
+    data: bytes | memoryview,
+    offset: int,
+    file_len: int,
+    ts_format: TimestampFormat | None = None,
+) -> bool:
+    """Check whether a valid MIE record starts at the given offset.
+
+    Applies fast heuristic checks in order of increasing cost. Does
+    NOT decode the full record — only reads the Type Word (2 bytes)
+    and optionally the timestamp words (4–6 bytes) for range validation.
+
+    Args:
+        data: Raw byte buffer (mmap or bytes).
+        offset: Candidate byte offset to test.
+        file_len: Total file length in bytes.
+        ts_format: Known timestamp format, or None to skip timestamp
+            field-range checks.
+
+    Returns:
+        True if the position looks like a valid record start.
+    """
+    # ── Check 1: Enough bytes for a minimal Type Word read ─────────
+    if offset + 2 > file_len:
+        return False
+
+    type_raw = read_u16(data, offset)
+    tw = decode_type_word(type_raw)
+
+    # ── Check 2: Valid message type ────────────────────────────────
+    if not is_valid_message_type(tw.message_type):
+        return False
+
+    # ── Check 3: Plausible word count ──────────────────────────────
+    if ts_format is not None:
+        min_wc = 1 + TIMESTAMP_WORD_COUNTS[ts_format] + 1
+    else:
+        # Use the smaller minimum if format unknown
+        min_wc = MIN_RECORD_WORDS_STANDARD
+    if tw.word_count < min_wc or tw.word_count > 63:
+        return False
+
+    # ── Check 4: Record fits within file ───────────────────────────
+    record_bytes = tw.word_count * 2
+    if offset + record_bytes > file_len:
+        return False
+
+    # ── Check 5: IRIG timestamp field ranges ───────────────────────
+    if ts_format == TimestampFormat.IRIG and offset + 8 <= file_len:
+        ts_upper = read_u16(data, offset + 2)
+        ts_middle = read_u16(data, offset + 4)
+        hour = ts_upper & 0x1F
+        minute = (ts_middle >> 10) & 0x3F
+        second = (ts_middle >> 4) & 0x3F
+        if hour >= 24 or minute >= 60 or second >= 60:
+            return False
+
+    # ── Check 6: Look-ahead — next record also valid ───────────────
+    next_offset = offset + record_bytes
+    if next_offset + 2 <= file_len:
+        next_raw = read_u16(data, next_offset)
+        next_tw = decode_type_word(next_raw)
+        if not is_valid_message_type(next_tw.message_type):
+            return False
+        if next_tw.word_count < min_wc or next_tw.word_count > 63:
+            return False
+    # If next record would be at EOF, we can't look ahead — accept
+    # the candidate on the strength of checks 1–5 alone.
+
+    return True
+
+
+def find_first_record(
+    data: bytes | memoryview,
+    file_len: int,
+    ts_format: TimestampFormat | None = None,
+    max_scan: int = MAX_SCAN_BYTES,
+) -> int | None:
+    """Find the byte offset of the first valid record in the file.
+
+    Scans from offset 0 in 2-byte (word-aligned) increments, applying
+    :func:`validate_record` at each position. Returns the offset of
+    the first position that passes all validation checks, or None if
+    no valid record is found within the scan distance.
+
+    This handles files with and without headers:
+    - Files starting directly with records return offset 0.
+    - Files with proprietary headers (e.g., embedded ASCII equipment
+      names) return the offset immediately after the header.
+
+    Args:
+        data: Raw byte buffer.
+        file_len: Total file length in bytes.
+        ts_format: Known timestamp format, or None for auto-detection
+            (skips timestamp range checks during header scan).
+        max_scan: Maximum bytes to scan before giving up.
+
+    Returns:
+        Byte offset of the first valid record, or None if not found.
+    """
+    scan_end = min(file_len, max_scan)
+
+    for offset in range(0, scan_end, 2):
+        if validate_record(data, offset, file_len, ts_format):
+            if offset > 0:
+                logger.info(
+                    "File header detected: %d bytes before first record "
+                    "at offset 0x%X",
+                    offset, offset,
+                )
+            else:
+                logger.debug("First record at offset 0 (no header)")
+            return offset
+
+    logger.warning(
+        "No valid record found in first %d bytes of file", scan_end
+    )
+    return None
+
+
+def recover_sync(
+    data: bytes | memoryview,
+    offset: int,
+    file_len: int,
+    ts_format: TimestampFormat | None = None,
+    max_scan: int = MAX_SCAN_BYTES,
+) -> int | None:
+    """Recover sync by scanning forward for the next valid record.
+
+    Called when the reader encounters an invalid record at the current
+    position. Scans forward in 2-byte increments from ``offset + 2``,
+    applying :func:`validate_record` at each position.
+
+    Args:
+        data: Raw byte buffer.
+        offset: Current (invalid) position.
+        file_len: Total file length.
+        ts_format: Known timestamp format, or None.
+        max_scan: Maximum bytes to scan from the current offset.
+
+    Returns:
+        Byte offset of the next valid record, or None if sync cannot
+        be recovered within the scan distance.
+    """
+    scan_start = offset + 2
+    scan_end = min(file_len, offset + max_scan)
+
+    logger.warning(
+        "Sync lost at offset 0x%X — scanning forward for next valid record",
+        offset,
+    )
+
+    for candidate in range(scan_start, scan_end, 2):
+        if validate_record(data, candidate, file_len, ts_format):
+            skipped = candidate - offset
+            logger.info(
+                "Sync recovered at offset 0x%X (skipped %d bytes from 0x%X)",
+                candidate, skipped, offset,
+            )
+            return candidate
+
+    logger.error(
+        "Sync recovery failed — no valid record found within %d bytes "
+        "of offset 0x%X",
+        max_scan, offset,
+    )
+    return None

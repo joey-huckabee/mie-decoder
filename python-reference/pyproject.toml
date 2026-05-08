@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "mie-decoder"
+version = "1.1.0"
+description = "Decoder for DDC MIL-STD-1553 MIE binary recording files"
+authors = ["Joey"]
+readme = "README.md"
+license = "MIT"
+packages = [{include = "mie_decoder", from = "src"}]
+
+[tool.poetry.scripts]
+mie-decoder = "mie_decoder.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pandas = "^2.0"
+tomli = {version = "^2.0", python = "<3.11"}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true

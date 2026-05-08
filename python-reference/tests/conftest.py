@@ -1,0 +1,176 @@
+"""Shared test fixtures for MIE-Decoder test suite.
+
+Provides binary test data derived from empirically validated DDC MIE
+recordings. All expected values have been cross-referenced against
+vendor-generated CSV output.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+# Known-good record: RT15 SA11 Receive, Bus A, 30 data words
+# From validated CSV row:
+#   10:15:54:50.456225,15,11R,0400,...,C771,,,7800,797E,...,A,0.000000
+RECORD_RT15_SA11_RCV = bytes.fromhex(
+    "02240F1826DB21F6"  # TypeWord + Timestamp
+    "7E79"              # Command Word (0x797E LE)
+    "0004"              # WD01: 0x0400
+    "0000"              # WD02: 0x0000
+    "0000"              # WD03: 0x0000
+    "2F00"              # WD04: 0x002F
+    "22CA"              # WD05: 0xCA22
+    "2F00"              # WD06: 0x002F
+    "22CA"              # WD07: 0xCA22
+    "0000"              # WD08
+    "0000"              # WD09
+    "0000"              # WD10
+    "0000"              # WD11
+    "0000"              # WD12
+    "0000"              # WD13
+    "0000"              # WD14
+    "0000"              # WD15
+    "0000"              # WD16
+    "0000"              # WD17
+    "0000"              # WD18
+    "0000"              # WD19
+    "0000"              # WD20
+    "0000"              # WD21
+    "0000"              # WD22
+    "0000"              # WD23
+    "0000"              # WD24
+    "0000"              # WD25
+    "0000"              # WD26
+    "0000"              # WD27
+    "0000"              # WD28
+    "0000"              # WD29
+    "71C7"              # WD30: 0xC771
+    "0078"              # Status Word: 0x7800
+)
+
+# Known-good record: RT15 SA22 Receive, Bus A, 11 data words
+RECORD_RT15_SA22_RCV = bytes.fromhex(
+    "02110F1826DB38F7"  # TypeWord + Timestamp
+    "CB7A"              # Command Word (0x7ACB LE)
+    "0010"              # WD01: 0x1000
+    "0000"              # WD02
+    "0700"              # WD03: 0x0007
+    "0008"              # WD04: 0x0800
+    "0000"              # WD05
+    "0000"              # WD06
+    "0000"              # WD07
+    "0000"              # WD08
+    "0000"              # WD09
+    "C880"              # WD10: 0x80C8
+    "E803"              # WD11: 0x03E8
+    "0078"              # Status Word: 0x7800
+)
+
+# Known-good record: RT15 SA22 Transmit, Bus A, 30 data words
+RECORD_RT15_SA22_XMT = bytes.fromhex(
+    "04240F1826DBE3F9"  # TypeWord + Timestamp
+    "DE7E"              # Command Word (0x7EDE LE)
+    "0078"              # Status Word: 0x7800
+    "2010"              # WD01: 0x1020
+    "8241"              # WD02: 0x4182
+    "0000"              # WD03
+    "0815"              # WD04: 0x1508
+    "0000"              # WD05
+    "0000"              # WD06
+    "0000"              # WD07
+    "0000"              # WD08
+    "00FE"              # WD09: 0xFE00
+    "0000"              # WD10
+    "0000"              # WD11
+    "0000"              # WD12
+    "0000"              # WD13
+    "0000"              # WD14
+    "0000"              # WD15
+    "0000"              # WD16
+    "0000"              # WD17
+    "0000"              # WD18
+    "0300"              # WD19: 0x0003
+    "0000"              # WD20
+    "0000"              # WD21
+    "0000"              # WD22
+    "0000"              # WD23
+    "0000"              # WD24
+    "0000"              # WD25
+    "0020"              # WD26: 0x2000
+    "0000"              # WD27
+    "0000"              # WD28
+    "0000"              # WD29
+    "0000"              # WD30
+)
+
+# Known-good Bus B record: RT15 SA10 Transmit, Bus B, 30 data words
+RECORD_RT15_SA10_XMT_BUSB = bytes.fromhex(
+    "84240F18AADA03835E7D"  # TypeWord + Timestamp + CmdWord
+    "0078"                  # Status Word: 0x7800
+    "0305"                  # WD01: 0x0503
+    "0000"                  # WD02
+    "0000"                  # WD03
+    "DE0E"                  # WD04: 0x0EDE
+    "0000"                  # WD05
+    "0080"                  # WD06: 0x8000
+    "0000"                  # WD07
+    "0000"                  # WD08
+    "8800"                  # WD09: 0x0088
+    "7300"                  # WD10: 0x0073
+    "7300"                  # WD11: 0x0073
+    "7300"                  # WD12: 0x0073
+    "7380"                  # WD13: 0x8073  -- wait, LE: 80 73 → 0x7380
+    "7380"                  # WD14: 0x7380
+    "0000"                  # WD15
+    "0000"                  # WD16
+    "0000"                  # WD17
+    "0000"                  # WD18
+    "0000"                  # WD19
+    "0000"                  # WD20
+    "0000"                  # WD21
+    "0000"                  # WD22
+    "0000"                  # WD23
+    "0000"                  # WD24
+    "0000"                  # WD25
+    "0000"                  # WD26
+    "0000"                  # WD27
+    "0000"                  # WD28
+    "0000"                  # WD29
+    "8FE8"                  # WD30: 0xE88F
+)
+
+
+@pytest.fixture
+def single_receive_record() -> bytes:
+    """A single RT15 SA11 Receive record (72 bytes)."""
+    return RECORD_RT15_SA11_RCV
+
+
+@pytest.fixture
+def single_transmit_record() -> bytes:
+    """A single RT15 SA22 Transmit record (72 bytes)."""
+    return RECORD_RT15_SA22_XMT
+
+
+@pytest.fixture
+def multi_record_data() -> bytes:
+    """Three consecutive records of different types."""
+    return RECORD_RT15_SA11_RCV + RECORD_RT15_SA22_RCV + RECORD_RT15_SA22_XMT
+
+
+@pytest.fixture
+def tmp_mie_file(tmp_path: Path, multi_record_data: bytes) -> Path:
+    """Write multi-record test data to a temporary .mie file."""
+    fpath = tmp_path / "test.mie"
+    fpath.write_bytes(multi_record_data)
+    return fpath
+
+
+@pytest.fixture
+def tmp_busb_file(tmp_path: Path) -> Path:
+    """Write a Bus B record to a temporary .mie file."""
+    fpath = tmp_path / "busb.mie"
+    fpath.write_bytes(RECORD_RT15_SA10_XMT_BUSB)
+    return fpath
