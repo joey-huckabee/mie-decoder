@@ -130,6 +130,104 @@ pub fn classify_message_format(
     }
 }
 
+/// Which structural invariant a record violated. Used by callers
+/// (the reader) to phrase a precise diagnostic; the strict-mode
+/// path otherwise maps every violation to a single `PayloadError`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhichInvariant {
+    /// L2-SYN-INV-001: Type 0x02 (BC→RT) requires Cmd direction = Receive.
+    DirectionBcToRt,
+    /// L2-SYN-INV-002: Type 0x04 (RT→BC) requires Cmd direction = Transmit.
+    DirectionRtToBc,
+    /// L2-SYN-INV-003: Type Word word_count too small for declared payload.
+    WordCountCapacity,
+}
+
+#[derive(Debug)]
+pub struct InvariantViolation {
+    pub kind: WhichInvariant,
+    pub detail: String,
+}
+
+/// Per-format minimum payload word count, computed from the primary
+/// Command Word's declared data_word_count. Used by the L2-SYN-INV-003
+/// capacity check. `SpuriousData` has variable size so returns 0
+/// (skip the check). For RT-to-RT formats the second Command Word is
+/// not yet decoded at the time we call this; we use Cmd1's
+/// data_word_count as an approximation (the bus protocol requires
+/// Cmd1 and Cmd2 to agree on data_word_count).
+fn min_payload_words(fmt: MessageFormat, cmd: &CommandWord) -> u16 {
+    let dwc = u16::from(cmd.data_word_count);
+    match fmt {
+        MessageFormat::Receive | MessageFormat::Transmit => dwc + 1, // data + status
+        MessageFormat::RtToRt => dwc + 3, // cmd2 + tx_status + data + rx_status
+        MessageFormat::ReceiveBroadcast => dwc, // data only (no status)
+        MessageFormat::RtToRtBroadcast => dwc + 2, // cmd2 + tx_status + data
+        MessageFormat::ModeCodeTxData => 2, // status + data
+        MessageFormat::ModeCodeRxData => 2, // data + status
+        MessageFormat::ModeCodeNoData => 1, // status only
+        MessageFormat::ModeCodeBcastNoData => 0,
+        MessageFormat::ModeCodeBcastData => 1, // data only (no status)
+        MessageFormat::SpuriousData => 0,      // variable; no capacity check
+    }
+}
+
+/// L2-SYN-INV: structural invariants per the locked schema. Caller
+/// has already framing-validated (sync.rs) and classified the format
+/// (classify_message_format). Returns Err describing the first
+/// invariant the record violates; Ok if all hold.
+///
+/// Current invariant set:
+/// - INV-001: Type 0x02 → Cmd direction = Receive
+/// - INV-002: Type 0x04 → Cmd direction = Transmit
+/// - INV-003: TW.word_count >= 1 + ts_words + 1 + min_payload_words(format, cmd)
+///
+/// Deferred (Phase 7b): cmd2 direction for RT-to-RT, Status RT vs
+/// Cmd RT match, reserved-bit zero check.
+pub fn validate_structural_invariants(
+    tw: &TypeWord,
+    cmd: &CommandWord,
+    msg_fmt: MessageFormat,
+    ts_words: u16,
+) -> Result<(), InvariantViolation> {
+    // L2-SYN-INV-001 / INV-002: per-type direction.
+    if tw.message_type == MessageType::BcToRt as u8 && cmd.direction != Direction::Receive {
+        return Err(InvariantViolation {
+            kind: WhichInvariant::DirectionBcToRt,
+            detail: format!(
+                "Type 0x02 (BC→RT) requires Cmd direction = Receive; got Transmit \
+                 (raw Cmd = 0x{:04X})",
+                cmd.raw
+            ),
+        });
+    }
+    if tw.message_type == MessageType::RtToBc as u8 && cmd.direction != Direction::Transmit {
+        return Err(InvariantViolation {
+            kind: WhichInvariant::DirectionRtToBc,
+            detail: format!(
+                "Type 0x04 (RT→BC) requires Cmd direction = Transmit; got Receive \
+                 (raw Cmd = 0x{:04X})",
+                cmd.raw
+            ),
+        });
+    }
+
+    // L2-SYN-INV-003: word-count capacity check.
+    let min_wc = 1 + ts_words + 1 + min_payload_words(msg_fmt, cmd);
+    if tw.word_count < min_wc {
+        return Err(InvariantViolation {
+            kind: WhichInvariant::WordCountCapacity,
+            detail: format!(
+                "TW.word_count = {} is too small for declared payload \
+                 (need at least {} for {:?} with data_word_count = {})",
+                tw.word_count, min_wc, msg_fmt, cmd.data_word_count
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 fn classify_mode_code(cmd: &CommandWord, word_count: u16) -> MessageFormat {
     let is_broadcast = cmd.rt == 31;
     if is_broadcast {
@@ -385,5 +483,94 @@ mod tests {
     fn classify_unknown_type() {
         let cmd = decode_command_word(0);
         assert!(classify_message_format(0x03, &cmd, 5).is_err());
+    }
+
+    // ── L2-SYN-INV structural invariants (Phase 7a) ──────────────────
+
+    fn tw(message_type: u8, word_count: u16) -> TypeWord {
+        TypeWord {
+            message_type,
+            bus: Bus::A,
+            word_count,
+            error: false,
+            raw: 0,
+        }
+    }
+
+    fn cmd_with(direction: Direction, dwc: u8) -> CommandWord {
+        CommandWord {
+            rt: 15,
+            direction,
+            subaddress: 11,
+            data_word_count: dwc,
+            raw: 0,
+        }
+    }
+
+    #[test]
+    fn invariants_pass_for_canonical_bc_to_rt() {
+        let t = tw(0x02, 36); // 1 + 3 + 1 + 30 + 1 = 36
+        let c = cmd_with(Direction::Receive, 30);
+        validate_structural_invariants(&t, &c, MessageFormat::Receive, 3).unwrap();
+    }
+
+    #[test]
+    fn invariants_pass_for_canonical_rt_to_bc() {
+        let t = tw(0x04, 36);
+        let c = cmd_with(Direction::Transmit, 30);
+        validate_structural_invariants(&t, &c, MessageFormat::Transmit, 3).unwrap();
+    }
+
+    #[test]
+    fn invariants_reject_bc_to_rt_with_transmit_cmd() {
+        let t = tw(0x02, 36);
+        let c = cmd_with(Direction::Transmit, 30); // wrong
+        let err = validate_structural_invariants(&t, &c, MessageFormat::Receive, 3).unwrap_err();
+        assert_eq!(err.kind, WhichInvariant::DirectionBcToRt);
+    }
+
+    #[test]
+    fn invariants_reject_rt_to_bc_with_receive_cmd() {
+        let t = tw(0x04, 36);
+        let c = cmd_with(Direction::Receive, 30); // wrong
+        let err = validate_structural_invariants(&t, &c, MessageFormat::Transmit, 3).unwrap_err();
+        assert_eq!(err.kind, WhichInvariant::DirectionRtToBc);
+    }
+
+    #[test]
+    fn invariants_reject_capacity_short() {
+        // wc=5 too small for Receive with dwc=30 (needs 1+3+1+31=36).
+        let t = tw(0x02, 5);
+        let c = cmd_with(Direction::Receive, 30);
+        let err = validate_structural_invariants(&t, &c, MessageFormat::Receive, 3).unwrap_err();
+        assert_eq!(err.kind, WhichInvariant::WordCountCapacity);
+    }
+
+    #[test]
+    fn invariants_accept_capacity_exact() {
+        // wc=36 is exactly the minimum for Receive with dwc=30.
+        let t = tw(0x02, 36);
+        let c = cmd_with(Direction::Receive, 30);
+        validate_structural_invariants(&t, &c, MessageFormat::Receive, 3).unwrap();
+    }
+
+    #[test]
+    fn invariants_skip_capacity_for_spurious() {
+        // SpuriousData has variable payload so the capacity check is
+        // intentionally skipped (min_payload_words returns 0).
+        let t = tw(0x20, 5); // wc=5 — only TW + 3 TS + 1 extra
+        let c = cmd_with(Direction::Receive, 0);
+        validate_structural_invariants(&t, &c, MessageFormat::SpuriousData, 3).unwrap();
+    }
+
+    #[test]
+    fn invariants_mode_code_not_constrained_by_direction() {
+        // Mode codes (type 0x01) can be Transmit OR Receive. The
+        // direction invariants only apply to 0x02 and 0x04.
+        let t = tw(0x01, 7);
+        let c_tx = cmd_with(Direction::Transmit, 1);
+        validate_structural_invariants(&t, &c_tx, MessageFormat::ModeCodeTxData, 3).unwrap();
+        let c_rx = cmd_with(Direction::Receive, 1);
+        validate_structural_invariants(&t, &c_rx, MessageFormat::ModeCodeRxData, 3).unwrap();
     }
 }

@@ -101,6 +101,9 @@ behavior remains covered by each implementation's own tests.
 | L2-SYN-016 | L1-013 | Strict mode SHALL stop and surface an error on invalid record validation. |
 | L2-SYN-017 | L1-016 | Valid error records and SPURIOUS_DATA records SHALL remain eligible record boundaries during validation and recovery. |
 | L2-SYN-018 | L1-015 | Header detection SHALL apply additional defenses against homogeneous-payload inputs. When the first N candidate records (with N >= 4) share identical bytes in payload positions (i.e., excluding positions where the timestamp word naturally varies), the implementation SHALL reject the input with a distinct error class. This defends against pathological files padded with a single byte value (such as 0x20-fill, where `0x20 0x20` parses as a valid SPURIOUS_DATA Type Word and the look-ahead heuristic alone admits the stream). |
+| L2-SYN-INV-001 | L1-013, L1-015 | Records with Type Word message type `0x02` (BC→RT) SHALL have a Command Word with `direction = Receive`. Strict mode SHALL surface a record error; lenient mode SHALL log a WARN and skip the record (advance to the next record boundary without emission). |
+| L2-SYN-INV-002 | L1-013, L1-015 | Records with Type Word message type `0x04` (RT→BC) SHALL have a Command Word with `direction = Transmit`. Strict mode SHALL surface a record error; lenient mode SHALL log a WARN and skip the record. |
+| L2-SYN-INV-003 | L1-013, L1-015 | Type Word `word_count` SHALL be at least `1 (TypeWord) + ts_words + 1 (CommandWord) + payload_words(format, Cmd.data_word_count)`, where `payload_words` is the per-format declared payload size (e.g., `data_word_count + 1` for `Receive` and `Transmit`, `1` for `ModeCodeNoData`, etc.). A record whose Type Word declares a smaller capacity than the Command Word's declared payload is internally inconsistent. Strict mode SHALL surface a record error; lenient mode SHALL log a WARN and skip the record. |
 
 ### L2-RDR - Reader Behavior
 

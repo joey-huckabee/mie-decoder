@@ -11,6 +11,8 @@ No external packages are required.
 from __future__ import annotations
 
 import struct
+from dataclasses import dataclass
+from enum import IntEnum
 from typing import Final
 
 from mie_decoder.models import (
@@ -409,6 +411,120 @@ def _classify_mode_code(cmd: CommandWord, word_count: int) -> MessageFormat:
         return MessageFormat.MODE_CODE_RX_DATA
 
     return MessageFormat.MODE_CODE_NO_DATA
+
+
+class WhichInvariant(IntEnum):
+    """Which structural invariant a record violated (L2-SYN-INV).
+
+    Used by callers (the reader) to phrase a precise diagnostic; the
+    strict-mode path otherwise maps every violation to a single
+    record-error class.
+    """
+
+    DIRECTION_BC_TO_RT = 1
+    """L2-SYN-INV-001: Type 0x02 requires Cmd direction = Receive."""
+
+    DIRECTION_RT_TO_BC = 2
+    """L2-SYN-INV-002: Type 0x04 requires Cmd direction = Transmit."""
+
+    WORD_COUNT_CAPACITY = 3
+    """L2-SYN-INV-003: TW.word_count too small for declared payload."""
+
+
+@dataclass(frozen=True)
+class InvariantViolation:
+    """Detail object returned by ``validate_structural_invariants``."""
+
+    kind: WhichInvariant
+    detail: str
+
+
+def _min_payload_words(fmt: MessageFormat, command_word: CommandWord) -> int:
+    """Per-format minimum payload word count, computed from Cmd1's
+    declared data_word_count. Mirrors the Rust ``min_payload_words``
+    helper. ``SPURIOUS_DATA`` returns 0 (capacity check skipped).
+    """
+    dwc = command_word.data_word_count
+    if fmt == MessageFormat.RECEIVE or fmt == MessageFormat.TRANSMIT:
+        return dwc + 1
+    if fmt == MessageFormat.RT_TO_RT:
+        return dwc + 3
+    if fmt == MessageFormat.RECEIVE_BROADCAST:
+        return dwc
+    if fmt == MessageFormat.RT_TO_RT_BROADCAST:
+        return dwc + 2
+    if fmt == MessageFormat.MODE_CODE_TX_DATA:
+        return 2
+    if fmt == MessageFormat.MODE_CODE_RX_DATA:
+        return 2
+    if fmt == MessageFormat.MODE_CODE_NO_DATA:
+        return 1
+    if fmt == MessageFormat.MODE_CODE_BCAST_NO_DATA:
+        return 0
+    if fmt == MessageFormat.MODE_CODE_BCAST_DATA:
+        return 1
+    if fmt == MessageFormat.SPURIOUS_DATA:
+        return 0  # variable; no capacity check
+    raise ValueError(f"Unhandled message format: {fmt}")
+
+
+def validate_structural_invariants(
+    type_word: TypeWord,
+    command_word: CommandWord,
+    msg_fmt: MessageFormat,
+    ts_words: int,
+) -> InvariantViolation | None:
+    """L2-SYN-INV: structural invariants per the locked schema.
+
+    Returns ``None`` if all invariants hold; otherwise returns an
+    :class:`InvariantViolation` describing the first failure.
+
+    Current invariant set:
+
+    - INV-001: Type 0x02 (BC→RT) → Cmd direction = Receive
+    - INV-002: Type 0x04 (RT→BC) → Cmd direction = Transmit
+    - INV-003: ``TW.word_count >= 1 + ts_words + 1 + min_payload_words(format, cmd)``
+
+    Deferred (Phase 7b): cmd2 direction for RT-to-RT, Status RT vs
+    Cmd RT match, reserved-bit zero check.
+    """
+    # INV-001 / INV-002: per-type direction.
+    if (
+        type_word.message_type == MessageType.BC_TO_RT
+        and command_word.direction != Direction.RECEIVE
+    ):
+        return InvariantViolation(
+            kind=WhichInvariant.DIRECTION_BC_TO_RT,
+            detail=(
+                f"Type 0x02 (BC→RT) requires Cmd direction = Receive; "
+                f"got Transmit (raw Cmd = 0x{command_word.raw:04X})"
+            ),
+        )
+    if (
+        type_word.message_type == MessageType.RT_TO_BC
+        and command_word.direction != Direction.TRANSMIT
+    ):
+        return InvariantViolation(
+            kind=WhichInvariant.DIRECTION_RT_TO_BC,
+            detail=(
+                f"Type 0x04 (RT→BC) requires Cmd direction = Transmit; "
+                f"got Receive (raw Cmd = 0x{command_word.raw:04X})"
+            ),
+        )
+
+    # INV-003: word-count capacity check.
+    min_wc = 1 + ts_words + 1 + _min_payload_words(msg_fmt, command_word)
+    if type_word.word_count < min_wc:
+        return InvariantViolation(
+            kind=WhichInvariant.WORD_COUNT_CAPACITY,
+            detail=(
+                f"TW.word_count = {type_word.word_count} is too small for "
+                f"declared payload (need at least {min_wc} for {msg_fmt.name} "
+                f"with data_word_count = {command_word.data_word_count})"
+            ),
+        )
+
+    return None
 
 
 def is_valid_message_type(message_type: int) -> bool:

@@ -550,6 +550,29 @@ impl<'a> Iterator for RecordIter<'a> {
                 cmd.subaddress
             );
 
+            // L2-SYN-INV: structural invariants. Strict mode aborts;
+            // lenient mode logs a WARN, advances past the record, and
+            // continues iteration.
+            if let Err(v) =
+                crate::decode::validate_structural_invariants(&tw, &cmd, msg_fmt, ts_words)
+            {
+                if self.strict {
+                    self.done = true;
+                    return Some(Err(crate::error::MieError::PayloadError {
+                        offset: self.offset as u64,
+                        detail: format!("L2-SYN-INV violation: {}", v.detail),
+                    }));
+                }
+                log_warn!(
+                    "L2-SYN-INV violation at 0x{:X}: {}; skipping record",
+                    self.offset,
+                    v.detail
+                );
+                self.offset += record_bytes;
+                self.prev_was_error = false;
+                continue;
+            }
+
             // Bound the slice to the current record's byte range so
             // payload reads can never spill into the next record. The
             // Type Word's word_count defines the record length; a

@@ -122,6 +122,12 @@
       "input": "inputs/strict-rejects-irig-range.hex",
       "expected_exit": 1,
       "config": "configs/strict.toml"
+    },
+    {
+      "name": "invariant-direction-mismatch",
+      "input": "inputs/invariant-direction-mismatch.hex",
+      "expected_exit": 1,
+      "config": "configs/strict.toml"
     }
   ]
 }

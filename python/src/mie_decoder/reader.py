@@ -57,6 +57,7 @@ from mie_decoder.decode import (
     is_valid_message_type,
     read_u16,
     read_u16_array,
+    validate_structural_invariants,
 )
 from mie_decoder.exceptions import (
     MieFileEmptyError,
@@ -432,6 +433,26 @@ class MieFileReader:
                         logger.warning(
                             "Cannot classify at 0x%X: %s — skipping",
                             offset, exc,
+                        )
+                        offset += record_bytes
+                        prev_was_error = False
+                        continue
+
+                    # L2-SYN-INV: structural invariants. Strict mode
+                    # aborts via MiePayloadError; lenient mode WARNs and
+                    # skips the record.
+                    inv = validate_structural_invariants(
+                        tw, cmd, msg_fmt, ts_words,
+                    )
+                    if inv is not None:
+                        if self._strict:
+                            raise MiePayloadError(
+                                offset,
+                                f"L2-SYN-INV violation: {inv.detail}",
+                            )
+                        logger.warning(
+                            "L2-SYN-INV violation at 0x%X: %s; skipping record",
+                            offset, inv.detail,
                         )
                         offset += record_bytes
                         prev_was_error = False

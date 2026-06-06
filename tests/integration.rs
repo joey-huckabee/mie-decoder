@@ -313,74 +313,45 @@ fn corrupt_irig_record_skipped_by_per_record_validation() {
 }
 
 #[test]
-fn payload_extraction_does_not_overrun_into_next_record() {
-    // Regression test: a record whose Type Word claims a small word
-    // count but whose Command Word claims a large data_word_count must
-    // not cause payload extraction to read past the record boundary
-    // into the next record. Before the fix, extract_payload was passed
-    // the whole file slice and would happily consume bytes from the
-    // following record as "data words", producing a garbage CSV row.
+fn payload_capacity_mismatch_skipped_in_lenient_mode() {
+    // Originally a regression test for payload-extraction overrun: a
+    // record whose Type Word claims wc=5 but whose Command Word
+    // declares data_word_count=30 used to let extract_payload consume
+    // bytes from the next record. The extract_payload bounding (Phase
+    // 2-era) plus the new L2-SYN-INV-003 capacity check (Phase 7a)
+    // both defend against this. The capacity check now fires first:
+    // in lenient mode the bad record is logged and skipped before
+    // extract_payload runs.
     //
-    // Record A: wc=5 (10 bytes total: Type + 3 IRIG TS + Cmd, no data,
-    //   no status), Cmd claims data_word_count=30.
-    // Record B: a clean rt15_sa11_rcv (72 bytes).
-    //
-    // With the bug, Record A's CSV row would contain 30 "data words"
-    // sourced from Record B's bytes. With the fix, payload extraction
-    // is bounded to Record A's 10 bytes and returns 0 data words.
+    // This test pins the lenient-mode behavior end-to-end. The strict
+    // case is covered by a per-impl unit test and a conformance
+    // fixture.
     let mut record_a = Vec::with_capacity(10);
-    // Type Word LE: type=0x02, bus=A, wc=5, error=0  →  0x0502
-    record_a.extend_from_slice(&0x0502u16.to_le_bytes());
-    // IRIG TS upper: hour=10, day=1 (L2-SYN-004 requires [1,366]),
-    // freerun=0  →  (1 << 5) | 10 = 0x002A
-    record_a.extend_from_slice(&0x002Au16.to_le_bytes());
-    // IRIG TS middle: minute=20<<10 | second=30<<4 | us_hi=0  →  0x51E0
-    record_a.extend_from_slice(&0x51E0u16.to_le_bytes());
-    // IRIG TS lower (microsecond low): 0
-    record_a.extend_from_slice(&0u16.to_le_bytes());
-    // Command Word: rt=5<<11 | dir=Recv=0 | sa=1<<5 | dwc=30  →  0x283E
-    record_a.extend_from_slice(&0x283Eu16.to_le_bytes());
+    record_a.extend_from_slice(&0x0502u16.to_le_bytes()); // TW: type 0x02, wc=5
+    record_a.extend_from_slice(&0x002Au16.to_le_bytes()); // IRIG upper (day=1, hour=10)
+    record_a.extend_from_slice(&0x51E0u16.to_le_bytes()); // IRIG middle
+    record_a.extend_from_slice(&0u16.to_le_bytes()); // IRIG lower
+    record_a.extend_from_slice(&0x283Eu16.to_le_bytes()); // Cmd: rt=5 R sa=1 dwc=30
     assert_eq!(record_a.len(), 10);
 
     let mut bytes = Vec::new();
     bytes.extend(&record_a);
-    bytes.extend(record_rt15_sa11_rcv());
+    bytes.extend(record_rt15_sa11_rcv()); // Record B at offset 10
     assert_eq!(bytes.len(), 82);
 
     let f = TempFile::new(&bytes);
     let reader = MieFileReader::new(f.path()).unwrap();
     let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
 
-    // Both records pass validation (Record A has all five 5-check
-    // heuristics satisfied: valid type, plausible wc, fits in file,
-    // valid IRIG fields, valid look-ahead at offset 10).
-    assert_eq!(msgs.len(), 2);
-
-    // Record A: command word fields decoded, but no payload bytes
-    // exist within the record's 10-byte budget. The fix should yield
-    // ZERO data words; the bug would have yielded up to 30 from
-    // Record B's bytes.
-    let m0 = &msgs[0];
-    assert_eq!(m0.file_offset, 0);
-    assert_eq!(m0.command_word.unwrap().rt, 5);
-    assert_eq!(m0.command_word.unwrap().subaddress, 1);
-    assert_eq!(m0.command_word.unwrap().data_word_count, 30);
-    assert_eq!(
-        m0.data_words.len(),
-        0,
-        "payload extraction leaked from next record: data_words={:?}",
-        m0.data_words.as_slice()
-    );
-    assert_eq!(m0.status_word, None);
-
-    // Record B: still decodes correctly — the bug would have left it
-    // intact on its own (it's the leak SOURCE, not victim).
-    let m1 = &msgs[1];
-    assert_eq!(m1.file_offset, 10);
-    assert_eq!(m1.command_word.unwrap().rt, 15);
-    assert_eq!(m1.command_word.unwrap().subaddress, 11);
-    assert_eq!(m1.data_words.len(), 30);
-    assert_eq!(m1.status_word, Some(0x7800));
+    // Record A is rejected by L2-SYN-INV-003 (wc=5 < 1+3+1+31=36).
+    // Lenient mode WARN+skips it and continues. Only Record B emits.
+    assert_eq!(msgs.len(), 1);
+    let m = &msgs[0];
+    assert_eq!(m.file_offset, 10);
+    assert_eq!(m.command_word.unwrap().rt, 15);
+    assert_eq!(m.command_word.unwrap().subaddress, 11);
+    assert_eq!(m.data_words.len(), 30);
+    assert_eq!(m.status_word, Some(0x7800));
 }
 
 #[test]

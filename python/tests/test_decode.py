@@ -358,3 +358,119 @@ class TestDetectTimestampFormat:
         rc = main(["decode", str(tmp_mie_file), "-o", str(out), "--time-format", "irig"])
         assert rc == 0
         assert out.exists()
+
+
+class TestStructuralInvariants:
+    """L2-SYN-INV-001/002/003 (Phase 7a)."""
+
+    @staticmethod
+    def _tw(message_type: int, word_count: int):
+        from mie_decoder.models import Bus, TypeWord
+        return TypeWord(
+            message_type=message_type,
+            bus=Bus.A,
+            word_count=word_count,
+            error=False,
+            raw=0,
+        )
+
+    @staticmethod
+    def _cmd(direction, dwc: int):
+        from mie_decoder.models import CommandWord
+        return CommandWord(
+            rt=15,
+            direction=direction,
+            subaddress=11,
+            data_word_count=dwc,
+            raw=0,
+        )
+
+    def test_canonical_bc_to_rt_passes(self) -> None:
+        from mie_decoder.decode import validate_structural_invariants
+        from mie_decoder.models import Direction, MessageFormat
+        result = validate_structural_invariants(
+            self._tw(0x02, 36), self._cmd(Direction.RECEIVE, 30),
+            MessageFormat.RECEIVE, 3,
+        )
+        assert result is None
+
+    def test_canonical_rt_to_bc_passes(self) -> None:
+        from mie_decoder.decode import validate_structural_invariants
+        from mie_decoder.models import Direction, MessageFormat
+        result = validate_structural_invariants(
+            self._tw(0x04, 36), self._cmd(Direction.TRANSMIT, 30),
+            MessageFormat.TRANSMIT, 3,
+        )
+        assert result is None
+
+    def test_bc_to_rt_with_transmit_cmd_rejected(self) -> None:
+        from mie_decoder.decode import (
+            WhichInvariant, validate_structural_invariants,
+        )
+        from mie_decoder.models import Direction, MessageFormat
+        result = validate_structural_invariants(
+            self._tw(0x02, 36), self._cmd(Direction.TRANSMIT, 30),
+            MessageFormat.RECEIVE, 3,
+        )
+        assert result is not None
+        assert result.kind == WhichInvariant.DIRECTION_BC_TO_RT
+
+    def test_rt_to_bc_with_receive_cmd_rejected(self) -> None:
+        from mie_decoder.decode import (
+            WhichInvariant, validate_structural_invariants,
+        )
+        from mie_decoder.models import Direction, MessageFormat
+        result = validate_structural_invariants(
+            self._tw(0x04, 36), self._cmd(Direction.RECEIVE, 30),
+            MessageFormat.TRANSMIT, 3,
+        )
+        assert result is not None
+        assert result.kind == WhichInvariant.DIRECTION_RT_TO_BC
+
+    def test_capacity_short_rejected(self) -> None:
+        from mie_decoder.decode import (
+            WhichInvariant, validate_structural_invariants,
+        )
+        from mie_decoder.models import Direction, MessageFormat
+        # wc=5 too small for Receive with dwc=30 (needs 1+3+1+31=36)
+        result = validate_structural_invariants(
+            self._tw(0x02, 5), self._cmd(Direction.RECEIVE, 30),
+            MessageFormat.RECEIVE, 3,
+        )
+        assert result is not None
+        assert result.kind == WhichInvariant.WORD_COUNT_CAPACITY
+
+    def test_capacity_exact_accepted(self) -> None:
+        from mie_decoder.decode import validate_structural_invariants
+        from mie_decoder.models import Direction, MessageFormat
+        # wc=36 is exactly minimum for Receive with dwc=30
+        result = validate_structural_invariants(
+            self._tw(0x02, 36), self._cmd(Direction.RECEIVE, 30),
+            MessageFormat.RECEIVE, 3,
+        )
+        assert result is None
+
+    def test_spurious_skips_capacity_check(self) -> None:
+        from mie_decoder.decode import validate_structural_invariants
+        from mie_decoder.models import Direction, MessageFormat
+        # SpuriousData has variable payload — capacity check skipped
+        result = validate_structural_invariants(
+            self._tw(0x20, 5), self._cmd(Direction.RECEIVE, 0),
+            MessageFormat.SPURIOUS_DATA, 3,
+        )
+        assert result is None
+
+    def test_mode_code_directions_not_constrained(self) -> None:
+        from mie_decoder.decode import validate_structural_invariants
+        from mie_decoder.models import Direction, MessageFormat
+        tw = self._tw(0x01, 7)
+        # Mode codes accept either direction.
+        for dir_ in (Direction.TRANSMIT, Direction.RECEIVE):
+            fmt = (
+                MessageFormat.MODE_CODE_TX_DATA if dir_ == Direction.TRANSMIT
+                else MessageFormat.MODE_CODE_RX_DATA
+            )
+            result = validate_structural_invariants(
+                tw, self._cmd(dir_, 1), fmt, 3,
+            )
+            assert result is None, f"unexpected violation for {dir_}: {result}"
