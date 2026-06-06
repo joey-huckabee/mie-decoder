@@ -32,6 +32,18 @@ behavior remains covered by each implementation's own tests.
 
 ---
 
+## Non-Requirements (Out of Scope)
+
+These items are explicitly OUT of scope for MIE-Decoder. They are
+recorded here so future requests do not get folded into the existing
+requirements set without separate analysis.
+
+| ID | Statement |
+|----|-----------|
+| NR-001 | The MIE Decoder SHALL NOT implement decode functionality for IRIG 106 Chapter 10 / 1553 data. MIE files use a DDC proprietary record format that is distinct from IRIG 106 Chapter 10 packet formats — they differ in file framing, timestamp encoding, metadata layout, and the sub-format conventions used to carry MIL-STD-1553 wire data. Any future request to add IRIG 106 1553 decode SHALL be treated as a new capability requiring separate requirements, design analysis, architecture review, and approval. It SHALL NOT be added as an extension of the existing MIE Decoder. |
+
+---
+
 ## L1 - Shared System Requirements
 
 | ID | Requirement |

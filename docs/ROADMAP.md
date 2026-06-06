@@ -22,6 +22,18 @@ fixtures, and vendor-compatible CSV behavior should remain aligned.
   `tests/conformance/` exercise shared decoding, recovery, filtering, config,
   error, and CSV behavior against byte-exact output oracles in CI.
 
+## Out of Scope (Pinned)
+
+### IRIG 106 1553 decode support is out of scope for MIE Decoder
+
+See `docs/REQUIREMENTS.md` NR-001. MIE files use a DDC proprietary
+record format that is distinct from IRIG 106 Chapter 10 1553 packet
+formats. Adding IRIG 106 1553 decode is a new capability — separate
+requirements, design analysis, architecture review, and approval —
+not an incremental extension of MIE-Decoder. Any inbound feature
+request that says "just add IRIG 106 support" SHALL be redirected
+to a new requirements + design review.
+
 ## Team Review Backlog (2026-06-05)
 
 Active backlog from a multi-implementation review conducted 2026-06-05.
