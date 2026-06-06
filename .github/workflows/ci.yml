@@ -131,3 +131,19 @@ jobs:
 
       - name: Run cross-implementation conformance suite
         run: python tests/conformance/run.py
+
+  trace-matrix:
+    name: Requirements trace matrix
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Verify TRACE-MATRIX.md is up to date
+        run: python scripts/build-trace-matrix.py --check
