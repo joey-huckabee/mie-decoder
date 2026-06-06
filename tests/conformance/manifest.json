@@ -1,0 +1,45 @@
+{
+  "cases": [
+    {
+      "name": "basic-multi-record",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/basic-multi-record.csv"
+    },
+    {
+      "name": "header-and-sync-recovery",
+      "input": "inputs/header-and-sync-recovery.hex",
+      "expected": "expected/header-and-sync-recovery.csv"
+    },
+    {
+      "name": "errors-inline",
+      "input": "inputs/errors-inline.hex",
+      "expected": "expected/errors-inline.csv",
+      "rust_args": [
+        "--inline-errors"
+      ],
+      "python_args": [
+        "--error-mode",
+        "inline"
+      ]
+    },
+    {
+      "name": "exclude-subaddress",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/exclude-subaddress.csv",
+      "rust_args": [
+        "--exclude-subaddresses",
+        "22"
+      ],
+      "python_args": [
+        "--exclude-subaddresses",
+        "22"
+      ]
+    },
+    {
+      "name": "config-filter",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/config-filter.csv",
+      "config": "configs/exclude-transmit.toml"
+    }
+  ]
+}

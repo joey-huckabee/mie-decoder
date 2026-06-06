@@ -215,7 +215,9 @@ class TestCsvWriter:
         out = tmp_path / "output.csv"
         count = write_csv(MieFileReader(tmp_mie_file), output=out)
         assert out.exists()
-        lines = out.read_text().strip().split("\n")
+        raw = out.read_bytes()
+        assert b"\r\n" not in raw
+        lines = raw.decode().strip().split("\n")
         assert len(lines) == 4
         assert count == 3
 

@@ -50,6 +50,9 @@ poetry -C python sync
 poetry -C python run pytest
 poetry -C python run mie-decoder --help
 poetry -P python build
+
+# Shared Rust/Python behavior
+python tests/conformance/run.py
 ```
 
 ## Architecture
@@ -91,6 +94,8 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - `docs/ROADMAP.md` — versioned roadmap with explicit "do not drop" commitments (TOML config, CSV byte-compat, sync semantics).
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
 - `python/` — maintained Python package and CLI with its own source and tests.
+- `tests/conformance/` — shared hexadecimal fixtures and byte-exact CSV
+  oracles exercised against both implementations.
 
 ## Conventions worth preserving
 
@@ -101,7 +106,9 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - **`DataWords` is fixed-capacity by design.** MIL-STD-1553B caps a single transaction at 32 data words. Don't switch to `Vec<u16>` "for flexibility."
 - **CSV column names and order are dictated by DDC vendor output.** Don't "clean up" `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` even though they're empty in v1.0.0 — they're columns by spec.
 - **`sync.rs` is pure** (no logging, no I/O). The reader handles any user-facing messaging based on returned values. Don't move logging into validation helpers.
-- **Test fixtures are byte-exact** translations of records that have been cross-referenced against vendor CSV output. Treat them as oracles; if a test fails, suspect the code, not the fixture.
+- **Shared conformance fixtures are byte-exact.** Treat
+  `tests/conformance/` as the cross-implementation oracle; update expected CSV
+  only after both implementations agree.
 - **Both implementations are maintained.** Keep Rust-specific design decisions
   in the Rust crate and Python-specific design decisions in `python/`; align
   shared format semantics and vendor-compatible CSV behavior.

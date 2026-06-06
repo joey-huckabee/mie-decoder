@@ -102,3 +102,32 @@ jobs:
         if: matrix.python-version == '3.12'
         working-directory: python
         run: poetry build
+
+  conformance:
+    name: Rust/Python conformance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+
+      - name: Install Poetry
+        run: pipx install poetry==2.3.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: poetry
+          cache-dependency-path: python/poetry.lock
+
+      - name: Synchronize locked Python dependencies
+        run: poetry -C python sync --no-interaction --no-ansi
+
+      - name: Run cross-implementation conformance suite
+        run: python tests/conformance/run.py

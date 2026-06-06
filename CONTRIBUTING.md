@@ -161,6 +161,17 @@ poetry -C python run mie-decoder --help
 poetry -P python build
 ```
 
+Shared Rust/Python conformance:
+
+```bash
+python tests/conformance/run.py
+```
+
+The conformance runner materializes text-based hexadecimal fixtures, invokes
+both CLIs, and compares their CSV output byte-for-byte against checked-in
+oracles. Use `--update-expected` only for intentional shared-output changes;
+the runner updates an oracle only after Rust and Python already agree.
+
 The current pre-commit hook runs the Rust checks documented above. Run the
 Python tests manually when changing `python/`.
 
@@ -175,6 +186,8 @@ every push and pull request:
   pytest suite on every supported minor version.
 - **Python 3.12:** strict package/lockfile validation and wheel + source
   distribution builds.
+- **Rust/Python conformance:** both CLIs decode the shared fixtures and must
+  produce byte-identical CSV matching the checked-in oracles.
 
 The Python matrix makes the `>=3.10,<3.15` compatibility declaration
 enforceable. In particular, Python 3.10 exercises the `tomli` compatibility

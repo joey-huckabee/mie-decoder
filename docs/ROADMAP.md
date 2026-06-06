@@ -18,6 +18,9 @@ fixtures, and vendor-compatible CSV behavior should remain aligned.
 - **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including currently-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`).
 - **Sync recovery semantics preserved.** Two-record look-ahead, 64 KB scan cap, error records and SPURIOUS_DATA continuations remain valid records that pass validation.
 - **One validation path.** Header skip, normal forward decode, and post-loss recovery all share `sync::validate_record`. There is no weaker fast path.
+- **Cross-implementation conformance.** Text-based fixtures under
+  `tests/conformance/` exercise shared decoding, recovery, filtering, config,
+  error, and CSV behavior against byte-exact output oracles in CI.
 
 ## Robustness & validation backlog
 

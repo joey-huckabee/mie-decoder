@@ -1,0 +1,15 @@
+# Errored RT15 SA11 Receive with one captured payload word and DDC error 0x011E.
+02470F1826DB21F6
+7E79 0004 1E01
+
+# SPURIOUS_DATA continuation with two raw words.
+20060F1826DB38F7
+AAAA BBBB
+
+# Normal record proves decoding continues after the error sequence.
+04240F1826DBE3F9
+DE7E 0078
+2010 8241 0000 0815 0000 0000 0000 0000
+00FE 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0300 0000 0000 0000 0000 0000
+0000 0020 0000 0000 0000 0000

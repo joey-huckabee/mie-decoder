@@ -219,7 +219,9 @@ def dataframe_to_csv(
     dest_name = str(output) if output is not None else "stdout"
 
     try:
-        df.to_csv(dest, index=False)
+        # Keep output byte-stable across platforms and aligned with the Rust
+        # implementation. Pandas otherwise emits CRLF when writing on Windows.
+        df.to_csv(dest, index=False, lineterminator="\n")
     except OSError as exc:
         raise MieWriterError(dest_name, exc) from exc
 

@@ -287,6 +287,12 @@ poetry -C python run pytest
 poetry -C python run mie-decoder --help
 ```
 
+Shared Rust/Python behavior:
+
+```bash
+python tests/conformance/run.py
+```
+
 ## Known Limitations
 
 - The Day field in IRIG timestamps may not decode correctly on all DDC card models.

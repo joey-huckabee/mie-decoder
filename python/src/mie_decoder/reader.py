@@ -62,6 +62,7 @@ from mie_decoder.exceptions import (
     MieFileEmptyError,
     MieFileNotFoundError,
     MieInvalidTypeWordError,
+    MiePayloadError,
     MieRecordTruncatedError,
     MieUnknownErrorCodeError,
     MieUnknownTypeWordError,
@@ -228,10 +229,11 @@ class MieFileReader:
                     record_bytes = tw.word_count * 2
 
                     # ── Validate current record ────────────────
-                    is_valid = (
-                        is_valid_message_type(tw.message_type)
-                        and tw.word_count >= min_wc
-                        and offset + record_bytes <= file_len
+                    is_valid = validate_record(
+                        mm,
+                        offset,
+                        file_len,
+                        ts_format=resolved_format,
                     )
 
                     if not is_valid:
@@ -252,6 +254,11 @@ class MieFileReader:
                                 raise MieUnknownTypeWordError(
                                     offset, type_raw, tw.message_type
                                 )
+                            raise MiePayloadError(
+                                offset,
+                                "record fails IRIG-range or look-ahead validation "
+                                f"(raw_type=0x{type_raw:04X})",
+                            )
 
                         recovered = recover_sync(
                             mm, offset, file_len,

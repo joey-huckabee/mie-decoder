@@ -112,20 +112,22 @@ class TestRecoverSync:
         fpath = tmp_path / "corrupt.mie"
         fpath.write_bytes(data)
         messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
-        # Should recover: 2 before corruption + 2 after
-        assert len(messages) >= 3
+        # The second pre-corruption record fails look-ahead validation because
+        # its next boundary is corrupt. The first and both recovered records
+        # remain.
+        assert len(messages) == 3
 
     def test_reader_strict_raises_on_corruption(
         self, tmp_path: Path, single_receive_record: bytes
     ) -> None:
         """Strict mode should raise on sync loss."""
         from mie_decoder.reader import MieFileReader
-        from mie_decoder.exceptions import MieInvalidTypeWordError
+        from mie_decoder.exceptions import MiePayloadError
 
         good = single_receive_record * 2
         corruption = b"\x03\x00" * 5  # invalid type 0x03
         data = good + corruption
         fpath = tmp_path / "strict_corrupt.mie"
         fpath.write_bytes(data)
-        with pytest.raises(MieInvalidTypeWordError):
+        with pytest.raises(MiePayloadError, match="look-ahead validation"):
             list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))

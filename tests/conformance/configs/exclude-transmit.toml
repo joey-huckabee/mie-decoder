@@ -1,0 +1,5 @@
+[decode]
+time_format = "irig"
+
+[filter]
+exclude_types = ["RT_TO_BC"]

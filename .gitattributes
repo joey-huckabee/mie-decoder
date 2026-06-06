@@ -1,1 +1,2 @@
 python/poetry.lock text eol=lf
+tests/conformance/** text eol=lf
