@@ -1,218 +1,275 @@
 # MIE-Decoder Requirements
 
 **Document ID:** MIE-REQ-001
-**Version:** 1.0.0
+**Version:** 2.0.0
 
-> **Status note:** This document was authored against the v1.1 Python
-> implementation and references Python-specific tooling (Poetry, pandas,
-> tomli, dataclasses, struct). The semantic requirements (decode behavior,
-> sync recovery, output format, error handling) carry across to the Rust
-> port unchanged; the implementation-flavored items (L1-010 pandas, L1-014
-> Poetry/Python, L2-DEC-005 struct, L2-CFG-002 tomllib, L2-WRT-005/006
-> DataFrame, L3-001/002/009/010 Python tooling) are stale relative to the
-> Rust crate. A comprehensive requirements refresh is tracked in
-> `docs/ROADMAP.md`. New requirements added during the Rust port are
-> marked accordingly (see L2-RDR-015).
+## Scope And Ownership
+
+This repository contains maintained Rust and Python implementations of
+MIE-Decoder. Requirements are divided into three ownership classes:
+
+- **Shared (`L1-*`, `L2-*`)** requirements define observable MIE decoding,
+  validation, configuration, filtering, and CSV behavior. Both implementations
+  SHALL satisfy them.
+- **Python (`PY-*`)** requirements apply only to the implementation under
+  `python/`.
+- **Rust (`RS-*`)** requirements apply only to the implementation at the
+  repository root.
+
+Shared behavior is normative even when implementation architecture or CLI
+syntax differs. For example, both implementations provide message counting and
+inline error output, but Rust exposes `count` and `--inline-errors` while
+Python exposes `decode --count` and `--error-mode inline`.
+
+Version 2.0 retains version 1 requirement IDs only when their meaning remains
+compatible. Python-only version 1 requirements are reallocated to `PY-*`; Rust
+implementation constraints use `RS-*`. Retired and reallocated IDs are listed
+at the end of this document.
+
+The cross-implementation suite under `tests/conformance/` verifies selected
+shared requirements against byte-exact CSV oracles. Implementation-specific
+behavior remains covered by each implementation's own tests.
 
 ---
 
-## L1 — System-Level Requirements
-
-L1 requirements define the overall capabilities and constraints of the
-MIE-Decoder system.
+## L1 - Shared System Requirements
 
 | ID | Requirement |
-|----|------------|
-| L1-001 | The system SHALL decode DDC MIE binary recording files containing MIL-STD-1553 bus monitor captures. |
-| L1-002 | The system SHALL produce CSV output matching the column layout of DDC's vendor recording software. |
-| L1-003 | The system SHALL decode IRIG-format timestamps with microsecond resolution. |
-| L1-004 | The system SHALL correctly extract message payloads for both Receive (BC→RT) and Transmit (RT→BC) transfer directions per MIL-STD-1553B wire order. |
-| L1-005 | The system SHALL compute the per-RT/MSG inter-arrival time (DELTA) for each decoded message. |
-| L1-006 | The system SHALL support both Bus A and Bus B recordings. |
-| L1-007 | The system SHALL provide a command-line interface with file input/output, message counting, and configurable logging. |
-| L1-008 | The system SHALL handle truncated final records without crashing. |
-| L1-009 | The system SHALL use memory-mapped I/O for efficient processing of large files. |
-| L1-010 | The system SHALL use pandas for CSV output generation. |
-| L1-011 | The system SHALL provide configurable logging at DEBUG, INFO, WARNING, ERROR, and CRITICAL levels. |
-| L1-012 | The system SHALL define a custom exception hierarchy for all error conditions. |
-| L1-013 | The system SHALL support a strict mode that raises exceptions on invalid records. |
-| L1-014 | The system SHALL be implemented as a Python 3.10+ Poetry project with type hints, Google-style docstrings, and pytest test coverage. |
+|----|-------------|
+| L1-001 | Each implementation SHALL decode DDC MIE binary recording files containing MIL-STD-1553 bus-monitor captures. |
+| L1-002 | Each implementation SHALL produce CSV output matching the DDC vendor-compatible column layout and field formatting defined in `docs/FIELDS.md`. |
+| L1-003 | Each implementation SHALL decode IRIG timestamps with microsecond resolution and SHALL support Standard free-running timestamps. |
+| L1-004 | Each implementation SHALL correctly decode all supported MIL-STD-1553 message formats and preserve bus wire order. |
+| L1-005 | Each implementation SHALL compute per-RT/MSG inter-arrival time (`DELTA`) in seconds. |
+| L1-006 | Each implementation SHALL support Bus A and Bus B recordings. |
+| L1-007 | Each implementation SHALL provide CLI capabilities for decoding, message counting, configuration, filtering, timestamp selection, logging, and diagnostic dump output. CLI syntax MAY differ. |
+| L1-008 | Each implementation SHALL handle truncated final records without crashing. |
+| L1-011 | Each implementation SHALL provide configurable diagnostic logging and accept DEBUG, INFO, WARNING, ERROR, and CRITICAL level names. |
+| L1-013 | Each implementation SHALL support strict and lenient handling of invalid records. |
+| L1-015 | Each implementation SHALL detect proprietary file headers, validate every record, and recover from word-aligned mid-file sync loss. |
+| L1-016 | Each implementation SHALL decode DDC error records and SPURIOUS_DATA records and SHALL support separate and inline error output. |
+| L1-017 | Each implementation SHALL support TOML configuration with CLI values taking precedence over configuration values and built-in defaults. |
+| L1-018 | Each implementation SHALL support message exclusion by type, RT address, bus, and subaddress. |
+| L1-019 | Shared CSV and decoding behavior SHALL remain aligned through the cross-implementation conformance suite. |
+| L1-020 | Each implementation SHALL provide actionable file, record, configuration, and output errors and SHALL return a non-zero CLI exit code on failure. |
 
 ---
 
-## L2 — Module-Level Requirements
+## L2 - Shared Behavioral Requirements
 
-L2 requirements allocate L1 capabilities to specific modules.
-
-### L2-DEC: decode.py — Binary Decoding
+### L2-DEC - Binary Decoding
 
 | ID | Parent | Requirement |
-|----|--------|------------|
-| L2-DEC-001 | L1-001 | The decode module SHALL decode a 16-bit Type Word into message_type (bits 0–6), bus (bit 7), word_count (bits 8–13), and error flag (bit 14). |
-| L2-DEC-002 | L1-003 | The decode module SHALL decode a 3-word IRIG timestamp into day (bits 13–5 of upper word), hour (bits 4–0 of upper word), minute (bits 15–10 of middle word), second (bits 9–4 of middle word), and microsecond (bits 3–0 of middle word concatenated with all 16 bits of lower word). |
-| L2-DEC-003 | L1-003 | The decode module SHALL decode the freerun flag from bit 15 of the IRIG upper word. |
-| L2-DEC-004 | L1-004 | The decode module SHALL decode a 16-bit Command Word into RT address (bits 15–11), T/R direction (bit 10), subaddress (bits 9–5), and data word count (bits 4–0, where 0 means 32). |
-| L2-DEC-005 | L1-001 | The decode module SHALL read little-endian unsigned 16-bit integers and arrays from byte buffers using struct. |
-| L2-DEC-006 | L1-001 | The decode module SHALL define MIN_RECORD_BYTES (10) and MIN_RECORD_WORDS (5) constants. |
+|----|--------|-------------|
+| L2-DEC-001 | L1-001 | A 16-bit Type Word SHALL decode `message_type` from bits 0-6, bus from bit 7, `word_count` from bits 8-13, and error flag from bit 14. |
+| L2-DEC-002 | L1-003 | A 3-word IRIG timestamp SHALL decode day, hour, minute, second, microsecond, and freerun fields according to `docs/FIELDS.md`. |
+| L2-DEC-003 | L1-003 | IRIG decoding SHALL decode the freerun flag from bit 15 of the upper timestamp word. |
+| L2-DEC-004 | L1-004 | A 16-bit Command Word SHALL decode RT address, T/R direction, subaddress, and data-word count, where a raw count of zero means 32 words. |
+| L2-DEC-007 | L1-003 | A Standard timestamp SHALL decode as a 32-bit free-running counter. |
+| L2-DEC-008 | L1-001 | All 16-bit words SHALL be read as little-endian values. |
+| L2-DEC-009 | L1-004 | Payload extraction SHALL remain bounded by the Type Word's declared record extent and SHALL NOT consume bytes from a following record. |
+| L2-DEC-010 | L1-001 | Decoded records SHALL retain their source byte offset and raw Type and Command Word values where present. |
 
-### L2-MDL: models.py — Data Structures
-
-| ID | Parent | Requirement |
-|----|--------|------------|
-| L2-MDL-001 | L1-001 | All model dataclasses SHALL use frozen=True and slots=True for immutability and memory efficiency. |
-| L2-MDL-002 | L1-006 | The Bus enum SHALL define A=0 and B=1. |
-| L2-MDL-003 | L1-004 | The Direction enum SHALL define RECEIVE=0 and TRANSMIT=1. |
-| L2-MDL-004 | L1-003 | IrigTimestamp SHALL provide to_total_microseconds() for absolute time comparison. |
-| L2-MDL-005 | L1-002 | IrigTimestamp SHALL provide format() producing "DAY:HH:MM:SS.uuuuuu" strings. |
-| L2-MDL-006 | L1-005 | MieMessage SHALL provide a delta_key property returning "<RT>:<SA><T\|R>" for DELTA grouping. |
-| L2-MDL-007 | L1-002 | MieMessage SHALL provide a msg_label property returning "<SA><T\|R>" for CSV output. |
-| L2-MDL-008 | L1-001 | MieMessage SHALL store the file_offset of the source record for diagnostic traceability. |
-| L2-MDL-009 | L1-001 | TypeWord SHALL preserve the raw 16-bit value for round-trip fidelity. |
-| L2-MDL-010 | L1-001 | CommandWord SHALL preserve the raw 16-bit value for round-trip fidelity. |
-
-### L2-RDR: reader.py — File Reader
+### L2-SYN - Synchronization And Validation
 
 | ID | Parent | Requirement |
-|----|--------|------------|
-| L2-RDR-001 | L1-009 | MieFileReader SHALL use mmap with ACCESS_READ for memory-mapped file access. |
-| L2-RDR-002 | L1-008 | MieFileReader SHALL silently skip truncated final records when strict=False. |
-| L2-RDR-003 | L1-013 | MieFileReader SHALL raise MieRecordTruncatedError on truncated records when strict=True. |
-| L2-RDR-004 | L1-013 | MieFileReader SHALL raise MieInvalidTypeWordError on invalid word counts when strict=True. |
-| L2-RDR-005 | L1-012 | MieFileReader SHALL raise MieFileNotFoundError when the file does not exist. |
-| L2-RDR-006 | L1-012 | MieFileReader SHALL raise MieFileEmptyError when the file is zero bytes. |
-| L2-RDR-007 | L1-004 | MieFileReader SHALL extract Data Words before Status Word for Receive messages. |
-| L2-RDR-008 | L1-004 | MieFileReader SHALL extract Status Word before Data Words for Transmit messages. |
-| L2-RDR-009 | L1-005 | MieFileReader SHALL compute DELTA as the elapsed time in seconds between the current message and the most recent prior message with the same RT address and MSG identifier. |
-| L2-RDR-010 | L1-005 | MieFileReader SHALL set DELTA to 0.0 for the first occurrence of each RT/MSG combination. |
-| L2-RDR-011 | L1-011 | MieFileReader SHALL log per-record details at DEBUG level. |
-| L2-RDR-012 | L1-011 | MieFileReader SHALL log decode start/complete with message counts at INFO level. |
-| L2-RDR-013 | L1-011 | MieFileReader SHALL log progress every 100,000 messages at INFO level. |
-| L2-RDR-014 | L1-011 | MieFileReader SHALL log freerun timestamps at WARNING level. |
-| L2-RDR-015 | L1-008 | MieFileReader SHALL validate every record using the full `sync::validate_record` path (type, word count, fit, IRIG range, two-record look-ahead) before decoding it. The per-record validation SHALL NOT be a weaker subset of the path used for header detection or sync recovery. |
+|----|--------|-------------|
+| L2-SYN-001 | L1-015 | Record validation SHALL reject unknown message types. |
+| L2-SYN-002 | L1-015 | Record validation SHALL reject word counts below the timestamp-format minimum or above 63. |
+| L2-SYN-003 | L1-015 | Record validation SHALL reject records extending past end-of-file. |
+| L2-SYN-004 | L1-015 | IRIG validation SHALL reject hour values >= 24, minute values >= 60, and second values >= 60. |
+| L2-SYN-005 | L1-015 | Record validation SHALL confirm that the next record boundary contains a plausible Type Word when look-ahead bytes are available. |
+| L2-SYN-006 | L1-015 | Header detection SHALL scan from offset zero in 2-byte, word-aligned increments. |
+| L2-SYN-007 | L1-015 | Header detection SHALL cap its scan at 64 KB. |
+| L2-SYN-008 | L1-015 | Header detection SHALL report when no valid record is found within the scan window. |
+| L2-SYN-009 | L1-015 | Sync recovery SHALL scan forward from an invalid boundary in 2-byte, word-aligned increments. |
+| L2-SYN-010 | L1-015 | Sync recovery SHALL cap its scan at 64 KB from the invalid boundary. |
+| L2-SYN-011 | L1-015 | Sync recovery SHALL report when no valid record is found within the scan window. |
+| L2-SYN-012 | L1-011 | Header detection SHALL log detected header size at INFO level. |
+| L2-SYN-013 | L1-011 | Sync recovery SHALL log sync loss at WARNING and successful recovery at INFO. |
+| L2-SYN-014 | L1-015 | Header detection, continuous decoding, and sync recovery SHALL use the same full record-validation path. |
+| L2-SYN-015 | L1-015 | Lenient mode SHALL skip invalid records and continue from a recovered boundary when possible. |
+| L2-SYN-016 | L1-013 | Strict mode SHALL stop and surface an error on invalid record validation. |
+| L2-SYN-017 | L1-016 | Valid error records and SPURIOUS_DATA records SHALL remain eligible record boundaries during validation and recovery. |
 
-### L2-WRT: writer.py — CSV Output
-
-| ID | Parent | Requirement |
-|----|--------|------------|
-| L2-WRT-001 | L1-002 | The writer module SHALL define CSV_HEADER matching DDC vendor column layout: TIME_STAMP, RT, MSG, WD01–WD32, STAT, CMD, MUX, TERM_NAME, BUS, DELTA, IM_GAP, RCV_GAP, XMT_GAP. |
-| L2-WRT-002 | L1-002 | The writer module SHALL pad data word columns to 32 with empty strings for messages with fewer than 32 data words. |
-| L2-WRT-003 | L1-002 | The writer module SHALL format data words, STAT, and CMD as 4-character uppercase hexadecimal. |
-| L2-WRT-004 | L1-002 | The writer module SHALL format DELTA with six decimal places. |
-| L2-WRT-005 | L1-010 | The writer module SHALL construct a pandas DataFrame via messages_to_dataframe(). |
-| L2-WRT-006 | L1-010 | The writer module SHALL write CSV via a separate dataframe_to_csv() function. |
-| L2-WRT-007 | L1-002 | write_csv() SHALL accept output as a file path, text stream, or None (stdout). |
-| L2-WRT-008 | L1-002 | write_csv() SHALL return the number of messages written. |
-| L2-WRT-009 | L1-012 | dataframe_to_csv() SHALL raise MieWriterError on I/O failure. |
-| L2-WRT-010 | L1-002 | CSV_COLUMNS SHALL define both column names and human-readable descriptions. |
-
-### L2-CLI: cli.py — Command-Line Interface
+### L2-RDR - Reader Behavior
 
 | ID | Parent | Requirement |
-|----|--------|------------|
-| L2-CLI-001 | L1-007 | The CLI SHALL accept a positional input file path argument. |
-| L2-CLI-002 | L1-007 | The CLI SHALL accept an optional -o/--output file path argument. |
-| L2-CLI-003 | L1-007 | The CLI SHALL accept a --count flag to print message count to stderr. |
-| L2-CLI-004 | L1-011 | The CLI SHALL accept a --log-level argument with choices DEBUG, INFO, WARNING, ERROR, CRITICAL. |
-| L2-CLI-005 | L1-007 | The CLI SHALL return exit code 0 on success and 1 on error. |
-| L2-CLI-006 | L1-007 | The CLI SHALL print human-readable error messages to stderr on failure. |
-| L2-CLI-007 | L1-011 | The CLI SHALL delegate logging configuration to logger.configure_logging(). |
+|----|--------|-------------|
+| L2-RDR-002 | L1-008 | Lenient mode SHALL stop cleanly at a truncated final record. |
+| L2-RDR-003 | L1-013 | Strict mode SHALL surface a truncation error when a readable Type Word declares a record extent beyond end-of-file. |
+| L2-RDR-005 | L1-020 | Opening a missing input file SHALL surface a file-not-found error. |
+| L2-RDR-006 | L1-020 | Opening an empty input file SHALL surface an empty-file error. |
+| L2-RDR-007 | L1-004 | Receive records SHALL extract Data Words before Status Word. |
+| L2-RDR-008 | L1-004 | Transmit records SHALL extract Status Word before Data Words. |
+| L2-RDR-009 | L1-005 | `DELTA` SHALL be calculated against the most recent prior message sharing the same RT and MSG identifier. |
+| L2-RDR-010 | L1-005 | The first occurrence of each RT/MSG key SHALL have `DELTA` equal to `0.000000`. |
+| L2-RDR-015 | L1-015 | Every record SHALL pass the full shared validation path before decoding. |
 
-### L2-LOG: logger.py — Logging Configuration
-
-| ID | Parent | Requirement |
-|----|--------|------------|
-| L2-LOG-001 | L1-011 | configure_logging() SHALL configure the "mie_decoder" logger namespace. |
-| L2-LOG-002 | L1-011 | configure_logging() SHALL output to stderr by default. |
-| L2-LOG-003 | L1-011 | configure_logging() SHALL use the format "%(asctime)s [%(levelname)-5s] %(name)s: %(message)s". |
-| L2-LOG-004 | L1-011 | configure_logging() SHALL raise ValueError for unrecognized log level names. |
-| L2-LOG-005 | L1-011 | configure_logging() SHALL remove existing handlers to prevent duplicate output on repeated calls. |
-
-### L2-EXC: exceptions.py — Exception Hierarchy
+### L2-MSG - Message Semantics
 
 | ID | Parent | Requirement |
-|----|--------|------------|
-| L2-EXC-001 | L1-012 | All custom exceptions SHALL inherit from MieDecoderError. |
-| L2-EXC-002 | L1-012 | File-level exceptions SHALL inherit from MieFileError. |
-| L2-EXC-003 | L1-012 | Record-level exceptions SHALL inherit from MieRecordError and include byte offset. |
-| L2-EXC-004 | L1-012 | MieWriterError SHALL wrap the underlying cause exception. |
+|----|--------|-------------|
+| L2-MSG-001 | L1-004 | The decoder SHALL classify all 10 supported MIL-STD-1553 transaction formats plus SPURIOUS_DATA. |
+| L2-MSG-002 | L1-006 | Bus SHALL be represented as `A` or `B` in CSV output. |
+| L2-MSG-003 | L1-004 | A decoded message SHALL expose an MSG label in `<subaddress><T\|R>` form when a Command Word is present. |
+
+### L2-ERR - Error Record Handling
+
+| ID | Parent | Requirement |
+|----|--------|-------------|
+| L2-ERR-001 | L1-016 | Type Word bit 14 SHALL identify an errored record. |
+| L2-ERR-002 | L1-016 | The final word of an errored record SHALL be decoded as its DDC Error Word. |
+| L2-ERR-003 | L1-016 | Known DDC Error Word values SHALL be recognized. |
+| L2-ERR-004 | L1-013 | Strict mode SHALL reject unknown DDC Error Word values. |
+| L2-ERR-005 | L1-016 | SPURIOUS_DATA immediately following an errored record SHALL use decoder code `0x2000`. |
+| L2-ERR-006 | L1-016 | Standalone SPURIOUS_DATA SHALL use decoder code `0x2001`. |
+| L2-ERR-007 | L1-002 | CSV output SHALL include `ERROR` and `ERROR_CODE` columns. |
+| L2-ERR-008 | L1-016 | Separate mode SHALL write normal messages to the main CSV and errored/spurious messages to `<stem>_errors<suffix>`. |
+| L2-ERR-010 | L1-002 | CSV `ERROR` SHALL be empty, `ERROR`, or `SPURIOUS` as appropriate; `ERROR_CODE` SHALL contain the corresponding uppercase hexadecimal code. |
+| L2-ERR-011 | L1-016 | Inline mode SHALL write normal, errored, and spurious messages to one CSV. |
+
+### L2-WRT - CSV Output
+
+| ID | Parent | Requirement |
+|----|--------|-------------|
+| L2-WRT-001 | L1-002 | CSV columns SHALL appear in this order: `TIME_STAMP`, `RT`, `MSG`, `WD01`-`WD32`, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, `DELTA`, `ERROR`, `ERROR_CODE`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`. |
+| L2-WRT-002 | L1-002 | Unused Data Word columns and unavailable fields SHALL be empty. |
+| L2-WRT-003 | L1-002 | Data Words, Status Word, Command Word, and Error Word SHALL use 4-character uppercase hexadecimal without a `0x` prefix. |
+| L2-WRT-004 | L1-002 | `DELTA` SHALL use exactly six decimal places. |
+| L2-WRT-007 | L1-002 | CSV output SHALL support a file destination and stdout. |
+| L2-WRT-011 | L1-002 | IRIG timestamp text SHALL use `DAY:HH:MM:SS.uuuuuu`. |
+| L2-WRT-012 | L1-002 | CSV output SHALL use LF (`\n`) line endings on every supported platform. |
+| L2-WRT-013 | L1-002 | CSV output SHALL preserve the currently-empty vendor compatibility columns. |
+
+### L2-CFG - Configuration And Filtering
+
+| ID | Parent | Requirement |
+|----|--------|-------------|
+| L2-CFG-001 | L1-017 | TOML configuration SHALL support logging level, timestamp format, strict mode, error mode, exclusion filters, and output format. |
+| L2-CFG-003 | L1-017 | Configuration precedence SHALL be CLI values over configuration-file values over built-in defaults. |
+| L2-CFG-004 | L1-017 | CLI filter arguments SHALL merge with configuration-file filters. |
+| L2-CFG-005 | L1-017 | The CLI SHALL accept a TOML configuration file path. |
+| L2-CFG-006 | L1-018 | Exclusion filters SHALL support message type, RT address, bus, and subaddress. |
+| L2-CFG-007 | L1-018 | Type filters SHALL accept documented symbolic names and hexadecimal type codes. |
+| L2-CFG-008 | L1-017 | The configuration schema and key names demonstrated by `config/default.toml` SHALL remain supported. |
+
+### L2-FLT - Filtering
+
+| ID | Parent | Requirement |
+|----|--------|-------------|
+| L2-FLT-001 | L1-018 | Filtering SHALL omit messages matching configured exclusion criteria and yield all other messages unchanged. |
+| L2-FLT-002 | L1-018 | Exclusion criteria SHALL use OR logic across configured type, RT, bus, and subaddress filters. |
+
+### L2-CLI - Shared CLI Capabilities
+
+| ID | Parent | Requirement |
+|----|--------|-------------|
+| L2-CLI-001 | L1-007 | Decode capability SHALL accept one input path. |
+| L2-CLI-002 | L1-007 | Decode capability SHALL accept an optional output path. |
+| L2-CLI-004 | L1-011 | The CLI SHALL accept a configurable logging level. |
+| L2-CLI-005 | L1-020 | Successful commands SHALL return exit code zero; usage or runtime failures SHALL return non-zero. |
+| L2-CLI-006 | L1-020 | Human-readable diagnostics SHALL be written to stderr rather than mixed into CSV stdout. |
+| L2-CLI-008 | L1-007 | The CLI SHALL provide message-counting capability without requiring CSV output. |
+| L2-CLI-009 | L1-007 | The CLI SHALL provide raw and record-aware diagnostic dump capability. |
+| L2-CLI-010 | L1-007 | The CLI SHALL accept timestamp-format selection, TOML configuration, and shared exclusion filters. |
+
+### L2-CONF - Cross-Implementation Conformance
+
+| ID | Parent | Requirement |
+|----|--------|-------------|
+| L2-CONF-001 | L1-019 | Shared conformance inputs SHALL be stored as reviewable hexadecimal text rather than committed `.mie` binary recordings. |
+| L2-CONF-002 | L1-019 | The conformance runner SHALL invoke both maintained CLIs and require byte-identical CSV output. |
+| L2-CONF-003 | L1-019 | Each implementation's output SHALL match the checked-in CSV oracle. |
+| L2-CONF-004 | L1-019 | Expected CSV oracles SHALL be updated only after both implementations agree. |
+| L2-CONF-005 | L1-019 | CI SHALL run the conformance suite on every push and pull request. |
 
 ---
 
-## L3 — Implementation-Level Requirements
+## Python Implementation Requirements
 
-L3 requirements specify implementation details and constraints.
-
-| ID | Parent | Requirement |
-|----|--------|------------|
-| L3-001 | L1-014 | The project SHALL use Poetry for dependency management and packaging. |
-| L3-002 | L1-014 | The project SHALL target Python 3.10+. |
-| L3-003 | L1-014 | All public functions and classes SHALL have Google-style docstrings. |
-| L3-004 | L1-014 | All public functions SHALL have complete type annotations. |
-| L3-005 | L1-014 | The project SHALL include unit tests for all decode functions. |
-| L3-006 | L1-014 | The project SHALL include end-to-end tests validating CSV output against known-good vendor data. |
-| L3-007 | L1-014 | The project SHALL include tests for all custom exceptions. |
-| L3-008 | L1-014 | Test fixtures SHALL use binary data derived from empirically validated recordings. |
-| L3-009 | L1-010 | pandas SHALL be the only external runtime dependency. |
-| L3-010 | L2-DEC-005 | All binary reads SHALL use struct.unpack_from with little-endian format. |
-| L3-011 | L2-MDL-001 | All model dataclasses SHALL use __slots__ to minimize per-instance memory. |
-| L3-012 | L2-RDR-001 | The reader SHALL not load the entire file into memory; mmap provides virtual memory paging. |
-| L3-013 | L1-007 | The __main__.py module SHALL contain only a delegation call to cli.main(). |
-| L3-014 | L1-011 | The logger module SHALL define LOGGER_NAME, LOG_FORMAT, and LOG_DATE_FORMAT as module-level constants. |
-| L3-015 | L2-WRT-001 | CSV_COLUMNS SHALL be the single source of truth for column ordering and descriptions. |
-| L3-016 | L2-EXC-003 | MieInvalidTypeWordError SHALL include the raw Type Word value and decoded word count. |
-| L3-017 | L2-EXC-003 | MieRecordTruncatedError SHALL include expected and available byte counts. |
-| L3-018 | L2-EXC-004 | MieWriterError SHALL include the output destination name. |
-
-### L2-SYN: sync.py — Record Synchronization
+These requirements apply only to `python/`.
 
 | ID | Parent | Requirement |
-|----|--------|------------|
-| L2-SYN-001 | L1-008 | validate_record() SHALL check Type Word message type against VALID_MESSAGE_TYPES. |
-| L2-SYN-002 | L1-008 | validate_record() SHALL check word count is between minimum and 63. |
-| L2-SYN-003 | L1-008 | validate_record() SHALL verify the record does not extend past EOF. |
-| L2-SYN-004 | L1-008 | validate_record() SHALL check IRIG timestamp field ranges when format is known. |
-| L2-SYN-005 | L1-008 | validate_record() SHALL confirm the next record's Type Word is also valid (look-ahead). |
-| L2-SYN-006 | L1-008 | find_first_record() SHALL scan from offset 0 in 2-byte steps to find the first valid record. |
-| L2-SYN-007 | L1-008 | find_first_record() SHALL cap the scan at MAX_SCAN_BYTES (64 KB). |
-| L2-SYN-008 | L1-008 | find_first_record() SHALL return None if no valid record is found. |
-| L2-SYN-009 | L1-008 | recover_sync() SHALL scan forward from the invalid offset in 2-byte steps. |
-| L2-SYN-010 | L1-008 | recover_sync() SHALL cap the scan at MAX_SCAN_BYTES from the current offset. |
-| L2-SYN-011 | L1-008 | recover_sync() SHALL return None if no valid record is found within the scan window. |
-| L2-SYN-012 | L1-011 | find_first_record() SHALL log the header size at INFO level when a header is detected. |
-| L2-SYN-013 | L1-011 | recover_sync() SHALL log sync loss at WARNING and recovery at INFO. |
+|----|--------|-------------|
+| PY-001 | L1-001 | The Python implementation SHALL support Python `>=3.10,<3.15`. |
+| PY-002 | L1-001 | Python dependencies and packaging SHALL be managed by Poetry with a committed `python/poetry.lock`. |
+| PY-003 | L1-001 | The Python package SHALL use the `src/mie_decoder` layout and expose the `mie-decoder` console script. |
+| PY-004 | L2-WRT-001 | Python CSV generation SHALL use pandas and SHALL explicitly request LF line endings. |
+| PY-005 | L2-CFG-001 | Python TOML parsing SHALL use `tomllib` on Python 3.11+ and `tomli` on Python 3.10. |
+| PY-006 | L1-020 | Python errors SHALL inherit from `MieDecoderError`, with file and record subclasses retaining typed details. |
+| PY-007 | L1-001 | Python public APIs SHALL use type annotations and documented public interfaces. |
+| PY-008 | L1-019 | The Python test suite SHALL run under Python 3.10, 3.11, 3.12, 3.13, and 3.14 in CI. |
+| PY-009 | L1-001 | The Python reader SHALL use read-only memory-mapped file access. |
+| PY-010 | L2-CLI-008 | Python message counting SHALL remain available through `decode --count`. |
+| PY-011 | L2-ERR-011 | Python inline error output SHALL remain available through `--error-mode inline`. |
 
-### L2-ERR: Error Record Handling
+---
 
-| ID | Parent | Requirement |
-|----|--------|------------|
-| L2-ERR-001 | L1-001 | The reader SHALL detect error records by testing Type Word bit 14. |
-| L2-ERR-002 | L1-001 | The reader SHALL extract the Error Word as the last word of errored records. |
-| L2-ERR-003 | L1-001 | The reader SHALL validate Error Word codes against KNOWN_DDC_ERROR_CODES. |
-| L2-ERR-004 | L1-012 | The reader SHALL raise MieUnknownErrorCodeError for unrecognized error codes in strict mode. |
-| L2-ERR-005 | L1-001 | The reader SHALL classify SPURIOUS_DATA (0x20) following an error record as continuation (0x2000). |
-| L2-ERR-006 | L1-001 | The reader SHALL classify standalone SPURIOUS_DATA as standalone (0x2001). |
-| L2-ERR-007 | L1-002 | The writer SHALL include ERROR and ERROR_CODE columns in CSV output. |
-| L2-ERR-008 | L1-002 | write_csv_split() SHALL write normal messages to the main file and errored/spurious to a separate file. |
-| L2-ERR-009 | L1-007 | The CLI SHALL accept --error-mode with values "separate" (default) and "inline". |
-| L2-ERR-010 | L1-002 | The ERROR column SHALL contain "ERROR" for errored records, "SPURIOUS" for spurious data, and empty for normal. |
+## Rust Implementation Requirements
 
-### L2-CFG: config.py — Configuration Management
+These requirements apply only to the root Rust crate.
 
 | ID | Parent | Requirement |
-|----|--------|------------|
-| L2-CFG-001 | L1-007 | DecoderConfig SHALL support log_level, time_format, strict, error_mode, filters, and output_format fields. |
-| L2-CFG-002 | L1-007 | load_config() SHALL parse TOML files using tomllib (3.11+) or tomli (3.10). |
-| L2-CFG-003 | L1-007 | with_overrides() SHALL merge CLI arguments on top of config file values. |
-| L2-CFG-004 | L1-007 | Filter CLI arguments SHALL merge with (not replace) config file filters. |
-| L2-CFG-005 | L1-007 | The CLI SHALL accept --config to specify a TOML configuration file. |
-| L2-CFG-006 | L1-007 | The CLI SHALL accept --exclude-types, --exclude-rts, --exclude-buses, --exclude-subaddresses. |
-| L2-CFG-007 | L1-007 | _parse_type_names() SHALL accept both enum names and hex codes (0x02). |
+|----|--------|-------------|
+| RS-001 | L1-001 | The Rust crate SHALL use edition 2024 with MSRV 1.85 or newer. |
+| RS-002 | L1-001 | The Rust crate SHALL keep `memmap2` as its only external runtime dependency unless an additional dependency is explicitly justified. |
+| RS-003 | L1-001 | The Rust reader SHALL use read-only memory-mapped file access. |
+| RS-004 | L2-WRT-001 | Rust CSV writing SHALL stream records directly to a `Write` implementation without collecting all messages or rows. |
+| RS-005 | L1-004 | Rust `DataWords` SHALL use a fixed-capacity inline buffer sized for the MIL-STD-1553 limit of 32 words. |
+| RS-006 | L1-020 | Rust fallible APIs SHALL return `Result<T, MieError>` and retain structured details for file, record, and writer failures. |
+| RS-007 | L1-001 | The Rust production build SHALL support static `x86_64-unknown-linux-musl` deployment for SLES 12. |
+| RS-008 | L2-CLI-008 | Rust message counting SHALL remain available through the `count` subcommand. |
+| RS-009 | L2-ERR-011 | Rust inline error output SHALL remain available through `--inline-errors`. |
+| RS-010 | L1-018 | Rust MAY additionally provide include filters without requiring equivalent Python CLI syntax. |
+| RS-011 | L1-019 | Rust CI SHALL enforce formatting, Clippy warnings-as-errors, all-target tests, and the configured line and region coverage floors. |
 
-### L2-FLT: filters.py — Message Filtering
+---
 
-| ID | Parent | Requirement |
-|----|--------|------------|
-| L2-FLT-001 | L1-007 | apply_filters() SHALL yield only messages not matching any exclusion criterion. |
-| L2-FLT-002 | L1-007 | FilterConfig.should_exclude() SHALL use OR logic across all filter lists. |
-| L2-FLT-003 | L1-007 | apply_filters() SHALL pass through all messages with zero overhead when no filters are active. |
-| L2-FLT-004 | L1-011 | apply_filters() SHALL log filter results (passed/excluded counts) at INFO level. |
+## Verification And Traceability
+
+### Shared Conformance Cases
+
+| Case | Primary Shared Requirements |
+|------|-----------------------------|
+| `basic-multi-record` | L1-001, L1-002, L1-004 through L1-006; L2-DEC-001, L2-DEC-002, L2-DEC-004, L2-DEC-008; L2-RDR-007 through L2-RDR-010; L2-MSG-002, L2-MSG-003; L2-WRT-001 through L2-WRT-004, L2-WRT-007, L2-WRT-011 through L2-WRT-013 |
+| `header-and-sync-recovery` | L1-015; L2-SYN-001 through L2-SYN-003, L2-SYN-005 through L2-SYN-007, L2-SYN-009, L2-SYN-014, L2-SYN-015; L2-RDR-015 |
+| `errors-inline` | L1-016; L2-ERR-001 through L2-ERR-003, L2-ERR-005, L2-ERR-007, L2-ERR-010, L2-ERR-011 |
+| `exclude-subaddress` | L1-018; L2-CFG-006; L2-FLT-001, L2-FLT-002; L2-CLI-010 |
+| `config-filter` | L1-017, L1-018; L2-CFG-001, L2-CFG-005, L2-CFG-006, L2-CFG-008; L2-FLT-001, L2-FLT-002 |
+
+### Implementation Evidence
+
+| Area | Python Evidence | Rust Evidence |
+|------|-----------------|---------------|
+| Binary decoding and models | `python/tests/test_decode.py`, `python/tests/test_models.py` | Unit tests in `src/decode.rs`, `src/models.rs` |
+| Reader, validation, and recovery | `python/tests/test_sync.py`, `python/tests/test_e2e.py` | Unit tests in `src/sync.rs`, `src/reader.rs`; `tests/integration.rs` |
+| Errors, filtering, and configuration | `python/tests/test_exceptions.py`, `python/tests/test_config.py` | Unit tests in `src/error.rs`, `src/filter.rs`, `src/config.rs`, `src/cli.rs` |
+| CSV behavior | `python/tests/test_e2e.py` | Unit tests in `src/writer.rs`; `tests/integration.rs` |
+| Cross-implementation contract | `tests/conformance/run.py` and checked-in fixtures/oracles | Same shared conformance suite |
+| Build and compatibility policy | `python/pyproject.toml`, `python/poetry.lock`, `.github/workflows/ci.yml` | `Cargo.toml`, `Cargo.lock`, `.cargo/config.toml`, `.github/workflows/ci.yml` |
+
+Requirements not mapped to a conformance case remain mandatory and are
+verified by implementation-specific tests, build metadata, or review. When a
+new behavior is intended to be shared, add or update a conformance case where
+practical.
+
+## Version 1 ID Reallocation
+
+Version 1 requirements that specified one implementation's technology are no
+longer shared requirements:
+
+| Version 1 ID | Version 2 Allocation |
+|--------------|----------------------|
+| `L1-009` memory-mapped I/O | `PY-009`, `RS-003` |
+| `L1-010` pandas CSV generation | `PY-004` |
+| `L1-012` Python exception hierarchy | `PY-006`; Rust error allocation is `RS-006` |
+| `L1-014` Python/Poetry project policy | `PY-001` through `PY-003`, `PY-007`, `PY-008` |
+| `L2-DEC-005` and `L3-010` Python `struct` usage | Shared little-endian behavior is `L2-DEC-008`; Python mechanism is verified by Python tests and review |
+| `L2-CFG-002` Python `tomllib`/`tomli` selection | `PY-005` |
+| `L2-WRT-005`, `L2-WRT-006`, and `L3-009` pandas/DataFrame design | `PY-004` |
+| `L2-CLI-003` Python `--count` syntax | `PY-010`; shared counting capability is `L2-CLI-008` |
+| `L2-ERR-009` Python `--error-mode` syntax | `PY-011`; Rust inline syntax is `RS-009` |
+| Remaining `L3-*` Python implementation details | `PY-*` requirements or implementation-specific tests and review |
+
+Any version 1 ID absent from the version 2 requirement tables is retired.

@@ -30,11 +30,6 @@ here so they don't get dropped.
 
 ### Documentation
 
-- **Comprehensive `docs/REQUIREMENTS.md` refresh.** Separate shared
-  behavioral requirements from Python- and Rust-specific implementation
-  traceability. The semantic requirements remain relevant to both
-  implementations, while tooling and module references need explicit
-  implementation ownership.
 - **Refresh `docs/diagrams/*.puml`.** Class, dataflow, and component
   diagrams currently describe the Python implementation. Add clearly labeled
   Python and Rust architecture diagrams rather than replacing one with the

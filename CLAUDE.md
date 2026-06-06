@@ -90,7 +90,8 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 
 - `docs/ARCHITECTURE.md` — module diagram, four-phase sync strategy, error pipeline, configuration hierarchy, error type, logging levels. Read this when changing the reader/sync code.
 - `docs/FIELDS.md` — complete binary field and CSV column reference (still accurate from the Python implementation).
-- `docs/REQUIREMENTS.md` — L1/L2/L3 requirements traceability.
+- `docs/REQUIREMENTS.md` — shared `L1`/`L2` requirements plus Python `PY-*`
+  and Rust `RS-*` implementation allocations.
 - `docs/ROADMAP.md` — versioned roadmap with explicit "do not drop" commitments (TOML config, CSV byte-compat, sync semantics).
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
 - `python/` — maintained Python package and CLI with its own source and tests.
