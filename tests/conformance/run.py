@@ -160,32 +160,40 @@ def prepare_rust_bin(args: argparse.Namespace) -> None:
 
 
 def prepare_python_bin(args: argparse.Namespace) -> None:
+    """Resolve the Python interpreter that will run the Python mie-decoder CLI.
+
+    Default to :data:`sys.executable`. When the runner is invoked under
+    ``poetry -C python run python ...`` (as it is in CI), the active
+    interpreter already has ``mie_decoder`` installed, so this avoids a
+    fragile ``poetry env info --executable`` subprocess that can resolve
+    to a different interpreter than the one Poetry installed packages
+    into. The interpreter is sanity-checked by importing ``mie_decoder``
+    so the runner fails fast with a clear error rather than emitting a
+    confusing ``No module named mie_decoder`` for every case.
+    """
     if args.python_bin:
         args.python_bin = args.python_bin.resolve()
     else:
-        if shutil.which("poetry") is None:
-            raise RuntimeError("poetry was not found; pass --python-bin")
-        result = subprocess.run(
-            ["poetry", "-C", "python", "env", "info", "--executable"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"failed to resolve Poetry environment:\n{result.stderr}")
-        executable = Path(result.stdout.strip())
-        args.python_bin = (
-            executable.resolve()
-            if executable.is_absolute()
-            else (ROOT / "python" / executable).resolve()
-        )
+        args.python_bin = Path(sys.executable).resolve()
 
     if not args.python_bin.exists():
         raise RuntimeError(f"Python interpreter was not found: {args.python_bin}")
+
+    probe = subprocess.run(
+        [str(args.python_bin), "-c", "import mie_decoder"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    if probe.returncode != 0:
+        raise RuntimeError(
+            f"mie_decoder is not importable from {args.python_bin}. "
+            "Either install the package into this interpreter (e.g. "
+            "`poetry -C python sync`) or pass --python-bin pointing at "
+            "an interpreter that has it.\n"
+            f"stderr:\n{probe.stderr}"
+        )
 
 
 def _errors_path(main_output: Path) -> Path:
