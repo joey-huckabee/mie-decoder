@@ -1,4 +1,4 @@
-# L1-023 unrecoverable mid-file sync loss fixture.
+# L1-EXIT-004 unrecoverable mid-file sync loss fixture.
 # Two valid RT15 SA11 R records, then 70 KB of 0xFF — the
 # recover_sync 64 KB scan window from offset 0x90 finds no valid
 # Type Word, so the iterator emits UnrecoverableSyncLoss.

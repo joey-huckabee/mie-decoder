@@ -1,4 +1,4 @@
-# L2-SYN-INV-001 fixture: valid record + record with type 0x02
+# L2-SYN-020 fixture: valid record + record with type 0x02
 # (BC->RT) and Cmd direction = Transmit (raw 0x7D7E). With
 # strict mode the second record SHALL raise a payload error and
 # the CLI SHALL exit with a non-zero exit code.

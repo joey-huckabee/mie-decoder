@@ -46,7 +46,7 @@ array of case objects. Each case object accepts the following fields:
 | `config` | string | no | Optional path to a shared TOML config applied to both implementations. |
 | `rust_args` | array of string | no | Additional CLI arguments appended to the Rust invocation only. |
 | `python_args` | array of string | no | Additional CLI arguments appended to the Python invocation only. |
-| `expected_exit` | integer | no | Expected exit code for both implementations. Defaults to `0`. Reserved for negative cases that intentionally exercise non-zero exit classes per `L1-021` through `L1-023` (e.g., a no-valid-records fixture asserting exit `2`). Runner support lands with Team Review Phase 6. |
+| `expected_exit` | integer | no | Expected exit code for both implementations. Defaults to `0`. Reserved for negative cases that intentionally exercise non-zero exit classes per `L1-EXIT-002` through `L1-EXIT-004` (e.g., a no-valid-records fixture asserting exit `2`). Runner support lands with Team Review Phase 6. |
 
 Unknown fields SHALL be rejected by the runner with a clear error so typos do
 not silently disable per-case behavior.

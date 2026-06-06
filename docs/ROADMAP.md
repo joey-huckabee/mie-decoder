@@ -26,7 +26,7 @@ fixtures, and vendor-compatible CSV behavior should remain aligned.
 
 ### IRIG 106 1553 decode support is out of scope for MIE Decoder
 
-See `docs/REQUIREMENTS.md` NR-001. MIE files use a DDC proprietary
+See `docs/L1-REQ.md` NR-001. MIE files use a DDC proprietary
 record format that is distinct from IRIG 106 Chapter 10 1553 packet
 formats. Adding IRIG 106 1553 decode is a new capability — separate
 requirements, design analysis, architecture review, and approval —
@@ -42,8 +42,8 @@ Items are numbered as they were raised in review.
 **Item 1 (DELTA units and Rust/Python divergence) is resolved** — landed
 the `Option<f64>`/`float | None` contract, error-record participation,
 non-monotonic-timestamp WARN, and the cross-impl `delta-tracking-irig`
-conformance fixture. See `L2-RDR-009a` through `L2-RDR-009d` in
-`docs/REQUIREMENTS.md` and the FIELDS.md DELTA section.
+conformance fixture. See `L2-RDR-016` through `L2-RDR-019` in
+`docs/L2-REQ.md` and the FIELDS.md DELTA section.
 
 **Items 2-8 below are open.** Effort estimates are person-day bands for
 a single engineer with full context. The Phase Sequencing block at the
@@ -72,14 +72,14 @@ because the input was junk." Operators who pipe
 `mie-decoder decode | downstream` get silent data loss.
 
 **Proposed contract.**
-- `L1-021`: No valid records → exit code **2**, no output file created.
-- `L1-022`: Recovered corruption (lenient mode, `recover_sync` succeeded
+- `L1-EXIT-002`: No valid records → exit code **2**, no output file created.
+- `L1-EXIT-003`: Recovered corruption (lenient mode, `recover_sync` succeeded
   ≥1 time) → exit code **0**, log INFO with recovery counter, CSV
   completes normally.
-- `L1-023`: Unrecoverable mid-file sync loss → exit code **3** by
+- `L1-EXIT-004`: Unrecoverable mid-file sync loss → exit code **3** by
   default. Optional `--allow-partial` flag downgrades to exit **0** with
   WARN; the partial output file is preserved.
-- `L1-024`: The decode command SHALL log a one-line summary on exit
+- `L1-EXIT-005`: The decode command SHALL log a one-line summary on exit
   naming the exit class (`complete`, `partial-recovered`,
   `partial-unrecoverable`, `no-records`).
 
@@ -148,7 +148,7 @@ cache; Windows: sharing violation).
   Naming: `<output>.mie-decoder.tmp.<pid>` so concurrent runs don't
   collide.
 - `L2-WRT-016`: On decode failure with default exit class (Item 2's
-  L1-023), the temp file SHALL be unlinked. With `--allow-partial`,
+  L1-EXIT-004), the temp file SHALL be unlinked. With `--allow-partial`,
   the temp file SHALL be renamed to the destination with a `.partial`
   suffix appended.
 - `L2-WRT-017`: Overwrite of an existing destination SHALL succeed;
@@ -203,11 +203,11 @@ confuse downstream parsers expecting fixed-width fields.
 - `L2-SYN-004` (revised): IRIG validation SHALL reject `hour ≥ 24`,
   `minute ≥ 60`, `second ≥ 60`, `day < 1 || day > 366`, and
   `microsecond > 999_999`.
-- `L2-SYN-004a`: When `freerun = true` (bit 15 of upper word), the
+- `L2-SYN-019`: When `freerun = true` (bit 15 of upper word), the
   day-of-year field SHALL be permitted to fall outside `[1, 366]`
   because the card's free-running oscillator is not calendar-locked.
   Hour/minute/second/microsecond constraints still apply.
-- `L2-DEC-002a`: `IrigTimestamp::format` SHALL emit exactly six
+- `L2-DEC-014`: `IrigTimestamp::format` SHALL emit exactly six
   microsecond digits regardless of the decoded value (overflow truncates
   to six digits and emits a WARN — this case should be unreachable
   given the validation above, but the formatter MUST NOT produce more
@@ -258,8 +258,8 @@ from valid data. This is the highest-trust-violation class of bug
 because validation is supposed to be the firewall against it.
 
 **Proposed contract.** Pin a structural-invariant table per message
-format. Format below; the actual table belongs in `docs/REQUIREMENTS.md`
-as a new L2-SYN-INV block referenced by L1-015.
+format. Format below; the actual table belongs in `docs/L2-REQ.md`
+as a new L2-SYN-020..025 block referenced by L1-SYN-001.
 
 | Format | Invariant | Strict | Lenient |
 |--------|-----------|--------|---------|
@@ -269,9 +269,9 @@ as a new L2-SYN-INV block referenced by L1-015.
 | Any with status | `Status.rt == Cmd.rt` | `PayloadError` | WARN+emit |
 | Type Word | `bit 15 == 0` | `UnknownTypeWord` | WARN+emit |
 
-- `L2-SYN-INV-001` through `L2-SYN-INV-005`: each invariant as a
+- `L2-SYN-020` through `L2-SYN-024`: each invariant as a
   separate ID so conformance can assert one at a time.
-- `L2-SYN-INV-006`: Failed invariants count toward the sync-loss
+- `L2-SYN-025`: Failed invariants count toward the sync-loss
   counter for Item 2's exit-class accounting.
 
 The status-RT-mismatch case is **real-bus noise** (RT responding under
@@ -336,7 +336,7 @@ into two PRs: (a) capacity + direction invariants (highest value);
 kind of bug — operator believes the filter is on, the filter is
 silently off.
 
-**Proposed contract.** A formal schema in `docs/REQUIREMENTS.md` (or
+**Proposed contract.** A formal schema in `docs/L2-REQ.md` (or
 referenced from there into a new `docs/CONFIG-SCHEMA.md`):
 
 | Key | Type | Range / Enum | Unknown handling |
@@ -392,10 +392,10 @@ symmetrically. **Effort: 3 days**, mostly test coverage.
 `delta-tracking-irig` from Item 1): `basic-multi-record`,
 `header-and-sync-recovery`, `errors-inline`, `exclude-subaddress`,
 `config-filter`, `delta-tracking-irig`. The traceability table at
-`docs/REQUIREMENTS.md` Shared Conformance Cases maps these to broad
+`docs/TRACE-MATRIX.md` (auto-generated from L1/L2/L3 + test markers) maps these to broad
 swathes of L1/L2 — over-claiming. Notable gaps:
 - No Standard-format timestamp fixture (despite L2-DEC-007).
-- No Bus B fixture (despite L1-006).
+- No Bus B fixture (despite L1-DEC-004).
 - No RT-to-RT fixture (one of 10 supported formats).
 - No mode code fixtures (broadcast or otherwise).
 - No separate-mode error output fixture (only inline).
@@ -466,20 +466,20 @@ streams. For a 10 GB recording, Python OOMs; Rust uses ~64 KB of
   would surface panics or unbounded scans.
 
 **Proposed contract.**
-- `L1-025`: The input file SHALL NOT be modified, truncated, or
+- `L1-EXIT-006`: The input file SHALL NOT be modified, truncated, or
   extended during decoding. Behavior under concurrent modification is
   implementation-defined and MAY cause termination.
-- `L1-026`: Sync recovery scanning SHALL be bounded — max one recovery
+- `L1-SYN-002`: Sync recovery scanning SHALL be bounded — max one recovery
   attempt per 64 KB of input, max total recovery scan distance per
   file equal to the file size (i.e., scans never re-traverse
   already-scanned bytes).
-- `L1-027`: For arbitrary input bytes within the size limits of
+- `L1-ROB-001`: For arbitrary input bytes within the size limits of
   `usize`, no implementation SHALL panic, segfault, or enter an
   unbounded loop. Failures SHALL surface as `MieError` variants.
-- `PY-012`: Python memory usage during decode SHALL be O(record_count)
+- `L3-PY-012`: Python memory usage during decode SHALL be O(record_count)
   until streaming output is implemented. Document this with a
   typical-file-size guideline (e.g., "10 M records ≈ 5 GB RSS").
-- `RS-012`: Rust memory usage during decode SHALL be O(1) in the
+- `L3-RS-012`: Rust memory usage during decode SHALL be O(1) in the
   number of records; constant overhead bounded by `BufWriter` capacity
   plus `delta_tracker` size.
 
@@ -487,9 +487,9 @@ streams. For a 10 GB recording, Python OOMs; Rust uses ~64 KB of
 - *Rust:* Mostly a documentation/test exercise. Add a `tests/fuzz.rs`
   (or use `cargo fuzz`) that feeds random byte sequences to
   `MieFileReader` and asserts no panic. The `recover_sync` cumulative
-  bound (L1-026) needs an added counter on `RecordIter` to prevent
+  bound (L1-SYN-002) needs an added counter on `RecordIter` to prevent
   pathological inputs from looping the full file repeatedly.
-- *Python:* Same fuzz harness via `hypothesis`. To make L1-027 actually
+- *Python:* Same fuzz harness via `hypothesis`. To make L1-ROB-001 actually
   hold, audit `decode.py` for places that could raise `IndexError`
   instead of `MiePayloadError` on malformed input — likely a few. The
   "Python streams CSV" change is a separate, larger refactor (track
@@ -514,7 +514,7 @@ Python streaming is a 3-5 day item that should wait until Items 2 and
 Recommended landing order, adopting the team's "first decisions" framing:
 
 **Phase 1 — Decisions and spec (1 PR, no behavior change).**
-- Update `docs/REQUIREMENTS.md` and `docs/FIELDS.md` for Items 2, 3,
+- Update the requirement docs (`docs/L1-REQ.md` / `docs/L2-REQ.md` / `docs/L3-REQ.md`) and `docs/FIELDS.md` for Items 2, 3,
   4, 6 contract language only.
 - Update `tests/conformance/manifest.json` schema to support
   `expected_exit`.
@@ -617,7 +617,7 @@ machinery already needs the terminal-Err signal.
 
 **Status:** **Open.** Not covered by the team review. Standalone item.
 
-`L1-008` / `L2-RDR-002` / `L2-RDR-003` all cover truncation of the
+`L1-DEC-005` / `L2-RDR-002` / `L2-RDR-003` all cover truncation of the
 *final* record. Nothing covers truncation of the *first* record after
 header skip. Today: in lenient mode `find_first_record` silently
 returns `None` → `NoValidRecords`; in strict mode no distinct error
@@ -677,16 +677,16 @@ match this behavior; the requirement just needs to catch up.
 ### Audit Item 5 — DELTA edge cases the spec doesn't address
 
 **Status:** **Resolved.** Landed as part of the Item 1 (DELTA) work
-on 2026-06-05. Both sub-items below are now in `docs/REQUIREMENTS.md`:
+on 2026-06-05. Both sub-items below are now in `docs/L2-REQ.md`:
 
 - Error-record participation: original audit said *pick one* — either
   "DELTA is 0.000000 for errored and spurious records" or "errored
   records participate in DELTA tracking." Resolved as **participation**
-  via `L2-RDR-009a`. Errored records track per RT/MSG; SPURIOUS_DATA
-  has no key so emits empty (`L2-RDR-009c`).
+  via `L2-RDR-016`. Errored records track per RT/MSG; SPURIOUS_DATA
+  has no key so emits empty (`L2-RDR-018`).
 - Negative DELTA from out-of-order timestamps: original audit said
   this is silently emitted as `-N.NNNNNN`. Resolved as **empty CSV
-  cell + one-WARN-per-key** via `L2-RDR-009b`.
+  cell + one-WARN-per-key** via `L2-RDR-017`.
 
 Both are exercised in the `delta-tracking-irig` conformance fixture.
 Captured here for history.
@@ -763,7 +763,7 @@ Five small items surfaced during the audit. Status tagged per item.
 - **Concurrent file modification under mmap** (`src/reader.rs:82`,
   Python `mmap.ACCESS_READ`): undefined on POSIX if truncated
   mid-decode. **Status: Open**, superseded in coverage by Team Review
-  Item 8 (`L1-025`); track there.
+  Item 8 (`L1-EXIT-006`); track there.
 
 - **`file_offset` is not exposed in any output** — it's in `MieMessage`
   per `L2-DEC-010` but not surfaced in CSV or `dump`. **Status: Open.**
@@ -774,14 +774,14 @@ Five small items surfaced during the audit. Status tagged per item.
 
 - **L2-CLI-005 exit codes are not class-differentiated**: currently all
   failure paths use exit 1 or 2 with no per-class distinction.
-  **Status: Open**, superseded by Team Review Item 2 (`L1-021` through
-  `L1-024`) which adds exit 2 and 3 with explicit semantics; track
+  **Status: Open**, superseded by Team Review Item 2 (`L1-EXIT-002` through
+  `L1-EXIT-005`) which adds exit 2 and 3 with explicit semantics; track
   there.
 
 - **`L2-CFG-008` ambiguity around per-implementation config keys**:
   "key names remain supported" — but Rust accepts `include_*` keys
   that Python doesn't. If `include_*` is intentionally Rust-only
-  (`RS-010`), the shared schema requirement should explicitly say
+  (`L3-RS-010`), the shared schema requirement should explicitly say
   "shared keys remain supported; implementations MAY add additional
   namespaced keys." **Status: Open**, partially overlaps with Team
   Review Item 6 (`L2-CFG-009` unknown-key WARN) — but the
@@ -790,7 +790,7 @@ Five small items surfaced during the audit. Status tagged per item.
 
 - **`L2-MSG-001` enumerates "10 supported transaction formats" but the
   doc never lists them**. **Status: Open.** Add a one-line list to
-  REQUIREMENTS.md, or reference
+  the requirement docs (L1-REQ / L2-REQ / L3-REQ), or reference
   `src/decode.rs::classify_message_format` as authoritative. Either
   way the enum membership becomes part of the spec rather than buried
   in code.
@@ -801,7 +801,7 @@ Five small items surfaced during the audit. Status tagged per item.
 
 > Don't try to land all of this at once. Two suggested PRs:
 >
-> 1. **Spec-only PR** updating REQUIREMENTS.md to capture items 1, 2,
+> 1. **Spec-only PR** updating the requirement docs to capture items 1, 2,
 >    3, 4, 5, 7 — these are all "code already does this, lock it in."
 >    Low risk, high value.
 > 2. **Behavior PR** for the negative-DELTA WARN diagnostic and the
@@ -810,7 +810,7 @@ Five small items surfaced during the audit. Status tagged per item.
 
 **Status of the original recommendation:**
 - The behavior PR's first piece (negative-DELTA WARN) **landed** as
-  part of the DELTA work (`L2-RDR-009b`).
+  part of the DELTA work (`L2-RDR-017`).
 - The behavior PR's second piece (lenient-mode terminal-Err) is now
   rolled into Team Review Item 2 / Phase 3.
 - The spec-only PR was never drafted. Audit Items 2, 3, 4, 6, 7, 8,
@@ -835,7 +835,7 @@ adds no behavior changes:
 | Audit Item 8 | New requirement rejecting homogeneous-payload pathological inputs |
 | Audit Item 9 (sub) | List the 10 transaction formats in `L2-MSG-001` |
 | Audit Item 9 (sub) | Clarify `file_offset` as internal-only in `L2-DEC-010` |
-| Audit Item 9 (sub) | Clarify `L2-CFG-008` per-impl key namespacing vs `RS-010` |
+| Audit Item 9 (sub) | Clarify `L2-CFG-008` per-impl key namespacing vs `L3-RS-010` |
 
 This consolidated PR would slot into **Team Review Phase 1** (spec
 PR, 1 day) — landing both the team review's spec changes (Items 2, 3,
@@ -854,7 +854,7 @@ coherent doc set without an explicit plan.
 Today's documentation is accurate but assumes the reader is already
 the decoder author. `docs/FIELDS.md` lists fields but doesn't walk
 through a worked decode. `docs/ARCHITECTURE.md` has ASCII diagrams
-that are useful but partial. `docs/REQUIREMENTS.md` is a contract
+that are useful but partial. `docs/L1-REQ.md`, `docs/L2-REQ.md`, and `docs/L3-REQ.md` are the contract
 document, not a tutorial. `docs/diagrams/*.puml` describes only the
 Python implementation. New engineers, downstream integrators, and
 flight-test users who want to understand "what is this tool doing
@@ -971,7 +971,7 @@ text rendering).
 | D27 | Class diagram (Rust): MieMessage and related structs | PUML class | `docs/diagrams/`, `MAINTAINER-GUIDE.md` |
 | D28 | Class diagram (Python): MieMessage and related dataclasses | PUML class | `docs/diagrams/`, `MAINTAINER-GUIDE.md` |
 | D29 | Conformance pipeline: hex fixture → both CLIs → byte-compare → oracle | PUML sequence | `MAINTAINER-GUIDE.md` |
-| D30 | DELTA computation flow (per `L2-RDR-009*`): timestamp basis check → key lookup → monotonicity check → tracker update | ASCII | `MIE-FORMAT.md` |
+| D30 | DELTA computation flow (per `L2-RDR-016 through L2-RDR-019`): timestamp basis check → key lookup → monotonicity check → tracker update | ASCII | `MIE-FORMAT.md` |
 
 ### Tables Required
 
@@ -989,13 +989,13 @@ they drift.
 | T6 | Empty-column rationale (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`) | `docs/FIELDS.md` + ROADMAP commitments | `VENDOR-CSV-DIFFS.md` |
 | T7 | Config TOML keys: key / type / range / unknown handling / CLI equivalent | `src/config.rs`, `python/.../config.py` | `CONFIG-REFERENCE.md` |
 | T8 | CLI flags: flag / argument type / per-subcommand applicability / config equivalent | `src/cli.rs`, `python/.../cli.py` | `CONFIG-REFERENCE.md` |
-| T9 | Exit codes (after Team Review Item 2 lands): code / class / meaning / when to expect | `L1-021` through `L1-024` | `ERROR-CATALOG.md`, `USER-GUIDE.md` |
+| T9 | Exit codes (after Team Review Item 2 lands): code / class / meaning / when to expect | `L1-EXIT-002` through `L1-EXIT-005` | `ERROR-CATALOG.md`, `USER-GUIDE.md` |
 | T10 | `MieError` variants (Rust) and exception classes (Python), keyed by `MieErrorKind` discriminant | `src/error.rs`, `python/.../exceptions.py` | `ERROR-CATALOG.md` |
 | T11 | Logging levels (DEBUG/INFO/WARNING/ERROR/CRITICAL) with what each produces | `src/log.rs` + `python/.../logger.py` + `docs/ARCHITECTURE.md` | `USER-GUIDE.md` |
 | T12 | Validation heuristics (five checks + look-ahead) with order, cost, and what each rejects | `src/sync.rs` | `MAINTAINER-GUIDE.md` |
-| T13 | Conformance fixture catalog: name / input / expected / args / requirements covered | `tests/conformance/manifest.json` + `docs/REQUIREMENTS.md` traceability table | `MAINTAINER-GUIDE.md` |
-| T14 | Cross-impl divergence registry: documented behaviors that differ between Rust and Python (e.g., Rust include filters per `RS-010`) | `docs/REQUIREMENTS.md` PY-* / RS-* tables | `MAINTAINER-GUIDE.md` |
-| T15 | DELTA contract decision matrix: timestamp basis × record type → DELTA value (per `L2-RDR-009*`) | `docs/REQUIREMENTS.md` L2-RDR-009a-d | `MIE-FORMAT.md` |
+| T13 | Conformance fixture catalog: name / input / expected / args / requirements covered | `tests/conformance/manifest.json` + `docs/TRACE-MATRIX.md` | `MAINTAINER-GUIDE.md` |
+| T14 | Cross-impl divergence registry: documented behaviors that differ between Rust and Python (e.g., Rust include filters per `L3-RS-010`) | `docs/L3-REQ.md` (L3-PY-* and L3-RS-* sections) | `MAINTAINER-GUIDE.md` |
+| T15 | DELTA contract decision matrix: timestamp basis × record type → DELTA value (per `L2-RDR-016 through L2-RDR-019`) | `docs/L2-REQ.md` (L2-RDR-016 through L2-RDR-019) | `MIE-FORMAT.md` |
 
 ### Worked Examples Required
 
@@ -1015,7 +1015,7 @@ line-by-line decode commentary.
 | E7 | Mode code with data, mode code without data | Mode-code-specific wire layouts |
 | E8 | File with proprietary header (e.g., DDC equipment-name bytes) | Header detection, scan window, find_first_record |
 | E9 | File with mid-file corruption | Sync recovery, recovery counter |
-| E10 | DELTA computation across normal → errored → SPURIOUS → normal sequence | The full L2-RDR-009* matrix in action |
+| E10 | DELTA computation across normal → errored → SPURIOUS → normal sequence | The full L2-RDR-016 through L2-RDR-019 matrix in action |
 | E11 | Filter-by-subaddress with both CLI flag and TOML config form | Config precedence, CLI/config equivalence |
 | E12 | Separate vs inline error mode on the same input | Output file naming, where each row lands |
 
@@ -1023,7 +1023,7 @@ line-by-line decode commentary.
 
 This initiative does NOT replace existing docs. It extends them:
 
-- `docs/REQUIREMENTS.md` remains the normative contract. New docs link
+- The requirement docs (`docs/L1-REQ.md`, `docs/L2-REQ.md`, `docs/L3-REQ.md`) remain the normative contract. New docs link
   back to specific requirement IDs.
 - `docs/FIELDS.md` is partially absorbed into `MIE-FORMAT.md`. The
   absorption is one-way: FIELDS.md content moves into MIE-FORMAT.md
@@ -1102,7 +1102,7 @@ The initiative is complete when:
    invocation is run against the documented input — verified by
    either adding the example as a conformance fixture or by a
    one-time manual run with output captured into the doc.
-5. `docs/REQUIREMENTS.md` requirement IDs are linked from every doc
+5. L1/L2/L3 requirement IDs are linked from every doc
    that mentions them (not just stated as text).
 6. The existing "Refresh `docs/diagrams/*.puml`" backlog item below
    is marked resolved.
@@ -1183,8 +1183,8 @@ here so they don't get dropped.
   across a sample set with cross-references against vendor CSV.
 - **Standard-timestamp tick calibration.** The Standard format is a
   free-running counter; the tick rate is card-dependent and not encoded
-  in the file. The current shared contract (see L2-RDR-009d in
-  `docs/REQUIREMENTS.md`) emits an empty `DELTA` for every
+  in the file. The current shared contract (see L2-RDR-019 in
+  `docs/L2-REQ.md`) emits an empty `DELTA` for every
   Standard-timestamp record because raw ticks cannot be truthfully
   represented as seconds. The follow-up feature here is a
   configuration value (TMATS field or CLI flag, e.g.
@@ -1239,7 +1239,7 @@ here so they don't get dropped.
 ### Diagnostics
 
 - **~~Negative DELTA reporting.~~** *Resolved.* The shared contract
-  (L2-RDR-009b in `docs/REQUIREMENTS.md`) now emits an empty `DELTA`
+  (L2-RDR-017 in `docs/L2-REQ.md`) now emits an empty `DELTA`
   on non-monotonic timestamps and a WARN gated to one line per RT/MSG
   key per recording.
 - **Strict-mode error classification for IRIG-range and look-ahead

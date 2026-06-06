@@ -254,7 +254,10 @@ config/
 docs/
 ├── ARCHITECTURE.md  Module diagram, sync strategy, data flow
 ├── FIELDS.md        Complete binary field + CSV column reference
-├── REQUIREMENTS.md  Requirements traceability
+├── L1-REQ.md        Level 1 SHALL statements (system requirements)
+├── L2-REQ.md        Level 2 architectural derivations
+├── L3-REQ.md        Level 3 implementation obligations (incl. PY/RS)
+├── TRACE-MATRIX.md  Auto-generated trace matrix (L1 -> L2 -> L3 -> tests)
 ├── ROADMAP.md       Versioned roadmap
 └── diagrams/        PlantUML sources
 

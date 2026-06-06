@@ -1,5 +1,5 @@
 # Single record with Bus B (bit 7 of Type Word set). Locks
-# L1-006 and L2-MSG-002 — the BUS column SHALL render 'B'.
+# L1-DEC-004 and L2-MSG-002 — the BUS column SHALL render 'B'.
 # Two records so look-ahead at record 1 succeeds.
 
 82240F1826DB21F67E79000400000000

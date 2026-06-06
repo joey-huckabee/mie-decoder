@@ -1,4 +1,4 @@
-# L2-SYN-INV-004 fixture: valid baseline + RT-to-RT record
+# L2-SYN-023 fixture: valid baseline + RT-to-RT record
 # where Cmd2 direction = Transmit (raw 0x2D43). The bus
 # protocol requires Cmd2 (the receiving RT's command) to have
 # direction = Receive. Strict mode SHALL reject; expected_exit=1.

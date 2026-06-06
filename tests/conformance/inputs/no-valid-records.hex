@@ -1,4 +1,4 @@
-# L1-021 no-valid-records fixture: 1 KB of 0xFF.
+# L1-EXIT-002 no-valid-records fixture: 1 KB of 0xFF.
 
 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF

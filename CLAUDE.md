@@ -90,8 +90,10 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 
 - `docs/ARCHITECTURE.md` — module diagram, four-phase sync strategy, error pipeline, configuration hierarchy, error type, logging levels. Read this when changing the reader/sync code.
 - `docs/FIELDS.md` — complete binary field and CSV column reference (still accurate from the Python implementation).
-- `docs/REQUIREMENTS.md` — shared `L1`/`L2` requirements plus Python `PY-*`
-  and Rust `RS-*` implementation allocations.
+- `docs/L1-REQ.md` — Level 1 SHALL statements (24 system requirements in 12 categories + NR-001 out-of-scope).
+- `docs/L2-REQ.md` — Level 2 architectural derivations (102 requirements, each with a single L1 parent).
+- `docs/L3-REQ.md` — Level 3 implementation obligations (26 requirements: 2 cross-impl L3-WRT-*, 12 L3-PY-*, 12 L3-RS-*).
+- `docs/TRACE-MATRIX.md` — auto-generated trace matrix produced by `scripts/build-trace-matrix.py`. Forward trace from L1 through L2 and L3 to test artifacts (`@pytest.mark.requirement` markers in `python/tests/` and `/// Requirements:` doc-comments above Rust `#[test]` items). Treat as the single source of truth for live status; the source docs hold spec content only.
 - `docs/ROADMAP.md` — versioned roadmap with explicit "do not drop" commitments (TOML config, CSV byte-compat, sync semantics).
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
 - `python/` — maintained Python package and CLI with its own source and tests.
@@ -113,3 +115,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - **Both implementations are maintained.** Keep Rust-specific design decisions
   in the Rust crate and Python-specific design decisions in `python/`; align
   shared format semantics and vendor-compatible CSV behavior.
+
+## Git conventions
+
+Do **not** add `Co-Authored-By: Claude ...` trailers to commit messages on this repo, even if the harness's default instructions suggest it. Commit messages are the human-authored record of intent; tool attribution belongs in tool logs, not history. This overrides the default trailer behavior.

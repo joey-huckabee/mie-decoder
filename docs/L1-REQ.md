@@ -1,0 +1,316 @@
+# MIE-Decoder — Level 1 Requirements
+
+## Purpose
+
+This document establishes the Level 1 (L1) SHALL-statement requirements for MIE-Decoder: maintained Rust and Python libraries plus CLIs that decode proprietary binary recording files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI cards into CSV output that is column-compatible with DDC's own recording software.
+
+L1 requirements define **what** the product must do at the highest level of abstraction. They are the root of the requirements tree; L2 requirements decompose each L1 into architectural decisions, and L3 requirements decompose each L2 into implementation-level obligations. All three levels are traced through `docs/TRACE-MATRIX.md`.
+
+## Scope
+
+This document covers the active two-implementation release (Rust v1.0.0 at the repository root, Python v1.1.0 under `python/`). Items explicitly out of scope are recorded in the **Non-Requirements** section below. Items deferred to future releases are recorded in `docs/ROADMAP.md` rather than in this document.
+
+## Conventions
+
+### Requirement identifier format
+
+Each L1 requirement is assigned a stable identifier of the form `L1-<CATEGORY>-<NNN>`, where `<CATEGORY>` is a code drawn from the table below and `<NNN>` is a zero-padded sequence number within that category. Identifiers are permanent: if a requirement is retired, its identifier is retired with it and never reused.
+
+L2 and L3 requirements derived from an L1 use `L2-<CATEGORY>-<NNN>` and `L3-<CATEGORY>-<NNN>` respectively, with parent links recorded in the trace matrix.
+
+Non-requirements (explicit out-of-scope items) use the prefix `NR-<NNN>` and are listed in the **Non-Requirements** section.
+
+### SHALL language
+
+Every requirement in this document uses the verb SHALL to express a mandatory obligation, per DO-178C and MIL-STD-498 conventions. SHOULD, MAY, and WILL are reserved for L2/L3 derivations where they carry their conventional meanings.
+
+### Requirement metadata
+
+Each requirement carries the following fields:
+
+- **Statement** — the SHALL obligation itself
+- **Rationale** — the reason the requirement exists, for the benefit of future maintainers
+- **Verification Method** — how compliance is demonstrated, drawn from the DO-178 vocabulary: Test (T), Analysis (A), Inspection (I), Demonstration (D). Multiple methods may apply to one requirement.
+
+**Status and verification artifacts** are tracked in [`docs/TRACE-MATRIX.md`](TRACE-MATRIX.md) — regenerated from `@pytest.mark.requirement` markers in `python/tests/`, the `/// Requirements:` doc-comment tags above Rust `#[test]` items, and the parent links in this file by `scripts/build-trace-matrix.py`. The matrix is the single source of truth for live status; this file, `L2-REQ.md`, and `L3-REQ.md` carry only the spec content above.
+
+### Verification method vocabulary
+
+- **Test (T)**: Executable verification by running code or the system and observing outcomes against expected behavior. Implemented as pytest test functions tagged with `@pytest.mark.requirement()` markers and Rust test functions tagged with `/// Requirements:` doc-comments referencing the requirement ID, plus the cross-implementation conformance suite under `tests/conformance/`.
+- **Analysis (A)**: Logical or mathematical evaluation, including static analysis, bounded-loop proofs, and model arguments. Implemented as analysis notes in `docs/analysis/` (forthcoming) or inline in `docs/ARCHITECTURE.md`.
+- **Inspection (I)**: Visual examination of code, documents, or configuration. Implemented as review records or as direct citation in the trace matrix.
+- **Demonstration (D)**: Operational observation of the running system by a human operator. Implemented as procedure documents in `docs/procedures/` (forthcoming).
+
+## Table of categories
+
+| Code     | Title                                       | L1 Count |
+|----------|---------------------------------------------|----------|
+| `DEC`    | Binary decoding                             | 5        |
+| `OUT`    | CSV output and output destination integrity | 2        |
+| `DLT`    | DELTA inter-arrival tracking                | 1        |
+| `CLI`    | CLI capability surface                      | 2        |
+| `LOG`    | Diagnostic logging                          | 1        |
+| `MODE`   | Strict and lenient handling                 | 1        |
+| `SYN`    | Synchronization and sync recovery           | 2        |
+| `ERR`    | DDC error records and SPURIOUS_DATA         | 1        |
+| `CFG`    | Configuration                               | 1        |
+| `CONF`   | Cross-implementation conformance            | 1        |
+| `EXIT`   | Exit-code semantics and operational contract| 6        |
+| `ROB`    | Robustness against arbitrary input          | 1        |
+| **Total**|                                             | **24**   |
+
+Out-of-scope items are listed separately under **Non-Requirements** (1 item).
+
+---
+
+## L1-DEC: Binary decoding
+
+### L1-DEC-001
+
+**Statement**: Each implementation SHALL decode DDC MIE binary recording files containing MIL-STD-1553 bus-monitor captures.
+
+**Rationale**: Decoding MIE recordings is the core purpose of the product. The MIE format is proprietary to DDC and is distinct from IRIG 106 Chapter 10 packetized formats (see NR-001). Both implementations must agree on the format interpretation; shared behavior is verified by the cross-implementation conformance suite.
+
+**Verification Method**: Test (T)
+
+### L1-DEC-002
+
+**Statement**: Each implementation SHALL decode IRIG timestamps with microsecond resolution and SHALL support Standard free-running timestamps.
+
+**Rationale**: Real flight-test recordings overwhelmingly use IRIG timestamps; some bench and replay captures use the Standard 32-bit free-running counter format. The decoder must auto-detect the format on the first valid record of each file and apply the chosen format consistently for the remainder of the decode invocation.
+
+**Verification Method**: Test (T)
+
+### L1-DEC-003
+
+**Statement**: Each implementation SHALL correctly decode all supported MIL-STD-1553 message formats and preserve bus wire order.
+
+**Rationale**: The CSV output is used to reconstruct the on-bus sequence of transactions for replay, analysis, and validation against the bus controller's intended schedule. The supported formats are enumerated in L2-MSG-001.
+
+**Verification Method**: Test (T)
+
+### L1-DEC-004
+
+**Statement**: Each implementation SHALL support Bus A and Bus B recordings.
+
+**Rationale**: MIL-STD-1553 is a dual-redundant bus. Both buses are equally valid carriers of transactions; the recording card reports which one carried each transaction via the Type Word's bus bit.
+
+**Verification Method**: Test (T)
+
+### L1-DEC-005
+
+**Statement**: Each implementation SHALL handle truncated final records without crashing.
+
+**Rationale**: Recordings are often interrupted by operator action, power loss, or storage exhaustion. The last record may be truncated mid-word. The decoder must terminate cleanly in lenient mode and surface a structured error in strict mode rather than panic or segfault.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-OUT: CSV output and output destination integrity
+
+### L1-OUT-001
+
+**Statement**: Each implementation SHALL produce CSV output that is column-name and column-order compatible with DDC's vendor recording software, per the layout defined in `docs/FIELDS.md`.
+
+**Rationale**: Byte-exact compatibility with the DDC vendor CSV enables `diff`-based validation against vendor output and allows the decoder to drop into downstream analysis pipelines that already consume the DDC layout. Vendor-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`) are preserved as a matter of layout fidelity even when their cells are empty.
+
+**Verification Method**: Test (T)
+
+### L1-OUT-002
+
+**Statement**: Each implementation SHALL preserve output destination integrity. The output file SHALL be produced via an atomic write strategy, SHALL refuse to write to the input path, and SHALL clean up partial output on failure unless the operator explicitly requested partial preservation.
+
+**Rationale**: A decode invocation that crashes or is killed mid-stream must not leave the destination half-written and indistinguishable from a clean result. A decode invocation pointed at its own input file would corrupt the source data; this must be detected and refused before any write occurs. Together these constraints make the decoder safe to run in batch and pipeline contexts.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-DLT: DELTA inter-arrival tracking
+
+### L1-DLT-001
+
+**Statement**: Each implementation SHALL compute per-RT-and-MSG inter-arrival time (`DELTA`) in seconds when the source timestamp has a known microsecond basis. When no microsecond basis is available, `DELTA` SHALL be empty.
+
+**Rationale**: Analysts use `DELTA` to detect bus-scheduling anomalies and missed schedule slots. The semantics of "empty" matter as much as the semantics of "populated": a number with no meaningful units is more dangerous than no number at all. Standard free-running timestamps have no calibrated tick rate and therefore must surface as empty rather than as a misleading floating-point value.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-CLI: CLI capability surface
+
+### L1-CLI-001
+
+**Statement**: Each implementation SHALL provide CLI capabilities for decoding, message counting, configuration, filtering, timestamp-format selection, logging-level control, and diagnostic dump output. CLI syntax MAY differ between implementations.
+
+**Rationale**: Operators use both implementations interchangeably depending on platform (Rust for static-musl SLES 12 deployments, Python for cross-platform development and analysis). The capabilities they need must be available in both — the exact subcommand or flag spelling is allowed to vary so each CLI can follow idiomatic conventions for its language ecosystem.
+
+**Verification Method**: Test (T), Inspection (I)
+
+### L1-CLI-002
+
+**Statement**: Each implementation SHALL support message exclusion filtering by transaction type, RT address, bus, and subaddress.
+
+**Rationale**: Recordings often contain millions of records; exclusion filters allow analysts to narrow output to the transactions relevant to a specific investigation without re-decoding. Filter axes match the four most-discriminating fields in the MIL-STD-1553 transaction header.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-LOG: Diagnostic logging
+
+### L1-LOG-001
+
+**Statement**: Each implementation SHALL provide configurable diagnostic logging and SHALL accept the level names `DEBUG`, `INFO`, `WARNING`, `ERROR`, and `CRITICAL`.
+
+**Rationale**: Operators routinely escalate from default `INFO` to `DEBUG` when investigating an anomalous file and de-escalate to `ERROR` for batch runs where stderr is being captured. The accepted level vocabulary follows Python's `logging` module to avoid an implementation-specific glossary.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-MODE: Strict and lenient handling
+
+### L1-MODE-001
+
+**Statement**: Each implementation SHALL support a strict mode that surfaces invalid records as errors and a lenient mode that skips them with a warning and continues decoding.
+
+**Rationale**: Strict mode is used in CI and conformance contexts where any invalid record indicates a bug or a corrupt input that must be triaged. Lenient mode is used in field-deployed analysis pipelines where some recording-card-driven anomalies are routine and the operator wants the maximum number of valid records extracted regardless of localized corruption.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-SYN: Synchronization and sync recovery
+
+### L1-SYN-001
+
+**Statement**: Each implementation SHALL detect the proprietary file header, SHALL validate every record before decoding, and SHALL recover from word-aligned mid-file sync loss.
+
+**Rationale**: The MIE format places a variable-length proprietary header before the first record; the decoder must skip past it without prior knowledge of the header size. Mid-file sync loss can occur when the recording medium experienced a transient write error or when the card was reset mid-recording; the decoder must walk forward to the next valid record boundary rather than abandon the rest of the file.
+
+**Verification Method**: Test (T)
+
+### L1-SYN-002
+
+**Statement**: Sync recovery scanning SHALL be bounded. Per-recovery scan distance SHALL NOT exceed `MAX_SCAN_BYTES` (64 KB). Across a full decode invocation, cumulative recovery scan distance SHALL NOT exceed the file size — recovery scans SHALL NOT re-traverse already-scanned bytes.
+
+**Rationale**: Without bounded scanning, a pathological input could force the decoder into a quadratic or unbounded loop searching for a sync point that does not exist. Per-recovery and cumulative bounds together guarantee `O(file_size)` worst-case scan work even on heavily corrupted inputs.
+
+**Verification Method**: Test (T), Analysis (A)
+
+---
+
+## L1-ERR: DDC error records and SPURIOUS_DATA
+
+### L1-ERR-001
+
+**Statement**: Each implementation SHALL decode DDC error records (Type Word bit 14 set) and SPURIOUS_DATA records (message type `0x20`), and SHALL support both separate-file and inline-column error output modes.
+
+**Rationale**: Error records and their SPURIOUS_DATA continuations are first-class artifacts of the DDC card's behavior — they encode bus errors that the analyst needs to see. Separate output keeps the clean message stream uncluttered; inline output keeps everything in one CSV for diff against vendor output. Both modes must be available because both are used in practice.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-CFG: Configuration
+
+### L1-CFG-001
+
+**Statement**: Each implementation SHALL support TOML configuration files. Configuration precedence SHALL be: CLI argument values override configuration-file values override built-in defaults.
+
+**Rationale**: Operators routinely have site-wide or recording-campaign-wide configuration that they want to share across runs; the TOML file provides that. Per-invocation overrides via CLI are needed when a specific run needs a one-off behavior change. The precedence order ensures that CLI overrides always win — a developer or operator typing a flag on the command line expects it to take effect regardless of any persisted configuration.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-CONF: Cross-implementation conformance
+
+### L1-CONF-001
+
+**Statement**: Shared CSV layout and decoding behavior across the Rust and Python implementations SHALL remain aligned through the cross-implementation conformance suite under `tests/conformance/`.
+
+**Rationale**: With two maintained implementations, drift between them silently breaks the contract that operators can swap one for the other. The conformance suite uses hexadecimal input fixtures and byte-exact CSV oracles, runs both CLIs on each fixture, and requires byte-identical output. CI runs the suite on every push and pull request.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-EXIT: Exit-code semantics and operational contract
+
+### L1-EXIT-001
+
+**Statement**: Each implementation SHALL provide actionable file, record, configuration, and output error reporting, and SHALL return a non-zero CLI exit code on failure.
+
+**Rationale**: The decoder is run in pipelines and CI; any failure must be distinguishable from success by exit code alone. Error messages must name the offending file, record offset, or configuration key so the operator can act on the failure without re-running with `--debug`.
+
+**Verification Method**: Test (T)
+
+### L1-EXIT-002
+
+**Statement**: A decode invocation that finds no valid records SHALL exit with code `2` and SHALL NOT create an output file.
+
+**Rationale**: An empty input, a wrong-format input, or an input with no records that pass validation is operationally distinct from a decode that ran and produced legitimate empty output (which doesn't happen — a successful decode produces at least one record). Exit code `2` lets the operator distinguish "you pointed me at the wrong file" from "you pointed me at the right file and there are no records in it". Not creating the output file prevents a downstream consumer from being handed an empty CSV that looks legitimately empty.
+
+**Verification Method**: Test (T)
+
+### L1-EXIT-003
+
+**Statement**: A decode invocation that recovers from one or more mid-file sync losses SHALL exit with code `0`, SHALL log an INFO-level summary naming the recovery count, and SHALL complete the CSV normally.
+
+**Rationale**: Sync recovery is a routine, expected event on field recordings — exiting non-zero would cause operators to dismiss real errors as "the usual recovery noise". The INFO summary line gives the operator the information they need (how many recoveries, total bytes scanned) without forcing them to enable DEBUG.
+
+**Verification Method**: Test (T)
+
+### L1-EXIT-004
+
+**Statement**: A decode invocation that suffers unrecoverable mid-file sync loss SHALL exit with code `3` by default and SHALL NOT preserve a partial output file. An optional `--allow-partial` CLI flag (and equivalent `decode.allow_partial` configuration key) SHALL downgrade the exit to `0`, SHALL log a WARN-level summary, and SHALL preserve the partial output with a `.partial` suffix appended to the configured destination path.
+
+**Rationale**: Unrecoverable sync loss is a corruption event the operator needs to know about, distinct from any other failure class. Exit `3` is its dedicated code. By default the partial file is unlinked so it cannot be mistaken for a complete result; `--allow-partial` is the explicit opt-in for operators investigating a specific file who want to inspect what was decoded before the failure.
+
+**Verification Method**: Test (T)
+
+### L1-EXIT-005
+
+**Statement**: The decode command SHALL log a one-line summary on exit naming the exit class: `complete`, `partial-recovered`, `partial-unrecoverable`, or `no-records`.
+
+**Rationale**: The exit class is the single most operationally useful piece of information from a decode run. A one-line summary makes it grep-able in pipeline logs without requiring the consumer to map exit codes back to classes.
+
+**Verification Method**: Test (T)
+
+### L1-EXIT-006
+
+**Statement**: The input file SHALL NOT be modified, truncated, or extended during decoding. Behavior under concurrent external modification of the input is implementation-defined and MAY cause process termination (POSIX mmap plus `ftruncate` on the underlying file can produce SIGBUS; Windows file locking generally prevents concurrent writers but mmap does not grow with extensions). This is an operational contract: implementations open the file read-only and rely on the operator for exclusive access while a decode is in progress.
+
+**Rationale**: The decoder uses memory-mapped I/O for performance and constant-memory behavior. Mmap makes the input filesystem state load-bearing during the entire decode; concurrent modification is undefined per the underlying OS, and we surface that contract here rather than pretend we can defend against every concurrent-write scenario.
+
+**Verification Method**: Inspection (I), Analysis (A)
+
+---
+
+## L1-ROB: Robustness against arbitrary input
+
+### L1-ROB-001
+
+**Statement**: For arbitrary input bytes within the size limits of `usize`, no implementation SHALL panic, segfault, or enter an unbounded loop. All failures SHALL surface as a documented decoder error variant (`MieError` in Rust, a `MieDecoderError` subclass in Python). Verified by a per-implementation deterministic-PRNG fuzz harness.
+
+**Rationale**: The decoder is run on operator-supplied files, some of which are corrupt by accident and some of which are the output of misconfigured recording sessions. Crashing on bad input gives the operator no useful information and may take down a batch pipeline. Surfacing every failure as a structured error variant lets the operator diagnose and act. The deterministic-PRNG harness ensures regressions can be reproduced.
+
+**Verification Method**: Test (T)
+
+---
+
+## Non-Requirements
+
+These items are explicitly OUT of scope for MIE-Decoder. They are recorded here so future requests do not get folded into the existing requirements set without separate analysis. Non-requirement IDs use the prefix `NR-<NNN>` and are not subject to the L1/L2/L3 decomposition convention.
+
+### NR-001
+
+**Statement**: The MIE Decoder SHALL NOT implement decode functionality for IRIG 106 Chapter 10 / 1553 data.
+
+**Rationale**: MIE files use a DDC proprietary record format that is distinct from IRIG 106 Chapter 10 packet formats — they differ in file framing, timestamp encoding, metadata layout, and the sub-format conventions used to carry MIL-STD-1553 wire data. Conflating the two formats would silently produce wrong output on inputs of either kind. Any future request to add IRIG 106 1553 decode SHALL be treated as a new capability requiring separate requirements, design analysis, architecture review, and approval. It SHALL NOT be added as an extension of the existing MIE Decoder.
+
+**Disposition**: Future request handled as a new capability per the rationale above.

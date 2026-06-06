@@ -307,10 +307,10 @@ millions of records this is a measurable win.
 
 | Implementation | Per-record cost | Total memory | Notes |
 |----------------|----------------|--------------|-------|
-| **Rust** | ~0 bytes (inline `DataWords` + bounded log buffers) | O(1) in record count | Streams rows directly to a `BufWriter<File>`. The only growable per-decode allocation is `delta_tracker: HashMap<u32, u64>` whose keys are bounded by `RT × SA × direction` ≤ 32 × 32 × 2 = 2048. Tracked as `RS-012`. |
-| **Python** | One `dict` per row (~1–2 KB) | O(record_count) | The writer materialises the entire pandas `DataFrame` before flushing. Decoding a recording with 10 M records consumes ~5 GB RSS. Tracked as `PY-012`. A future `PY-streaming` change will replace this with a chunked writer. |
+| **Rust** | ~0 bytes (inline `DataWords` + bounded log buffers) | O(1) in record count | Streams rows directly to a `BufWriter<File>`. The only growable per-decode allocation is `delta_tracker: HashMap<u32, u64>` whose keys are bounded by `RT × SA × direction` ≤ 32 × 32 × 2 = 2048. Tracked as `L3-RS-012`. |
+| **Python** | One `dict` per row (~1–2 KB) | O(record_count) | The writer materialises the entire pandas `DataFrame` before flushing. Decoding a recording with 10 M records consumes ~5 GB RSS. Tracked as `L3-PY-012`. A future `PY-streaming` change will replace this with a chunked writer. |
 
-### Operational limits (`L1-025`, `L1-026`)
+### Operational limits (`L1-EXIT-006`, `L1-SYN-002`)
 
 - **No concurrent modification.** The input file is opened with a
   read-only mmap. POSIX `ftruncate` on a mapped file can produce
@@ -327,7 +327,7 @@ millions of records this is a measurable win.
   bytes. The combination guarantees terminating iteration even on
   pathological inputs.
 
-### Fuzz harness (`L1-027`)
+### Fuzz harness (`L1-ROB-001`)
 
 Both implementations carry a deterministic-PRNG fuzz harness that
 feeds 256 random byte sequences (32 B – 8 KB each) through the
