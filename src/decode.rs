@@ -141,11 +141,33 @@ pub enum WhichInvariant {
     DirectionRtToBc,
     /// L2-SYN-INV-003: Type Word word_count too small for declared payload.
     WordCountCapacity,
+    /// L2-SYN-INV-004: Cmd2 direction for RT-to-RT must be Receive.
+    DirectionRtToRtCmd2,
+    /// L2-SYN-INV-005: Status Word RT field does not match Cmd RT.
+    /// AnomalyWarn-class — real-bus noise possible.
+    StatusRtMismatch,
+    /// L2-SYN-INV-006: Type Word bit 15 (reserved) is set.
+    /// AnomalyWarn-class — possible vendor extension.
+    TypeWordReservedBit,
+}
+
+/// Policy class for a structural invariant violation, per the locked
+/// schema in `docs/REQUIREMENTS.md` (Phase 7 severity classes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvariantSeverity {
+    /// Strict mode aborts with a record-error class; lenient mode
+    /// WARN+skips the record (advance offset without emission).
+    Reject,
+    /// Both modes log a WARN and continue emitting the record. Used
+    /// where outright rejection would produce false negatives on
+    /// real-bus noise or vendor extensions (L2-SYN-INV-005, 006).
+    AnomalyWarn,
 }
 
 #[derive(Debug)]
 pub struct InvariantViolation {
     pub kind: WhichInvariant,
+    pub severity: InvariantSeverity,
     pub detail: String,
 }
 
@@ -194,6 +216,7 @@ pub fn validate_structural_invariants(
     if tw.message_type == MessageType::BcToRt as u8 && cmd.direction != Direction::Receive {
         return Err(InvariantViolation {
             kind: WhichInvariant::DirectionBcToRt,
+            severity: InvariantSeverity::Reject,
             detail: format!(
                 "Type 0x02 (BC→RT) requires Cmd direction = Receive; got Transmit \
                  (raw Cmd = 0x{:04X})",
@@ -204,6 +227,7 @@ pub fn validate_structural_invariants(
     if tw.message_type == MessageType::RtToBc as u8 && cmd.direction != Direction::Transmit {
         return Err(InvariantViolation {
             kind: WhichInvariant::DirectionRtToBc,
+            severity: InvariantSeverity::Reject,
             detail: format!(
                 "Type 0x04 (RT→BC) requires Cmd direction = Transmit; got Receive \
                  (raw Cmd = 0x{:04X})",
@@ -217,6 +241,7 @@ pub fn validate_structural_invariants(
     if tw.word_count < min_wc {
         return Err(InvariantViolation {
             kind: WhichInvariant::WordCountCapacity,
+            severity: InvariantSeverity::Reject,
             detail: format!(
                 "TW.word_count = {} is too small for declared payload \
                  (need at least {} for {:?} with data_word_count = {})",
@@ -226,6 +251,85 @@ pub fn validate_structural_invariants(
     }
 
     Ok(())
+}
+
+/// L2-SYN-INV-004: Cmd2 direction check for RT-to-RT formats.
+///
+/// Called post-extract because Cmd2 lives inside the payload and is
+/// only available after `extract_payload`. For non-RT-to-RT formats
+/// (or when cmd2 is None) this is a no-op.
+pub fn validate_post_extract_invariants(
+    msg_fmt: MessageFormat,
+    cmd2: Option<&CommandWord>,
+) -> Result<(), InvariantViolation> {
+    let is_rt_to_rt = matches!(
+        msg_fmt,
+        MessageFormat::RtToRt | MessageFormat::RtToRtBroadcast
+    );
+    if !is_rt_to_rt {
+        return Ok(());
+    }
+    let Some(c2) = cmd2 else {
+        return Ok(());
+    };
+    if c2.direction != Direction::Receive {
+        return Err(InvariantViolation {
+            kind: WhichInvariant::DirectionRtToRtCmd2,
+            severity: InvariantSeverity::Reject,
+            detail: format!(
+                "RT-to-RT Cmd2 requires direction = Receive; got Transmit \
+                 (raw Cmd2 = 0x{:04X})",
+                c2.raw
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// L2-SYN-INV-005 / L2-SYN-INV-006: AnomalyWarn-class observations.
+///
+/// Both invariants are anomaly detectors rather than corruption
+/// rejections; the reader logs each violation as a WARN and continues
+/// emitting the record. Returns a Vec because multiple anomalies can
+/// fire on a single record (e.g., Status RT mismatch AND reserved
+/// bit set simultaneously).
+pub fn detect_record_anomalies(
+    tw: &TypeWord,
+    cmd: &CommandWord,
+    status_word: Option<u16>,
+) -> Vec<InvariantViolation> {
+    let mut out = Vec::new();
+
+    // L2-SYN-INV-005: Status RT vs Cmd RT.
+    if let Some(status_raw) = status_word {
+        let status_rt = ((status_raw >> 11) & 0x1F) as u8;
+        if status_rt != cmd.rt {
+            out.push(InvariantViolation {
+                kind: WhichInvariant::StatusRtMismatch,
+                severity: InvariantSeverity::AnomalyWarn,
+                detail: format!(
+                    "Status RT = {status_rt} does not match Cmd RT = {} \
+                     (raw Status = 0x{status_raw:04X}); possible bus interference",
+                    cmd.rt
+                ),
+            });
+        }
+    }
+
+    // L2-SYN-INV-006: Type Word bit 15 reserved.
+    if (tw.raw >> 15) & 1 != 0 {
+        out.push(InvariantViolation {
+            kind: WhichInvariant::TypeWordReservedBit,
+            severity: InvariantSeverity::AnomalyWarn,
+            detail: format!(
+                "Type Word bit 15 (reserved) is set in raw 0x{:04X}; \
+                 possible undocumented vendor extension",
+                tw.raw
+            ),
+        });
+    }
+
+    out
 }
 
 fn classify_mode_code(cmd: &CommandWord, word_count: u16) -> MessageFormat {
@@ -572,5 +676,129 @@ mod tests {
         validate_structural_invariants(&t, &c_tx, MessageFormat::ModeCodeTxData, 3).unwrap();
         let c_rx = cmd_with(Direction::Receive, 1);
         validate_structural_invariants(&t, &c_rx, MessageFormat::ModeCodeRxData, 3).unwrap();
+    }
+
+    // ── L2-SYN-INV-004 (post-extract Cmd2 direction) ─────────────────
+
+    #[test]
+    fn post_extract_invariant_rt_to_rt_cmd2_receive_passes() {
+        let c2 = CommandWord {
+            rt: 5,
+            direction: Direction::Receive,
+            subaddress: 10,
+            data_word_count: 3,
+            raw: 0,
+        };
+        validate_post_extract_invariants(MessageFormat::RtToRt, Some(&c2)).unwrap();
+    }
+
+    #[test]
+    fn post_extract_invariant_rt_to_rt_cmd2_transmit_rejected() {
+        let c2 = CommandWord {
+            rt: 5,
+            direction: Direction::Transmit, // WRONG: should be Receive
+            subaddress: 10,
+            data_word_count: 3,
+            raw: 0xABCD,
+        };
+        let err = validate_post_extract_invariants(MessageFormat::RtToRt, Some(&c2)).unwrap_err();
+        assert_eq!(err.kind, WhichInvariant::DirectionRtToRtCmd2);
+        assert_eq!(err.severity, InvariantSeverity::Reject);
+    }
+
+    #[test]
+    fn post_extract_invariant_rt_to_rt_broadcast_also_checked() {
+        let c2 = CommandWord {
+            rt: 5,
+            direction: Direction::Transmit,
+            subaddress: 10,
+            data_word_count: 3,
+            raw: 0,
+        };
+        let err = validate_post_extract_invariants(MessageFormat::RtToRtBroadcast, Some(&c2))
+            .unwrap_err();
+        assert_eq!(err.kind, WhichInvariant::DirectionRtToRtCmd2);
+    }
+
+    #[test]
+    fn post_extract_invariant_non_rt_to_rt_is_noop() {
+        // No cmd2 for non-RT-to-RT formats; function returns Ok.
+        validate_post_extract_invariants(MessageFormat::Receive, None).unwrap();
+        // Even if a stray Cmd2 is passed in (shouldn't happen), other
+        // formats don't enforce the direction invariant.
+        let c2 = CommandWord {
+            rt: 5,
+            direction: Direction::Transmit,
+            subaddress: 10,
+            data_word_count: 3,
+            raw: 0,
+        };
+        validate_post_extract_invariants(MessageFormat::Receive, Some(&c2)).unwrap();
+    }
+
+    // ── L2-SYN-INV-005 / INV-006 (anomaly detectors) ─────────────────
+
+    #[test]
+    fn anomaly_status_rt_match_no_violation() {
+        // RT=15 in Cmd; status's bits 15-11 also = 15 (raw 0x7800).
+        let t = tw(0x02, 36);
+        let c = cmd_with(Direction::Receive, 30); // rt=15
+        let anomalies = detect_record_anomalies(&t, &c, Some(0x7800));
+        assert!(anomalies.is_empty());
+    }
+
+    #[test]
+    fn anomaly_status_rt_mismatch_logged() {
+        // Cmd RT=15 but Status raw 0x2800 → status RT = 5.
+        let t = tw(0x02, 36);
+        let c = cmd_with(Direction::Receive, 30); // rt=15
+        let anomalies = detect_record_anomalies(&t, &c, Some(0x2800));
+        assert_eq!(anomalies.len(), 1);
+        assert_eq!(anomalies[0].kind, WhichInvariant::StatusRtMismatch);
+        assert_eq!(anomalies[0].severity, InvariantSeverity::AnomalyWarn);
+    }
+
+    #[test]
+    fn anomaly_no_status_no_violation() {
+        // Broadcast formats and SPURIOUS_DATA have no Status Word;
+        // INV-005 is silent.
+        let t = tw(0x02, 36);
+        let c = cmd_with(Direction::Receive, 30);
+        let anomalies = detect_record_anomalies(&t, &c, None);
+        assert!(anomalies.is_empty());
+    }
+
+    #[test]
+    fn anomaly_type_word_reserved_bit_set_logged() {
+        // Type word raw with bit 15 set: 0x8402 (wc=4, bit15=1, type=0x02).
+        // (The framing parts here are irrelevant — the anomaly check
+        // only looks at bit 15.)
+        let t = TypeWord {
+            message_type: 0x02,
+            bus: Bus::A,
+            word_count: 4,
+            error: false,
+            raw: 0x8402,
+        };
+        let c = cmd_with(Direction::Receive, 1);
+        let anomalies = detect_record_anomalies(&t, &c, None);
+        assert_eq!(anomalies.len(), 1);
+        assert_eq!(anomalies[0].kind, WhichInvariant::TypeWordReservedBit);
+        assert_eq!(anomalies[0].severity, InvariantSeverity::AnomalyWarn);
+    }
+
+    #[test]
+    fn anomaly_multiple_can_fire_on_one_record() {
+        // Status RT mismatch + reserved bit set: expect TWO anomalies.
+        let t = TypeWord {
+            message_type: 0x02,
+            bus: Bus::A,
+            word_count: 36,
+            error: false,
+            raw: 0xA402, // bit 15 set
+        };
+        let c = cmd_with(Direction::Receive, 30); // rt=15
+        let anomalies = detect_record_anomalies(&t, &c, Some(0x2800)); // status RT=5
+        assert_eq!(anomalies.len(), 2);
     }
 }

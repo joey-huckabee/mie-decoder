@@ -585,6 +585,34 @@ impl<'a> Iterator for RecordIter<'a> {
             let (cmd2, status, status2, data_words) =
                 extract_payload(record_data, payload_offset, msg_fmt, &cmd);
 
+            // L2-SYN-INV-004: post-extract Reject-class check (Cmd2
+            // direction for RT-to-RT formats). Same strict/lenient
+            // policy as the pre-extract invariants.
+            if let Err(v) = crate::decode::validate_post_extract_invariants(msg_fmt, cmd2.as_ref())
+            {
+                if self.strict {
+                    self.done = true;
+                    return Some(Err(crate::error::MieError::PayloadError {
+                        offset: self.offset as u64,
+                        detail: format!("L2-SYN-INV violation: {}", v.detail),
+                    }));
+                }
+                log_warn!(
+                    "L2-SYN-INV violation at 0x{:X}: {}; skipping record",
+                    self.offset,
+                    v.detail
+                );
+                self.offset += record_bytes;
+                self.prev_was_error = false;
+                continue;
+            }
+
+            // L2-SYN-INV-005 / INV-006: AnomalyWarn-class observations.
+            // Both modes log a WARN and continue emitting the record.
+            for v in crate::decode::detect_record_anomalies(&tw, &cmd, status) {
+                log_warn!("L2-SYN-INV anomaly at 0x{:X}: {}", self.offset, v.detail);
+            }
+
             let key = delta_key(
                 cmd.rt,
                 cmd.subaddress,

@@ -474,3 +474,114 @@ class TestStructuralInvariants:
                 tw, self._cmd(dir_, 1), fmt, 3,
             )
             assert result is None, f"unexpected violation for {dir_}: {result}"
+
+
+class TestPostExtractInvariants:
+    """L2-SYN-INV-004 (Phase 7b): Cmd2 direction for RT-to-RT."""
+
+    @staticmethod
+    def _cmd(direction, raw: int = 0):
+        from mie_decoder.models import CommandWord
+        return CommandWord(
+            rt=5, direction=direction, subaddress=10,
+            data_word_count=3, raw=raw,
+        )
+
+    def test_rt_to_rt_cmd2_receive_passes(self) -> None:
+        from mie_decoder.decode import validate_post_extract_invariants
+        from mie_decoder.models import Direction, MessageFormat
+        result = validate_post_extract_invariants(
+            MessageFormat.RT_TO_RT, self._cmd(Direction.RECEIVE),
+        )
+        assert result is None
+
+    def test_rt_to_rt_cmd2_transmit_rejected(self) -> None:
+        from mie_decoder.decode import (
+            InvariantSeverity, WhichInvariant, validate_post_extract_invariants,
+        )
+        from mie_decoder.models import Direction, MessageFormat
+        result = validate_post_extract_invariants(
+            MessageFormat.RT_TO_RT,
+            self._cmd(Direction.TRANSMIT, raw=0xABCD),
+        )
+        assert result is not None
+        assert result.kind == WhichInvariant.DIRECTION_RT_TO_RT_CMD2
+        assert result.severity == InvariantSeverity.REJECT
+
+    def test_rt_to_rt_broadcast_also_checked(self) -> None:
+        from mie_decoder.decode import (
+            WhichInvariant, validate_post_extract_invariants,
+        )
+        from mie_decoder.models import Direction, MessageFormat
+        result = validate_post_extract_invariants(
+            MessageFormat.RT_TO_RT_BROADCAST,
+            self._cmd(Direction.TRANSMIT),
+        )
+        assert result is not None
+        assert result.kind == WhichInvariant.DIRECTION_RT_TO_RT_CMD2
+
+    def test_non_rt_to_rt_is_noop(self) -> None:
+        from mie_decoder.decode import validate_post_extract_invariants
+        from mie_decoder.models import Direction, MessageFormat
+        # No cmd2 for non-RT-to-RT
+        assert validate_post_extract_invariants(MessageFormat.RECEIVE, None) is None
+        # Even with stray Cmd2 (shouldn't happen), no enforcement
+        assert validate_post_extract_invariants(
+            MessageFormat.RECEIVE, self._cmd(Direction.TRANSMIT),
+        ) is None
+
+
+class TestRecordAnomalies:
+    """L2-SYN-INV-005 / L2-SYN-INV-006 (Phase 7b): anomaly detectors."""
+
+    @staticmethod
+    def _tw(raw: int, message_type: int = 0x02, wc: int = 36):
+        from mie_decoder.models import Bus, TypeWord
+        return TypeWord(
+            message_type=message_type, bus=Bus.A, word_count=wc,
+            error=False, raw=raw,
+        )
+
+    @staticmethod
+    def _cmd(rt: int = 15):
+        from mie_decoder.models import CommandWord, Direction
+        return CommandWord(
+            rt=rt, direction=Direction.RECEIVE, subaddress=11,
+            data_word_count=30, raw=0,
+        )
+
+    def test_status_rt_match_no_violation(self) -> None:
+        from mie_decoder.decode import detect_record_anomalies
+        # RT=15 in Cmd; Status raw 0x7800 → bits 15-11 = 15
+        anomalies = detect_record_anomalies(self._tw(0x2402), self._cmd(15), 0x7800)
+        assert anomalies == []
+
+    def test_status_rt_mismatch_anomaly(self) -> None:
+        from mie_decoder.decode import (
+            InvariantSeverity, WhichInvariant, detect_record_anomalies,
+        )
+        # Cmd RT=15, Status 0x2800 → status RT=5
+        anomalies = detect_record_anomalies(self._tw(0x2402), self._cmd(15), 0x2800)
+        assert len(anomalies) == 1
+        assert anomalies[0].kind == WhichInvariant.STATUS_RT_MISMATCH
+        assert anomalies[0].severity == InvariantSeverity.ANOMALY_WARN
+
+    def test_no_status_no_violation(self) -> None:
+        from mie_decoder.decode import detect_record_anomalies
+        anomalies = detect_record_anomalies(self._tw(0x2402), self._cmd(15), None)
+        assert anomalies == []
+
+    def test_type_word_reserved_bit_anomaly(self) -> None:
+        from mie_decoder.decode import (
+            InvariantSeverity, WhichInvariant, detect_record_anomalies,
+        )
+        anomalies = detect_record_anomalies(self._tw(0x8402), self._cmd(15), None)
+        assert len(anomalies) == 1
+        assert anomalies[0].kind == WhichInvariant.TYPE_WORD_RESERVED_BIT
+        assert anomalies[0].severity == InvariantSeverity.ANOMALY_WARN
+
+    def test_multiple_anomalies_can_fire_on_one_record(self) -> None:
+        from mie_decoder.decode import detect_record_anomalies
+        # Both status RT mismatch AND TW bit 15 set: 2 anomalies
+        anomalies = detect_record_anomalies(self._tw(0xA402), self._cmd(15), 0x2800)
+        assert len(anomalies) == 2

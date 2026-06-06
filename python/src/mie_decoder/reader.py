@@ -53,10 +53,12 @@ from mie_decoder.decode import (
     decode_irig_timestamp,
     decode_standard_timestamp,
     decode_type_word,
+    detect_record_anomalies,
     detect_timestamp_format,
     is_valid_message_type,
     read_u16,
     read_u16_array,
+    validate_post_extract_invariants,
     validate_structural_invariants,
 )
 from mie_decoder.exceptions import (
@@ -468,6 +470,31 @@ class MieFileReader:
                     cmd2, status, status2, data_words = _extract_payload(
                         mm, payload_byte_offset, tw.word_count, msg_fmt, cmd,
                     )
+
+                    # L2-SYN-INV-004: post-extract Reject-class check.
+                    # Same strict/lenient policy as the pre-extract checks.
+                    post_inv = validate_post_extract_invariants(msg_fmt, cmd2)
+                    if post_inv is not None:
+                        if self._strict:
+                            raise MiePayloadError(
+                                offset,
+                                f"L2-SYN-INV violation: {post_inv.detail}",
+                            )
+                        logger.warning(
+                            "L2-SYN-INV violation at 0x%X: %s; skipping record",
+                            offset, post_inv.detail,
+                        )
+                        offset += record_bytes
+                        prev_was_error = False
+                        continue
+
+                    # L2-SYN-INV-005 / INV-006: AnomalyWarn-class.
+                    # Both modes log a WARN and continue emitting.
+                    for anomaly in detect_record_anomalies(tw, cmd, status):
+                        logger.warning(
+                            "L2-SYN-INV anomaly at 0x%X: %s",
+                            offset, anomaly.detail,
+                        )
 
                     direction_char = (
                         "T" if cmd.direction == Direction.TRANSMIT else "R"

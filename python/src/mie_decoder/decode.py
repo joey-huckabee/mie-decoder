@@ -430,12 +430,37 @@ class WhichInvariant(IntEnum):
     WORD_COUNT_CAPACITY = 3
     """L2-SYN-INV-003: TW.word_count too small for declared payload."""
 
+    DIRECTION_RT_TO_RT_CMD2 = 4
+    """L2-SYN-INV-004: Cmd2 direction for RT-to-RT must be Receive."""
+
+    STATUS_RT_MISMATCH = 5
+    """L2-SYN-INV-005: Status RT does not match Cmd RT.
+    AnomalyWarn-class — real-bus noise possible."""
+
+    TYPE_WORD_RESERVED_BIT = 6
+    """L2-SYN-INV-006: Type Word bit 15 (reserved) is set.
+    AnomalyWarn-class — possible vendor extension."""
+
+
+class InvariantSeverity(IntEnum):
+    """Policy class for a structural-invariant violation.
+
+    - ``REJECT``: strict mode aborts; lenient mode WARN+skips the record.
+    - ``ANOMALY_WARN``: both modes log a WARN and emit the record
+      anyway. Used where outright rejection would produce false
+      negatives on real-bus noise or vendor extensions (INV-005, 006).
+    """
+
+    REJECT = 1
+    ANOMALY_WARN = 2
+
 
 @dataclass(frozen=True)
 class InvariantViolation:
-    """Detail object returned by ``validate_structural_invariants``."""
+    """Detail object returned by invariant-check functions."""
 
     kind: WhichInvariant
+    severity: InvariantSeverity
     detail: str
 
 
@@ -495,6 +520,7 @@ def validate_structural_invariants(
     ):
         return InvariantViolation(
             kind=WhichInvariant.DIRECTION_BC_TO_RT,
+            severity=InvariantSeverity.REJECT,
             detail=(
                 f"Type 0x02 (BC→RT) requires Cmd direction = Receive; "
                 f"got Transmit (raw Cmd = 0x{command_word.raw:04X})"
@@ -506,6 +532,7 @@ def validate_structural_invariants(
     ):
         return InvariantViolation(
             kind=WhichInvariant.DIRECTION_RT_TO_BC,
+            severity=InvariantSeverity.REJECT,
             detail=(
                 f"Type 0x04 (RT→BC) requires Cmd direction = Transmit; "
                 f"got Receive (raw Cmd = 0x{command_word.raw:04X})"
@@ -517,6 +544,7 @@ def validate_structural_invariants(
     if type_word.word_count < min_wc:
         return InvariantViolation(
             kind=WhichInvariant.WORD_COUNT_CAPACITY,
+            severity=InvariantSeverity.REJECT,
             detail=(
                 f"TW.word_count = {type_word.word_count} is too small for "
                 f"declared payload (need at least {min_wc} for {msg_fmt.name} "
@@ -525,6 +553,79 @@ def validate_structural_invariants(
         )
 
     return None
+
+
+def validate_post_extract_invariants(
+    msg_fmt: MessageFormat,
+    cmd2: CommandWord | None,
+) -> InvariantViolation | None:
+    """L2-SYN-INV-004: Cmd2 direction check for RT-to-RT formats.
+
+    Called post-extract because Cmd2 lives inside the payload. For
+    non-RT-to-RT formats (or when cmd2 is None) this is a no-op.
+    """
+    if msg_fmt not in (MessageFormat.RT_TO_RT, MessageFormat.RT_TO_RT_BROADCAST):
+        return None
+    if cmd2 is None:
+        return None
+    if cmd2.direction != Direction.RECEIVE:
+        return InvariantViolation(
+            kind=WhichInvariant.DIRECTION_RT_TO_RT_CMD2,
+            severity=InvariantSeverity.REJECT,
+            detail=(
+                f"RT-to-RT Cmd2 requires direction = Receive; got "
+                f"Transmit (raw Cmd2 = 0x{cmd2.raw:04X})"
+            ),
+        )
+    return None
+
+
+def detect_record_anomalies(
+    type_word: TypeWord,
+    command_word: CommandWord,
+    status_word: int | None,
+) -> list[InvariantViolation]:
+    """L2-SYN-INV-005 / L2-SYN-INV-006: anomaly-class observations.
+
+    Both invariants are anomaly detectors rather than corruption
+    rejections; the reader logs each violation as a WARN and continues
+    emitting the record. Returns a list because multiple anomalies can
+    fire on the same record (e.g., status RT mismatch AND reserved bit
+    set simultaneously).
+    """
+    out: list[InvariantViolation] = []
+
+    # INV-005: Status RT vs Cmd RT.
+    if status_word is not None:
+        status_rt = (status_word >> 11) & 0x1F
+        if status_rt != command_word.rt:
+            out.append(
+                InvariantViolation(
+                    kind=WhichInvariant.STATUS_RT_MISMATCH,
+                    severity=InvariantSeverity.ANOMALY_WARN,
+                    detail=(
+                        f"Status RT = {status_rt} does not match Cmd RT = "
+                        f"{command_word.rt} (raw Status = 0x{status_word:04X}); "
+                        f"possible bus interference"
+                    ),
+                )
+            )
+
+    # INV-006: Type Word bit 15 reserved.
+    if (type_word.raw >> 15) & 1 != 0:
+        out.append(
+            InvariantViolation(
+                kind=WhichInvariant.TYPE_WORD_RESERVED_BIT,
+                severity=InvariantSeverity.ANOMALY_WARN,
+                detail=(
+                    f"Type Word bit 15 (reserved) is set in raw "
+                    f"0x{type_word.raw:04X}; possible undocumented vendor "
+                    f"extension"
+                ),
+            )
+        )
+
+    return out
 
 
 def is_valid_message_type(message_type: int) -> bool:

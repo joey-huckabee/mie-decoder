@@ -128,6 +128,12 @@
       "input": "inputs/invariant-direction-mismatch.hex",
       "expected_exit": 1,
       "config": "configs/strict.toml"
+    },
+    {
+      "name": "invariant-rt-to-rt-cmd2-mismatch",
+      "input": "inputs/invariant-rt-to-rt-cmd2-mismatch.hex",
+      "expected_exit": 1,
+      "config": "configs/strict.toml"
     }
   ]
 }
