@@ -129,6 +129,8 @@ class DecoderConfig:
         error_mode: How errored messages appear in output.
         filters: Message filtering configuration.
         output_format: Output format name (csv for v1.0).
+        no_clobber: L2-WRT-017. Refuse to overwrite an existing
+            destination. Defaults to False (overwrite permitted).
     """
 
     log_level: str = "WARNING"
@@ -137,6 +139,7 @@ class DecoderConfig:
     error_mode: ErrorMode = ErrorMode.SEPARATE
     filters: FilterConfig = field(default_factory=FilterConfig)
     output_format: str = "csv"
+    no_clobber: bool = False
 
     def with_overrides(self, **kwargs: Any) -> DecoderConfig:
         """Return a new config with specified fields overridden.
@@ -154,6 +157,13 @@ class DecoderConfig:
         new_strict = kwargs.get("strict") if kwargs.get("strict") is not None else self.strict
         new_em = kwargs.get("error_mode") or self.error_mode
         new_fmt = kwargs.get("output_format") or self.output_format
+        # bool overrides need an explicit None check; `or` would let a
+        # config-file True be reset to False by an omitted CLI flag.
+        new_nc = (
+            kwargs["no_clobber"]
+            if kwargs.get("no_clobber") is not None
+            else self.no_clobber
+        )
 
         # Merge filter overrides — CLI adds to (not replaces) config file filters
         new_filters = FilterConfig(
@@ -170,6 +180,7 @@ class DecoderConfig:
             error_mode=new_em,
             filters=new_filters,
             output_format=new_fmt,
+            no_clobber=new_nc,
         )
 
 
@@ -306,6 +317,8 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
 
     # Output format
     output_format = output_section.get("format", "csv")
+    # L2-WRT-017: refuse to overwrite existing destination.
+    no_clobber = bool(output_section.get("no_clobber", False))
 
     config = DecoderConfig(
         log_level=log_level,
@@ -314,6 +327,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         error_mode=error_mode,
         filters=filters,
         output_format=output_format,
+        no_clobber=no_clobber,
     )
 
     logger.debug("Loaded config: %s", config)

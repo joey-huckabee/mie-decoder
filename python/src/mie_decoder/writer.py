@@ -94,16 +94,126 @@ Output Column Definitions:
 from __future__ import annotations
 
 import logging
+import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, TextIO
 
 import pandas as pd
 
-from mie_decoder.exceptions import MieWriterError
+from mie_decoder.exceptions import (
+    MieClobberRefusedError,
+    MieInputOutputCollisionError,
+    MieWriterError,
+)
 from mie_decoder.models import MieMessage
 
 logger = logging.getLogger(__name__)
+
+
+# ── Path identity check (L2-WRT-014) ───────────────────────────────────
+
+
+def paths_refer_to_same_file(input_path: Path, output_path: Path) -> bool:
+    """Test whether ``input_path`` and ``output_path`` resolve to the same file.
+
+    Handles the common case where ``output_path`` does not yet exist by
+    resolving the parent directory and comparing against the prospective
+    full path. Symlink-safe via ``Path.resolve``.
+    """
+    try:
+        input_resolved = Path(input_path).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    # Direct path: both exist.
+    try:
+        output_resolved = Path(output_path).resolve(strict=True)
+        return input_resolved == output_resolved
+    except (OSError, RuntimeError):
+        pass
+    # Output doesn't exist; resolve its parent and join the filename.
+    op = Path(output_path)
+    parent = op.parent if str(op.parent) else Path(".")
+    try:
+        parent_resolved = parent.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    if op.name == "":
+        return False
+    return input_resolved == parent_resolved / op.name
+
+
+# ── WriteOptions and preflight (L2-WRT-014, L2-WRT-017) ────────────────
+
+
+@dataclass(frozen=True)
+class WriteOptions:
+    """Output-side options for the L2-WRT-014/017 safety checks.
+
+    Attributes:
+        input_path: Input MIE file path. When set, ``write_csv`` and
+            ``write_csv_split`` reject same-path output before opening
+            any file.
+        no_clobber: When True, refuse to overwrite an existing
+            destination.
+    """
+
+    input_path: Path | None = None
+    no_clobber: bool = False
+
+
+def _preflight_output(output: Path, opts: WriteOptions) -> None:
+    """Raise per the L2-WRT-014 and L2-WRT-017 contracts.
+
+    Runs before any output file is opened so existing destinations are
+    never partially overwritten on a rejected configuration.
+    """
+    if opts.input_path is not None and paths_refer_to_same_file(opts.input_path, output):
+        raise MieInputOutputCollisionError(str(output))
+    if opts.no_clobber and output.exists():
+        raise MieClobberRefusedError(str(output))
+
+
+# ── Atomic CSV write helper (L2-WRT-015, L2-WRT-016) ───────────────────
+
+
+def _make_temp_path(final_path: Path) -> Path:
+    """Build the temp file path next to ``final_path``.
+
+    Pattern: ``<destination>.mie-decoder.tmp.<pid>``. Co-located so
+    ``os.replace`` is atomic (same filesystem). The PID suffix avoids
+    collisions when multiple processes target the same destination
+    directory.
+    """
+    return final_path.with_name(f"{final_path.name}.mie-decoder.tmp.{os.getpid()}")
+
+
+def _write_dataframe_atomic(df: pd.DataFrame, dest: Path) -> None:
+    """Write ``df`` to a temp file beside ``dest``, then ``os.replace``.
+
+    On any failure during the write, the temp file is unlinked and the
+    original ``dest`` (if it existed) is left untouched.
+    """
+    temp = _make_temp_path(dest)
+    try:
+        df.to_csv(temp, index=False, lineterminator="\n")
+    except OSError as exc:
+        if temp.exists():
+            try:
+                temp.unlink()
+            except OSError:
+                pass
+        raise MieWriterError(str(dest), exc) from exc
+    try:
+        os.replace(temp, dest)
+    except OSError as exc:
+        if temp.exists():
+            try:
+                temp.unlink()
+            except OSError:
+                pass
+        raise MieWriterError(str(dest), exc) from exc
 
 #: Maximum number of data word columns in the CSV output.
 MAX_DATA_WORDS: int = 32
@@ -201,27 +311,39 @@ def dataframe_to_csv(
 ) -> None:
     """Write a DataFrame to CSV format.
 
-    This is the low-level CSV writing function. It writes the DataFrame
-    produced by :func:`messages_to_dataframe` to the specified output
-    destination using :meth:`pandas.DataFrame.to_csv`.
+    Low-level CSV writing. File-path destinations go through the
+    atomic temp-file + ``os.replace`` pattern (L2-WRT-015). Text-stream
+    destinations (including ``sys.stdout``) bypass the atomic path
+    because they have no on-disk identity; a broken-pipe condition on
+    such a destination is silently swallowed (L2-WRT-018).
 
     Args:
         df: DataFrame with columns matching :data:`CSV_HEADER`.
         output: Destination for CSV output. Accepts:
-            - A file path (``str`` or ``Path``) — writes to that file.
-            - A text stream (e.g., ``sys.stdout``) — writes directly.
+            - A file path (``str`` or ``Path``) — atomic write.
+            - A text stream (e.g., ``sys.stdout``) — direct write.
             - ``None`` — writes to ``sys.stdout``.
 
     Raises:
         MieWriterError: If an I/O error occurs during writing.
     """
-    dest: str | Path | TextIO = output if output is not None else sys.stdout
-    dest_name = str(output) if output is not None else "stdout"
+    if isinstance(output, (str, Path)):
+        dest = Path(output)
+        _write_dataframe_atomic(df, dest)
+        logger.info("Wrote %d rows to %s", len(df), dest)
+        return
 
+    # Text-stream destination (TextIO or None → stdout).
+    stream: TextIO = output if output is not None else sys.stdout
+    dest_name = "stdout" if output is None else "<stream>"
     try:
         # Keep output byte-stable across platforms and aligned with the Rust
         # implementation. Pandas otherwise emits CRLF when writing on Windows.
-        df.to_csv(dest, index=False, lineterminator="\n")
+        df.to_csv(stream, index=False, lineterminator="\n")
+    except BrokenPipeError:
+        # L2-WRT-018: downstream consumer closed early. Treat as success.
+        logger.info("Stdout consumer closed early (broken pipe) — exit 0")
+        return
     except OSError as exc:
         raise MieWriterError(dest_name, exc) from exc
 
@@ -231,6 +353,7 @@ def dataframe_to_csv(
 def write_csv(
     messages: Iterable[MieMessage],
     output: str | Path | TextIO | None = None,
+    opts: WriteOptions | None = None,
 ) -> int:
     """Write all messages (normal + errored) to a single CSV.
 
@@ -239,14 +362,23 @@ def write_csv(
 
     Args:
         messages: Iterable of decoded MieMessage instances.
-        output: Destination for CSV output.
+        output: Destination for CSV output (file path, stream, or None for stdout).
+        opts: Output safety options. When ``output`` is a file path, the
+            L2-WRT-014 input/output collision check and L2-WRT-017
+            no-clobber check are applied. Ignored for stream destinations.
 
     Returns:
         The number of messages written.
 
     Raises:
+        MieInputOutputCollisionError: Output path resolves to the same file as the input.
+        MieClobberRefusedError: Output exists and ``opts.no_clobber`` is True.
         MieWriterError: If an I/O error occurs during writing.
     """
+    if opts is None:
+        opts = WriteOptions()
+    if isinstance(output, (str, Path)):
+        _preflight_output(Path(output), opts)
     df = messages_to_dataframe(messages)
     dataframe_to_csv(df, output=output)
     return len(df)
@@ -255,6 +387,7 @@ def write_csv(
 def write_csv_split(
     messages: Iterable[MieMessage],
     output: str | Path,
+    opts: WriteOptions | None = None,
 ) -> tuple[int, int]:
     """Write normal messages to main CSV, errors to a separate file.
 
@@ -262,20 +395,41 @@ def write_csv_split(
     ``output``, errored and spurious records go to
     ``<output_stem>_errors<output_suffix>``.
 
+    Both files are written via the atomic temp + ``os.replace`` pattern.
+    If the errors-file write fails after the main file has been
+    committed, the main file remains; we accept this trade-off because
+    atomically committing two files together is not possible without
+    cross-file rename support.
+
     Args:
         messages: Iterable of decoded MieMessage instances.
         output: Path for the main CSV output file.
+        opts: Output safety options. Both the main destination AND the
+            derived errors path are checked against ``opts.no_clobber``.
+            The L2-WRT-014 collision check applies to the main path.
 
     Returns:
         A tuple of (normal_count, error_count).
 
     Raises:
+        MieInputOutputCollisionError: Main output collides with input.
+        MieClobberRefusedError: Main or errors destination exists and
+            ``opts.no_clobber`` is True.
         MieWriterError: If an I/O error occurs during writing.
     """
+    if opts is None:
+        opts = WriteOptions()
     output_path = Path(output)
     error_path = output_path.with_name(
         f"{output_path.stem}_errors{output_path.suffix}"
     )
+
+    _preflight_output(output_path, opts)
+    # The errors-file path also needs the no-clobber check; the
+    # collision check is implicit since errors_path is derived from
+    # output_path which was just checked.
+    if opts.no_clobber and error_path.exists():
+        raise MieClobberRefusedError(str(error_path))
 
     normal_rows: list[dict[str, str]] = []
     error_rows: list[dict[str, str]] = []

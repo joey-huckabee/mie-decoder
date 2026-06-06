@@ -9,7 +9,9 @@ Exception hierarchy::
     MieDecoderError
     ├── MieFileError
     │   ├── MieFileNotFoundError
-    │   └── MieFileEmptyError
+    │   ├── MieFileEmptyError
+    │   ├── MieInputOutputCollisionError
+    │   └── MieClobberRefusedError
     ├── MieRecordError
     │   ├── MieInvalidTypeWordError
     │   ├── MieUnknownTypeWordError
@@ -72,6 +74,46 @@ class MieFileEmptyError(MieFileError):
     def __init__(self, path: str) -> None:
         self.path = path
         super().__init__(f"MIE file is empty (0 bytes): {path}")
+
+
+class MieInputOutputCollisionError(MieFileError):
+    """Raised when the output path resolves to the same file as the input.
+
+    Per L2-WRT-014, decoding in-place is unsafe with a memory-mapped
+    reader. The implementation rejects this configuration before any
+    output file is opened.
+
+    Attributes:
+        path: The colliding path (both input and output resolve here).
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        super().__init__(
+            f"Output path resolves to the same file as the input ({path}); "
+            f"decoding in-place is unsafe with a memory-mapped reader. "
+            f"Choose a different output path."
+        )
+
+
+class MieClobberRefusedError(MieFileError):
+    """Raised when ``--no-clobber`` is set and the destination exists.
+
+    Per L2-WRT-017, the implementation refuses to overwrite an existing
+    file when the no-clobber flag is in effect (CLI ``--no-clobber`` or
+    config ``output.no_clobber = true``).
+
+    Attributes:
+        path: The destination path that already exists.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        super().__init__(
+            f"Refusing to overwrite existing file {path} "
+            f"(--no-clobber or output.no_clobber is set). "
+            f"Remove the file or unset the flag to proceed."
+        )
 
 
 class MieRecordError(MieDecoderError):

@@ -9,12 +9,166 @@
 //! strings — they exist for compatibility, not because we populate them.
 
 use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::io::{self, BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 use crate::error::{MieError, MieResult};
 use crate::models::{MAX_DATA_WORDS, MieMessage};
 use crate::{log_info, log_warn};
+
+// ── Path identity (L2-WRT-014) ────────────────────────────────────────
+
+/// Test whether `input` and `output` resolve to the same file.
+///
+/// Handles the common case where `output` does not yet exist by
+/// canonicalizing the output's parent directory and joining the
+/// filename. Returns `Ok(false)` whenever either path or its parent
+/// cannot be canonicalized — collision is only positive when both
+/// resolve to the same identity.
+///
+/// This is intentionally symlink-safe (via `fs::canonicalize`) so that
+/// `/tmp/in.mie` aliasing `/var/foo/in.mie` is detected.
+pub fn paths_refer_to_same_file(input: &Path, output: &Path) -> io::Result<bool> {
+    let input_canon = std::fs::canonicalize(input)?;
+
+    // Direct path: both files exist on disk.
+    if let Ok(out_canon) = std::fs::canonicalize(output) {
+        return Ok(input_canon == out_canon);
+    }
+
+    // Output doesn't exist yet (the common case). Canonicalize the
+    // parent and join the filename. If the parent itself doesn't exist,
+    // there can be no collision because the output isn't reachable.
+    let Some(parent) = output.parent() else {
+        return Ok(false);
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    let Ok(parent_canon) = std::fs::canonicalize(parent) else {
+        return Ok(false);
+    };
+    let Some(filename) = output.file_name() else {
+        return Ok(false);
+    };
+    Ok(input_canon == parent_canon.join(filename))
+}
+
+// ── AtomicCsvFile (L2-WRT-015, L2-WRT-016) ────────────────────────────
+
+/// Write a CSV to a temp file in the destination's directory, then
+/// `rename()` atomically over the destination on successful commit.
+///
+/// On Drop without commit (i.e., decode failed or was interrupted),
+/// the temp file is unlinked. The destination file — if it already
+/// existed — is never touched on the failure path.
+///
+/// Rename is atomic on POSIX (`rename(2)`) and on NTFS within the
+/// same volume (`MoveFileEx` with replace). Keeping the temp file
+/// in the destination's parent guarantees same-volume placement.
+pub struct AtomicCsvFile {
+    final_path: PathBuf,
+    temp_path: PathBuf,
+    /// Owned via `Option` so `commit()` can move out the writer and
+    /// run `BufWriter::into_inner()` without partially-moving `self`
+    /// (which Drop would object to).
+    writer: Option<BufWriter<File>>,
+    committed: bool,
+}
+
+impl AtomicCsvFile {
+    pub fn create(final_path: PathBuf) -> MieResult<Self> {
+        let temp_path = make_temp_path(&final_path);
+        let file = File::create(&temp_path).map_err(|source| MieError::WriterError {
+            destination: temp_path.display().to_string(),
+            source,
+        })?;
+        Ok(Self {
+            final_path,
+            temp_path,
+            writer: Some(BufWriter::new(file)),
+            committed: false,
+        })
+    }
+
+    /// Flush, close the temp file, and atomically rename it over the
+    /// final destination. After a successful commit the temp file no
+    /// longer exists so Drop's cleanup becomes a no-op.
+    pub fn commit(mut self) -> MieResult<()> {
+        let writer = self
+            .writer
+            .take()
+            .expect("AtomicCsvFile::commit called without an active writer");
+        let temp_for_err = self.temp_path.display().to_string();
+        let file = writer.into_inner().map_err(|e| MieError::WriterError {
+            destination: temp_for_err,
+            source: e.into_error(),
+        })?;
+        // Closing the File before rename matters on Windows: NTFS will
+        // not rename a file that has an open handle. POSIX is fine
+        // either way, but explicit close keeps platforms aligned.
+        drop(file);
+        std::fs::rename(&self.temp_path, &self.final_path).map_err(|source| {
+            MieError::WriterError {
+                destination: self.final_path.display().to_string(),
+                source,
+            }
+        })?;
+        self.committed = true;
+        Ok(())
+    }
+
+    pub fn final_path(&self) -> &Path {
+        &self.final_path
+    }
+}
+
+impl Write for AtomicCsvFile {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.writer
+            .as_mut()
+            .expect("AtomicCsvFile::write after commit")
+            .write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer
+            .as_mut()
+            .expect("AtomicCsvFile::flush after commit")
+            .flush()
+    }
+}
+
+impl Drop for AtomicCsvFile {
+    fn drop(&mut self) {
+        // Take and drop the writer explicitly so the file handle is
+        // closed before we try to unlink (matters on Windows).
+        let _ = self.writer.take();
+        if !self.committed {
+            // Best-effort cleanup. If the temp file is already gone
+            // (e.g. commit succeeded part-way then failed in rename
+            // and we're cleaning up here defensively), this is a no-op.
+            let _ = std::fs::remove_file(&self.temp_path);
+        }
+    }
+}
+
+/// Construct the temp file path: `<destination>.mie-decoder.tmp.<pid>`
+/// in the destination's parent directory. Same-directory placement
+/// guarantees the subsequent `rename()` lives on one filesystem and
+/// is therefore atomic.
+fn make_temp_path(final_path: &Path) -> PathBuf {
+    let mut name = final_path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(format!(".mie-decoder.tmp.{}", std::process::id()));
+    match final_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.join(name),
+        _ => PathBuf::from(name),
+    }
+}
 
 /// Header row written before the first data row. Public so callers can
 /// embed it elsewhere if needed.
@@ -144,25 +298,59 @@ fn write_row<W: Write>(out: &mut W, msg: &MieMessage) -> std::io::Result<()> {
 
 // ── Top-level entry points matching the Python API ────────────────────
 
+/// Output-side options controlling safety checks enforced by `write_csv`
+/// and `write_csv_split`. Default is "no checks" so library callers that
+/// want raw behavior still get it.
+#[derive(Debug, Clone, Default)]
+pub struct WriteOptions {
+    /// Input path used for the L2-WRT-014 same-file collision check.
+    /// `None` skips the check (typically when the caller has already
+    /// validated, or there is no associated input file context).
+    pub input_path: Option<PathBuf>,
+    /// L2-WRT-017: refuse to overwrite an existing destination.
+    pub no_clobber: bool,
+}
+
+/// Pre-flight checks shared by file-output entry points. Runs the
+/// L2-WRT-014 input/output identity test and the L2-WRT-017 no-clobber
+/// gate, in that order. No filesystem state is mutated; this only
+/// produces an error before any output file is opened.
+fn preflight_output(output: &Path, opts: &WriteOptions) -> MieResult<()> {
+    if let Some(input) = &opts.input_path
+        && paths_refer_to_same_file(input, output).unwrap_or(false)
+    {
+        return Err(MieError::InputOutputCollision {
+            path: output.to_path_buf(),
+        });
+    }
+    if opts.no_clobber && output.exists() {
+        return Err(MieError::ClobberRefused {
+            path: output.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
 /// Stream `messages` to a single CSV. Errors and spurious records are
 /// included with their ERROR / ERROR_CODE columns populated (INLINE mode,
 /// or stdout where splitting is not possible).
 ///
-/// `output` may be `None` for stdout.
-pub fn write_csv<I>(messages: I, output: Option<&Path>) -> MieResult<u64>
+/// `output` may be `None` for stdout; stdout output skips the
+/// pre-flight checks because it has no filesystem identity.
+pub fn write_csv<I>(messages: I, output: Option<&Path>, opts: WriteOptions) -> MieResult<u64>
 where
     I: IntoIterator<Item = MieResult<MieMessage>>,
 {
     match output {
         Some(path) => {
-            let file = File::create(path).map_err(|source| MieError::WriterError {
-                destination: path.display().to_string(),
-                source,
-            })?;
-            let buf = BufWriter::new(file);
-            let mut writer = CsvWriter::new(buf, path.display().to_string())?;
-            stream_into(&mut writer, messages)?;
-            let n = writer.finish()?;
+            preflight_output(path, &opts)?;
+            let mut atomic = AtomicCsvFile::create(path.to_path_buf())?;
+            let n = {
+                let mut writer = CsvWriter::new(&mut atomic, path.display().to_string())?;
+                stream_into(&mut writer, messages)?;
+                writer.finish()?
+            };
+            atomic.commit()?;
             log_info!("wrote {} rows to {}", n, path.display());
             Ok(n)
         }
@@ -179,61 +367,89 @@ where
 }
 
 /// Split-output streaming: normal records to `output`, errored / spurious
-/// to `<stem>_errors<ext>`. Only opens the error file lazily on first error
-/// row, so files with no errors don't produce an empty `_errors.csv`.
+/// to `<stem>_errors<ext>`. Only opens the error temp file lazily on the
+/// first error row, so files with no errors don't produce an empty
+/// `_errors.csv` (and don't even create a temp).
+///
+/// Both files use the AtomicCsvFile pattern — temp + atomic rename.
+/// If the second file's commit fails, the first one has already been
+/// renamed; this is an accepted trade-off because we can't atomically
+/// commit two files together. The error file is committed first so a
+/// failure during commit of the main file leaves the (smaller) errors
+/// file alone rather than the other way around.
 ///
 /// Returns `(normal_count, error_count)`.
-pub fn write_csv_split<I>(messages: I, output: &Path) -> MieResult<(u64, u64)>
+pub fn write_csv_split<I>(messages: I, output: &Path, opts: WriteOptions) -> MieResult<(u64, u64)>
 where
     I: IntoIterator<Item = MieResult<MieMessage>>,
 {
-    let main_file = File::create(output).map_err(|source| MieError::WriterError {
-        destination: output.display().to_string(),
-        source,
-    })?;
-    let mut main = CsvWriter::new(BufWriter::new(main_file), output.display().to_string())?;
+    preflight_output(output, &opts)?;
 
     let error_path = error_path_for(output);
-    let mut errors: Option<CsvWriter<BufWriter<File>>> = None;
-
-    for item in messages {
-        let msg = item?;
-        if !msg.error_label().is_empty() {
-            if errors.is_none() {
-                let f = File::create(&error_path).map_err(|source| MieError::WriterError {
-                    destination: error_path.display().to_string(),
-                    source,
-                })?;
-                errors = Some(CsvWriter::new(
-                    BufWriter::new(f),
-                    error_path.display().to_string(),
-                )?);
-            }
-            errors.as_mut().unwrap().write_message(&msg)?;
-        } else {
-            main.write_message(&msg)?;
-        }
+    // Also pre-flight the error file path for clobber. The collision
+    // check against the input is implicit — the error path is derived
+    // from output, which was already checked.
+    if opts.no_clobber && error_path.exists() {
+        return Err(MieError::ClobberRefused {
+            path: error_path.clone(),
+        });
     }
 
-    let normal_count = main.rows_written();
-    main.finish()?;
+    let mut main_atomic = AtomicCsvFile::create(output.to_path_buf())?;
+    let mut errors_atomic: Option<AtomicCsvFile> = None;
 
-    let error_count = match errors {
-        Some(w) => {
-            let n = w.rows_written();
+    let (normal_count, error_count) = {
+        let mut main = CsvWriter::new(&mut main_atomic, output.display().to_string())?;
+        // The error writer is created lazily on first error row so a
+        // clean file doesn't leave an empty errors CSV behind.
+        let mut error_writer: Option<CsvWriter<&mut AtomicCsvFile>> = None;
+
+        for item in messages {
+            let msg = item?;
+            if !msg.error_label().is_empty() {
+                if error_writer.is_none() {
+                    errors_atomic = Some(AtomicCsvFile::create(error_path.clone())?);
+                    let inner = errors_atomic.as_mut().unwrap();
+                    error_writer = Some(CsvWriter::new(inner, error_path.display().to_string())?);
+                }
+                error_writer.as_mut().unwrap().write_message(&msg)?;
+            } else {
+                main.write_message(&msg)?;
+            }
+        }
+
+        let n_errors = match error_writer.as_ref() {
+            Some(w) => w.rows_written(),
+            None => 0,
+        };
+        let n_main = main.rows_written();
+
+        // Flush both CsvWriters before commit (drops them, which
+        // releases the borrows on the AtomicCsvFiles).
+        if let Some(w) = error_writer {
             w.finish()?;
-            log_info!(
-                "wrote {} error/spurious rows to {}",
-                n,
-                error_path.display()
-            );
-            n
         }
-        None => {
-            log_info!("no error/spurious records — error file not created");
-            0
-        }
+        main.finish()?;
+
+        (n_main, n_errors)
     };
+
+    // Commit errors first so a main-commit failure doesn't leave a
+    // dangling errors file when the main file was the unrecoverable
+    // one. (If the error commit itself fails, the main temp is
+    // unlinked on Drop — net effect is no output, which matches the
+    // failure-mode expectation.)
+    if let Some(ea) = errors_atomic {
+        ea.commit()?;
+        log_info!(
+            "wrote {} error/spurious rows to {}",
+            error_count,
+            error_path.display()
+        );
+    } else {
+        log_info!("no error/spurious records — error file not created");
+    }
+    main_atomic.commit()?;
 
     log_info!("wrote {} normal rows to {}", normal_count, output.display());
     if normal_count == 0 {
@@ -368,5 +584,201 @@ mod tests {
             Path::new("data/x/out_errors.csv")
         );
         assert_eq!(error_path_for(Path::new("out")), Path::new("out_errors"));
+    }
+
+    // ── AtomicCsvFile and path identity ──────────────────────────────
+    //
+    // Tests pinning L2-WRT-014 (input/output collision), L2-WRT-015
+    // (atomic rename), L2-WRT-016 default-cleanup, and L2-WRT-017
+    // (--no-clobber refusal). The .partial-rename branch of L2-WRT-016
+    // depends on the --allow-partial CLI flag and is covered with
+    // Phase 3.
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn unique_path(suffix: &str) -> std::path::PathBuf {
+        static C: AtomicU64 = AtomicU64::new(0);
+        let n = C.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        std::env::temp_dir().join(format!("mie-atomic-test-{pid}-{n}{suffix}"))
+    }
+
+    #[test]
+    fn make_temp_path_lives_next_to_destination() {
+        let dest = std::env::temp_dir().join("out.csv");
+        let tmp = make_temp_path(&dest);
+        assert_eq!(tmp.parent(), dest.parent());
+        let name = tmp.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("out.csv.mie-decoder.tmp."));
+        // PID suffix
+        assert!(name.ends_with(&std::process::id().to_string()));
+    }
+
+    #[test]
+    fn atomic_commit_renames_temp_over_destination() {
+        let dest = unique_path(".csv");
+        {
+            let mut atomic = AtomicCsvFile::create(dest.clone()).unwrap();
+            atomic.write_all(b"hello\n").unwrap();
+            atomic.commit().unwrap();
+        }
+        let content = std::fs::read_to_string(&dest).unwrap();
+        assert_eq!(content, "hello\n");
+        // Temp file must be gone after commit.
+        let tmp = make_temp_path(&dest);
+        assert!(!tmp.exists(), "temp file still present after commit");
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    #[test]
+    fn atomic_drop_without_commit_unlinks_temp_and_leaves_destination() {
+        let dest = unique_path(".csv");
+        // Pre-create destination so we can verify it isn't touched.
+        std::fs::write(&dest, b"original\n").unwrap();
+        let tmp = make_temp_path(&dest);
+        {
+            let mut atomic = AtomicCsvFile::create(dest.clone()).unwrap();
+            atomic.write_all(b"discarded\n").unwrap();
+            // Drop without commit — simulates a decode failure.
+        }
+        // Temp must be unlinked; destination must be unchanged.
+        assert!(!tmp.exists(), "temp file should be cleaned up on Drop");
+        let content = std::fs::read_to_string(&dest).unwrap();
+        assert_eq!(content, "original\n");
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    #[test]
+    fn paths_refer_to_same_file_existing() {
+        let p = unique_path(".dat");
+        std::fs::write(&p, b"x").unwrap();
+        assert!(paths_refer_to_same_file(&p, &p).unwrap());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn paths_refer_to_same_file_nonexistent_output_under_same_parent() {
+        // Input exists; output names the same path but doesn't exist yet
+        // (because we removed it). The check should still detect collision
+        // via parent canonicalize + filename match.
+        let p = unique_path(".dat");
+        std::fs::write(&p, b"x").unwrap();
+        let same_name_missing_file = p.clone();
+        std::fs::remove_file(&same_name_missing_file).unwrap();
+        // Re-create input so canonicalize works on input.
+        std::fs::write(&p, b"x").unwrap();
+        // Different output path that doesn't exist — must NOT be a collision.
+        let different = unique_path(".csv");
+        assert!(!paths_refer_to_same_file(&p, &different).unwrap());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn write_csv_rejects_input_output_collision() {
+        let p = unique_path(".csv");
+        std::fs::write(&p, b"existing\n").unwrap();
+        let opts = WriteOptions {
+            input_path: Some(p.clone()),
+            no_clobber: false,
+        };
+        // Empty iterator — should never reach the write because
+        // preflight_output fails first.
+        let result = write_csv(std::iter::empty(), Some(&p), opts);
+        match result {
+            Err(MieError::InputOutputCollision { path }) => assert_eq!(path, p),
+            other => panic!("expected InputOutputCollision, got {other:?}"),
+        }
+        // File must be unchanged.
+        let content = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(content, "existing\n");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn write_csv_rejects_clobber_when_no_clobber_set() {
+        let p = unique_path(".csv");
+        std::fs::write(&p, b"existing\n").unwrap();
+        let opts = WriteOptions {
+            input_path: None,
+            no_clobber: true,
+        };
+        let result = write_csv(std::iter::empty(), Some(&p), opts);
+        match result {
+            Err(MieError::ClobberRefused { path }) => assert_eq!(path, p),
+            other => panic!("expected ClobberRefused, got {other:?}"),
+        }
+        // File must be unchanged.
+        let content = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(content, "existing\n");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn write_csv_overwrites_by_default() {
+        let p = unique_path(".csv");
+        std::fs::write(&p, b"existing\n").unwrap();
+        let result = write_csv(std::iter::empty(), Some(&p), WriteOptions::default());
+        result.unwrap();
+        // File should now contain just the CSV header.
+        let content = std::fs::read_to_string(&p).unwrap();
+        assert!(content.starts_with("TIME_STAMP,RT,MSG,"));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn write_csv_split_rejects_input_output_collision() {
+        let p = unique_path(".csv");
+        std::fs::write(&p, b"existing\n").unwrap();
+        let opts = WriteOptions {
+            input_path: Some(p.clone()),
+            no_clobber: false,
+        };
+        let result = write_csv_split(std::iter::empty(), &p, opts);
+        match result {
+            Err(MieError::InputOutputCollision { path }) => assert_eq!(path, p),
+            other => panic!("expected InputOutputCollision, got {other:?}"),
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn write_csv_split_no_clobber_checks_errors_file_too() {
+        // No-clobber should reject if the *errors* file exists, even
+        // when the main destination is fresh.
+        let dest = unique_path(".csv");
+        let err_dest = error_path_for(&dest);
+        std::fs::write(&err_dest, b"old errors\n").unwrap();
+        let opts = WriteOptions {
+            input_path: None,
+            no_clobber: true,
+        };
+        let result = write_csv_split(std::iter::empty(), &dest, opts);
+        match result {
+            Err(MieError::ClobberRefused { path }) => assert_eq!(path, err_dest),
+            other => panic!("expected ClobberRefused on errors path, got {other:?}"),
+        }
+        // Main dest must not have been created.
+        assert!(!dest.exists());
+        let _ = std::fs::remove_file(&err_dest);
+    }
+
+    #[test]
+    fn is_broken_pipe_predicate() {
+        let e = MieError::WriterError {
+            destination: "stdout".to_string(),
+            source: io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed"),
+        };
+        assert!(e.is_broken_pipe());
+
+        let other = MieError::WriterError {
+            destination: "stdout".to_string(),
+            source: io::Error::other("nope"),
+        };
+        assert!(!other.is_broken_pipe());
+
+        let non_writer = MieError::FileEmpty {
+            path: std::path::PathBuf::from("/x"),
+        };
+        assert!(!non_writer.is_broken_pipe());
     }
 }

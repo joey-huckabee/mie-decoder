@@ -236,6 +236,112 @@ class TestCsvWriter:
         assert list(df.columns) == CSV_HEADER
 
 
+class TestAtomicWriteSafety:
+    """L2-WRT-014 through L2-WRT-018 enforcement tests for the Python writer."""
+
+    def test_paths_refer_to_same_file_existing(self, tmp_path: Path) -> None:
+        from mie_decoder.writer import paths_refer_to_same_file
+
+        p = tmp_path / "x.dat"
+        p.write_bytes(b"x")
+        assert paths_refer_to_same_file(p, p) is True
+
+    def test_paths_refer_to_same_file_distinct(self, tmp_path: Path) -> None:
+        from mie_decoder.writer import paths_refer_to_same_file
+
+        a = tmp_path / "a.dat"
+        a.write_bytes(b"a")
+        b = tmp_path / "b.dat"  # doesn't exist
+        assert paths_refer_to_same_file(a, b) is False
+
+    def test_write_csv_rejects_input_output_collision(
+        self, tmp_mie_file: Path
+    ) -> None:
+        """L2-WRT-014: refuse to write CSV over the input file."""
+        from mie_decoder.exceptions import MieInputOutputCollisionError
+        from mie_decoder.writer import WriteOptions
+
+        opts = WriteOptions(input_path=tmp_mie_file, no_clobber=False)
+        original_bytes = tmp_mie_file.read_bytes()
+        with pytest.raises(MieInputOutputCollisionError) as exc_info:
+            write_csv(
+                MieFileReader(tmp_mie_file),
+                output=tmp_mie_file,
+                opts=opts,
+            )
+        assert str(tmp_mie_file) in str(exc_info.value)
+        # Input file MUST be unchanged.
+        assert tmp_mie_file.read_bytes() == original_bytes
+
+    def test_write_csv_rejects_clobber_with_no_clobber(
+        self, tmp_mie_file: Path, tmp_path: Path
+    ) -> None:
+        """L2-WRT-017: refuse to overwrite an existing destination."""
+        from mie_decoder.exceptions import MieClobberRefusedError
+        from mie_decoder.writer import WriteOptions
+
+        out = tmp_path / "out.csv"
+        out.write_text("EXISTING\n", encoding="utf-8")
+        opts = WriteOptions(no_clobber=True)
+        with pytest.raises(MieClobberRefusedError):
+            write_csv(MieFileReader(tmp_mie_file), output=out, opts=opts)
+        # Existing file untouched.
+        assert out.read_text(encoding="utf-8") == "EXISTING\n"
+
+    def test_write_csv_overwrites_by_default(
+        self, tmp_mie_file: Path, tmp_path: Path
+    ) -> None:
+        """No-clobber off (default): existing destination is replaced."""
+        out = tmp_path / "out.csv"
+        out.write_text("OLD\n", encoding="utf-8")
+        count = write_csv(MieFileReader(tmp_mie_file), output=out)
+        assert count == 3
+        text = out.read_text(encoding="utf-8")
+        assert text.startswith("TIME_STAMP,RT,MSG,")
+
+    def test_write_csv_to_file_cleans_up_temp(
+        self, tmp_mie_file: Path, tmp_path: Path
+    ) -> None:
+        """L2-WRT-015: after a successful write, no temp file should remain."""
+        out = tmp_path / "out.csv"
+        write_csv(MieFileReader(tmp_mie_file), output=out)
+        # Temp pattern: <output>.mie-decoder.tmp.<pid>
+        leftovers = [
+            p for p in tmp_path.iterdir()
+            if p.name.startswith("out.csv.mie-decoder.tmp.")
+        ]
+        assert leftovers == [], f"unexpected temp file(s): {leftovers}"
+
+    def test_write_csv_split_rejects_input_output_collision(
+        self, tmp_mie_file: Path
+    ) -> None:
+        from mie_decoder.exceptions import MieInputOutputCollisionError
+        from mie_decoder.writer import WriteOptions, write_csv_split
+
+        opts = WriteOptions(input_path=tmp_mie_file, no_clobber=False)
+        with pytest.raises(MieInputOutputCollisionError):
+            write_csv_split(MieFileReader(tmp_mie_file), output=tmp_mie_file, opts=opts)
+
+    def test_write_csv_split_no_clobber_checks_errors_file(
+        self, tmp_mie_file: Path, tmp_path: Path
+    ) -> None:
+        """no_clobber must also refuse if the errors-file destination exists."""
+        from mie_decoder.exceptions import MieClobberRefusedError
+        from mie_decoder.writer import WriteOptions, write_csv_split
+
+        out = tmp_path / "out.csv"
+        err = tmp_path / "out_errors.csv"
+        err.write_text("OLD ERRORS\n", encoding="utf-8")
+        opts = WriteOptions(no_clobber=True)
+        with pytest.raises(MieClobberRefusedError) as exc_info:
+            write_csv_split(MieFileReader(tmp_mie_file), output=out, opts=opts)
+        assert str(err) in str(exc_info.value)
+        # Main destination must not have been created.
+        assert not out.exists()
+        # Errors file untouched.
+        assert err.read_text(encoding="utf-8") == "OLD ERRORS\n"
+
+
 class TestCliEndToEnd:
     """End-to-end CLI tests."""
 

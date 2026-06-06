@@ -58,6 +58,16 @@ pub enum MieError {
         destination: String,
         source: io::Error,
     },
+
+    /// Output path resolves to the same file as the input. Per L2-WRT-014,
+    /// decoding in-place is unsafe (the input is mmap-backed) and is
+    /// rejected before any output file is opened.
+    InputOutputCollision { path: PathBuf },
+
+    /// `--no-clobber` was set (or `output.no_clobber = true` in config)
+    /// and the output destination already exists. Per L2-WRT-017 the
+    /// implementation refuses to overwrite rather than silently replacing.
+    ClobberRefused { path: PathBuf },
 }
 
 /// Discriminant identifying which variant of [`MieError`] occurred.
@@ -73,6 +83,8 @@ pub enum MieErrorKind {
     UnknownErrorCode,
     NoValidRecords,
     WriterError,
+    InputOutputCollision,
+    ClobberRefused,
 }
 
 impl MieError {
@@ -88,7 +100,19 @@ impl MieError {
             Self::UnknownErrorCode { .. } => MieErrorKind::UnknownErrorCode,
             Self::NoValidRecords { .. } => MieErrorKind::NoValidRecords,
             Self::WriterError { .. } => MieErrorKind::WriterError,
+            Self::InputOutputCollision { .. } => MieErrorKind::InputOutputCollision,
+            Self::ClobberRefused { .. } => MieErrorKind::ClobberRefused,
         }
+    }
+
+    /// True if this error wraps an `io::Error` whose kind is `BrokenPipe`.
+    /// Per L2-WRT-018 a broken-pipe condition on stdout output SHALL
+    /// exit `0` with no error; the CLI driver uses this predicate.
+    pub fn is_broken_pipe(&self) -> bool {
+        matches!(
+            self,
+            Self::WriterError { source, .. } if source.kind() == io::ErrorKind::BrokenPipe
+        )
     }
 
     /// True if this error originated at the file level (open/empty/io).
@@ -172,6 +196,20 @@ impl fmt::Display for MieError {
                 destination,
                 source,
             } => write!(f, "Failed to write to {destination}: {source}"),
+            Self::InputOutputCollision { path } => write!(
+                f,
+                "Output path resolves to the same file as the input ({}); \
+                 decoding in-place is unsafe with a memory-mapped reader. \
+                 Choose a different output path.",
+                path.display()
+            ),
+            Self::ClobberRefused { path } => write!(
+                f,
+                "Refusing to overwrite existing file {} \
+                 (--no-clobber or output.no_clobber is set). \
+                 Remove the file or unset the flag to proceed.",
+                path.display()
+            ),
         }
     }
 }

@@ -213,7 +213,7 @@ fn csv_output_has_one_row_per_message_plus_header() {
 
     let out_path = std::env::temp_dir().join(format!("mie-int-out-{}.csv", std::process::id()));
     let reader = MieFileReader::new(f.path()).unwrap();
-    let n = write_csv(reader.iter(), Some(&out_path)).unwrap();
+    let n = write_csv(reader.iter(), Some(&out_path), Default::default()).unwrap();
     assert_eq!(n, 3);
 
     let csv = std::fs::read_to_string(&out_path).unwrap();

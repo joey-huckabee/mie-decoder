@@ -27,6 +27,11 @@ pub struct DecoderConfig {
     pub error_mode: ErrorMode,
     pub filters: FilterConfig,
     pub output_format: String,
+    /// L2-WRT-017: refuse to overwrite an existing destination. Defaults
+    /// to `false` (overwrite is permitted) to preserve historical
+    /// behavior. Set via `output.no_clobber = true` in TOML or
+    /// `--no-clobber` on the CLI.
+    pub no_clobber: bool,
 }
 
 impl Default for DecoderConfig {
@@ -38,6 +43,7 @@ impl Default for DecoderConfig {
             error_mode: ErrorMode::Separate,
             filters: FilterConfig::default(),
             output_format: "csv".to_string(),
+            no_clobber: false,
         }
     }
 }
@@ -52,6 +58,7 @@ pub struct ConfigOverrides {
     pub strict: Option<bool>,
     pub error_mode: Option<ErrorMode>,
     pub output_format: Option<String>,
+    pub no_clobber: Option<bool>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -80,6 +87,9 @@ impl DecoderConfig {
         }
         if let Some(v) = ov.output_format {
             self.output_format = v;
+        }
+        if let Some(v) = ov.no_clobber {
+            self.no_clobber = v;
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -164,6 +174,9 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     }
     if let Some(fmt) = toml.get_string("output", "format")? {
         cfg.output_format = fmt.to_string();
+    }
+    if let Some(b) = toml.get_bool("output", "no_clobber")? {
+        cfg.no_clobber = b;
     }
 
     if let Some(types) = toml.get_array("filter", "exclude_types")? {

@@ -34,7 +34,13 @@ import time
 from pathlib import Path
 
 from mie_decoder import __version__
-from mie_decoder.exceptions import MieDecoderError, MieFileError, MieWriterError
+from mie_decoder.exceptions import (
+    MieClobberRefusedError,
+    MieDecoderError,
+    MieFileError,
+    MieInputOutputCollisionError,
+    MieWriterError,
+)
 from mie_decoder.logger import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -148,6 +154,15 @@ def build_parser() -> argparse.ArgumentParser:
             "'inline': errors included in main CSV with ERROR/ERROR_CODE columns."
         ),
     )
+    decode_parser.add_argument(
+        "--no-clobber",
+        action="store_true",
+        default=False,
+        help=(
+            "Refuse to overwrite an existing output file (L2-WRT-017). "
+            "Mirrors the output.no_clobber config key."
+        ),
+    )
 
     # ── dump subcommand ────────────────────────────────────────────
     dump_parser = subparsers.add_parser(
@@ -202,7 +217,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     from mie_decoder.config import DecoderConfig, load_config, _parse_type_names, _parse_bus_names
     from mie_decoder.filters import apply_filters
     from mie_decoder.reader import MieFileReader
-    from mie_decoder.writer import write_csv, write_csv_split
+    from mie_decoder.writer import WriteOptions, write_csv, write_csv_split
     from mie_decoder.models import ErrorMode, TimestampFormat
 
     # ── Load and merge configuration ───────────────────────────────
@@ -236,6 +251,9 @@ def _run_decode(args: argparse.Namespace) -> int:
             return 1
     if args.exclude_subaddresses is not None:
         overrides["exclude_subaddresses"] = args.exclude_subaddresses
+    # CLI flag flips no_clobber on; absence leaves config value intact.
+    if args.no_clobber:
+        overrides["no_clobber"] = True
 
     config = config.with_overrides(**overrides)
 
@@ -265,21 +283,38 @@ def _run_decode(args: argparse.Namespace) -> int:
         print(f"{count} messages in {reader.path.name}", file=sys.stderr)
         return 0
 
+    # WriteOptions populated once with both file-output safety checks
+    # (L2-WRT-014 input/output collision and L2-WRT-017 no-clobber).
+    # File-path destinations consume these; stdout output ignores them.
+    write_opts = WriteOptions(
+        input_path=args.input,
+        no_clobber=config.no_clobber,
+    )
+
     try:
         t0 = time.perf_counter()
         if config.error_mode == ErrorMode.SEPARATE and args.output is not None:
-            normal_count, error_count = write_csv_split(messages, output=args.output)
+            normal_count, error_count = write_csv_split(
+                messages, output=args.output, opts=write_opts,
+            )
             elapsed = time.perf_counter() - t0
             logger.info(
                 "Wrote %d messages + %d errors to %s in %.3fs",
                 normal_count, error_count, args.output, elapsed,
             )
         else:
-            # INLINE mode, or stdout (can't split stdout)
-            count = write_csv(messages, output=args.output)
+            # INLINE mode, or stdout (can't split stdout).
+            count = write_csv(messages, output=args.output, opts=write_opts)
             elapsed = time.perf_counter() - t0
             dest = str(args.output) if args.output else "stdout"
             logger.info("Wrote %d messages to %s in %.3fs", count, dest, elapsed)
+    except (MieInputOutputCollisionError, MieClobberRefusedError) as exc:
+        # File-safety preflight (L2-WRT-014/017). Distinct exit code
+        # (1) preserves L2-CLI-005 behavior; finer exit-class semantics
+        # land with Phase 3.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     except MieWriterError as exc:
         logger.error("Write failed: %s", exc)
         print(f"Error writing output: {exc}", file=sys.stderr)

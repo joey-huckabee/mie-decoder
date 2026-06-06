@@ -18,7 +18,7 @@ use crate::filter::FilterIterExt;
 use crate::log::{self, Level};
 use crate::models::{ErrorMode, TimestampFormat};
 use crate::reader::{MieFileReader, ReaderOptions};
-use crate::writer::{write_csv, write_csv_split};
+use crate::writer::{WriteOptions, write_csv, write_csv_split};
 use crate::{log_error, log_info};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -44,6 +44,8 @@ DECODE OPTIONS:
   -o, --output PATH                     Output CSV (default stdout)
   --inline-errors                       Errors inline in main CSV
                                         (default: separate <stem>_errors.csv)
+  --no-clobber                          Refuse to overwrite an existing
+                                        output file (L2-WRT-017)
   --time-format auto|irig|standard      Default auto
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
@@ -88,6 +90,7 @@ struct DecodeArgs {
     input: PathBuf,
     output: Option<PathBuf>,
     inline_errors: bool,
+    no_clobber: bool,
     time_format: Option<TimestampFormat>,
     strict: Option<bool>,
     output_format: Option<String>,
@@ -313,6 +316,7 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
                 args.output = Some(PathBuf::from(&s["--output=".len()..]));
             }
             "--inline-errors" => args.inline_errors = true,
+            "--no-clobber" => args.no_clobber = true,
             "--strict" => args.strict = Some(true),
             "--time-format" => {
                 let v = next_value("--time-format", iter)?;
@@ -593,6 +597,9 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
             None
         },
         output_format: args.output_format.clone(),
+        // CLI flag flips no_clobber on; absence leaves the config value
+        // intact (Some(false) would clobber a `true` from the config).
+        no_clobber: if args.no_clobber { Some(true) } else { None },
         exclude_types: args.exclude_types,
         exclude_rts: args.exclude_rts,
         exclude_buses: args.exclude_buses,
@@ -622,20 +629,42 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
     // below consumes it.
     let messages = reader.iter().filter_messages(cfg.filters.clone());
 
+    // WriteOptions populated once with both file-output safety checks
+    // (input/output collision per L2-WRT-014 and no-clobber per
+    // L2-WRT-017). Stdout output ignores these checks because it has
+    // no filesystem identity.
+    let write_opts = WriteOptions {
+        input_path: Some(args.input.clone()),
+        no_clobber: cfg.no_clobber,
+    };
+
     if cfg.error_mode == ErrorMode::Separate {
         let Some(ref output) = args.output else {
             // Stdout can't be split; force inline behavior with a warning.
             crate::log_warn!("stdout output forces inline error mode");
-            write_csv(messages, None).map_err(format_mie_error)?;
-            return Ok(());
+            return convert_write_result(write_csv(messages, None, WriteOptions::default()));
         };
-        let (n, e) = write_csv_split(messages, output).map_err(format_mie_error)?;
-        log_info!("wrote {n} messages + {e} errors to {}", output.display());
+        let r = write_csv_split(messages, output, write_opts).map(|(n, e)| {
+            log_info!("wrote {n} messages + {e} errors to {}", output.display());
+        });
+        convert_write_result(r)
     } else {
-        write_csv(messages, args.output.as_deref()).map_err(format_mie_error)?;
+        convert_write_result(write_csv(messages, args.output.as_deref(), write_opts).map(|_| ()))
     }
+}
 
-    Ok(())
+/// Translate a writer-side result into the CLI's `Result<(), String>`,
+/// silencing L2-WRT-018 broken-pipe conditions on stdout. Any other
+/// writer error propagates as a user-facing diagnostic.
+fn convert_write_result<T>(r: crate::error::MieResult<T>) -> Result<(), String> {
+    match r {
+        Ok(_) => Ok(()),
+        Err(e) if e.is_broken_pipe() => {
+            log_info!("stdout consumer closed early (broken pipe) — exit 0");
+            Ok(())
+        }
+        Err(e) => Err(format_mie_error(e)),
+    }
 }
 
 fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), String> {
