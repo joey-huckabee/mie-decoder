@@ -1,0 +1,6 @@
+# Mode code without data (Type 0x01, SA=0, T/R=R, dwc=2 mode code id,
+# wc=6). Classification path: non-broadcast + T/R=R + wc < 7 →
+# MODE_CODE_NO_DATA. Wire layout: Cmd + Status only.
+
+01060F1826DB21F60278007801060F18
+26DB21F602780078

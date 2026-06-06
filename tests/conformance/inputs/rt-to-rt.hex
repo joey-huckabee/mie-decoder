@@ -1,0 +1,7 @@
+# RT-to-RT transfer (Type 0x08). Locks L2-MSG-001 RT-to-RT
+# classification + the Cmd2 / TxStatus / Data / RxStatus
+# wire layout. Two records so look-ahead at record 1 succeeds.
+
+080B0F1826DB21F6C37E432900780100
+020003000028080B0F1826DB21F6C37E
+432900780100020003000028

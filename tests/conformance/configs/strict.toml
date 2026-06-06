@@ -1,0 +1,4 @@
+# Shared config that enables strict mode for both implementations.
+# Used by the strict-rejects-irig-range conformance case.
+[decode]
+strict = true

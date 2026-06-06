@@ -69,6 +69,59 @@
         "--error-mode",
         "inline"
       ]
+    },
+    {
+      "name": "standard-timestamps",
+      "input": "inputs/standard-timestamps.hex",
+      "expected": "expected/standard-timestamps.csv",
+      "rust_args": [
+        "--time-format",
+        "standard"
+      ],
+      "python_args": [
+        "--time-format",
+        "standard"
+      ]
+    },
+    {
+      "name": "bus-b",
+      "input": "inputs/bus-b.hex",
+      "expected": "expected/bus-b.csv"
+    },
+    {
+      "name": "rt-to-rt",
+      "input": "inputs/rt-to-rt.hex",
+      "expected": "expected/rt-to-rt.csv"
+    },
+    {
+      "name": "mode-code-tx-data",
+      "input": "inputs/mode-code-tx-data.hex",
+      "expected": "expected/mode-code-tx-data.csv"
+    },
+    {
+      "name": "mode-code-no-data",
+      "input": "inputs/mode-code-no-data.hex",
+      "expected": "expected/mode-code-no-data.csv",
+      "rust_args": [
+        "--time-format",
+        "irig"
+      ],
+      "python_args": [
+        "--time-format",
+        "irig"
+      ]
+    },
+    {
+      "name": "errors-separate",
+      "input": "inputs/errors-inline.hex",
+      "expected": "expected/errors-separate.csv",
+      "expected_errors": "expected/errors-separate_errors.csv"
+    },
+    {
+      "name": "strict-rejects-irig-range",
+      "input": "inputs/strict-rejects-irig-range.hex",
+      "expected_exit": 1,
+      "config": "configs/strict.toml"
     }
   ]
 }

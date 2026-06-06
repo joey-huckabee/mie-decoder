@@ -1,0 +1,5 @@
+# Mode code with data, Transmit direction (Type 0x01, SA=31, T/R=T,
+# dwc=1). Locks the ModeCodeTxData wire layout: Cmd + Status + Data.
+
+01070F1826DB21F6E17F007842000107
+0F1826DB21F6E17F00784200

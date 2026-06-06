@@ -188,6 +188,20 @@ def prepare_python_bin(args: argparse.Namespace) -> None:
         raise RuntimeError(f"Python interpreter was not found: {args.python_bin}")
 
 
+def _errors_path(main_output: Path) -> Path:
+    """Derive the split-mode errors path for a given main output path.
+
+    Mirrors the L2-ERR-008 stem/suffix definition (and the matching
+    behavior in both implementations' writers): `out.csv` →
+    `out_errors.csv`, `out` → `out_errors`.
+    """
+    stem = main_output.stem
+    suffix = main_output.suffix
+    if suffix:
+        return main_output.with_name(f"{stem}_errors{suffix}")
+    return main_output.with_name(f"{stem}_errors")
+
+
 def diff_bytes(
     expected: bytes,
     actual: bytes,
@@ -279,6 +293,55 @@ def main() -> int:
             expected = expected_path.read_bytes()
             require_equal(expected, rust, str(expected_path), f"{name} Rust output")
             require_equal(expected, python, str(expected_path), f"{name} Python output")
+
+            # Split-output cases (separate error mode) compare an
+            # additional <output_stem>_errors.csv against the
+            # expected_errors oracle. Both implementations derive the
+            # errors path the same way (see L2-ERR-008 stem/suffix
+            # definition), so we can reuse the canonical naming here.
+            expected_errors_rel = case.get("expected_errors")
+            if expected_errors_rel:
+                rust_errors_path = _errors_path(rust_output)
+                python_errors_path = _errors_path(python_output)
+                if not rust_errors_path.exists():
+                    raise RuntimeError(
+                        f"{name}: Rust did not create errors file {rust_errors_path}"
+                    )
+                if not python_errors_path.exists():
+                    raise RuntimeError(
+                        f"{name}: Python did not create errors file {python_errors_path}"
+                    )
+                rust_errors = rust_errors_path.read_bytes()
+                python_errors = python_errors_path.read_bytes()
+                require_equal(
+                    rust_errors,
+                    python_errors,
+                    f"{name} Rust errors output",
+                    f"{name} Python errors output",
+                )
+                expected_errors_path = SUITE / expected_errors_rel
+                if args.update_expected:
+                    expected_errors_path.parent.mkdir(parents=True, exist_ok=True)
+                    expected_errors_path.write_bytes(rust_errors)
+                    print(f"UPDATED {expected_errors_path.relative_to(ROOT)}")
+                if not expected_errors_path.exists():
+                    raise RuntimeError(
+                        f"{name}: expected_errors oracle is missing: {expected_errors_path}"
+                    )
+                expected_errors = expected_errors_path.read_bytes()
+                require_equal(
+                    expected_errors,
+                    rust_errors,
+                    str(expected_errors_path),
+                    f"{name} Rust errors output",
+                )
+                require_equal(
+                    expected_errors,
+                    python_errors,
+                    str(expected_errors_path),
+                    f"{name} Python errors output",
+                )
+
             passed += 1
             print(f"PASS {name}")
 
