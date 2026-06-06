@@ -164,6 +164,22 @@ poetry -P python build
 The current pre-commit hook runs the Rust checks documented above. Run the
 Python tests manually when changing `python/`.
 
+## Continuous integration
+
+GitHub Actions runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on
+every push and pull request:
+
+- **Rust:** `cargo fmt --check`, Clippy with warnings denied, all-target tests,
+  and the `cargo cov-ci` 70% line + region coverage gate.
+- **Python 3.10 through 3.14:** locked dependency synchronization and the full
+  pytest suite on every supported minor version.
+- **Python 3.12:** strict package/lockfile validation and wheel + source
+  distribution builds.
+
+The Python matrix makes the `>=3.10,<3.15` compatibility declaration
+enforceable. In particular, Python 3.10 exercises the `tomli` compatibility
+path while newer versions use the standard-library `tomllib`.
+
 ## Coverage
 
 We use [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)
@@ -210,9 +226,8 @@ readings stabilize.
 
 Building an instrumented test binary takes much longer than a normal
 `cargo test`. The pre-commit hook is meant to be fast (under a few
-seconds for a small change). Coverage runs are a `pre-push`-shaped
-operation, or a CI step. Run `cargo cov-ci` manually before pushing
-material changes.
+seconds for a small change). CI enforces `cargo cov-ci` on every push
+and pull request; run it locally before pushing material changes.
 
 ### Line-level exclusions
 

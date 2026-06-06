@@ -140,15 +140,10 @@ here so they don't get dropped.
 
 ## Tooling
 
-- **CI workflow with `cargo cov-ci` as a hard gate.** No GitHub
-  Actions workflow exists yet. When CI lands, the coverage step is
-  `cargo cov-ci` (defined in `.cargo/config.toml`), which enforces
-  the agreed thresholds (`--fail-under-lines 70 --fail-under-regions
-  70`). Treat exit-non-zero as a hard build failure. Also worth
-  running `cargo cov-lcov` and uploading `lcov.info` as a build
-  artifact (or to codecov.io) so coverage trends are visible across
-  PRs. Until CI lands, contributors run `cargo cov-ci` locally
-  before pushing.
+- **Publish Rust coverage reports from CI.** The GitHub Actions workflow now
+  runs `cargo cov-ci` as a hard 70% line + region gate. A future improvement
+  is running `cargo cov-lcov` and uploading `lcov.info` as a build artifact
+  or to codecov.io so coverage trends are visible across PRs.
 - **Ratchet thresholds upward as baseline stabilizes.** Initial
   floors (70/70) sit ~5pp below the baseline (74.81% / 71.55%) to
   absorb refactor drift. After a few weeks of stable readings,
