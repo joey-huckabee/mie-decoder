@@ -56,6 +56,9 @@ behavior remains covered by each implementation's own tests.
 | L1-022 | A decode invocation that recovers from one or more mid-file sync losses SHALL exit with code `0`, SHALL log an INFO summary naming the recovery count, and SHALL complete the CSV normally. |
 | L1-023 | A decode invocation that suffers unrecoverable mid-file sync loss SHALL exit with code `3` by default and SHALL NOT preserve a partial output file. An optional `--allow-partial` CLI flag (and equivalent `decode.allow_partial` configuration key) SHALL downgrade the exit to `0`, log a WARN, and preserve the partial output with a `.partial` suffix appended to the configured destination. |
 | L1-024 | The decode command SHALL log a one-line summary on exit naming the exit class: `complete`, `partial-recovered`, `partial-unrecoverable`, or `no-records`. |
+| L1-025 | The input file SHALL NOT be modified, truncated, or extended during decoding. Behavior under concurrent modification is implementation-defined and MAY cause termination (POSIX mmap + ftruncate can produce SIGBUS; Windows file locking generally prevents writers but mmap does not grow with extensions). This is an operational contract: implementations make a read-only mmap and depend on the operator for exclusive access. |
+| L1-026 | Sync recovery scanning SHALL be bounded. Per-recovery scan distance SHALL NOT exceed `MAX_SCAN_BYTES` (64 KB). Across a full decode invocation, cumulative recovery scan distance SHALL NOT exceed the file size — recovery scans SHALL NOT re-traverse already-scanned bytes. (Satisfied by the existing implementation: `recover_sync` starts at the current offset and each successful recovery advances the offset past the scanned region.) |
+| L1-027 | For arbitrary input bytes within the size limits of `usize`, no implementation SHALL panic, segfault, or enter an unbounded loop. All failures SHALL surface as a documented decoder error variant (`MieError` in Rust, a `MieDecoderError` subclass in Python). Verified by a per-implementation deterministic-PRNG fuzz harness. |
 
 ---
 
@@ -258,6 +261,7 @@ These requirements apply only to `python/`.
 | PY-009 | L1-001 | The Python reader SHALL use read-only memory-mapped file access. |
 | PY-010 | L2-CLI-008 | Python message counting SHALL remain available through `decode --count`. |
 | PY-011 | L2-ERR-011 | Python inline error output SHALL remain available through `--error-mode inline`. |
+| PY-012 | L1-027 | Python decode memory usage SHALL be O(record_count) — the writer materializes a `pandas.DataFrame` for the full record stream before writing. A future PY-streaming feature will replace this with a chunked writer; until that lands, the operator SHALL be aware that decoding very large recordings consumes proportional memory. |
 
 ---
 
@@ -278,6 +282,7 @@ These requirements apply only to the root Rust crate.
 | RS-009 | L2-ERR-011 | Rust inline error output SHALL remain available through `--inline-errors`. |
 | RS-010 | L1-018 | Rust MAY additionally provide include filters without requiring equivalent Python CLI syntax. |
 | RS-011 | L1-019 | Rust CI SHALL enforce formatting, Clippy warnings-as-errors, all-target tests, and the configured line and region coverage floors. |
+| RS-012 | L1-027 | Rust decode memory usage SHALL be O(1) in the record count. The writer streams rows directly to a `BufWriter` (per RS-004) and the `DataWords` payload buffer is inline-fixed (per RS-005); the only per-record allocation is `String` for log messages and the per-key `HashMap` entry in `delta_tracker`, which is bounded by the count of distinct RT/MSG keys (≤ 32 × 32 × 2). |
 
 ---
 

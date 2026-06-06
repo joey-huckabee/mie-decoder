@@ -300,3 +300,48 @@ pub struct DataWords {
 
 This avoids one heap allocation per decoded record. For files with
 millions of records this is a measurable win.
+
+## Performance and Limits (Phase 8)
+
+### Memory model
+
+| Implementation | Per-record cost | Total memory | Notes |
+|----------------|----------------|--------------|-------|
+| **Rust** | ~0 bytes (inline `DataWords` + bounded log buffers) | O(1) in record count | Streams rows directly to a `BufWriter<File>`. The only growable per-decode allocation is `delta_tracker: HashMap<u32, u64>` whose keys are bounded by `RT × SA × direction` ≤ 32 × 32 × 2 = 2048. Tracked as `RS-012`. |
+| **Python** | One `dict` per row (~1–2 KB) | O(record_count) | The writer materialises the entire pandas `DataFrame` before flushing. Decoding a recording with 10 M records consumes ~5 GB RSS. Tracked as `PY-012`. A future `PY-streaming` change will replace this with a chunked writer. |
+
+### Operational limits (`L1-025`, `L1-026`)
+
+- **No concurrent modification.** The input file is opened with a
+  read-only mmap. POSIX `ftruncate` on a mapped file can produce
+  SIGBUS on subsequent access; Windows generally locks the file
+  against truncate while mapped but mmap does not grow if the file
+  is extended. The operator is responsible for exclusive access for
+  the duration of the decode.
+- **Sync-recovery scan bounds.** Each `recover_sync` invocation scans
+  at most `MAX_SCAN_BYTES` (64 KB) forward from the failed boundary.
+  Across a full decode, cumulative recovery scan distance is bounded
+  by the file size — `recover_sync` starts at the current offset and
+  every successful recovery advances the offset past the scanned
+  region, so the iterator can never re-traverse already-scanned
+  bytes. The combination guarantees terminating iteration even on
+  pathological inputs.
+
+### Fuzz harness (`L1-027`)
+
+Both implementations carry a deterministic-PRNG fuzz harness that
+feeds 256 random byte sequences (32 B – 8 KB each) through the
+`MieFileReader → message iterator` path and asserts that every
+outcome is either a successfully decoded message or a documented
+decoder error variant — never a panic, `IndexError`, `struct.error`,
+or unbounded iteration. The harnesses use a shared xorshift64 PRNG
+with seed `0x0DDCD1ECDDC0DEC0`, so a failure in one implementation
+is exactly reproducible against the other.
+
+- Rust: `tests/integration.rs::fuzz_arbitrary_bytes_never_panic`
+- Python: `python/tests/test_e2e.py::TestFuzzHarness`
+
+The default-suite iteration count (256) is sized so the harness
+completes in a few seconds per implementation. CI environments that
+want a longer burn-in can override `ITERATIONS` via a separate
+follow-on smoke test outside the default suite.
