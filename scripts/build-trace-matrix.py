@@ -460,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
     new_content = build_matrix()
     if args.check:
         try:
-            current = TRACE_DOC.read_text(encoding="utf-8")
+            current = TRACE_DOC.read_bytes().decode("utf-8")
         except OSError:
             current = ""
         if current != new_content:
@@ -472,7 +472,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
-    TRACE_DOC.write_text(new_content, encoding="utf-8")
+    # Pin LF line endings so the file is portable across platforms and
+    # passes the repo's CRLF guard. Path.write_text on Windows defaults
+    # to translating "\n" to "\r\n"; bypass via write_bytes.
+    TRACE_DOC.write_bytes(new_content.encode("utf-8"))
     print(f"Wrote {TRACE_DOC.relative_to(ROOT).as_posix()}")
     return 0
 
