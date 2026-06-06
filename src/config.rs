@@ -183,6 +183,14 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
         cfg.error_mode = parse_error_mode(em)?;
     }
     if let Some(fmt) = toml.get_string("output", "format")? {
+        // L2-CFG-010: validate enum membership at load time. `csv` is
+        // the only output format in v1; forward-compat for future
+        // formats (Parquet, etc.) will widen this list.
+        if fmt != "csv" {
+            return Err(ConfigError(format!(
+                "Invalid output.format: {fmt:?}. Valid: csv"
+            )));
+        }
         cfg.output_format = fmt.to_string();
     }
     if let Some(b) = toml.get_bool("output", "no_clobber")? {
@@ -201,7 +209,7 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
         for v in rts {
             cfg.filters
                 .exclude_rts
-                .push(parse_int_u8(v, "exclude_rts")?);
+                .push(parse_int_rt_sa(v, "exclude_rts")?);
         }
     }
     if let Some(buses) = toml.get_array("filter", "exclude_buses")? {
@@ -213,11 +221,41 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
         for v in sas {
             cfg.filters
                 .exclude_subaddresses
-                .push(parse_int_u8(v, "exclude_subaddresses")?);
+                .push(parse_int_rt_sa(v, "exclude_subaddresses")?);
+        }
+    }
+
+    // L2-CFG-009: WARN on unknown `[section] key` entries so typos in a
+    // config file (e.g., `exclude_subdresses`) surface to the operator
+    // instead of being silently dropped. Non-fatal so forward-compatible
+    // additions don't break older configs.
+    for (section, key, _) in &toml.entries {
+        if !is_known_shared_key(section.as_str(), key.as_str()) {
+            crate::log_warn!("unknown TOML key: [{section}] {key}");
         }
     }
 
     Ok(cfg)
+}
+
+/// Shared schema membership check used by L2-CFG-009. Any
+/// `(section, key)` pair not in this list triggers an unknown-key WARN
+/// at load time.
+fn is_known_shared_key(section: &str, key: &str) -> bool {
+    matches!(
+        (section, key),
+        ("logging", "level")
+            | ("decode", "time_format")
+            | ("decode", "strict")
+            | ("decode", "error_mode")
+            | ("decode", "allow_partial")
+            | ("output", "format")
+            | ("output", "no_clobber")
+            | ("filter", "exclude_types")
+            | ("filter", "exclude_rts")
+            | ("filter", "exclude_buses")
+            | ("filter", "exclude_subaddresses")
+    )
 }
 
 // ── Helpers for value coercion ────────────────────────────────────────
@@ -299,10 +337,19 @@ pub fn parse_bus_name(s: &str) -> Result<Bus, ConfigError> {
     }
 }
 
-fn parse_int_u8(v: &TomlValue, field: &str) -> Result<u8, ConfigError> {
+/// Parse a MIL-STD-1553 RT address or subaddress: integer in [0, 31].
+/// Per the L2-CFG schema reference, values outside this range are
+/// rejected at load time because they could never match a real record.
+fn parse_int_rt_sa(v: &TomlValue, field: &str) -> Result<u8, ConfigError> {
     match v {
-        TomlValue::Int(i) => u8::try_from(*i)
-            .map_err(|_| ConfigError(format!("{field} value out of range (0-255): {i}"))),
+        TomlValue::Int(i) => {
+            if !(0..=31).contains(i) {
+                return Err(ConfigError(format!(
+                    "{field} value out of MIL-STD-1553 range [0, 31]: {i}"
+                )));
+            }
+            Ok(*i as u8)
+        }
         _ => Err(ConfigError(format!("{field} entries must be integers"))),
     }
 }
@@ -576,12 +623,20 @@ time_format = "auto"
 
     #[test]
     fn hash_in_string_not_a_comment() {
+        // Verify the parser preserves `#` inside a quoted string rather
+        // than treating it as a comment delimiter. Tested at the
+        // TOML-parser layer because the validator (Phase 5) now
+        // restricts known string-valued keys to enum members, none of
+        // which contain `#`.
         let text = r#"
 [output]
 format = "csv#weird"
 "#;
-        let cfg = parse_into_config(text).unwrap();
-        assert_eq!(cfg.output_format, "csv#weird");
+        let doc = parse_toml(text).unwrap();
+        match doc.get("output", "format") {
+            Some(TomlValue::String(s)) => assert_eq!(s, "csv#weird"),
+            other => panic!("expected String(\"csv#weird\"), got {other:?}"),
+        }
     }
 
     #[test]
@@ -625,6 +680,77 @@ exclude_types = ["UNICORN"]
             parse_into_config(&text)
                 .unwrap_or_else(|e| panic!("expected {level:?} to parse, got: {}", e.0));
         }
+    }
+
+    // ── L2-CFG schema validations (Phase 5) ──────────────────────────
+
+    #[test]
+    fn unknown_output_format_rejected() {
+        let text = "[output]\nformat = \"json\"\n";
+        let err = parse_into_config(text).unwrap_err();
+        assert!(
+            err.0.contains("output.format"),
+            "error should name the field: {}",
+            err.0
+        );
+        assert!(err.0.contains("json"));
+    }
+
+    #[test]
+    fn output_format_csv_still_accepted() {
+        let text = "[output]\nformat = \"csv\"\n";
+        let cfg = parse_into_config(text).unwrap();
+        assert_eq!(cfg.output_format, "csv");
+    }
+
+    #[test]
+    fn exclude_rts_out_of_range_rejected() {
+        // L2-CFG: RT must be in [0, 31]. 32 is out of range.
+        let text = "[filter]\nexclude_rts = [32]\n";
+        let err = parse_into_config(text).unwrap_err();
+        assert!(
+            err.0.contains("exclude_rts") && err.0.contains("[0, 31]"),
+            "expected range error mentioning [0, 31]: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn exclude_subaddresses_negative_rejected() {
+        let text = "[filter]\nexclude_subaddresses = [-1]\n";
+        let err = parse_into_config(text).unwrap_err();
+        assert!(
+            err.0.contains("exclude_subaddresses") && err.0.contains("[0, 31]"),
+            "expected range error mentioning [0, 31]: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn exclude_rts_zero_and_thirty_one_accepted() {
+        // Boundary values must still parse.
+        let text = "[filter]\nexclude_rts = [0, 31]\n";
+        let cfg = parse_into_config(text).unwrap();
+        assert_eq!(cfg.filters.exclude_rts, vec![0, 31]);
+    }
+
+    #[test]
+    fn unknown_top_level_key_is_warned_not_rejected() {
+        // L2-CFG-009: unknown keys WARN at load time but do not fail
+        // the load — preserves forward compatibility.
+        let text = "[output]\nformat = \"csv\"\nunknown_thing = true\n";
+        let cfg = parse_into_config(text).expect("unknown key should warn, not fail");
+        assert_eq!(cfg.output_format, "csv");
+    }
+
+    #[test]
+    fn unknown_filter_key_is_warned_not_rejected() {
+        // Common typo: exclude_subdresses (missing 'ad').
+        let text = "[filter]\nexclude_subdresses = [0]\n";
+        let cfg = parse_into_config(text).expect("typo'd key should warn, not fail");
+        // The misspelled key gets WARN'd; the correctly-spelled key
+        // (had it been written) would not be filtered, so default empty.
+        assert!(cfg.filters.exclude_subaddresses.is_empty());
     }
 
     #[test]

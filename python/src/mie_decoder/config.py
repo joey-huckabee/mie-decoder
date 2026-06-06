@@ -45,6 +45,65 @@ except ModuleNotFoundError:
 #: Map of message type names (case-insensitive) to MessageType enum values.
 _TYPE_NAME_MAP: dict[str, int] = {m.name.upper(): m.value for m in MessageType}
 
+#: Accepted logging.level values (case-insensitive). Mirrors the Rust
+#: log::Level::parse table so both implementations reject the same
+#: inputs at config load time.
+_VALID_LOG_LEVELS: frozenset[str] = frozenset({
+    "DEBUG", "INFO", "WARNING", "WARN", "ERROR", "CRITICAL", "OFF",
+})
+
+#: L2-CFG-009 schema membership. Any [section] key not in this set
+#: triggers an unknown-key WARN at load time.
+_KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset({
+    ("logging", "level"),
+    ("decode", "time_format"),
+    ("decode", "strict"),
+    ("decode", "error_mode"),
+    ("decode", "allow_partial"),
+    ("output", "format"),
+    ("output", "no_clobber"),
+    ("filter", "exclude_types"),
+    ("filter", "exclude_rts"),
+    ("filter", "exclude_buses"),
+    ("filter", "exclude_subaddresses"),
+})
+
+
+def _require_bool(section: str, key: str, value: object) -> bool:
+    """Validate that `value` is a real ``bool`` (not coerced from an
+    int/str). Per L2-CFG-010 schema validations apply at load time.
+    """
+    # NOTE: ``isinstance(True, int)`` is True in Python, but
+    # ``isinstance(0, bool)`` is False — the bool check is sufficient
+    # here, no special-case needed.
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"Invalid [{section}] {key}: expected boolean, got "
+            f"{type(value).__name__} ({value!r})"
+        )
+    return value
+
+
+def _require_rt_sa_range(field: str, values: object) -> set[int]:
+    """Validate a list of RT or subaddress values: each must be an int
+    in [0, 31] per the L2-CFG schema reference.
+    """
+    if not isinstance(values, list):
+        raise ValueError(f"Invalid filter.{field}: expected array, got {type(values).__name__}")
+    out: set[int] = set()
+    for v in values:
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise ValueError(
+                f"Invalid filter.{field} entry: expected integer, got "
+                f"{type(v).__name__} ({v!r})"
+            )
+        if not (0 <= v <= 31):
+            raise ValueError(
+                f"filter.{field} value out of MIL-STD-1553 range [0, 31]: {v}"
+            )
+        out.add(v)
+    return out
+
 #: Map of bus name strings to Bus enum values.
 _BUS_NAME_MAP: dict[str, Bus] = {"A": Bus.A, "B": Bus.B}
 
@@ -286,8 +345,19 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     filter_section = data.get("filter", {})
     output_section = data.get("output", {})
 
-    # Logging level
-    log_level = logging_section.get("level", "WARNING").upper()
+    # Logging level (L2-CFG-010: validate at load time).
+    log_level_raw = logging_section.get("level", "WARNING")
+    if not isinstance(log_level_raw, str):
+        raise ValueError(
+            f"Invalid [logging] level: expected string, got "
+            f"{type(log_level_raw).__name__}"
+        )
+    log_level = log_level_raw.upper()
+    if log_level not in _VALID_LOG_LEVELS:
+        raise ValueError(
+            f"Invalid [logging] level: {log_level_raw!r}. "
+            f"Valid: DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL"
+        )
 
     # Timestamp format
     tf_str = decode_section.get("time_format", "auto").lower()
@@ -298,8 +368,8 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         )
     time_format = _TIME_FORMAT_MAP[tf_str]
 
-    # Strict mode
-    strict = bool(decode_section.get("strict", False))
+    # Strict mode (L2-CFG-010: TOML boolean only; no coercion).
+    strict = _require_bool("decode", "strict", decode_section.get("strict", False))
 
     # Error mode
     em_str = decode_section.get("error_mode", "separate").lower()
@@ -311,9 +381,12 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
 
     # Filters
     exclude_types = _parse_type_names(filter_section.get("exclude_types", []))
-    exclude_rts = set(filter_section.get("exclude_rts", []))
+    # L2-CFG schema: RT/SA values must be in [0, 31].
+    exclude_rts = _require_rt_sa_range("exclude_rts", filter_section.get("exclude_rts", []))
     exclude_buses = _parse_bus_names(filter_section.get("exclude_buses", []))
-    exclude_subaddresses = set(filter_section.get("exclude_subaddresses", []))
+    exclude_subaddresses = _require_rt_sa_range(
+        "exclude_subaddresses", filter_section.get("exclude_subaddresses", [])
+    )
 
     filters = FilterConfig(
         exclude_types=exclude_types,
@@ -322,14 +395,32 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         exclude_subaddresses=exclude_subaddresses,
     )
 
-    # Output format
+    # Output format (L2-CFG-010: validate at load time, only "csv" in v1).
     output_format = output_section.get("format", "csv")
+    if output_format != "csv":
+        raise ValueError(
+            f"Invalid output.format: {output_format!r}. Valid: csv"
+        )
     # L2-WRT-017: refuse to overwrite existing destination.
-    no_clobber = bool(output_section.get("no_clobber", False))
+    no_clobber = _require_bool(
+        "output", "no_clobber", output_section.get("no_clobber", False)
+    )
     # L1-023: --allow-partial / decode.allow_partial — turns
     # unrecoverable mid-file sync loss into a `.partial` commit + exit 0
     # instead of exit 3.
-    allow_partial = bool(decode_section.get("allow_partial", False))
+    allow_partial = _require_bool(
+        "decode", "allow_partial", decode_section.get("allow_partial", False)
+    )
+
+    # L2-CFG-009: WARN on unknown keys so typos surface to the operator
+    # instead of being silently dropped. Non-fatal so forward-compatible
+    # additions don't break older configs.
+    for section_name, section_dict in data.items():
+        if not isinstance(section_dict, dict):
+            continue
+        for key in section_dict.keys():
+            if (section_name, key) not in _KNOWN_SHARED_KEYS:
+                logger.warning("unknown TOML key: [%s] %s", section_name, key)
 
     config = DecoderConfig(
         log_level=log_level,

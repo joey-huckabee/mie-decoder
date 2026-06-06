@@ -337,3 +337,86 @@ class TestErrorModeConfig:
         # No errors in test data, so error file should not be created
         error_file = tmp_path / "main_errors.csv"
         assert not error_file.exists()
+
+
+class TestSchemaValidation:
+    """Phase 5: L2-CFG schema validation tests."""
+
+    def test_unknown_log_level_rejected(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "bad.toml"
+        cfg.write_text("[logging]\nlevel = \"NOPE\"\n")
+        with pytest.raises(ValueError, match="logging"):
+            load_config(cfg)
+
+    def test_known_log_levels_accepted_case_insensitively(self, tmp_path: Path) -> None:
+        for level in ["DEBUG", "info", "Warning", "WARN", "error", "CRITICAL"]:
+            cfg = tmp_path / f"l_{level}.toml"
+            cfg.write_text(f"[logging]\nlevel = \"{level}\"\n")
+            config = load_config(cfg)
+            assert config.log_level == level.upper()
+
+    def test_unknown_output_format_rejected(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "bad_fmt.toml"
+        cfg.write_text("[output]\nformat = \"json\"\n")
+        with pytest.raises(ValueError, match="output.format"):
+            load_config(cfg)
+
+    def test_output_format_csv_accepted(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "ok_fmt.toml"
+        cfg.write_text("[output]\nformat = \"csv\"\n")
+        config = load_config(cfg)
+        assert config.output_format == "csv"
+
+    def test_strict_must_be_bool(self, tmp_path: Path) -> None:
+        # TOML supports bool natively. A string here is rejected by
+        # tomllib at parse time (TypeError), so we test the dataclass
+        # path instead.
+        from mie_decoder.config import _require_bool
+        with pytest.raises(ValueError, match="expected boolean"):
+            _require_bool("decode", "strict", "yes")
+
+    def test_exclude_rts_out_of_range_rejected(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "rt_high.toml"
+        cfg.write_text("[filter]\nexclude_rts = [32]\n")
+        with pytest.raises(ValueError, match=r"\[0, 31\]"):
+            load_config(cfg)
+
+    def test_exclude_subaddresses_negative_rejected(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "sa_neg.toml"
+        cfg.write_text("[filter]\nexclude_subaddresses = [-1]\n")
+        with pytest.raises(ValueError, match=r"\[0, 31\]"):
+            load_config(cfg)
+
+    def test_exclude_rts_boundary_values_accepted(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "rt_bounds.toml"
+        cfg.write_text("[filter]\nexclude_rts = [0, 31]\n")
+        config = load_config(cfg)
+        assert config.filters.exclude_rts == {0, 31}
+
+    def test_unknown_top_level_key_is_warned_not_rejected(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        cfg = tmp_path / "unknown.toml"
+        cfg.write_text(
+            "[output]\nformat = \"csv\"\nunknown_thing = true\n"
+        )
+        import logging
+        with caplog.at_level(logging.WARNING, logger="mie_decoder.config"):
+            config = load_config(cfg)
+        assert config.output_format == "csv"
+        # The WARN should mention the offending key.
+        assert any("unknown_thing" in rec.getMessage() for rec in caplog.records)
+
+    def test_unknown_filter_key_warned_not_rejected(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # Common typo: exclude_subdresses (missing "ad").
+        cfg = tmp_path / "typo.toml"
+        cfg.write_text("[filter]\nexclude_subdresses = [0]\n")
+        import logging
+        with caplog.at_level(logging.WARNING, logger="mie_decoder.config"):
+            config = load_config(cfg)
+        assert config.filters.exclude_subaddresses == set()
+        assert any(
+            "exclude_subdresses" in rec.getMessage() for rec in caplog.records
+        )
