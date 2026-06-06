@@ -52,6 +52,10 @@ behavior remains covered by each implementation's own tests.
 | L1-018 | Each implementation SHALL support message exclusion by type, RT address, bus, and subaddress. |
 | L1-019 | Shared CSV and decoding behavior SHALL remain aligned through the cross-implementation conformance suite. |
 | L1-020 | Each implementation SHALL provide actionable file, record, configuration, and output errors and SHALL return a non-zero CLI exit code on failure. |
+| L1-021 | A decode invocation that finds no valid records SHALL exit with code `2` and SHALL NOT create an output file. |
+| L1-022 | A decode invocation that recovers from one or more mid-file sync losses SHALL exit with code `0`, SHALL log an INFO summary naming the recovery count, and SHALL complete the CSV normally. |
+| L1-023 | A decode invocation that suffers unrecoverable mid-file sync loss SHALL exit with code `3` by default and SHALL NOT preserve a partial output file. An optional `--allow-partial` CLI flag (and equivalent `decode.allow_partial` configuration key) SHALL downgrade the exit to `0`, log a WARN, and preserve the partial output with a `.partial` suffix appended to the configured destination. |
+| L1-024 | The decode command SHALL log a one-line summary on exit naming the exit class: `complete`, `partial-recovered`, `partial-unrecoverable`, or `no-records`. |
 
 ---
 
@@ -63,12 +67,16 @@ behavior remains covered by each implementation's own tests.
 |----|--------|-------------|
 | L2-DEC-001 | L1-001 | A 16-bit Type Word SHALL decode `message_type` from bits 0-6, bus from bit 7, `word_count` from bits 8-13, and error flag from bit 14. |
 | L2-DEC-002 | L1-003 | A 3-word IRIG timestamp SHALL decode day, hour, minute, second, microsecond, and freerun fields according to `docs/FIELDS.md`. |
+| L2-DEC-002a | L1-002 | IRIG timestamp text SHALL emit exactly six microsecond digits regardless of the decoded value. A microsecond value >= 1_000_000 SHALL be considered unreachable given L2-SYN-004 validation, but if encountered (defensive path) the implementation SHALL truncate to six digits and SHALL log a WARN naming the offending record offset. The formatter SHALL NOT emit more than six microsecond digits under any circumstance. |
 | L2-DEC-003 | L1-003 | IRIG decoding SHALL decode the freerun flag from bit 15 of the upper timestamp word. |
 | L2-DEC-004 | L1-004 | A 16-bit Command Word SHALL decode RT address, T/R direction, subaddress, and data-word count, where a raw count of zero means 32 words. |
 | L2-DEC-007 | L1-003 | A Standard timestamp SHALL decode as a 32-bit free-running counter. |
 | L2-DEC-008 | L1-001 | All 16-bit words SHALL be read as little-endian values. |
 | L2-DEC-009 | L1-004 | Payload extraction SHALL remain bounded by the Type Word's declared record extent and SHALL NOT consume bytes from a following record. |
-| L2-DEC-010 | L1-001 | Decoded records SHALL retain their source byte offset and raw Type and Command Word values where present. |
+| L2-DEC-010 | L1-001 | Decoded records SHALL retain their source byte offset and raw Type and Command Word values where present, in the internal record representation (e.g., `MieMessage`). Surfacing these fields in CSV output is not required by L2-WRT-001 and is reserved for future debug-only output or a programmatic API. |
+| L2-DEC-011 | L1-003 | Timestamp-format detection SHALL be file-level: the format is resolved on the first valid record and used unchanged for every subsequent record in the same decode invocation. Per-record re-detection is not permitted. |
+| L2-DEC-012 | L1-003 | When IRIG and Standard score equally during auto-detection, IRIG SHALL be selected. Flight-test recordings overwhelmingly use IRIG; this tie-break preserves the most common path. |
+| L2-DEC-013 | L1-017 | An explicit `--time-format` CLI flag or `decode.time_format` configuration value SHALL bypass auto-detection and force the chosen format. The chosen format SHALL still be validated against the first record's word count to detect obviously-wrong selections, surfacing a distinct error class in strict mode and a WARN in lenient mode. |
 
 ### L2-SYN - Synchronization And Validation
 
@@ -77,8 +85,9 @@ behavior remains covered by each implementation's own tests.
 | L2-SYN-001 | L1-015 | Record validation SHALL reject unknown message types. |
 | L2-SYN-002 | L1-015 | Record validation SHALL reject word counts below the timestamp-format minimum or above 63. |
 | L2-SYN-003 | L1-015 | Record validation SHALL reject records extending past end-of-file. |
-| L2-SYN-004 | L1-015 | IRIG validation SHALL reject hour values >= 24, minute values >= 60, and second values >= 60. |
-| L2-SYN-005 | L1-015 | Record validation SHALL confirm that the next record boundary contains a plausible Type Word when look-ahead bytes are available. |
+| L2-SYN-004 | L1-015 | IRIG validation SHALL reject hour values >= 24, minute values >= 60, second values >= 60, day-of-year values < 1 or > 366, and microsecond values > 999_999. |
+| L2-SYN-004a | L1-015 | When the IRIG freerun flag (bit 15 of the upper timestamp word) is set, the day-of-year range constraint of L2-SYN-004 SHALL NOT apply because the card's free-running oscillator is not calendar-locked. Hour, minute, second, and microsecond constraints still apply. |
+| L2-SYN-005 | L1-015 | Record validation SHALL confirm that the next record boundary contains a plausible Type Word when at least 2 bytes are available at `offset + (word_count × 2)`. When fewer than 2 bytes remain after the candidate record, look-ahead SHALL be skipped and validation checks 1 through 4 (type, word count, fits-in-file, IRIG range) SHALL be authoritative. |
 | L2-SYN-006 | L1-015 | Header detection SHALL scan from offset zero in 2-byte, word-aligned increments. |
 | L2-SYN-007 | L1-015 | Header detection SHALL cap its scan at 64 KB. |
 | L2-SYN-008 | L1-015 | Header detection SHALL report when no valid record is found within the scan window. |
@@ -91,6 +100,7 @@ behavior remains covered by each implementation's own tests.
 | L2-SYN-015 | L1-015 | Lenient mode SHALL skip invalid records and continue from a recovered boundary when possible. |
 | L2-SYN-016 | L1-013 | Strict mode SHALL stop and surface an error on invalid record validation. |
 | L2-SYN-017 | L1-016 | Valid error records and SPURIOUS_DATA records SHALL remain eligible record boundaries during validation and recovery. |
+| L2-SYN-018 | L1-015 | Header detection SHALL apply additional defenses against homogeneous-payload inputs. When the first N candidate records (with N >= 4) share identical bytes in payload positions (i.e., excluding positions where the timestamp word naturally varies), the implementation SHALL reject the input with a distinct error class. This defends against pathological files padded with a single byte value (such as 0x20-fill, where `0x20 0x20` parses as a valid SPURIOUS_DATA Type Word and the look-ahead heuristic alone admits the stream). |
 
 ### L2-RDR - Reader Behavior
 
@@ -98,6 +108,7 @@ behavior remains covered by each implementation's own tests.
 |----|--------|-------------|
 | L2-RDR-002 | L1-008 | Lenient mode SHALL stop cleanly at a truncated final record. |
 | L2-RDR-003 | L1-013 | Strict mode SHALL surface a truncation error when a readable Type Word declares a record extent beyond end-of-file. |
+| L2-RDR-004 | L1-013 | Header detection followed by a first-record truncation (the first valid Type Word's declared extent runs past EOF) SHALL surface a distinct error class in strict mode (e.g., `MieError::FirstRecordTruncated`) and SHALL terminate cleanly with zero records emitted in lenient mode. This is the post-header counterpart to L2-RDR-002/003. |
 | L2-RDR-005 | L1-020 | Opening a missing input file SHALL surface a file-not-found error. |
 | L2-RDR-006 | L1-020 | Opening an empty input file SHALL surface an empty-file error. |
 | L2-RDR-007 | L1-004 | Receive records SHALL extract Data Words before Status Word. |
@@ -114,7 +125,7 @@ behavior remains covered by each implementation's own tests.
 
 | ID | Parent | Requirement |
 |----|--------|-------------|
-| L2-MSG-001 | L1-004 | The decoder SHALL classify all 10 supported MIL-STD-1553 transaction formats plus SPURIOUS_DATA. |
+| L2-MSG-001 | L1-004 | The decoder SHALL classify all 10 supported MIL-STD-1553 transaction formats plus SPURIOUS_DATA. The supported transaction formats are: (1) BC→RT Receive, (2) RT→BC Transmit, (3) RT-to-RT, (4) Receive Broadcast (BC→RT broadcast), (5) RT-to-RT Broadcast, (6) Mode Code Transmit with data, (7) Mode Code Receive with data, (8) Mode Code with no data, (9) Mode Code Broadcast with no data, (10) Mode Code Broadcast with data. SPURIOUS_DATA is the 11th classification and represents records lacking a Command Word. |
 | L2-MSG-002 | L1-006 | Bus SHALL be represented as `A` or `B` in CSV output. |
 | L2-MSG-003 | L1-004 | A decoded message SHALL expose an MSG label in `<subaddress><T\|R>` form when a Command Word is present. |
 
@@ -126,10 +137,10 @@ behavior remains covered by each implementation's own tests.
 | L2-ERR-002 | L1-016 | The final word of an errored record SHALL be decoded as its DDC Error Word. |
 | L2-ERR-003 | L1-016 | Known DDC Error Word values SHALL be recognized. |
 | L2-ERR-004 | L1-013 | Strict mode SHALL reject unknown DDC Error Word values. |
-| L2-ERR-005 | L1-016 | SPURIOUS_DATA immediately following an errored record SHALL use decoder code `0x2000`. |
+| L2-ERR-005 | L1-016 | SPURIOUS_DATA immediately following an errored record SHALL use decoder code `0x2000`. "Immediately following" refers to the immediately preceding *successfully decoded* record, not the immediately preceding error record. A classification failure or unrecoverable validation error between an error record and a SPURIOUS_DATA record SHALL reset the continuation flag — the corruption itself is treated as a boundary, and the SPURIOUS_DATA SHALL fall through to `L2-ERR-006` (standalone, `0x2001`). |
 | L2-ERR-006 | L1-016 | Standalone SPURIOUS_DATA SHALL use decoder code `0x2001`. |
 | L2-ERR-007 | L1-002 | CSV output SHALL include `ERROR` and `ERROR_CODE` columns. |
-| L2-ERR-008 | L1-016 | Separate mode SHALL write normal messages to the main CSV and errored/spurious messages to `<stem>_errors<suffix>`. |
+| L2-ERR-008 | L1-016 | Separate mode SHALL write normal messages to the main CSV and errored/spurious messages to `<stem>_errors<suffix>`, where `<stem>` is the destination filename up to and excluding the final `.`, and `<suffix>` is the final `.` and extension (or empty if the destination has no extension). Examples: `out.csv` → `out_errors.csv`; `out` → `out_errors`; `data.bar.csv` → `data.bar_errors.csv`. |
 | L2-ERR-010 | L1-002 | CSV `ERROR` SHALL be empty, `ERROR`, or `SPURIOUS` as appropriate; `ERROR_CODE` SHALL contain the corresponding uppercase hexadecimal code. |
 | L2-ERR-011 | L1-016 | Inline mode SHALL write normal, errored, and spurious messages to one CSV. |
 
@@ -145,6 +156,11 @@ behavior remains covered by each implementation's own tests.
 | L2-WRT-011 | L1-002 | IRIG timestamp text SHALL use `DAY:HH:MM:SS.uuuuuu`. |
 | L2-WRT-012 | L1-002 | CSV output SHALL use LF (`\n`) line endings on every supported platform. |
 | L2-WRT-013 | L1-002 | CSV output SHALL preserve the currently-empty vendor compatibility columns. |
+| L2-WRT-014 | L1-020 | The decode output path SHALL NOT resolve to the same canonical path as the input file. Implementations SHALL surface a distinct error class (e.g., `MieError::InputOutputCollision` / `MieOutputPathError`) before opening the output. Stdout output is exempt because it has no filesystem identity. |
+| L2-WRT-015 | L1-020 | File output SHALL be written via a temporary file in the destination's directory, then renamed atomically over the destination on successful completion. The temp file name SHALL be `<destination>.mie-decoder.tmp.<pid>` so concurrent decoders writing to the same directory do not collide. The temp file SHALL live on the same filesystem as the destination so the rename is atomic. |
+| L2-WRT-016 | L1-023 | On a decode failure that triggers the default `partial-unrecoverable` exit class (L1-023), the temp file SHALL be unlinked before the process exits. When `--allow-partial` is in effect, the temp file SHALL instead be renamed to `<destination>.partial` so the operator can inspect it; in that case the original `<destination>` SHALL remain untouched. |
+| L2-WRT-017 | L1-020 | Overwrite of an existing destination SHALL succeed by default. An optional `--no-clobber` CLI flag (and equivalent `output.no_clobber` configuration key) SHALL refuse the overwrite and surface a distinct error class. |
+| L2-WRT-018 | L1-020 | A broken-pipe condition on stdout output (downstream consumer closed early) SHALL exit `0` with no error. Disk-full and permission errors SHALL surface as a writer error preserving the underlying OS error message. |
 
 ### L2-CFG - Configuration And Filtering
 
@@ -156,7 +172,30 @@ behavior remains covered by each implementation's own tests.
 | L2-CFG-005 | L1-017 | The CLI SHALL accept a TOML configuration file path. |
 | L2-CFG-006 | L1-018 | Exclusion filters SHALL support message type, RT address, bus, and subaddress. |
 | L2-CFG-007 | L1-018 | Type filters SHALL accept documented symbolic names and hexadecimal type codes. |
-| L2-CFG-008 | L1-017 | The configuration schema and key names demonstrated by `config/default.toml` SHALL remain supported. |
+| L2-CFG-008 | L1-017 | The configuration schema and key names demonstrated by `config/default.toml` SHALL remain supported. Implementations MAY add additional keys under namespaces that do not collide with shared keys (e.g., Rust-only `filter.include_*` keys per `RS-010`); such additional keys SHALL be ignored or warned by implementations that do not support them. |
+| L2-CFG-009 | L1-017 | Unknown top-level TOML keys SHALL produce a WARN at load time naming the offending `[section] key`, but SHALL NOT fail the load. This permits forward-compatible additions to the schema without breaking older configs. |
+| L2-CFG-010 | L1-017 | All schema validations (type, range, enum membership, unknown-key detection) SHALL apply at configuration load time, not at use time. A loaded `DecoderConfig` SHALL represent already-validated state; consumers SHALL NOT perform additional validation. |
+
+#### L2-CFG Schema Reference
+
+The table below pins the accepted TOML keys, their types, valid ranges,
+and unknown-value handling. This schema is normative for `L2-CFG-001`,
+`L2-CFG-008`, `L2-CFG-009`, and `L2-CFG-010`.
+
+| Key | Type | Range / Enum | Unknown-value handling |
+|-----|------|--------------|------------------------|
+| `logging.level` | string | one of `DEBUG`/`INFO`/`WARNING`/`WARN`/`ERROR`/`CRITICAL` (case-insensitive) | reject at load time |
+| `decode.time_format` | string | one of `auto`/`irig`/`standard` | reject at load time |
+| `decode.strict` | bool | TOML boolean only (not coerced from strings) | reject non-bool |
+| `decode.error_mode` | string | one of `separate`/`inline` | reject at load time |
+| `decode.allow_partial` | bool | TOML boolean only (see L1-023) | reject non-bool |
+| `output.format` | string | `csv` is the only valid value in v1 | reject at load time |
+| `output.no_clobber` | bool | TOML boolean only (see L2-WRT-017) | reject non-bool |
+| `filter.exclude_types` | array of string\|int | per-element validated against `L2-CFG-007` | reject at load time |
+| `filter.exclude_rts` | array of int | each in `[0, 31]` (1553 RT range) | reject out-of-range at load time |
+| `filter.exclude_buses` | array of string | each in `{A, B}` | reject at load time |
+| `filter.exclude_subaddresses` | array of int | each in `[0, 31]` (1553 subaddress range) | reject out-of-range at load time |
+| Any unknown `[section] key` | — | — | WARN at load time per L2-CFG-009 |
 
 ### L2-FLT - Filtering
 
@@ -173,6 +212,7 @@ behavior remains covered by each implementation's own tests.
 | L2-CLI-002 | L1-007 | Decode capability SHALL accept an optional output path. |
 | L2-CLI-004 | L1-011 | The CLI SHALL accept a configurable logging level. |
 | L2-CLI-005 | L1-020 | Successful commands SHALL return exit code zero; usage or runtime failures SHALL return non-zero. |
+| L2-CLI-005a | L1-021, L1-022, L1-023 | Decode exit codes SHALL follow L1-021 through L1-023: `0` on a complete or recovered decode (and on `--allow-partial` partials), `1` on usage or configuration failure, `2` on no-valid-records, `3` on unrecoverable mid-file sync loss without `--allow-partial`. The `count` and `dump` commands inherit `0`, `1`, and `2` but SHALL NOT produce exit `3` because they do not write a streaming output that could be partial. |
 | L2-CLI-006 | L1-020 | Human-readable diagnostics SHALL be written to stderr rather than mixed into CSV stdout. |
 | L2-CLI-008 | L1-007 | The CLI SHALL provide message-counting capability without requiring CSV output. |
 | L2-CLI-009 | L1-007 | The CLI SHALL provide raw and record-aware diagnostic dump capability. |

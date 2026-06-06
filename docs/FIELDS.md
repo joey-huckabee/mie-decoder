@@ -34,7 +34,7 @@ code with extensions for microsecond resolution.
 |------|-------|-------|-------------|
 | 15 | 1 | Freerun | Set to 1 when the external IRIG time source is unavailable and the card is using its internal free-running oscillator. When freerun is active, day/hour values may not reflect real-world calendar time, but relative timing between messages remains valid. |
 | 14 | 1 | Reserved | Reserved for future use. |
-| 13–5 | 9 | Day of Year | Day of year (1–366). NOTE: empirical testing has shown a discrepancy between the binary-decoded value and vendor CSV output for this field on some DDC card models. The bit extraction is correct per the DDC specification, but the card firmware may use a different encoding (possibly BCD or a different field width). All other timestamp fields are validated correct. |
+| 13–5 | 9 | Day of Year | Day of year (1–366). Validation rejects values outside `[1, 366]` per `L2-SYN-004`, except when the Freerun flag (bit 15) is set per `L2-SYN-004a` — a free-running oscillator is not calendar-locked so the day field may carry any value. NOTE: empirical testing has shown a discrepancy between the binary-decoded value and vendor CSV output for this field on some DDC card models. The bit extraction is correct per the DDC specification, but the card firmware may use a different encoding (possibly BCD or a different field width) — that investigation is tracked in `docs/ROADMAP.md`. |
 | 4–0 | 5 | Hour | Hour of day (0–23). |
 
 **Middle Word:**
@@ -43,7 +43,7 @@ code with extensions for microsecond resolution.
 |------|-------|-------|-------------|
 | 15–10 | 6 | Minutes | Minute of hour (0–59). |
 | 9–4 | 6 | Seconds | Second of minute (0–59). |
-| 3–0 | 4 | Microseconds [19:16] | Upper 4 bits of the 20-bit microsecond counter. Combined with the Lower Word to form a value from 0 to 999,999. |
+| 3–0 | 4 | Microseconds [19:16] | Upper 4 bits of the 20-bit microsecond counter. Combined with the Lower Word to form a value from 0 to 999,999. Validation rejects reconstructed microsecond values greater than 999,999 per `L2-SYN-004`; the formatter `L2-DEC-002a` guarantees exactly six microsecond digits in CSV output regardless. |
 
 **Lower Word:**
 
