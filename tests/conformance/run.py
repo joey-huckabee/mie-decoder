@@ -56,7 +56,15 @@ def run_command(
     output: Path,
     case_name: str,
     implementation: str,
-) -> bytes:
+    expected_exit: int = 0,
+) -> bytes | None:
+    """Run one implementation's CLI and assert its exit code matches.
+
+    Returns the CSV bytes from `output` when `expected_exit == 0`, or
+    `None` for negative cases (no output file expected). Raises
+    RuntimeError on unexpected exit codes, command timeouts, or
+    missing output.
+    """
     print(f"RUN  {case_name} ({implementation})", flush=True)
     try:
         result = subprocess.run(
@@ -77,14 +85,17 @@ def run_command(
             f"stdout:\n{exc.stdout or ''}\n"
             f"stderr:\n{exc.stderr or ''}"
         ) from exc
-    if result.returncode != 0:
+    if result.returncode != expected_exit:
         rendered = subprocess.list2cmdline(command)
         raise RuntimeError(
-            f"{case_name}: {implementation} exited {result.returncode}\n"
+            f"{case_name}: {implementation} exited {result.returncode}, expected {expected_exit}\n"
             f"command: {rendered}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
         )
+    if expected_exit != 0:
+        # Negative case — no output file expected.
+        return None
     if not output.exists():
         raise RuntimeError(f"{case_name}: {implementation} did not create {output}")
     return output.read_bytes()
@@ -228,23 +239,34 @@ def main() -> int:
             source.write_bytes(read_hex(SUITE / case["input"]))
             rust_output = temp / f"{name}-rust.csv"
             python_output = temp / f"{name}-python.csv"
-            expected_path = SUITE / case["expected"]
+            expected_exit = int(case.get("expected_exit", 0))
 
             rust = run_command(
                 rust_command(args, case, source, rust_output),
                 rust_output,
                 name,
                 "Rust",
+                expected_exit=expected_exit,
             )
             python = run_command(
                 python_command(args, case, source, python_output),
                 python_output,
                 name,
                 "Python",
+                expected_exit=expected_exit,
             )
+
+            if expected_exit != 0:
+                # Negative case — exit code alone is the assertion.
+                # No CSV oracle is required (and the "expected" key may
+                # be omitted from the manifest entry).
+                passed += 1
+                print(f"PASS {name} (expected_exit={expected_exit})")
+                continue
 
             require_equal(rust, python, f"{name} Rust output", f"{name} Python output")
 
+            expected_path = SUITE / case["expected"]
             if args.update_expected:
                 expected_path.parent.mkdir(parents=True, exist_ok=True)
                 expected_path.write_bytes(rust)

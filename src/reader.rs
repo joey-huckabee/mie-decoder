@@ -10,6 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use memmap2::Mmap;
 
@@ -35,6 +36,12 @@ pub struct MieFileReader {
     file_size: u64,
     strict: bool,
     time_format: TimestampFormat,
+    /// Cumulative sync-recovery attempts during the most recent iter()
+    /// call. Reset to 0 at the start of each iter(). Shared with the
+    /// active RecordIter via a reference so the CLI can query it
+    /// post-iteration (e.g., to distinguish L1-022 partial-recovered
+    /// from L1-021 complete in the exit-class summary).
+    sync_losses: AtomicU64,
 }
 
 /// Builder-style options. `strict=false`, `time_format=Auto` by default.
@@ -98,6 +105,7 @@ impl MieFileReader {
             file_size,
             strict: opts.strict,
             time_format: opts.time_format,
+            sync_losses: AtomicU64::new(0),
         })
     }
 
@@ -109,8 +117,19 @@ impl MieFileReader {
         self.file_size
     }
 
+    /// Cumulative sync-recovery count from the most recent iter() call.
+    /// Reset to 0 each time `iter()` is invoked. Query after the
+    /// iterator is exhausted to derive the L1-022/024 exit class.
+    pub fn sync_losses(&self) -> u64 {
+        self.sync_losses.load(Ordering::Relaxed)
+    }
+
     /// Borrow an iterator over decoded messages.
     pub fn iter(&self) -> RecordIter<'_> {
+        // Reset the per-call counter so successive iter() calls on the
+        // same reader handle don't accumulate stale counts.
+        self.sync_losses.store(0, Ordering::Relaxed);
+
         let resolved_format = if self.time_format == TimestampFormat::Auto {
             None
         } else {
@@ -157,6 +176,7 @@ impl MieFileReader {
             offset: start_offset.map(|h| h.offset).unwrap_or(file_len),
             done: false,
             pending_error,
+            pending_unrecoverable: None,
             strict: self.strict,
             resolved_format,
             prev_was_error: false,
@@ -164,6 +184,7 @@ impl MieFileReader {
             warned_ooo_keys: HashSet::new(),
             msg_count: 0,
             sync_losses: 0,
+            sync_losses_atomic: &self.sync_losses,
             path_for_log: &self.path,
         }
     }
@@ -187,6 +208,14 @@ pub struct RecordIter<'a> {
     /// detected at iterator construction (e.g. no valid records in the
     /// scan window) without silently yielding an empty stream.
     pending_error: Option<MieError>,
+    /// Set when lenient-mode sync recovery exhausts mid-file. The next
+    /// next() call yields this terminal Err once, then transitions to
+    /// done = true. Distinct from `pending_error` so the message-decoding
+    /// loop can populate it without entangling with construction-time
+    /// errors. Per L1-023 the CLI catches this variant to decide
+    /// between exit 3 (default) and a `.partial` commit + exit 0
+    /// (when `--allow-partial` is set).
+    pending_unrecoverable: Option<MieError>,
     strict: bool,
     resolved_format: Option<TimestampFormat>,
     prev_was_error: bool,
@@ -200,7 +229,13 @@ pub struct RecordIter<'a> {
     /// to one line per key per recording.
     warned_ooo_keys: HashSet<u32>,
     msg_count: u64,
+    /// Per-iteration sync-loss counter, kept locally to avoid an
+    /// atomic load on every record. Mirrored to `sync_losses_atomic`
+    /// so the reader-level getter can surface it post-iteration.
     sync_losses: u64,
+    /// Shared with `MieFileReader::sync_losses` so the CLI can query
+    /// the cumulative count after iteration ends.
+    sync_losses_atomic: &'a AtomicU64,
     path_for_log: &'a Path,
 }
 
@@ -222,6 +257,16 @@ impl<'a> Iterator for RecordIter<'a> {
         // transition to Done. This makes "no valid records" a real Err
         // item rather than a silent empty stream.
         if let Some(err) = self.pending_error.take() {
+            self.done = true;
+            return Some(Err(err));
+        }
+        // Surface a deferred mid-iteration unrecoverable-sync-loss
+        // error exactly once. Lenient mode populates this when
+        // `recover_sync` exhausts; emitting it as a terminal Err item
+        // (instead of silently returning None) lets the CLI distinguish
+        // exit 3 from a clean completion and lets `--allow-partial`
+        // commit the partial output.
+        if let Some(err) = self.pending_unrecoverable.take() {
             self.done = true;
             return Some(Err(err));
         }
@@ -265,6 +310,7 @@ impl<'a> Iterator for RecordIter<'a> {
 
             if !is_valid {
                 self.sync_losses += 1;
+                self.sync_losses_atomic.fetch_add(1, Ordering::Relaxed);
                 if self.strict {
                     // Classify in priority order. The first three arms
                     // mirror the three coarse checks; if validation fails
@@ -327,14 +373,50 @@ impl<'a> Iterator for RecordIter<'a> {
                         continue;
                     }
                     None => {
+                        // Distinguish truncation (ran out of file
+                        // before the scan window exhausted) from
+                        // genuine mid-file corruption (full 64 KB
+                        // window scanned, no valid record).
+                        //
+                        // - Truncation → L1-008 / L2-RDR-002: lenient
+                        //   mode stops cleanly with no error.
+                        // - Corruption → L1-023: surface as terminal
+                        //   `UnrecoverableSyncLoss` so the CLI maps to
+                        //   exit 3 (or to a `.partial` commit + exit
+                        //   0 when `--allow-partial` is set).
+                        let bytes_remaining = self.file_len.saturating_sub(self.offset);
+                        if bytes_remaining < MAX_SCAN_BYTES {
+                            log_info!(
+                                "lenient mode: scan exhausted at EOF \
+                                 (offset 0x{:X}, {} bytes remain < {} \
+                                 scan window); treating as truncation",
+                                self.offset,
+                                bytes_remaining,
+                                MAX_SCAN_BYTES
+                            );
+                            self.done = true;
+                            self.log_complete();
+                            return None;
+                        }
                         log_error!(
                             "unrecoverable sync loss at 0x{:X} after {} messages",
                             self.offset,
                             self.msg_count
                         );
-                        self.done = true;
+                        // Stash a terminal Err so the next next() call
+                        // surfaces UnrecoverableSyncLoss exactly once.
+                        // The writer can then either commit a `.partial`
+                        // (allow_partial) or unlink the temp + propagate
+                        // for exit 3.
+                        self.pending_unrecoverable = Some(MieError::UnrecoverableSyncLoss {
+                            offset: self.offset as u64,
+                            sync_losses: self.sync_losses,
+                        });
                         self.log_complete();
-                        return None;
+                        // Recurse once to pop the pending error and set
+                        // `done`. Single recursion: the branch above
+                        // returns before re-entering this loop.
+                        return self.next();
                     }
                 }
             }

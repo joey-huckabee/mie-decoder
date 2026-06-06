@@ -46,6 +46,10 @@ DECODE OPTIONS:
                                         (default: separate <stem>_errors.csv)
   --no-clobber                          Refuse to overwrite an existing
                                         output file (L2-WRT-017)
+  --allow-partial                       On unrecoverable mid-file sync
+                                        loss, write a <output>.partial
+                                        file and exit 0 instead of 3
+                                        (L1-023)
   --time-format auto|irig|standard      Default auto
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
@@ -91,6 +95,7 @@ struct DecodeArgs {
     output: Option<PathBuf>,
     inline_errors: bool,
     no_clobber: bool,
+    allow_partial: bool,
     time_format: Option<TimestampFormat>,
     strict: Option<bool>,
     output_format: Option<String>,
@@ -223,14 +228,19 @@ pub fn run(argv: Vec<String>) -> ExitCode {
 
     log_info!("mie-decoder v{VERSION}");
 
-    let result = match command {
+    // Decode returns a Result<ExitCode, String> so it can choose exit
+    // codes 2 (no-records) and 3 (partial-unrecoverable) without
+    // routing through the generic exit-1 error path. Count/Dump still
+    // use the simpler Result<(), String> contract and map to either 0
+    // (Ok) or 1 (Err) via map_simple_to_exit below.
+    let result: Result<ExitCode, String> = match command {
         Command::Decode(args) => run_decode(globals, *args),
-        Command::Count(input) => run_count(globals, input),
-        Command::Dump(args) => run_dump(globals, *args),
+        Command::Count(input) => run_count(globals, input).map(|()| ExitCode::SUCCESS),
+        Command::Dump(args) => run_dump(globals, *args).map(|()| ExitCode::SUCCESS),
     };
 
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             log_error!("{e}");
             eprintln!("Error: {e}");
@@ -317,6 +327,7 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             }
             "--inline-errors" => args.inline_errors = true,
             "--no-clobber" => args.no_clobber = true,
+            "--allow-partial" => args.allow_partial = true,
             "--strict" => args.strict = Some(true),
             "--time-format" => {
                 let v = next_value("--time-format", iter)?;
@@ -585,7 +596,7 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String
     .map_err(format_mie_error)
 }
 
-fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
+fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String> {
     let cfg = resolve_config(&globals)?;
 
     let cfg = cfg.with_overrides(ConfigOverrides {
@@ -600,6 +611,8 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
         // CLI flag flips no_clobber on; absence leaves the config value
         // intact (Some(false) would clobber a `true` from the config).
         no_clobber: if args.no_clobber { Some(true) } else { None },
+        // Same precedence pattern for --allow-partial.
+        allow_partial: if args.allow_partial { Some(true) } else { None },
         exclude_types: args.exclude_types,
         exclude_rts: args.exclude_rts,
         exclude_buses: args.exclude_buses,
@@ -631,39 +644,91 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<(), String> {
 
     // WriteOptions populated once with both file-output safety checks
     // (input/output collision per L2-WRT-014 and no-clobber per
-    // L2-WRT-017). Stdout output ignores these checks because it has
-    // no filesystem identity.
+    // L2-WRT-017) and L1-023 allow_partial.
     let write_opts = WriteOptions {
         input_path: Some(args.input.clone()),
         no_clobber: cfg.no_clobber,
+        allow_partial: cfg.allow_partial,
     };
 
-    if cfg.error_mode == ErrorMode::Separate {
-        let Some(ref output) = args.output else {
-            // Stdout can't be split; force inline behavior with a warning.
-            crate::log_warn!("stdout output forces inline error mode");
-            return convert_write_result(write_csv(messages, None, WriteOptions::default()));
-        };
-        let r = write_csv_split(messages, output, write_opts).map(|(n, e)| {
-            log_info!("wrote {n} messages + {e} errors to {}", output.display());
-        });
-        convert_write_result(r)
+    // Stdout is `output == None`; the spec's path-safety checks are
+    // file-only so they are bypassed here. Separate mode requires a
+    // file path; stdout in that case forces inline behavior with a
+    // WARN, matching the v1 behavior.
+    let write_result = if cfg.error_mode == ErrorMode::Separate {
+        match args.output.as_ref() {
+            None => {
+                // Stdout can't be split; force inline behavior with
+                // a warning and ignore file-only write options.
+                crate::log_warn!("stdout output forces inline error mode");
+                write_csv(messages, None, WriteOptions::default())
+            }
+            Some(output) => write_csv_split(messages, output, write_opts).inspect(|outcome| {
+                log_info!(
+                    "wrote {} messages + {} errors to {}",
+                    outcome.normal_count,
+                    outcome.error_count,
+                    output.display()
+                );
+            }),
+        }
     } else {
-        convert_write_result(write_csv(messages, args.output.as_deref(), write_opts).map(|_| ()))
-    }
+        write_csv(messages, args.output.as_deref(), write_opts)
+    };
+
+    // After the iterator is exhausted, the reader's atomic sync_losses
+    // counter is authoritative for the L1-024 exit-class summary
+    // (Complete vs PartialRecovered). Querying here is safe because
+    // the iterator (which borrows the reader) was already moved into
+    // and consumed by write_csv* above.
+    let sync_losses = reader.sync_losses();
+
+    Ok(classify_decode_exit(write_result, sync_losses))
 }
 
-/// Translate a writer-side result into the CLI's `Result<(), String>`,
-/// silencing L2-WRT-018 broken-pipe conditions on stdout. Any other
-/// writer error propagates as a user-facing diagnostic.
-fn convert_write_result<T>(r: crate::error::MieResult<T>) -> Result<(), String> {
+/// Map a writer-side result + the reader's sync-loss count to an
+/// `ExitCode` per L1-021 through L1-024 and L2-CLI-005a. Emits the
+/// one-line exit-class summary required by L1-024 in every branch.
+fn classify_decode_exit(
+    r: crate::error::MieResult<crate::writer::WriteOutcome>,
+    sync_losses: u64,
+) -> ExitCode {
     match r {
-        Ok(_) => Ok(()),
-        Err(e) if e.is_broken_pipe() => {
-            log_info!("stdout consumer closed early (broken pipe) — exit 0");
-            Ok(())
+        Ok(outcome) => {
+            let class = if outcome.partial.is_some() {
+                "partial-unrecoverable"
+            } else if sync_losses > 0 {
+                "partial-recovered"
+            } else {
+                "complete"
+            };
+            log_info!("decode exit class: {class} (sync_losses={sync_losses})");
+            ExitCode::SUCCESS
         }
-        Err(e) => Err(format_mie_error(e)),
+        Err(e) if e.is_broken_pipe() => {
+            log_info!("decode exit class: complete (broken-pipe on stdout)");
+            ExitCode::SUCCESS
+        }
+        Err(e @ MieError::NoValidRecords { .. }) => {
+            log_error!("{e}");
+            eprintln!("Error: {e}");
+            log_info!("decode exit class: no-records");
+            ExitCode::from(2)
+        }
+        Err(e @ MieError::UnrecoverableSyncLoss { .. }) => {
+            log_error!("{e}");
+            eprintln!("Error: {e}");
+            log_info!(
+                "decode exit class: partial-unrecoverable (sync_losses={sync_losses}); \
+                 pass --allow-partial to preserve the rows decoded so far"
+            );
+            ExitCode::from(3)
+        }
+        Err(e) => {
+            log_error!("{e}");
+            eprintln!("Error: {e}");
+            ExitCode::from(1)
+        }
     }
 }
 

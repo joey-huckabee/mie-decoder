@@ -68,6 +68,13 @@ pub enum MieError {
     /// and the output destination already exists. Per L2-WRT-017 the
     /// implementation refuses to overwrite rather than silently replacing.
     ClobberRefused { path: PathBuf },
+
+    /// Mid-file sync loss in lenient mode that `recover_sync` could not
+    /// reacquire within the scan window. Per L1-023 this maps to CLI
+    /// exit code `3` by default, or to a `.partial` commit + exit `0`
+    /// when `--allow-partial` is set. `sync_losses` is the cumulative
+    /// recovery-attempt count for the decode invocation.
+    UnrecoverableSyncLoss { offset: u64, sync_losses: u64 },
 }
 
 /// Discriminant identifying which variant of [`MieError`] occurred.
@@ -85,6 +92,7 @@ pub enum MieErrorKind {
     WriterError,
     InputOutputCollision,
     ClobberRefused,
+    UnrecoverableSyncLoss,
 }
 
 impl MieError {
@@ -102,6 +110,7 @@ impl MieError {
             Self::WriterError { .. } => MieErrorKind::WriterError,
             Self::InputOutputCollision { .. } => MieErrorKind::InputOutputCollision,
             Self::ClobberRefused { .. } => MieErrorKind::ClobberRefused,
+            Self::UnrecoverableSyncLoss { .. } => MieErrorKind::UnrecoverableSyncLoss,
         }
     }
 
@@ -209,6 +218,16 @@ impl fmt::Display for MieError {
                  (--no-clobber or output.no_clobber is set). \
                  Remove the file or unset the flag to proceed.",
                 path.display()
+            ),
+            Self::UnrecoverableSyncLoss {
+                offset,
+                sync_losses,
+            } => write!(
+                f,
+                "Unrecoverable mid-file sync loss at offset 0x{offset:X} \
+                 after {sync_losses} recovery attempt(s); the decoder could \
+                 not reacquire sync within the scan window. \
+                 Pass --allow-partial to keep what was decoded as a .partial file."
             ),
         }
     }

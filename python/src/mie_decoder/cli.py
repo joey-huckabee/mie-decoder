@@ -39,6 +39,8 @@ from mie_decoder.exceptions import (
     MieDecoderError,
     MieFileError,
     MieInputOutputCollisionError,
+    MieNoValidRecordsError,
+    MieUnrecoverableSyncLossError,
     MieWriterError,
 )
 from mie_decoder.logger import configure_logging
@@ -163,6 +165,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Mirrors the output.no_clobber config key."
         ),
     )
+    decode_parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        default=False,
+        help=(
+            "On unrecoverable mid-file sync loss, write <output>.partial "
+            "and exit 0 instead of exit 3 (L1-023). Mirrors the "
+            "decode.allow_partial config key."
+        ),
+    )
 
     # ── dump subcommand ────────────────────────────────────────────
     dump_parser = subparsers.add_parser(
@@ -254,6 +266,8 @@ def _run_decode(args: argparse.Namespace) -> int:
     # CLI flag flips no_clobber on; absence leaves config value intact.
     if args.no_clobber:
         overrides["no_clobber"] = True
+    if args.allow_partial:
+        overrides["allow_partial"] = True
 
     config = config.with_overrides(**overrides)
 
@@ -283,38 +297,63 @@ def _run_decode(args: argparse.Namespace) -> int:
         print(f"{count} messages in {reader.path.name}", file=sys.stderr)
         return 0
 
-    # WriteOptions populated once with both file-output safety checks
-    # (L2-WRT-014 input/output collision and L2-WRT-017 no-clobber).
-    # File-path destinations consume these; stdout output ignores them.
+    # WriteOptions populated once with all three file-output safety
+    # checks (L2-WRT-014 collision, L2-WRT-017 no-clobber, L1-023
+    # allow_partial). File-path destinations consume these; stdout
+    # output ignores them.
     write_opts = WriteOptions(
         input_path=args.input,
         no_clobber=config.no_clobber,
+        allow_partial=config.allow_partial,
     )
 
     try:
         t0 = time.perf_counter()
         if config.error_mode == ErrorMode.SEPARATE and args.output is not None:
-            normal_count, error_count = write_csv_split(
+            outcome = write_csv_split(
                 messages, output=args.output, opts=write_opts,
             )
             elapsed = time.perf_counter() - t0
             logger.info(
                 "Wrote %d messages + %d errors to %s in %.3fs",
-                normal_count, error_count, args.output, elapsed,
+                outcome.normal_count, outcome.error_count, args.output, elapsed,
             )
         else:
             # INLINE mode, or stdout (can't split stdout).
-            count = write_csv(messages, output=args.output, opts=write_opts)
+            outcome = write_csv(messages, output=args.output, opts=write_opts)
             elapsed = time.perf_counter() - t0
             dest = str(args.output) if args.output else "stdout"
-            logger.info("Wrote %d messages to %s in %.3fs", count, dest, elapsed)
+            logger.info(
+                "Wrote %d messages to %s in %.3fs",
+                outcome.normal_count, dest, elapsed,
+            )
     except (MieInputOutputCollisionError, MieClobberRefusedError) as exc:
-        # File-safety preflight (L2-WRT-014/017). Distinct exit code
-        # (1) preserves L2-CLI-005 behavior; finer exit-class semantics
-        # land with Phase 3.
+        # File-safety preflight (L2-WRT-014/017). Generic exit 1.
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+    except MieNoValidRecordsError as exc:
+        # L1-021 → exit 2.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: no-records")
+        return 2
+    except MieUnrecoverableSyncLossError as exc:
+        # L1-023 → exit 3 (allow_partial would have caught this
+        # inside the writer and returned a WriteOutcome instead).
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info(
+            "decode exit class: partial-unrecoverable (sync_losses=%d); "
+            "pass --allow-partial to preserve the rows decoded so far",
+            exc.sync_losses,
+        )
+        return 3
+    except BrokenPipeError:
+        # L2-WRT-018 — already handled inside dataframe_to_csv for
+        # streams, but cover the edge case where it escapes.
+        logger.info("decode exit class: complete (broken-pipe on stdout)")
+        return 0
     except MieWriterError as exc:
         logger.error("Write failed: %s", exc)
         print(f"Error writing output: {exc}", file=sys.stderr)
@@ -324,6 +363,17 @@ def _run_decode(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
+    # L1-024 exit-class summary. Distinguish complete from
+    # partial-recovered via reader.sync_losses, partial-committed
+    # via outcome.partial.
+    sync_losses = reader.sync_losses
+    if outcome.partial is not None:
+        cls = "partial-unrecoverable"
+    elif sync_losses > 0:
+        cls = "partial-recovered"
+    else:
+        cls = "complete"
+    logger.info("decode exit class: %s (sync_losses=%d)", cls, sync_losses)
     return 0
 
 

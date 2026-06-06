@@ -213,19 +213,22 @@ class TestCsvWriter:
     def test_csv_to_file(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         """Writing to a file path should produce a valid CSV file."""
         out = tmp_path / "output.csv"
-        count = write_csv(MieFileReader(tmp_mie_file), output=out)
+        outcome = write_csv(MieFileReader(tmp_mie_file), output=out)
         assert out.exists()
         raw = out.read_bytes()
         assert b"\r\n" not in raw
         lines = raw.decode().strip().split("\n")
         assert len(lines) == 4
-        assert count == 3
+        assert outcome.normal_count == 3
+        assert outcome.partial is None
 
     def test_write_csv_returns_count(self, tmp_mie_file: Path) -> None:
-        """write_csv should return the number of messages written."""
+        """write_csv should return a WriteOutcome whose normal_count
+        matches the number of messages written."""
         buf = io.StringIO()
-        count = write_csv(MieFileReader(tmp_mie_file), output=buf)
-        assert count == 3
+        outcome = write_csv(MieFileReader(tmp_mie_file), output=buf)
+        assert outcome.normal_count == 3
+        assert outcome.partial is None
 
     def test_messages_to_dataframe(self, tmp_mie_file: Path) -> None:
         """messages_to_dataframe should produce a DataFrame with correct shape."""
@@ -294,8 +297,8 @@ class TestAtomicWriteSafety:
         """No-clobber off (default): existing destination is replaced."""
         out = tmp_path / "out.csv"
         out.write_text("OLD\n", encoding="utf-8")
-        count = write_csv(MieFileReader(tmp_mie_file), output=out)
-        assert count == 3
+        outcome = write_csv(MieFileReader(tmp_mie_file), output=out)
+        assert outcome.normal_count == 3
         text = out.read_text(encoding="utf-8")
         assert text.startswith("TIME_STAMP,RT,MSG,")
 
@@ -321,6 +324,102 @@ class TestAtomicWriteSafety:
         opts = WriteOptions(input_path=tmp_mie_file, no_clobber=False)
         with pytest.raises(MieInputOutputCollisionError):
             write_csv_split(MieFileReader(tmp_mie_file), output=tmp_mie_file, opts=opts)
+
+    def test_no_valid_records_raises(self, tmp_path: Path) -> None:
+        """L1-021: input with no decodable records raises MieNoValidRecordsError."""
+        from mie_decoder.exceptions import MieNoValidRecordsError
+
+        bad = tmp_path / "garbage.bin"
+        bad.write_bytes(b"\xff" * 1024)  # 1 KB of 0xFF — no valid Type Word
+        reader = MieFileReader(bad)
+        with pytest.raises(MieNoValidRecordsError):
+            list(reader)
+
+    def test_lenient_unrecoverable_sync_loss_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """L1-023: lenient-mode mid-file sync loss (not truncation) raises."""
+        from mie_decoder.exceptions import MieUnrecoverableSyncLossError
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        # Two valid records + 70 KB of 0xFF — the second record's
+        # look-ahead succeeds (next bytes are 0xFF Type Word — invalid),
+        # so recover_sync from offset 72 scans the full 64 KB and finds
+        # no valid record → unrecoverable corruption.
+        fpath = tmp_path / "corruption.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV + RECORD_RT15_SA11_RCV + b"\xff" * 70_000)
+        reader = MieFileReader(fpath)
+        with pytest.raises(MieUnrecoverableSyncLossError) as exc_info:
+            list(reader)
+        assert exc_info.value.sync_losses >= 1
+
+    def test_write_csv_with_allow_partial_commits_dot_partial(
+        self, tmp_path: Path
+    ) -> None:
+        """allow_partial converts UnrecoverableSyncLoss to a .partial file
+        and a non-None WriteOutcome.partial."""
+        from mie_decoder.writer import WriteOptions
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "corruption.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV + RECORD_RT15_SA11_RCV + b"\xff" * 70_000)
+        out = tmp_path / "out.csv"
+        opts = WriteOptions(allow_partial=True)
+        outcome = write_csv(MieFileReader(fpath), output=out, opts=opts)
+        assert outcome.partial is not None
+        assert outcome.partial.sync_losses >= 1
+        partial_path = outcome.partial.main_path
+        assert partial_path.exists()
+        assert partial_path.name == "out.csv.partial"
+        # Main destination must NOT exist.
+        assert not out.exists()
+        # The partial should contain the records that decoded
+        # successfully before the sync loss.
+        body = partial_path.read_text(encoding="utf-8")
+        assert body.startswith("TIME_STAMP,RT,MSG,")
+        assert "11R" in body
+
+    def test_cli_no_valid_records_returns_exit_2(self, tmp_path: Path) -> None:
+        """CLI maps MieNoValidRecordsError to exit code 2 (L1-021)."""
+        from mie_decoder.cli import main
+
+        bad = tmp_path / "garbage.bin"
+        bad.write_bytes(b"\xff" * 1024)
+        rc = main(["decode", str(bad), "-o", str(tmp_path / "out.csv")])
+        assert rc == 2
+        # No output file should have been created.
+        assert not (tmp_path / "out.csv").exists()
+
+    def test_cli_unrecoverable_default_returns_exit_3(
+        self, tmp_path: Path
+    ) -> None:
+        """CLI maps MieUnrecoverableSyncLossError to exit code 3 (L1-023)."""
+        from mie_decoder.cli import main
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "corruption.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV + RECORD_RT15_SA11_RCV + b"\xff" * 70_000)
+        out = tmp_path / "out.csv"
+        rc = main(["decode", str(fpath), "-o", str(out)])
+        assert rc == 3
+        # No main output and no .partial under default behavior.
+        assert not out.exists()
+        assert not (tmp_path / "out.csv.partial").exists()
+
+    def test_cli_unrecoverable_allow_partial_returns_exit_0(
+        self, tmp_path: Path
+    ) -> None:
+        """--allow-partial converts exit 3 into exit 0 + .partial file."""
+        from mie_decoder.cli import main
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "corruption.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV + RECORD_RT15_SA11_RCV + b"\xff" * 70_000)
+        out = tmp_path / "out.csv"
+        rc = main(["decode", str(fpath), "-o", str(out), "--allow-partial"])
+        assert rc == 0
+        assert (tmp_path / "out.csv.partial").exists()
+        assert not out.exists()
 
     def test_write_csv_split_no_clobber_checks_errors_file(
         self, tmp_mie_file: Path, tmp_path: Path

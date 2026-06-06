@@ -169,6 +169,57 @@ fn multi_record_stream() {
 }
 
 #[test]
+fn lenient_mode_unrecoverable_sync_loss_yields_terminal_error() {
+    // L1-023 lenient-mode contract: when sync recovery exhausts within
+    // the 64 KB scan window, the iterator must yield a terminal
+    // Err(UnrecoverableSyncLoss) item before stopping. Previously this
+    // returned None silently and the CLI exited 0 with truncated data.
+    use mie_decoder::error::{MieError, MieErrorKind};
+
+    // Two valid records back-to-back so the first record's look-ahead
+    // check sees the second record's Type Word and accepts. Then 70 KB
+    // of 0xFF — guarantees recover_sync from the second-record boundary
+    // exhausts the 64 KB scan window without finding any valid Type
+    // Word.
+    let mut bytes = record_rt15_sa11_rcv();
+    bytes.extend(record_rt15_sa11_rcv());
+    bytes.extend(vec![0xFFu8; 70_000]);
+    let f = TempFile::new(&bytes);
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let mut it = reader.iter();
+
+    // First record decodes normally.
+    match it.next() {
+        Some(Ok(msg)) => assert_eq!(msg.command_word.unwrap().rt, 15),
+        other => panic!("expected first record OK, got {other:?}"),
+    }
+
+    // Second call: validation fails on the 0xFF tail, recover_sync
+    // walks 64 KB without finding sync, terminal Err surfaces.
+    match it.next() {
+        Some(Err(e)) => {
+            assert_eq!(e.kind(), MieErrorKind::UnrecoverableSyncLoss);
+            if let MieError::UnrecoverableSyncLoss { sync_losses, .. } = e {
+                assert!(sync_losses >= 1);
+            } else {
+                unreachable!();
+            }
+        }
+        other => panic!("expected Some(Err(UnrecoverableSyncLoss)), got {other:?}"),
+    }
+
+    // Subsequent calls: None forever.
+    assert!(it.next().is_none());
+    assert!(it.next().is_none());
+
+    drop(it);
+    // Reader-level counter is consistent with what the terminal error
+    // reported. (Reader's getter is now exposed for the CLI's L1-024
+    // exit-class summary.)
+    assert!(reader.sync_losses() >= 1);
+}
+
+#[test]
 fn delta_tracker_per_rt_msg_key() {
     let mut bytes = Vec::new();
     bytes.extend(record_rt15_sa11_rcv()); // RT15 SA11 R
@@ -213,7 +264,9 @@ fn csv_output_has_one_row_per_message_plus_header() {
 
     let out_path = std::env::temp_dir().join(format!("mie-int-out-{}.csv", std::process::id()));
     let reader = MieFileReader::new(f.path()).unwrap();
-    let n = write_csv(reader.iter(), Some(&out_path), Default::default()).unwrap();
+    let n = write_csv(reader.iter(), Some(&out_path), Default::default())
+        .unwrap()
+        .normal_count;
     assert_eq!(n, 3);
 
     let csv = std::fs::read_to_string(&out_path).unwrap();

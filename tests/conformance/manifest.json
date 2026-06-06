@@ -52,6 +52,23 @@
         "--error-mode",
         "inline"
       ]
+    },
+    {
+      "name": "no-valid-records",
+      "input": "inputs/no-valid-records.hex",
+      "expected_exit": 2
+    },
+    {
+      "name": "partial-unrecoverable-default",
+      "input": "inputs/partial-unrecoverable.hex",
+      "expected_exit": 3,
+      "rust_args": [
+        "--inline-errors"
+      ],
+      "python_args": [
+        "--error-mode",
+        "inline"
+      ]
     }
   ]
 }

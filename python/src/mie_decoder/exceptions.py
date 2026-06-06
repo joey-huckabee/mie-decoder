@@ -10,6 +10,7 @@ Exception hierarchy::
     ├── MieFileError
     │   ├── MieFileNotFoundError
     │   ├── MieFileEmptyError
+    │   ├── MieNoValidRecordsError
     │   ├── MieInputOutputCollisionError
     │   └── MieClobberRefusedError
     ├── MieRecordError
@@ -17,7 +18,8 @@ Exception hierarchy::
     │   ├── MieUnknownTypeWordError
     │   ├── MieRecordTruncatedError
     │   ├── MiePayloadError
-    │   └── MieUnknownErrorCodeError
+    │   ├── MieUnknownErrorCodeError
+    │   └── MieUnrecoverableSyncLossError
     └── MieWriterError
 """
 
@@ -58,6 +60,30 @@ class MieFileNotFoundError(MieFileError):
     def __init__(self, path: str) -> None:
         self.path = path
         super().__init__(f"MIE file not found: {path}")
+
+
+class MieNoValidRecordsError(MieFileError):
+    """Raised when the input file contains no decodable MIE records.
+
+    Per L1-021 the CLI maps this to exit code ``2``. Typically means the
+    file is not an MIE recording at all (e.g., a TOML file passed as
+    input by mistake) or the records begin past the 64 KB header scan
+    window.
+
+    Attributes:
+        path: Path that was scanned.
+        scan_bytes: Number of bytes scanned before giving up.
+    """
+
+    def __init__(self, path: str, scan_bytes: int) -> None:
+        self.path = path
+        self.scan_bytes = scan_bytes
+        super().__init__(
+            f"No valid MIE records found in {path} "
+            f"(scanned first {scan_bytes} bytes). "
+            f"The file may not be an MIE recording, or the records may "
+            f"begin past the scan window."
+        )
 
 
 class MieFileEmptyError(MieFileError):
@@ -239,6 +265,32 @@ class MieWriterError(MieDecoderError):
         self.destination = destination
         self.cause = cause
         super().__init__(f"Failed to write to {destination}: {cause}")
+
+
+class MieUnrecoverableSyncLossError(MieRecordError):
+    """Raised in lenient mode when sync recovery exhausts mid-file.
+
+    Per L1-023 the CLI maps this to exit code ``3`` by default, or to a
+    ``.partial`` commit + exit ``0`` when ``--allow-partial`` is set.
+    Carries the cumulative recovery-attempt count for the decode
+    invocation so the operator can correlate with sync-loss WARN logs.
+
+    Attributes:
+        offset: Byte offset of the record that triggered the
+            unrecoverable loss.
+        sync_losses: Cumulative recovery attempts when the loss became
+            unrecoverable.
+    """
+
+    def __init__(self, offset: int, sync_losses: int) -> None:
+        self.sync_losses = sync_losses
+        super().__init__(
+            offset,
+            f"Unrecoverable mid-file sync loss after {sync_losses} "
+            f"recovery attempt(s); the decoder could not reacquire sync "
+            f"within the scan window. Pass --allow-partial to keep what "
+            f"was decoded as a .partial file.",
+        )
 
 
 class MieUnknownErrorCodeError(MieRecordError):

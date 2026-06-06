@@ -62,10 +62,12 @@ from mie_decoder.exceptions import (
     MieFileEmptyError,
     MieFileNotFoundError,
     MieInvalidTypeWordError,
+    MieNoValidRecordsError,
     MiePayloadError,
     MieRecordTruncatedError,
     MieUnknownErrorCodeError,
     MieUnknownTypeWordError,
+    MieUnrecoverableSyncLossError,
 )
 from mie_decoder.models import (
     ALL_KNOWN_ERROR_CODES,
@@ -144,6 +146,11 @@ class MieFileReader:
         self._path = Path(path)
         self._strict = strict
         self._time_format = time_format
+        # Cumulative sync-recovery count from the most recent __iter__
+        # call. Reset to 0 on each iteration so the CLI can read it
+        # after the loop completes (for L1-022 / L1-024 exit-class
+        # summary). Mirrors `MieFileReader::sync_losses` in Rust.
+        self._sync_losses: int = 0
         if not self._path.exists():
             raise MieFileNotFoundError(str(self._path))
         self._file_size = self._path.stat().st_size
@@ -164,6 +171,17 @@ class MieFileReader:
         """Size of the source file in bytes."""
         return self._file_size
 
+    @property
+    def sync_losses(self) -> int:
+        """Cumulative sync-recovery count from the most recent
+        ``__iter__`` call. Reset to 0 each iteration.
+
+        Used by the CLI's L1-024 exit-class summary to distinguish
+        Complete (sync_losses == 0) from PartialRecovered (sync_losses
+        > 0 with a successful full decode).
+        """
+        return self._sync_losses
+
     def __iter__(self) -> Iterator[MieMessage]:
         """Iterate over all decoded messages in file order.
 
@@ -183,6 +201,10 @@ class MieFileReader:
         warned_ooo_keys: set[str] = set()
         msg_count = 0
         sync_losses = 0
+        # Reset the externally-visible counter at the start of each
+        # iteration so successive __iter__ calls on the same reader
+        # handle don't accumulate stale counts.
+        self._sync_losses = 0
         prev_was_error = False
         resolved_format: TimestampFormat | None = None
 
@@ -202,10 +224,15 @@ class MieFileReader:
                     ts_format=resolved_format,
                 )
                 if start_offset is None:
+                    # L1-021: surface as an exception so the CLI maps
+                    # to exit 2 (and so library callers can react)
+                    # rather than silently yielding zero messages.
+                    from mie_decoder.sync import MAX_SCAN_BYTES
+                    scan_bytes = min(file_len, MAX_SCAN_BYTES)
                     logger.error(
                         "No valid records found in %s", self._path.name
                     )
-                    return
+                    raise MieNoValidRecordsError(str(self._path), scan_bytes)
 
                 offset = start_offset
                 loop_min = MIN_RECORD_BYTES_STANDARD
@@ -240,6 +267,7 @@ class MieFileReader:
                     if not is_valid:
                         # ── Sync loss — attempt recovery ───────
                         sync_losses += 1
+                        self._sync_losses = sync_losses
 
                         if self._strict:
                             if tw.word_count < min_wc:
@@ -266,12 +294,30 @@ class MieFileReader:
                             ts_format=resolved_format,
                         )
                         if recovered is None:
+                            # Distinguish truncation (file ended before
+                            # the 64 KB scan window exhausted) from
+                            # genuine mid-file corruption.
+                            #
+                            # - Truncation → L1-008 / L2-RDR-002:
+                            #   lenient mode stops cleanly.
+                            # - Corruption → L1-023: raise so the CLI
+                            #   maps to exit 3 (or `.partial` + exit 0
+                            #   with --allow-partial).
+                            from mie_decoder.sync import MAX_SCAN_BYTES
+                            bytes_remaining = file_len - offset
+                            if bytes_remaining < MAX_SCAN_BYTES:
+                                logger.info(
+                                    "Lenient mode: scan exhausted at EOF "
+                                    "(offset 0x%X, %d bytes remain < %d "
+                                    "scan window); treating as truncation",
+                                    offset, bytes_remaining, MAX_SCAN_BYTES,
+                                )
+                                break
                             logger.error(
-                                "Unrecoverable sync loss at 0x%X — "
-                                "stopping after %d messages",
+                                "Unrecoverable sync loss at 0x%X after %d messages",
                                 offset, msg_count,
                             )
-                            break
+                            raise MieUnrecoverableSyncLossError(offset, sync_losses)
 
                         offset = recovered
                         prev_was_error = False

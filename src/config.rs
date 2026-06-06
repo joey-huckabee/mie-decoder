@@ -32,6 +32,11 @@ pub struct DecoderConfig {
     /// behavior. Set via `output.no_clobber = true` in TOML or
     /// `--no-clobber` on the CLI.
     pub no_clobber: bool,
+    /// L1-023: on unrecoverable mid-file sync loss, commit the rows
+    /// decoded so far as `<destination>.partial` and exit 0, rather
+    /// than unlinking and exiting 3. Set via `decode.allow_partial =
+    /// true` in TOML or `--allow-partial` on the CLI.
+    pub allow_partial: bool,
 }
 
 impl Default for DecoderConfig {
@@ -44,6 +49,7 @@ impl Default for DecoderConfig {
             filters: FilterConfig::default(),
             output_format: "csv".to_string(),
             no_clobber: false,
+            allow_partial: false,
         }
     }
 }
@@ -59,6 +65,7 @@ pub struct ConfigOverrides {
     pub error_mode: Option<ErrorMode>,
     pub output_format: Option<String>,
     pub no_clobber: Option<bool>,
+    pub allow_partial: Option<bool>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -90,6 +97,9 @@ impl DecoderConfig {
         }
         if let Some(v) = ov.no_clobber {
             self.no_clobber = v;
+        }
+        if let Some(v) = ov.allow_partial {
+            self.allow_partial = v;
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -177,6 +187,9 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     }
     if let Some(b) = toml.get_bool("output", "no_clobber")? {
         cfg.no_clobber = b;
+    }
+    if let Some(b) = toml.get_bool("decode", "allow_partial")? {
+        cfg.allow_partial = b;
     }
 
     if let Some(types) = toml.get_array("filter", "exclude_types")? {

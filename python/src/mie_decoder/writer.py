@@ -105,6 +105,7 @@ import pandas as pd
 from mie_decoder.exceptions import (
     MieClobberRefusedError,
     MieInputOutputCollisionError,
+    MieUnrecoverableSyncLossError,
     MieWriterError,
 )
 from mie_decoder.models import MieMessage
@@ -157,10 +158,54 @@ class WriteOptions:
             any file.
         no_clobber: When True, refuse to overwrite an existing
             destination.
+        allow_partial: When True, an unrecoverable mid-file sync loss
+            commits the rows decoded so far as ``<destination>.partial``
+            and returns success rather than propagating the error.
     """
 
     input_path: Path | None = None
     no_clobber: bool = False
+    allow_partial: bool = False
+
+
+@dataclass(frozen=True)
+class PartialCommit:
+    """Where the partial output landed when ``allow_partial`` converted
+    an ``UnrecoverableSyncLoss`` into a successful exit.
+
+    Attributes:
+        main_path: Path of the committed main `.partial` file.
+        errors_path: Path of the errors `.partial` file, if any
+            errored/spurious rows were written before the sync loss.
+        offset: Byte offset of the unrecoverable boundary.
+        sync_losses: Cumulative recovery attempts when the loss
+            became unrecoverable.
+    """
+
+    main_path: Path
+    errors_path: Path | None
+    offset: int
+    sync_losses: int
+
+
+@dataclass(frozen=True)
+class WriteOutcome:
+    """Result of a successful CSV write.
+
+    ``partial`` is ``None`` for Complete / PartialRecovered decodes;
+    the CLI distinguishes the two by querying
+    ``MieFileReader.sync_losses`` post-iteration. ``partial`` is
+    ``Some(PartialCommit)`` only when ``allow_partial`` fired.
+
+    Attributes:
+        normal_count: Number of normal messages written.
+        error_count: Number of errored/spurious messages written.
+        partial: Partial-commit info, if applicable.
+    """
+
+    normal_count: int
+    error_count: int
+    partial: PartialCommit | None
 
 
 def _preflight_output(output: Path, opts: WriteOptions) -> None:
@@ -354,7 +399,7 @@ def write_csv(
     messages: Iterable[MieMessage],
     output: str | Path | TextIO | None = None,
     opts: WriteOptions | None = None,
-) -> int:
+) -> WriteOutcome:
     """Write all messages (normal + errored) to a single CSV.
 
     Used for INLINE error mode. ERROR and ERROR_CODE columns are
@@ -364,31 +409,74 @@ def write_csv(
         messages: Iterable of decoded MieMessage instances.
         output: Destination for CSV output (file path, stream, or None for stdout).
         opts: Output safety options. When ``output`` is a file path, the
-            L2-WRT-014 input/output collision check and L2-WRT-017
-            no-clobber check are applied. Ignored for stream destinations.
+            L2-WRT-014 input/output collision check, L2-WRT-017 no-clobber
+            check, and L1-023 allow_partial handling are applied. Stream
+            destinations ignore these (no on-disk identity, no partial).
 
     Returns:
-        The number of messages written.
+        A WriteOutcome capturing counts and optional PartialCommit info.
 
     Raises:
         MieInputOutputCollisionError: Output path resolves to the same file as the input.
         MieClobberRefusedError: Output exists and ``opts.no_clobber`` is True.
+        MieUnrecoverableSyncLossError: Lenient-mode mid-file sync loss
+            exhausted recovery and ``opts.allow_partial`` is False.
         MieWriterError: If an I/O error occurs during writing.
     """
     if opts is None:
         opts = WriteOptions()
     if isinstance(output, (str, Path)):
         _preflight_output(Path(output), opts)
-    df = messages_to_dataframe(messages)
+
+    # Collect rows in one pass so we can detect UnrecoverableSyncLoss
+    # mid-stream and commit the rows-so-far as .partial when
+    # allow_partial is set. (Python's writer materialises the full
+    # DataFrame regardless; the streaming variant is tracked as
+    # PY-streaming.)
+    rows: list[dict[str, str]] = []
+    partial_info: tuple[int, int] | None = None
+    try:
+        for i, msg in enumerate(messages):
+            rows.append(message_to_row(msg))
+            if (i + 1) % 10_000 == 0:
+                logger.debug("Converted %d messages to rows", i + 1)
+    except MieUnrecoverableSyncLossError as exc:
+        if not opts.allow_partial:
+            raise
+        partial_info = (exc.offset, exc.sync_losses)
+
+    df = pd.DataFrame(rows, columns=CSV_HEADER)
+
+    if partial_info is not None and isinstance(output, (str, Path)):
+        dest = Path(output)
+        partial_path = dest.with_name(f"{dest.name}.partial")
+        _write_dataframe_atomic(df, partial_path)
+        offset, sync_losses = partial_info
+        logger.warning(
+            "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
+            "wrote %d rows to %s (--allow-partial)",
+            offset, sync_losses, len(df), partial_path,
+        )
+        return WriteOutcome(
+            normal_count=len(df),
+            error_count=0,
+            partial=PartialCommit(
+                main_path=partial_path,
+                errors_path=None,
+                offset=offset,
+                sync_losses=sync_losses,
+            ),
+        )
+
     dataframe_to_csv(df, output=output)
-    return len(df)
+    return WriteOutcome(normal_count=len(df), error_count=0, partial=None)
 
 
 def write_csv_split(
     messages: Iterable[MieMessage],
     output: str | Path,
     opts: WriteOptions | None = None,
-) -> tuple[int, int]:
+) -> WriteOutcome:
     """Write normal messages to main CSV, errors to a separate file.
 
     Used for SEPARATE error mode (default). Normal messages go to
@@ -433,15 +521,48 @@ def write_csv_split(
 
     normal_rows: list[dict[str, str]] = []
     error_rows: list[dict[str, str]] = []
+    partial_info: tuple[int, int] | None = None
 
-    for msg in messages:
-        row = message_to_row(msg)
-        if msg.error_label:
-            error_rows.append(row)
-        else:
-            normal_rows.append(row)
+    try:
+        for msg in messages:
+            row = message_to_row(msg)
+            if msg.error_label:
+                error_rows.append(row)
+            else:
+                normal_rows.append(row)
+    except MieUnrecoverableSyncLossError as exc:
+        if not opts.allow_partial:
+            raise
+        partial_info = (exc.offset, exc.sync_losses)
 
     normal_df = pd.DataFrame(normal_rows, columns=CSV_HEADER)
+
+    if partial_info is not None:
+        # Commit both files as .partial.
+        main_partial = output_path.with_name(f"{output_path.name}.partial")
+        _write_dataframe_atomic(normal_df, main_partial)
+        errors_partial: Path | None = None
+        if error_rows:
+            error_df = pd.DataFrame(error_rows, columns=CSV_HEADER)
+            errors_partial = error_path.with_name(f"{error_path.name}.partial")
+            _write_dataframe_atomic(error_df, errors_partial)
+        offset, sync_losses = partial_info
+        logger.warning(
+            "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
+            "wrote %d normal + %d error rows as partial to %s (--allow-partial)",
+            offset, sync_losses, len(normal_df), len(error_rows), main_partial,
+        )
+        return WriteOutcome(
+            normal_count=len(normal_df),
+            error_count=len(error_rows),
+            partial=PartialCommit(
+                main_path=main_partial,
+                errors_path=errors_partial,
+                offset=offset,
+                sync_losses=sync_losses,
+            ),
+        )
+
     dataframe_to_csv(normal_df, output=output_path)
     logger.info("Wrote %d normal messages to %s", len(normal_df), output_path)
 
@@ -452,4 +573,8 @@ def write_csv_split(
     else:
         logger.info("No error/spurious messages — error file not created")
 
-    return len(normal_df), len(error_rows)
+    return WriteOutcome(
+        normal_count=len(normal_df),
+        error_count=len(error_rows),
+        partial=None,
+    )

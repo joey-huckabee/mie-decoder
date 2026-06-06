@@ -120,6 +120,46 @@ impl AtomicCsvFile {
         Ok(())
     }
 
+    /// Flush, close the temp file, and atomically rename it to
+    /// `<final_path>.partial` rather than over the final destination.
+    /// Used by L2-WRT-016's `--allow-partial` branch: the original
+    /// destination (if it existed) remains untouched, and the operator
+    /// gets the decoded-so-far rows in the .partial file. Returns the
+    /// path written so callers can log it.
+    pub fn commit_partial(mut self) -> MieResult<PathBuf> {
+        let writer = self
+            .writer
+            .take()
+            .expect("AtomicCsvFile::commit_partial called without an active writer");
+        let temp_for_err = self.temp_path.display().to_string();
+        let file = writer.into_inner().map_err(|e| MieError::WriterError {
+            destination: temp_for_err,
+            source: e.into_error(),
+        })?;
+        drop(file);
+        // `<dest>.partial` lives in the destination directory by
+        // construction (final_path itself does), so the rename stays on
+        // one filesystem and is atomic.
+        let mut name = self
+            .final_path
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_default();
+        name.push(".partial");
+        let partial = match self.final_path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.join(&name),
+            _ => PathBuf::from(name),
+        };
+        std::fs::rename(&self.temp_path, &partial).map_err(|source| MieError::WriterError {
+            destination: partial.display().to_string(),
+            source,
+        })?;
+        // Mark committed so Drop does not try to clean up the (now
+        // renamed) temp path.
+        self.committed = true;
+        Ok(partial)
+    }
+
     pub fn final_path(&self) -> &Path {
         &self.final_path
     }
@@ -309,6 +349,37 @@ pub struct WriteOptions {
     pub input_path: Option<PathBuf>,
     /// L2-WRT-017: refuse to overwrite an existing destination.
     pub no_clobber: bool,
+    /// L1-023 / L2-WRT-016: when the decode hits an unrecoverable mid-
+    /// file sync loss, commit the rows decoded so far as
+    /// `<destination>.partial` and treat the run as successful (exit 0)
+    /// rather than unlinking the temp + propagating the error (exit 3).
+    pub allow_partial: bool,
+}
+
+/// Outcome of a successful CSV write. `partial` is `Some(_)` when
+/// `WriteOptions.allow_partial` was set and the decode hit an
+/// `UnrecoverableSyncLoss` — the rows decoded so far have been
+/// committed to the `.partial` path captured in `PartialCommit`.
+/// `partial` is `None` for a complete (or completely-recovered)
+/// decode; the CLI distinguishes Complete from PartialRecovered by
+/// querying `MieFileReader::sync_losses()` post-iteration.
+#[derive(Debug)]
+pub struct WriteOutcome {
+    pub normal_count: u64,
+    pub error_count: u64,
+    pub partial: Option<PartialCommit>,
+}
+
+/// Records where the partial output landed when `allow_partial`
+/// converted an `UnrecoverableSyncLoss` into a successful exit.
+/// `errors_path` is `Some(_)` only when split-mode produced any
+/// errored/spurious rows before the sync loss.
+#[derive(Debug)]
+pub struct PartialCommit {
+    pub main_path: PathBuf,
+    pub errors_path: Option<PathBuf>,
+    pub offset: u64,
+    pub sync_losses: u64,
 }
 
 /// Pre-flight checks shared by file-output entry points. Runs the
@@ -336,8 +407,14 @@ fn preflight_output(output: &Path, opts: &WriteOptions) -> MieResult<()> {
 /// or stdout where splitting is not possible).
 ///
 /// `output` may be `None` for stdout; stdout output skips the
-/// pre-flight checks because it has no filesystem identity.
-pub fn write_csv<I>(messages: I, output: Option<&Path>, opts: WriteOptions) -> MieResult<u64>
+/// pre-flight checks because it has no filesystem identity and ignores
+/// `allow_partial` (a partial stdout stream is what the consumer
+/// would have seen anyway).
+pub fn write_csv<I>(
+    messages: I,
+    output: Option<&Path>,
+    opts: WriteOptions,
+) -> MieResult<WriteOutcome>
 where
     I: IntoIterator<Item = MieResult<MieMessage>>,
 {
@@ -345,14 +422,59 @@ where
         Some(path) => {
             preflight_output(path, &opts)?;
             let mut atomic = AtomicCsvFile::create(path.to_path_buf())?;
-            let n = {
+
+            let (count, partial_info) = {
                 let mut writer = CsvWriter::new(&mut atomic, path.display().to_string())?;
-                stream_into(&mut writer, messages)?;
-                writer.finish()?
+                let mut partial_info: Option<(u64, u64)> = None;
+                for item in messages {
+                    match item {
+                        Ok(msg) => writer.write_message(&msg)?,
+                        Err(MieError::UnrecoverableSyncLoss {
+                            offset,
+                            sync_losses,
+                        }) if opts.allow_partial => {
+                            partial_info = Some((offset, sync_losses));
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                let n = writer.finish()?;
+                (n, partial_info)
             };
-            atomic.commit()?;
-            log_info!("wrote {} rows to {}", n, path.display());
-            Ok(n)
+
+            match partial_info {
+                None => {
+                    atomic.commit()?;
+                    log_info!("wrote {} rows to {}", count, path.display());
+                    Ok(WriteOutcome {
+                        normal_count: count,
+                        error_count: 0,
+                        partial: None,
+                    })
+                }
+                Some((offset, sync_losses)) => {
+                    let partial_path = atomic.commit_partial()?;
+                    log_warn!(
+                        "unrecoverable sync loss at 0x{:X} after {} recovery attempt(s); \
+                         wrote {} rows to {} (--allow-partial)",
+                        offset,
+                        sync_losses,
+                        count,
+                        partial_path.display()
+                    );
+                    Ok(WriteOutcome {
+                        normal_count: count,
+                        error_count: 0,
+                        partial: Some(PartialCommit {
+                            main_path: partial_path,
+                            errors_path: None,
+                            offset,
+                            sync_losses,
+                        }),
+                    })
+                }
+            }
         }
         None => {
             let stdout = std::io::stdout();
@@ -361,7 +483,11 @@ where
             stream_into(&mut writer, messages)?;
             let n = writer.finish()?;
             log_info!("wrote {} rows to stdout", n);
-            Ok(n)
+            Ok(WriteOutcome {
+                normal_count: n,
+                error_count: 0,
+                partial: None,
+            })
         }
     }
 }
@@ -372,14 +498,10 @@ where
 /// `_errors.csv` (and don't even create a temp).
 ///
 /// Both files use the AtomicCsvFile pattern — temp + atomic rename.
-/// If the second file's commit fails, the first one has already been
-/// renamed; this is an accepted trade-off because we can't atomically
-/// commit two files together. The error file is committed first so a
-/// failure during commit of the main file leaves the (smaller) errors
-/// file alone rather than the other way around.
-///
-/// Returns `(normal_count, error_count)`.
-pub fn write_csv_split<I>(messages: I, output: &Path, opts: WriteOptions) -> MieResult<(u64, u64)>
+/// When `opts.allow_partial` and the iterator yields
+/// `UnrecoverableSyncLoss`, both files (if any) are committed as
+/// `.partial` and the function returns Ok with PartialCommit info.
+pub fn write_csv_split<I>(messages: I, output: &Path, opts: WriteOptions) -> MieResult<WriteOutcome>
 where
     I: IntoIterator<Item = MieResult<MieMessage>>,
 {
@@ -398,14 +520,25 @@ where
     let mut main_atomic = AtomicCsvFile::create(output.to_path_buf())?;
     let mut errors_atomic: Option<AtomicCsvFile> = None;
 
-    let (normal_count, error_count) = {
+    let (normal_count, error_count, partial_info) = {
         let mut main = CsvWriter::new(&mut main_atomic, output.display().to_string())?;
         // The error writer is created lazily on first error row so a
         // clean file doesn't leave an empty errors CSV behind.
         let mut error_writer: Option<CsvWriter<&mut AtomicCsvFile>> = None;
+        let mut partial_info: Option<(u64, u64)> = None;
 
         for item in messages {
-            let msg = item?;
+            let msg = match item {
+                Ok(m) => m,
+                Err(MieError::UnrecoverableSyncLoss {
+                    offset,
+                    sync_losses,
+                }) if opts.allow_partial => {
+                    partial_info = Some((offset, sync_losses));
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
             if !msg.error_label().is_empty() {
                 if error_writer.is_none() {
                     errors_atomic = Some(AtomicCsvFile::create(error_path.clone())?);
@@ -431,32 +564,69 @@ where
         }
         main.finish()?;
 
-        (n_main, n_errors)
+        (n_main, n_errors, partial_info)
     };
 
-    // Commit errors first so a main-commit failure doesn't leave a
-    // dangling errors file when the main file was the unrecoverable
-    // one. (If the error commit itself fails, the main temp is
-    // unlinked on Drop — net effect is no output, which matches the
-    // failure-mode expectation.)
-    if let Some(ea) = errors_atomic {
-        ea.commit()?;
-        log_info!(
-            "wrote {} error/spurious rows to {}",
-            error_count,
-            error_path.display()
-        );
-    } else {
-        log_info!("no error/spurious records — error file not created");
-    }
-    main_atomic.commit()?;
+    match partial_info {
+        None => {
+            // Normal path. Commit errors first so a main-commit failure
+            // doesn't leave a dangling errors file. (If the error commit
+            // itself fails, the main temp is unlinked on Drop.)
+            if let Some(ea) = errors_atomic {
+                ea.commit()?;
+                log_info!(
+                    "wrote {} error/spurious rows to {}",
+                    error_count,
+                    error_path.display()
+                );
+            } else {
+                log_info!("no error/spurious records — error file not created");
+            }
+            main_atomic.commit()?;
 
-    log_info!("wrote {} normal rows to {}", normal_count, output.display());
-    if normal_count == 0 {
-        log_warn!("main CSV is empty (header only)");
-    }
+            log_info!("wrote {} normal rows to {}", normal_count, output.display());
+            if normal_count == 0 {
+                log_warn!("main CSV is empty (header only)");
+            }
 
-    Ok((normal_count, error_count))
+            Ok(WriteOutcome {
+                normal_count,
+                error_count,
+                partial: None,
+            })
+        }
+        Some((offset, sync_losses)) => {
+            // Partial path. Rename each AtomicCsvFile temp to its
+            // `.partial` counterpart so the operator can inspect what
+            // was decoded before the corruption.
+            let errors_partial_path = if let Some(ea) = errors_atomic {
+                Some(ea.commit_partial()?)
+            } else {
+                None
+            };
+            let main_partial_path = main_atomic.commit_partial()?;
+            log_warn!(
+                "unrecoverable sync loss at 0x{:X} after {} recovery attempt(s); \
+                 wrote {} normal + {} error rows as partial to {} (--allow-partial)",
+                offset,
+                sync_losses,
+                normal_count,
+                error_count,
+                main_partial_path.display()
+            );
+
+            Ok(WriteOutcome {
+                normal_count,
+                error_count,
+                partial: Some(PartialCommit {
+                    main_path: main_partial_path,
+                    errors_path: errors_partial_path,
+                    offset,
+                    sync_losses,
+                }),
+            })
+        }
+    }
 }
 
 fn stream_into<W, I>(writer: &mut CsvWriter<W>, messages: I) -> MieResult<()>
@@ -680,6 +850,7 @@ mod tests {
         let opts = WriteOptions {
             input_path: Some(p.clone()),
             no_clobber: false,
+            allow_partial: false,
         };
         // Empty iterator — should never reach the write because
         // preflight_output fails first.
@@ -701,6 +872,7 @@ mod tests {
         let opts = WriteOptions {
             input_path: None,
             no_clobber: true,
+            allow_partial: false,
         };
         let result = write_csv(std::iter::empty(), Some(&p), opts);
         match result {
@@ -732,6 +904,7 @@ mod tests {
         let opts = WriteOptions {
             input_path: Some(p.clone()),
             no_clobber: false,
+            allow_partial: false,
         };
         let result = write_csv_split(std::iter::empty(), &p, opts);
         match result {
@@ -751,6 +924,7 @@ mod tests {
         let opts = WriteOptions {
             input_path: None,
             no_clobber: true,
+            allow_partial: false,
         };
         let result = write_csv_split(std::iter::empty(), &dest, opts);
         match result {
@@ -760,6 +934,103 @@ mod tests {
         // Main dest must not have been created.
         assert!(!dest.exists());
         let _ = std::fs::remove_file(&err_dest);
+    }
+
+    #[test]
+    fn atomic_commit_partial_writes_dot_partial_and_leaves_destination() {
+        let dest = unique_path(".csv");
+        // Pre-create destination so we can verify it stays untouched.
+        std::fs::write(&dest, b"original\n").unwrap();
+        let partial_path = {
+            let mut atomic = AtomicCsvFile::create(dest.clone()).unwrap();
+            atomic.write_all(b"partial decode\n").unwrap();
+            atomic.commit_partial().unwrap()
+        };
+        // The committed-partial path must be <dest>.partial.
+        let expected_partial = {
+            let mut name = dest.file_name().unwrap().to_os_string();
+            name.push(".partial");
+            dest.parent().unwrap().join(name)
+        };
+        assert_eq!(partial_path, expected_partial);
+        assert_eq!(
+            std::fs::read_to_string(&partial_path).unwrap(),
+            "partial decode\n"
+        );
+        // Original destination must be unchanged.
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "original\n");
+        // Temp must be gone.
+        let tmp = make_temp_path(&dest);
+        assert!(
+            !tmp.exists(),
+            "temp file should be gone after commit_partial"
+        );
+        let _ = std::fs::remove_file(&dest);
+        let _ = std::fs::remove_file(&partial_path);
+    }
+
+    #[test]
+    fn write_csv_with_allow_partial_commits_on_unrecoverable() {
+        let dest = unique_path(".csv");
+        // Synthetic iterator: one good message, then UnrecoverableSyncLoss.
+        let messages: Vec<MieResult<MieMessage>> = vec![
+            Ok(sample_msg()),
+            Err(MieError::UnrecoverableSyncLoss {
+                offset: 0x1234,
+                sync_losses: 1,
+            }),
+        ];
+        let opts = WriteOptions {
+            input_path: None,
+            no_clobber: false,
+            allow_partial: true,
+        };
+        let outcome = write_csv(messages, Some(&dest), opts).unwrap();
+        let partial = outcome.partial.expect("partial commit info");
+        assert_eq!(partial.offset, 0x1234);
+        assert_eq!(partial.sync_losses, 1);
+        // Main destination must NOT exist; only the .partial does.
+        assert!(!dest.exists(), "destination should not exist on partial");
+        assert!(partial.main_path.exists(), "partial file must exist");
+        let body = std::fs::read_to_string(&partial.main_path).unwrap();
+        assert!(body.starts_with("TIME_STAMP,RT,MSG,"));
+        assert!(body.contains("11R")); // sample_msg is SA 11 R
+        let _ = std::fs::remove_file(&partial.main_path);
+    }
+
+    #[test]
+    fn write_csv_without_allow_partial_propagates_unrecoverable() {
+        let dest = unique_path(".csv");
+        let messages: Vec<MieResult<MieMessage>> = vec![
+            Ok(sample_msg()),
+            Err(MieError::UnrecoverableSyncLoss {
+                offset: 0x42,
+                sync_losses: 1,
+            }),
+        ];
+        let opts = WriteOptions {
+            input_path: None,
+            no_clobber: false,
+            allow_partial: false,
+        };
+        let err = write_csv(messages, Some(&dest), opts).unwrap_err();
+        match err {
+            MieError::UnrecoverableSyncLoss {
+                offset,
+                sync_losses,
+            } => {
+                assert_eq!(offset, 0x42);
+                assert_eq!(sync_losses, 1);
+            }
+            other => panic!("expected UnrecoverableSyncLoss, got {other:?}"),
+        }
+        // Both destination and .partial must be absent — Drop unlinked
+        // the temp because allow_partial was false.
+        assert!(!dest.exists());
+        let mut partial_name = dest.file_name().unwrap().to_os_string();
+        partial_name.push(".partial");
+        let partial = dest.parent().unwrap().join(partial_name);
+        assert!(!partial.exists());
     }
 
     #[test]

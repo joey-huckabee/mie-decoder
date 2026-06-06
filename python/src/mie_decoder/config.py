@@ -140,6 +140,7 @@ class DecoderConfig:
     filters: FilterConfig = field(default_factory=FilterConfig)
     output_format: str = "csv"
     no_clobber: bool = False
+    allow_partial: bool = False
 
     def with_overrides(self, **kwargs: Any) -> DecoderConfig:
         """Return a new config with specified fields overridden.
@@ -164,6 +165,11 @@ class DecoderConfig:
             if kwargs.get("no_clobber") is not None
             else self.no_clobber
         )
+        new_ap = (
+            kwargs["allow_partial"]
+            if kwargs.get("allow_partial") is not None
+            else self.allow_partial
+        )
 
         # Merge filter overrides — CLI adds to (not replaces) config file filters
         new_filters = FilterConfig(
@@ -181,6 +187,7 @@ class DecoderConfig:
             filters=new_filters,
             output_format=new_fmt,
             no_clobber=new_nc,
+            allow_partial=new_ap,
         )
 
 
@@ -319,6 +326,10 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     output_format = output_section.get("format", "csv")
     # L2-WRT-017: refuse to overwrite existing destination.
     no_clobber = bool(output_section.get("no_clobber", False))
+    # L1-023: --allow-partial / decode.allow_partial — turns
+    # unrecoverable mid-file sync loss into a `.partial` commit + exit 0
+    # instead of exit 3.
+    allow_partial = bool(decode_section.get("allow_partial", False))
 
     config = DecoderConfig(
         log_level=log_level,
@@ -328,6 +339,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         filters=filters,
         output_format=output_format,
         no_clobber=no_clobber,
+        allow_partial=allow_partial,
     )
 
     logger.debug("Loaded config: %s", config)
