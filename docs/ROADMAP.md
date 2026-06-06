@@ -832,6 +832,293 @@ batch. **Combined effort: 1-2 days.**
 
 ---
 
+## Documentation Initiative (2026-06-05)
+
+**Severity:** High (gates broader adoption, onboarding, and downstream
+integration). Tracked here as a multi-phase initiative because the
+scope is large enough that piecemeal commits won't converge on a
+coherent doc set without an explicit plan.
+
+Today's documentation is accurate but assumes the reader is already
+the decoder author. `docs/FIELDS.md` lists fields but doesn't walk
+through a worked decode. `docs/ARCHITECTURE.md` has ASCII diagrams
+that are useful but partial. `docs/REQUIREMENTS.md` is a contract
+document, not a tutorial. `docs/diagrams/*.puml` describes only the
+Python implementation. New engineers, downstream integrators, and
+flight-test users who want to understand "what is this tool doing
+to my recording" don't have a single accessible reference. This
+initiative produces one.
+
+### Audiences and Scope
+
+Three primary audiences. The deliverable docs map to one or more.
+
+| Audience | Need | Primary Deliverables |
+|----------|------|----------------------|
+| **Users** (flight-test engineers running the tool) | "How do I decode this file and read the output?" | `USER-GUIDE.md`, `CONFIG-REFERENCE.md`, `ERROR-CATALOG.md`, `EXAMPLES.md` |
+| **Integrators** (consumers of CSV output, comparison-with-vendor users) | "What does each column mean, byte-for-byte, with edge cases?" | `MIE-FORMAT.md` (extends FIELDS.md), `EXAMPLES.md`, `VENDOR-CSV-DIFFS.md` |
+| **Maintainers** (us, future-us, contributors) | "How do I add a feature without breaking the contract?" | Refreshed `ARCHITECTURE.md`, refreshed `docs/diagrams/*.puml`, new `MAINTAINER-GUIDE.md` |
+
+### Deliverable Documents
+
+New files to produce under `docs/`:
+
+1. **`MIE-FORMAT.md`** — Comprehensive MIE binary format reference.
+   Extends and partially absorbs FIELDS.md. Includes annotated bit
+   layouts for every word, full record-layout walkthroughs for all
+   10 transaction formats + SPURIOUS_DATA, error-record lifecycle
+   (Type Word bit 14 → truncated payload → Error Word → optional
+   SPURIOUS continuation), and a worked hex-to-CSV decode for at
+   least three representative records.
+
+2. **`USER-GUIDE.md`** — Task-oriented CLI guide. Per-command
+   walkthroughs (`decode`, `count`, `dump`), common workflows
+   (filter by RT, separate vs inline errors, configure via TOML,
+   diff against vendor CSV), troubleshooting (FAQ tied to error
+   messages from `ERROR-CATALOG.md`).
+
+3. **`CONFIG-REFERENCE.md`** — Every TOML key, every CLI flag, the
+   precedence rules (CLI > config > defaults), validation behavior
+   per Item 6 of the Team Review Backlog. Side-by-side table of
+   TOML key → CLI flag equivalents. Worked example showing the same
+   filter expressed three ways.
+
+4. **`ERROR-CATALOG.md`** — Every `MieError` variant (Rust) /
+   exception class (Python), when it fires, what the user should do.
+   Tied to exit codes (Item 2). Tied to DDC error codes (0x01xx) and
+   decoder codes (0x20xx) with hardware/software origin clearly
+   labeled.
+
+5. **`EXAMPLES.md`** — End-to-end worked decodes. Each example shows:
+   the input recording (described in prose + hex extract), the CLI
+   invocation, the expected CSV output, and a line-by-line
+   explanation of one or two interesting rows. At minimum: basic
+   BC→RT, errored record + SPURIOUS continuation, RT-to-RT
+   transfer, mode-code message, broadcast, header-skipped file,
+   sync-recovery scenario.
+
+6. **`VENDOR-CSV-DIFFS.md`** — Documented alignment with DDC vendor
+   CSV output. Columns that match byte-for-byte; columns that we
+   leave empty (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`)
+   and why; known cosmetic differences (line endings, trailing
+   whitespace); the validation workflow for confirming a decode
+   matches vendor output.
+
+7. **`MAINTAINER-GUIDE.md`** — Architecture-focused contributor
+   guide. How to add a message format, how to add a validation
+   check, how to add a conformance fixture, how the cross-impl
+   contract works, when to add a `PY-*`/`RS-*` vs a shared
+   requirement, code style notes beyond what's in CONTRIBUTING.md.
+
+8. **Refreshed `ARCHITECTURE.md`** — Beef up the existing module
+   diagrams; add the Rust counterparts where currently only Python
+   is shown. Add explicit sequence diagrams for the read-decode
+   loop and sync-recovery path. Cross-link to the new docs above.
+
+9. **Refreshed `docs/diagrams/*.puml`** — Resolves the existing
+   "Documentation" backlog item in the Robustness section below.
+   Add clearly labeled Python and Rust class/component/dataflow
+   diagrams rather than overwriting one with the other.
+
+### Diagrams Required
+
+PUML for class/component/sequence diagrams (matches existing
+convention). ASCII boxes-and-arrows for inline data-flow blocks
+(matches `ARCHITECTURE.md`). Annotated bit grids for binary-layout
+diagrams (markdown table with one column per bit, or a fixed-width
+text rendering).
+
+| # | Diagram | Format | Target Doc |
+|---|---------|--------|------------|
+| D1 | Type Word bit layout (16-bit grid, bits 0-6 message type / 7 bus / 8-13 word count / 14 error / 15 reserved) | bit grid | `MIE-FORMAT.md` |
+| D2 | Command Word bit layout (RT / T-R / SA / WC) | bit grid | `MIE-FORMAT.md` |
+| D3 | Status Word bit layout (per MIL-STD-1553) | bit grid | `MIE-FORMAT.md` |
+| D4 | IRIG timestamp 3-word layout (upper / middle / lower with field annotations) | bit grid | `MIE-FORMAT.md` |
+| D5 | Standard timestamp 2-word layout (upper / lower) | bit grid | `MIE-FORMAT.md` |
+| D6 | Per-format wire layout — BC→RT (Receive) | ASCII | `MIE-FORMAT.md` |
+| D7 | Per-format wire layout — RT→BC (Transmit) | ASCII | `MIE-FORMAT.md` |
+| D8 | Per-format wire layout — RT→RT | ASCII | `MIE-FORMAT.md` |
+| D9 | Per-format wire layout — Broadcast BC→RT | ASCII | `MIE-FORMAT.md` |
+| D10 | Per-format wire layout — Broadcast RT→RT | ASCII | `MIE-FORMAT.md` |
+| D11 | Per-format wire layout — Mode Code TX with data | ASCII | `MIE-FORMAT.md` |
+| D12 | Per-format wire layout — Mode Code RX with data | ASCII | `MIE-FORMAT.md` |
+| D13 | Per-format wire layout — Mode Code no data | ASCII | `MIE-FORMAT.md` |
+| D14 | Per-format wire layout — Mode Code broadcast (with / without data) | ASCII | `MIE-FORMAT.md` |
+| D15 | Per-format wire layout — SPURIOUS_DATA | ASCII | `MIE-FORMAT.md` |
+| D16 | Error record lifecycle: bit-14 set → truncated payload → Error Word → optional SPURIOUS continuation | ASCII + PUML sequence | `MIE-FORMAT.md` + `ARCHITECTURE.md` |
+| D17 | File-level layout: optional header + record stream | ASCII | `MIE-FORMAT.md` |
+| D18 | Rust module dependency graph | PUML component | `ARCHITECTURE.md`, `docs/diagrams/` |
+| D19 | Python module dependency graph | PUML component | `ARCHITECTURE.md`, `docs/diagrams/` |
+| D20 | Data flow: file → mmap → reader → filter → writer (Rust streaming variant) | ASCII | `ARCHITECTURE.md` |
+| D21 | Data flow: file → mmap → reader → filter → DataFrame → writer (Python buffered variant) | ASCII | `ARCHITECTURE.md` |
+| D22 | Sync recovery state machine: validate → recover_sync → re-enter | PUML state | `ARCHITECTURE.md` |
+| D23 | Sync four-phase strategy: header detect → continuous validate → look-ahead confirm → recovery walk | ASCII | `ARCHITECTURE.md` |
+| D24 | Read-decode loop sequence diagram (one record from offset to yielded MieMessage) | PUML sequence | `ARCHITECTURE.md`, `MAINTAINER-GUIDE.md` |
+| D25 | Config precedence: CLI args > config file > defaults | ASCII | `CONFIG-REFERENCE.md` |
+| D26 | Error mode comparison: separate vs inline output | ASCII | `USER-GUIDE.md` |
+| D27 | Class diagram (Rust): MieMessage and related structs | PUML class | `docs/diagrams/`, `MAINTAINER-GUIDE.md` |
+| D28 | Class diagram (Python): MieMessage and related dataclasses | PUML class | `docs/diagrams/`, `MAINTAINER-GUIDE.md` |
+| D29 | Conformance pipeline: hex fixture → both CLIs → byte-compare → oracle | PUML sequence | `MAINTAINER-GUIDE.md` |
+| D30 | DELTA computation flow (per `L2-RDR-009*`): timestamp basis check → key lookup → monotonicity check → tracker update | ASCII | `MIE-FORMAT.md` |
+
+### Tables Required
+
+All as markdown tables in the deliverable documents. Source of truth
+listed so tables can be regenerated from authoritative code/spec if
+they drift.
+
+| # | Table | Source of truth | Target Doc |
+|---|-------|-----------------|------------|
+| T1 | Type Word message type codes (7 rows × code/name/short description/format) | `src/models.rs::MessageType` | `MIE-FORMAT.md` |
+| T2 | All 10 MIL-STD-1553 transaction formats + SPURIOUS_DATA, with which Type Word(s) map to each | `src/decode.rs::classify_message_format` | `MIE-FORMAT.md` |
+| T3 | DDC hardware error codes (0x01xx) with hex / symbolic name / description | `src/models.rs` constants | `ERROR-CATALOG.md`, `MIE-FORMAT.md` |
+| T4 | Decoder error codes (0x20xx) with origin (decoder-assigned, not hardware) | `src/models.rs` constants | `ERROR-CATALOG.md`, `MIE-FORMAT.md` |
+| T5 | CSV columns with format spec (width, padding, encoding) and source binary field | `docs/FIELDS.md` | `MIE-FORMAT.md` (extended) |
+| T6 | Empty-column rationale (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`) | `docs/FIELDS.md` + ROADMAP commitments | `VENDOR-CSV-DIFFS.md` |
+| T7 | Config TOML keys: key / type / range / unknown handling / CLI equivalent | `src/config.rs`, `python/.../config.py` | `CONFIG-REFERENCE.md` |
+| T8 | CLI flags: flag / argument type / per-subcommand applicability / config equivalent | `src/cli.rs`, `python/.../cli.py` | `CONFIG-REFERENCE.md` |
+| T9 | Exit codes (after Team Review Item 2 lands): code / class / meaning / when to expect | `L1-021` through `L1-024` | `ERROR-CATALOG.md`, `USER-GUIDE.md` |
+| T10 | `MieError` variants (Rust) and exception classes (Python), keyed by `MieErrorKind` discriminant | `src/error.rs`, `python/.../exceptions.py` | `ERROR-CATALOG.md` |
+| T11 | Logging levels (DEBUG/INFO/WARNING/ERROR/CRITICAL) with what each produces | `src/log.rs` + `python/.../logger.py` + `docs/ARCHITECTURE.md` | `USER-GUIDE.md` |
+| T12 | Validation heuristics (five checks + look-ahead) with order, cost, and what each rejects | `src/sync.rs` | `MAINTAINER-GUIDE.md` |
+| T13 | Conformance fixture catalog: name / input / expected / args / requirements covered | `tests/conformance/manifest.json` + `docs/REQUIREMENTS.md` traceability table | `MAINTAINER-GUIDE.md` |
+| T14 | Cross-impl divergence registry: documented behaviors that differ between Rust and Python (e.g., Rust include filters per `RS-010`) | `docs/REQUIREMENTS.md` PY-* / RS-* tables | `MAINTAINER-GUIDE.md` |
+| T15 | DELTA contract decision matrix: timestamp basis × record type → DELTA value (per `L2-RDR-009*`) | `docs/REQUIREMENTS.md` L2-RDR-009a-d | `MIE-FORMAT.md` |
+
+### Worked Examples Required
+
+Each example in `EXAMPLES.md` (and select ones cross-posted into
+`MIE-FORMAT.md`) is structured as: prose context → input hex with
+byte-position annotations → CLI invocation → expected CSV row(s) →
+line-by-line decode commentary.
+
+| # | Example | Demonstrates |
+|---|---------|--------------|
+| E1 | Single BC→RT receive, 30 data words | Baseline record structure, IRIG timestamp decode, RT/MSG/DELTA |
+| E2 | Single RT→BC transmit | Status-word-before-data wire order |
+| E3 | RT-to-RT transfer | Two command words, two status words |
+| E4 | Errored record (bit 14, DDC code 0x011E) | Truncated payload, appended Error Word, ERROR/ERROR_CODE columns |
+| E5 | Errored record followed by SPURIOUS continuation | Continuation classification (0x2000 vs 0x2001), `prev_was_error` flag |
+| E6 | Broadcast BC→RT (RT=31) | Status word absent |
+| E7 | Mode code with data, mode code without data | Mode-code-specific wire layouts |
+| E8 | File with proprietary header (e.g., DDC equipment-name bytes) | Header detection, scan window, find_first_record |
+| E9 | File with mid-file corruption | Sync recovery, recovery counter |
+| E10 | DELTA computation across normal → errored → SPURIOUS → normal sequence | The full L2-RDR-009* matrix in action |
+| E11 | Filter-by-subaddress with both CLI flag and TOML config form | Config precedence, CLI/config equivalence |
+| E12 | Separate vs inline error mode on the same input | Output file naming, where each row lands |
+
+### Cross-References to Existing Docs
+
+This initiative does NOT replace existing docs. It extends them:
+
+- `docs/REQUIREMENTS.md` remains the normative contract. New docs link
+  back to specific requirement IDs.
+- `docs/FIELDS.md` is partially absorbed into `MIE-FORMAT.md`. The
+  absorption is one-way: FIELDS.md content moves into MIE-FORMAT.md
+  with annotations and diagrams; FIELDS.md becomes a thin pointer
+  to MIE-FORMAT.md so external links don't break.
+- `docs/ARCHITECTURE.md` gets new diagrams (D18-D24, D27-D28) and
+  links into MAINTAINER-GUIDE.md.
+- `CLAUDE.md` (project instructions) stays the LLM-facing summary;
+  new docs are for humans.
+- `docs/ROADMAP.md` (this file) is unchanged in scope.
+
+### Phased Plan
+
+**Phase D1 — Format reference and worked examples (foundation).**
+Produce `MIE-FORMAT.md` with diagrams D1-D17 and D30, tables T1-T6
+and T15, and worked examples E1-E5. This is the gating phase
+because every other doc references it. *Effort: 3-4 days.*
+
+**Phase D2 — User guide and error catalog.** Produce `USER-GUIDE.md`,
+`CONFIG-REFERENCE.md`, `ERROR-CATALOG.md`, `EXAMPLES.md` (remaining
+worked examples E6-E12). Includes diagrams D25-D26, tables T7-T11
+and T9. *Effort: 3 days.*
+
+**Phase D3 — Vendor diff reference.** Produce `VENDOR-CSV-DIFFS.md`.
+Requires running a comparison against a known vendor CSV output and
+documenting the alignment / known cosmetic differences.
+*Effort: 1-2 days* (most of the time is spent confirming alignment,
+not writing).
+
+**Phase D4 — Architecture and maintainer refresh.** Refresh
+`ARCHITECTURE.md`, add diagrams D18-D24 and D27-D29, produce
+`MAINTAINER-GUIDE.md` with tables T12-T14. Resolves the existing
+"Refresh `docs/diagrams/*.puml`" backlog item in the Robustness
+section below. *Effort: 2-3 days.*
+
+**Phase D5 — Integration and link audit.** Walk every new and
+existing doc, verify cross-links resolve, verify every table source
+of truth still matches code, verify diagrams render in GitHub's
+markdown viewer. *Effort: 1 day.*
+
+**Total: 10-13 days.** Phase D1 is the largest single item; Phases
+D2-D4 can be parallelized across people once D1 is complete.
+
+### Effort and Tooling
+
+- Diagram tooling: **PlantUML** for class/component/sequence/state
+  (existing convention in `docs/diagrams/`), **ASCII** for inline
+  data flows (existing convention in `ARCHITECTURE.md`), **markdown
+  tables** for bit-grid diagrams (renders cleanly in GitHub).
+- PUML rendering: keep raw `.puml` files in `docs/diagrams/`. Add
+  a build step (or `Makefile` target) to render to SVG if anyone
+  wants images. Initial deliverable is `.puml` source only —
+  reviewers can render with a VS Code extension or
+  plantuml.com/uml.
+- Sample fixtures for worked examples: prefer existing conformance
+  fixtures so the hex shown in docs is byte-identical to what CI
+  validates. Add fixtures only if no existing one demonstrates the
+  concept.
+- Vendor CSV for `VENDOR-CSV-DIFFS.md`: requires a real DDC vendor
+  CSV from the same recording as one of the conformance inputs.
+  This is the only deliverable with an external dependency — note
+  if a sample isn't available, that phase is gated.
+
+### Acceptance Criteria
+
+The initiative is complete when:
+
+1. All deliverable documents exist under `docs/` and pass an
+   `mdformat` lint (or equivalent).
+2. Every diagram in the catalog above is present, in the specified
+   format, in the specified document.
+3. Every table in the catalog above is present and accurate
+   against current code (spot-check 3 cells per table against
+   source of truth).
+4. Every worked example produces the expected output when the CLI
+   invocation is run against the documented input — verified by
+   either adding the example as a conformance fixture or by a
+   one-time manual run with output captured into the doc.
+5. `docs/REQUIREMENTS.md` requirement IDs are linked from every doc
+   that mentions them (not just stated as text).
+6. The existing "Refresh `docs/diagrams/*.puml`" backlog item below
+   is marked resolved.
+7. A new "Documentation" L1 or L2 requirement is *not* added —
+   docs are not requirements. But a `CLAUDE.md` pointer to the new
+   doc structure SHOULD be added so future LLM sessions find the
+   docs.
+
+### Open Questions
+
+- **Should `MIE-FORMAT.md` fully absorb `FIELDS.md`, or live alongside
+  it?** Absorbing is cleaner long-term but breaks any external link
+  to FIELDS.md. Recommendation: absorb, leave FIELDS.md as a 3-line
+  pointer (header + "moved to MIE-FORMAT.md" + link).
+- **Diagram format: stay PUML-only or add Mermaid?** Mermaid renders
+  natively in GitHub markdown without tooling, but PUML is more
+  expressive and is the existing convention. Recommendation: PUML
+  for committed source, but Mermaid is acceptable for any
+  in-document diagram that's tightly coupled to surrounding prose
+  (e.g., a small flow diagram inside USER-GUIDE.md).
+- **Worked examples on Standard timestamps:** until tick-rate
+  calibration lands (the deferred follow-up from the DELTA
+  contract), Standard-timestamp examples will show empty DELTA
+  columns. Document this caveat in `MIE-FORMAT.md` so readers
+  don't think it's a doc bug.
+
+---
+
 ## Robustness & validation backlog
 
 Items surfaced during the Rust v1.0.0 review. These are not regressions —
