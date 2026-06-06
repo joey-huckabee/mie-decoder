@@ -155,9 +155,10 @@ cargo clippy --all-targets -- -D warnings  # Lint manually
 Python:
 
 ```bash
-poetry -C python install
+poetry -C python sync
 poetry -C python run pytest
 poetry -C python run mie-decoder --help
+poetry -P python build
 ```
 
 The current pre-commit hook runs the Rust checks documented above. Run the

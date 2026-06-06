@@ -282,7 +282,7 @@ cargo clippy --all-targets  # Lint (if installed)
 Python:
 
 ```bash
-poetry -C python install
+poetry -C python sync
 poetry -C python run pytest
 poetry -C python run mie-decoder --help
 ```

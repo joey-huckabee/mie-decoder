@@ -46,9 +46,10 @@ cargo run --release -- count path/to/recording.mie
 cargo run --release -- dump path/to/recording.mie --records 10
 
 # Python setup, test, and CLI
-poetry -C python install
+poetry -C python sync
 poetry -C python run pytest
 poetry -C python run mie-decoder --help
+poetry -P python build
 ```
 
 ## Architecture
