@@ -22,6 +22,816 @@ fixtures, and vendor-compatible CSV behavior should remain aligned.
   `tests/conformance/` exercise shared decoding, recovery, filtering, config,
   error, and CSV behavior against byte-exact output oracles in CI.
 
+## Team Review Backlog (2026-06-05)
+
+Active backlog from a multi-implementation review conducted 2026-06-05.
+Items are numbered as they were raised in review.
+
+**Item 1 (DELTA units and Rust/Python divergence) is resolved** — landed
+the `Option<f64>`/`float | None` contract, error-record participation,
+non-monotonic-timestamp WARN, and the cross-impl `delta-tracking-irig`
+conformance fixture. See `L2-RDR-009a` through `L2-RDR-009d` in
+`docs/REQUIREMENTS.md` and the FIELDS.md DELTA section.
+
+**Items 2-8 below are open.** Effort estimates are person-day bands for
+a single engineer with full context. The Phase Sequencing block at the
+end records the recommended landing order — Phase 1 (spec only) is the
+gating decision; after that, phases are mostly independent.
+
+---
+
+### Item 2 — Distinguish complete success, partial success, unrecoverable failure
+
+**Severity:** Critical.
+
+**Status quo.** Python's `MieFileReader.__iter__` returns silently when
+`find_first_record` is None (`python/src/mie_decoder/reader.py:203-207`)
+— a non-MIE file becomes a successful empty decode with exit 0. Rust
+surfaces `MieError::NoValidRecords` as the first iterator item
+(`src/reader.rs:138-149`). On unrecoverable mid-file sync loss, both
+implementations log ERROR and stop with exit 0 (`src/reader.rs:320-329`;
+`python/src/mie_decoder/reader.py:267-273`). The CSV writer reports
+success even when zero rows were emitted.
+
+**Risk.** A pipeline that decodes a corrupt file and `cat`s the output
+never knows the file was bad. Conformance fixtures can't distinguish
+"decoded nothing because nothing was there" from "decoded nothing
+because the input was junk." Operators who pipe
+`mie-decoder decode | downstream` get silent data loss.
+
+**Proposed contract.**
+- `L1-021`: No valid records → exit code **2**, no output file created.
+- `L1-022`: Recovered corruption (lenient mode, `recover_sync` succeeded
+  ≥1 time) → exit code **0**, log INFO with recovery counter, CSV
+  completes normally.
+- `L1-023`: Unrecoverable mid-file sync loss → exit code **3** by
+  default. Optional `--allow-partial` flag downgrades to exit **0** with
+  WARN; the partial output file is preserved.
+- `L1-024`: The decode command SHALL log a one-line summary on exit
+  naming the exit class (`complete`, `partial-recovered`,
+  `partial-unrecoverable`, `no-records`).
+
+**Implementation surface.**
+- *Rust:* Add `ExitClass` enum returned alongside
+  `(normal_count, error_count)` from `write_csv` / `write_csv_split`.
+  `cli::run_decode` maps to exit codes. The iterator already returns
+  `Err` on unrecoverable loss in strict mode; lenient mode needs a
+  terminal `Err` item before the iterator stops. Hold the path of the
+  partial file in `RecordIter` so the CLI can `unlink` on failure
+  unless `--allow-partial`.
+- *Python:* `MieFileReader` becomes a generator that yields a final
+  sentinel (or raises a non-fatal `MiePartialDecodeError`) when sync
+  recovery exhausts. CLI catches the sentinel and maps to exit code.
+  The `if start_offset is None: return` path becomes
+  `raise MieNoValidRecordsError` (new exception class) so non-MIE
+  files exit 2.
+- *Both:* `--allow-partial` CLI flag plus matching
+  `decode.allow_partial = bool` config key.
+
+**Tests / conformance.** Three new fixtures:
+1. `no-valid-records` — 1 KB of `0xFF`, expected exit **2**.
+2. `partial-unrecoverable-default` — valid record + corrupt tail,
+   default exit **3**.
+3. `partial-unrecoverable-allow` — same input with `--allow-partial`,
+   exit **0** + partial CSV oracle.
+
+Update `tests/conformance/run.py` to capture and assert exit codes
+(currently it requires `returncode == 0`).
+
+**Sequencing.** Depends on Item 3 (atomic writes) so the failed-decode
+path can actually delete the temp file. **Effort: 3-5 days** including
+the conformance plumbing.
+
+---
+
+### Item 3 — Output transaction safety and path identity
+
+**Severity:** High.
+
+**Status quo.** `src/writer.rs:155` calls `File::create(path)` before
+consuming the iterator; if decode errors after the header is written,
+the file is left header-only or partial. Stdout case has the same
+issue. Python (`python/src/mie_decoder/writer.py:283-301`) builds rows
+in memory then writes, so a decode error before completion leaves no
+file — different failure mode, equally undefined. Neither implementation
+checks that `--output` differs from the input path; with Rust's
+mmap-on-read this could produce undefined behavior (Linux: stale page
+cache; Windows: sharing violation).
+
+**Risk.** Three concrete failure modes today:
+- (a) `mie-decoder decode input.mie -o input.mie` corrupts the input
+  mid-mmap.
+- (b) `decode broken.mie -o existing-good.csv` destroys an existing
+  file when the decode fails.
+- (c) Disk-full midway through a 10 GB decode leaves a half-written
+  CSV indistinguishable from a complete one.
+
+**Proposed contract.**
+- `L2-WRT-014`: The output path SHALL NOT resolve to the same canonical
+  path as the input. Implementations SHALL surface a distinct error
+  class before opening the output.
+- `L2-WRT-015`: File output SHALL be written via temp-file-plus-atomic-
+  rename. The temp file SHALL live in the destination's directory (not
+  a system temp dir, to keep the rename on the same filesystem).
+  Naming: `<output>.mie-decoder.tmp.<pid>` so concurrent runs don't
+  collide.
+- `L2-WRT-016`: On decode failure with default exit class (Item 2's
+  L1-023), the temp file SHALL be unlinked. With `--allow-partial`,
+  the temp file SHALL be renamed to the destination with a `.partial`
+  suffix appended.
+- `L2-WRT-017`: Overwrite of an existing destination SHALL succeed;
+  opt-out via `--no-clobber`.
+- `L2-WRT-018`: Broken pipe (stdout consumer closed) SHALL exit **0**
+  with no error. Disk full and permission errors SHALL produce a
+  `WriterError` with the underlying OS error preserved.
+
+**Implementation surface.**
+- *Rust:* New `AtomicCsvFile` struct wrapping `BufWriter<File>` plus
+  the temp path. `Drop` impl unlinks on failure path; explicit
+  `commit()` does the rename. Use `std::fs::rename` (atomic on POSIX,
+  atomic on NTFS for same-volume). `write_csv` / `write_csv_split`
+  route through it. Pre-flight identity check via either a vendored
+  `is_same_file` (~30 lines) or `fs::canonicalize` on both paths and
+  compare.
+- *Python:* `dataframe_to_csv` writes to a temp `Path`, then
+  `os.replace(temp, dest)` (atomic on POSIX and Windows). Identity
+  check via `os.path.samefile`. Stdout path: ignore `BrokenPipeError`.
+- *Both:* CLI grows `--no-clobber`. Config key `output.no_clobber = bool`.
+
+**Tests / conformance.** Unit tests for: same-path rejection, atomic
+rename, partial cleanup under simulated error, `.partial` suffix under
+`--allow-partial`, broken-pipe handling. Conformance: add a
+`--no-clobber` case that runs twice and asserts the second invocation
+fails with a distinct error class.
+
+**Sequencing.** Item 2 depends on this for clean partial-file semantics.
+Should land first or at the same time as Item 2. **Effort: 2-3 days.**
+
+---
+
+### Item 4 — IRIG validation accepts out-of-range day and microsecond fields
+
+**Severity:** High.
+
+**Status quo.** `sync::validate_record` checks hour/minute/second only
+(`src/sync.rs:62-74`); day and microseconds are unchecked. A garbage
+record whose bit pattern happens to encode `day=400` or
+`microsecond=1_500_000` passes validation. `IrigTimestamp::format` then
+emits `400:15:54:50.1500000` — seven-digit microseconds break the
+documented `DAY:HH:MM:SS.uuuuuu` layout (`docs/FIELDS.md`) and can
+confuse downstream parsers expecting fixed-width fields.
+
+**Risk.** Two distinct harms:
+- (a) Sync false-positives — a corrupt record passes the gate and emits
+  garbage rows.
+- (b) Output schema violation — DDC vendor CSV uses fixed-width fields,
+  our output silently widens.
+
+**Proposed contract.**
+- `L2-SYN-004` (revised): IRIG validation SHALL reject `hour ≥ 24`,
+  `minute ≥ 60`, `second ≥ 60`, `day < 1 || day > 366`, and
+  `microsecond > 999_999`.
+- `L2-SYN-004a`: When `freerun = true` (bit 15 of upper word), the
+  day-of-year field SHALL be permitted to fall outside `[1, 366]`
+  because the card's free-running oscillator is not calendar-locked.
+  Hour/minute/second/microsecond constraints still apply.
+- `L2-DEC-002a`: `IrigTimestamp::format` SHALL emit exactly six
+  microsecond digits regardless of the decoded value (overflow truncates
+  to six digits and emits a WARN — this case should be unreachable
+  given the validation above, but the formatter MUST NOT produce more
+  than six).
+
+**Implementation surface.**
+- *Rust:* `src/sync.rs::validate_record` — extend the IRIG block
+  (currently lines 62-74). Add day check; compute `microsecond` from
+  middle+lower and check `< 1_000_000`. `find_first_record` and
+  `recover_sync` already share `validate_record` so no further edits
+  there. Add defensive clamp/warn in `src/decode.rs::decode_irig_timestamp`.
+- *Python:* `python/src/mie_decoder/sync.py::validate_record` — same
+  additions. `python/src/mie_decoder/decode.py::decode_irig_timestamp`
+  — same defensive clamp.
+- *Both:* Update the FIELDS.md day-of-year note (already mentions vendor
+  variance — re-anchor it on the freerun exception rather than
+  card-model variance, which the broader IRIG day-field investigation
+  still owes — see existing "IRIG day-field decoding across DDC card
+  models" backlog item below).
+
+**Tests / conformance.** Unit tests: each of `day=0`, `day=367`,
+`microsecond=1_000_000` rejected; `freerun=true` with `day=0` accepted.
+New conformance fixture `irig-freerun-out-of-range-day` that produces
+a row with freerun set and an unusual day, plus a negative
+`irig-corrupt-microsecond-rejected` that proves the byte sequence fails
+to decode.
+
+**Sequencing.** Independent. **Effort: 1 day.**
+
+---
+
+### Item 5 — Structural cross-field invariants are not enforced
+
+**Severity:** High.
+
+**Status quo.** Today's five validation heuristics catch framing-level
+corruption but accept records that are internally inconsistent: Type
+Word `0x02` (BC→RT) with a Command Word direction of Transmit; Command
+Word `data_word_count=30` packed into a record whose `word_count` only
+leaves room for 10 data words; Status Word RT field that doesn't match
+the Command Word RT; reserved bits set to 1. Already enumerated as
+ROADMAP backlog items in the "Validation strength" section below (T/R
+consistency, Type↔Cmd capacity, header look-ahead depth).
+
+**Risk.** Structurally plausible corruption produces decoded rows that
+look real — wrong CSV output that downstream tools can't distinguish
+from valid data. This is the highest-trust-violation class of bug
+because validation is supposed to be the firewall against it.
+
+**Proposed contract.** Pin a structural-invariant table per message
+format. Format below; the actual table belongs in `docs/REQUIREMENTS.md`
+as a new L2-SYN-INV block referenced by L1-015.
+
+| Format | Invariant | Strict | Lenient |
+|--------|-----------|--------|---------|
+| BC→RT (0x02) | `Cmd.direction == Receive` | `UnknownTypeWord` | WARN+skip |
+| RT→BC (0x04) | `Cmd.direction == Transmit` | `UnknownTypeWord` | WARN+skip |
+| Any | `TW.word_count ≥ 1 + TS + 1 + Cmd.data_word_count + status_words` | `PayloadError` | WARN+skip |
+| Any with status | `Status.rt == Cmd.rt` | `PayloadError` | WARN+emit |
+| Type Word | `bit 15 == 0` | `UnknownTypeWord` | WARN+emit |
+
+- `L2-SYN-INV-001` through `L2-SYN-INV-005`: each invariant as a
+  separate ID so conformance can assert one at a time.
+- `L2-SYN-INV-006`: Failed invariants count toward the sync-loss
+  counter for Item 2's exit-class accounting.
+
+The status-RT-mismatch case is **real-bus noise** (RT responding under
+a different address), not necessarily corruption — so it must be
+warn-and-emit, not skip, even in lenient mode. This needs to be
+explicitly carved out in the requirement; otherwise we'll generate
+false negatives on real recordings.
+
+**Implementation surface.**
+- *Rust:* `src/decode.rs::classify_message_format` already returns a
+  per-format enum; add a
+  `validate_structural_invariants(tw, cmd, payload_words) -> Result<(), InvariantViolation>`
+  companion that the reader calls between classification and yielding.
+  The reader's strict/lenient branch maps `InvariantViolation` to
+  `MieError::PayloadError` with a structured `which_check` field
+  (resolves the "structured 'which check failed' enum" backlog item
+  below) or to a WARN+continue.
+- *Python:* `_decode_error_record` and the normal-record path in
+  `__iter__` get a shared `_check_invariants(...)` helper. Same
+  strict/lenient mapping.
+
+**Tests / conformance.** One conformance fixture per invariant,
+exercising both strict (negative — must fail) and lenient (positive —
+must skip-with-warn). Total ~10 fixtures. Effort dominated by fixture
+construction.
+
+**Sequencing.** Independent but large. **Effort: 5-7 days.** Best split
+into two PRs: (a) capacity + direction invariants (highest value);
+(b) status RT + reserved-bits (lower value, more debate).
+
+---
+
+### Item 6 — Configuration schema drift between Rust and Python
+
+**Severity:** High.
+
+**Status quo.** Concrete divergences confirmed against source:
+- *Log level validation:* Rust rejects unknown `logging.level` at parse
+  time (`src/config.rs:148`, regression-fixed; see test at
+  `src/config.rs:580-593`). Python accepts any string
+  (`python/src/mie_decoder/config.py:272`) and silently drops it at
+  apply time.
+- *Output format validation:* Both implementations accept any string
+  for `output.format` and store it (`src/config.rs:165-167`,
+  `python/.../config.py:308`). Rust documents "csv expected"; neither
+  validates.
+- *Strict boolean coercion:* Python uses
+  `bool(decode_section.get("strict", False))`
+  (`python/.../config.py:284`). For a TOML value that parsed as a
+  string (it wouldn't — `tomllib` rejects), this is a non-issue at the
+  TOML layer; but if someone calls `DecoderConfig(...)` directly with
+  `strict="no"`, Python coerces to True. Rust's `with_overrides`
+  requires `Option<bool>` so this is type-enforced.
+- *RT/subaddress range:* Python `set(filter_section.get("exclude_rts", []))`
+  — no range check. Rust `parse_int_u8` (`src/config.rs:276`) only
+  checks u8 range (0-255), not 1553's 0-31. Both can accept
+  `exclude_rts = [99]` and silently never match any record.
+- *Unknown TOML keys:* Both implementations ignore unknown keys
+  silently. A typo in `exclude_subdresses` is invisible.
+
+**Risk.** Configs that "look applied" but quietly aren't are the worst
+kind of bug — operator believes the filter is on, the filter is
+silently off.
+
+**Proposed contract.** A formal schema in `docs/REQUIREMENTS.md` (or
+referenced from there into a new `docs/CONFIG-SCHEMA.md`):
+
+| Key | Type | Range / Enum | Unknown handling |
+|-----|------|--------------|------------------|
+| `logging.level` | string | one of DEBUG/INFO/WARNING/WARN/ERROR/CRITICAL (case-insensitive) | reject |
+| `decode.time_format` | string | auto/irig/standard | reject |
+| `decode.strict` | bool (TOML boolean only) | true/false | reject non-bool |
+| `decode.error_mode` | string | separate/inline | reject |
+| `decode.allow_partial` | bool | (Item 2) | reject non-bool |
+| `output.format` | string | csv (only valid value in v1) | reject |
+| `output.no_clobber` | bool | (Item 3) | reject non-bool |
+| `filter.exclude_types` | string\|int array | per-element validated | reject |
+| `filter.exclude_rts` | int array | each in [0, 31] | reject out-of-range |
+| `filter.exclude_buses` | string array | each in {A, B} | reject |
+| `filter.exclude_subaddresses` | int array | each in [0, 31] | reject out-of-range |
+| Any unknown key | — | — | WARN at load time |
+
+- `L2-CFG-009`: Unknown TOML keys SHALL produce a WARN at load time
+  naming the offending key, but SHALL NOT fail the load.
+  (WARN-not-error so we can add keys without breaking older configs.)
+- `L2-CFG-010`: All schema validations SHALL apply at load time, not
+  at use time.
+
+**Implementation surface.**
+- *Rust:* Add `output.format` validator (currently passes through). Add
+  0-31 range checks in `parse_int_u8` callers for RT/SA specifically
+  (introduce `parse_int_rt_sa(v) -> u8` that asserts 0..=31). Add
+  unknown-key tracking in `parse_toml` — easiest: track all
+  `(section, key)` entries we read, diff against `doc.entries` after,
+  WARN for unread keys.
+- *Python:* Add the same validators. Replace `bool(...)` coercion with
+  explicit `isinstance(..., bool)` check. Add the 0-31 ranges. Add
+  unknown-key tracking. Add `logging.level` validation. Verify the CLI
+  driver actually calls `logging.getLogger().setLevel(...)` based on
+  the loaded value (separate audit needed).
+
+**Tests / conformance.** Existing config tests need extension:
+unknown-level rejected (both), unknown-output-format rejected (both),
+out-of-range RT rejected (both), unknown-key WARN'd (both). New
+conformance case `config-validation-rejects-unknown-key` that runs with
+a typo'd TOML and asserts non-zero exit.
+
+**Sequencing.** Independent but touches both implementations
+symmetrically. **Effort: 3 days**, mostly test coverage.
+
+---
+
+### Item 7 — Conformance suite under-covers the alignment claim
+
+**Severity:** Medium.
+
+**Status quo.** Six conformance cases now (after the new
+`delta-tracking-irig` from Item 1): `basic-multi-record`,
+`header-and-sync-recovery`, `errors-inline`, `exclude-subaddress`,
+`config-filter`, `delta-tracking-irig`. The traceability table at
+`docs/REQUIREMENTS.md` Shared Conformance Cases maps these to broad
+swathes of L1/L2 — over-claiming. Notable gaps:
+- No Standard-format timestamp fixture (despite L2-DEC-007).
+- No Bus B fixture (despite L1-006).
+- No RT-to-RT fixture (one of 10 supported formats).
+- No mode code fixtures (broadcast or otherwise).
+- No separate-mode error output fixture (only inline).
+- No invalid-input fixture (no `MieError` path is exercised cross-impl).
+- No strict-mode fixture.
+- No exit-code assertions (Item 2 requires this).
+
+**Risk.** Future divergences in any of these areas land green in CI.
+The error-record DELTA divergence we just fixed (Item 1) was invisible
+for exactly this reason.
+
+**Proposed contract.**
+- `L2-CONF-006`: The conformance suite SHALL include at least one case
+  for each L1 requirement and at least one case per non-trivial L2
+  behavioral class. The traceability table SHALL list, per case, the
+  specific requirements it actually exercises (no umbrella claims).
+- `L2-CONF-007`: The conformance runner SHALL assert exit codes per
+  case (default 0; cases with `expected_exit` override).
+- `L2-CONF-008`: Cases SHALL exist for each documented divergence
+  point between implementations (currently: Rust include filters;
+  future: anything in this roadmap).
+
+**Implementation surface.** New fixtures to add (each ~30 min given
+existing tooling):
+1. `standard-timestamps-empty-delta` — proves Item-1 contract on
+   Standard.
+2. `bus-b` — one record with bit 7 set in the Type Word.
+3. `rt-to-rt` — Type 0x08.
+4. `mode-code-tx-data` and `mode-code-no-data` — covers the two most
+   distinct mode-code layouts.
+5. `errors-separate` — same input as `errors-inline` with default error
+   mode, asserting `<stem>_errors.csv` exists with the right contents.
+6. `strict-rejects-unknown-type` — input with an invalid Type Word,
+   run with `--strict`, expected non-zero exit and no output file.
+7. `no-valid-records-exit-2` — Item 2 fixture.
+
+Extend `tests/conformance/run.py` to:
+- Read `expected_exit` from manifest (default 0).
+- Support `expected_stderr_contains` for cases where we want to assert
+  on a specific log line.
+- Support split-output cases (need to check both main + errors CSV
+  against oracles).
+
+**Sequencing.** Item 2 produces fixtures 6 and 7 as a side effect.
+Items 4 and 5 produce more. **Effort for the rest: 2-3 days.**
+
+---
+
+### Item 8 — Operational assumptions unstated
+
+**Severity:** Medium.
+
+**Status quo.** Both readers use mmap (`src/reader.rs:82` via memmap2;
+`python/src/mie_decoder/reader.py:195` via `mmap.ACCESS_READ`).
+Concurrent file modification during decode is undefined: on POSIX,
+truncating a mapped file can produce SIGBUS on subsequent access; on
+Windows, file locking generally prevents truncate, but extension while
+mapped doesn't grow the mapping. Python's writer materializes the full
+DataFrame in memory before flushing
+(`python/src/mie_decoder/writer.py:174-195` → `pandas.DataFrame`); Rust
+streams. For a 10 GB recording, Python OOMs; Rust uses ~64 KB of
+`BufWriter`. No requirement documents this asymmetry.
+
+**Risk.**
+- (a) Quiet data corruption if the input file is truncated mid-decode.
+- (b) Python OOM on large files with no documented limit.
+- (c) No defined behavior for "arbitrary bytes as input" — fuzz test
+  would surface panics or unbounded scans.
+
+**Proposed contract.**
+- `L1-025`: The input file SHALL NOT be modified, truncated, or
+  extended during decoding. Behavior under concurrent modification is
+  implementation-defined and MAY cause termination.
+- `L1-026`: Sync recovery scanning SHALL be bounded — max one recovery
+  attempt per 64 KB of input, max total recovery scan distance per
+  file equal to the file size (i.e., scans never re-traverse
+  already-scanned bytes).
+- `L1-027`: For arbitrary input bytes within the size limits of
+  `usize`, no implementation SHALL panic, segfault, or enter an
+  unbounded loop. Failures SHALL surface as `MieError` variants.
+- `PY-012`: Python memory usage during decode SHALL be O(record_count)
+  until streaming output is implemented. Document this with a
+  typical-file-size guideline (e.g., "10 M records ≈ 5 GB RSS").
+- `RS-012`: Rust memory usage during decode SHALL be O(1) in the
+  number of records; constant overhead bounded by `BufWriter` capacity
+  plus `delta_tracker` size.
+
+**Implementation surface.**
+- *Rust:* Mostly a documentation/test exercise. Add a `tests/fuzz.rs`
+  (or use `cargo fuzz`) that feeds random byte sequences to
+  `MieFileReader` and asserts no panic. The `recover_sync` cumulative
+  bound (L1-026) needs an added counter on `RecordIter` to prevent
+  pathological inputs from looping the full file repeatedly.
+- *Python:* Same fuzz harness via `hypothesis`. To make L1-027 actually
+  hold, audit `decode.py` for places that could raise `IndexError`
+  instead of `MiePayloadError` on malformed input — likely a few. The
+  "Python streams CSV" change is a separate, larger refactor (track
+  as `PY-streaming` — pandas DataFrame buffering is currently
+  load-bearing for the `_errors.csv` split path).
+- *Docs:* Add a "Performance and limits" section to
+  `docs/ARCHITECTURE.md`.
+
+**Tests / conformance.** Fuzz harness (no conformance case — fuzz is
+per-impl). Cross-impl input-size benchmark documented as a non-binding
+reference. Streaming-Python is its own item; mark it `PY-streaming` in
+the backlog.
+
+**Sequencing.** Fuzz/no-panic landings are independent (1 day each).
+Python streaming is a 3-5 day item that should wait until Items 2 and
+3 land (the streaming writer needs the atomic-file machinery anyway).
+
+---
+
+### Phase Sequencing
+
+Recommended landing order, adopting the team's "first decisions" framing:
+
+**Phase 1 — Decisions and spec (1 PR, no behavior change).**
+- Update `docs/REQUIREMENTS.md` and `docs/FIELDS.md` for Items 2, 3,
+  4, 6 contract language only.
+- Update `tests/conformance/manifest.json` schema to support
+  `expected_exit`.
+- Item 1 (DELTA) already landed.
+- *Effort: 1 day.*
+
+**Phase 2 — Atomic writes and identity check (Item 3).**
+- Lands the file-safety substrate the rest depends on.
+- *Effort: 2-3 days.*
+
+**Phase 3 — Exit-code semantics (Item 2).**
+- Builds on Phase 2's temp-file mechanism for partial-file cleanup.
+- Includes the `no-valid-records` and `partial-unrecoverable`
+  conformance fixtures.
+- *Effort: 3-5 days.*
+
+**Phase 4 — IRIG range validation (Item 4).**
+- Independent, low risk.
+- *Effort: 1 day.*
+
+**Phase 5 — Config schema alignment (Item 6).**
+- Independent, mechanical.
+- *Effort: 3 days.*
+
+**Phase 6 — Conformance breadth (Item 7).**
+- Add the missing fixtures (Standard, Bus B, RT-RT, mode codes,
+  errors-separate, strict-rejects).
+- *Effort: 2-3 days* (after Items 2, 4 provide some fixtures for free).
+
+**Phase 7 — Structural invariants (Item 5).**
+- Largest design surface. Split into sub-PRs per invariant.
+- *Effort: 5-7 days total.*
+
+**Phase 8 — Fuzz and limits docs (Item 8).**
+- Land fuzz harness, document memory model. Python streaming as a
+  separate later item (`PY-streaming`).
+- *Effort: 2 days* for the documented-limits portion;
+  *3-5 days* additional for `PY-streaming` whenever it lands.
+
+**Total open work: ~25-30 person-days.** Phase 1 is the gating
+decision — once language is locked, the implementation phases are
+mostly independent and can parallelize across engineers.
+
+---
+
+## Architecture Audit (2026-06-05)
+
+Findings from the initial architecture and requirements audit performed
+on 2026-06-05, **prior to** the team review that produced the Team
+Review Backlog above. Captured here verbatim (with light status
+annotations) so context and rationale are not lost. Some items have
+since landed as part of the DELTA work; others overlap with the team
+review; the remainder are genuinely open and not yet captured
+elsewhere.
+
+Source citations preserved. Status markers added inline.
+
+### Bottom line
+
+The requirements are unusually well-structured (L1 → L2 → PY/RS split
+with traceability), and the code mostly matches them. The gaps that
+came out of this audit fall into three buckets: (1) documented
+behaviors the spec doesn't actually mandate, (2) edge cases neither
+code nor spec address, and (3) one wording ambiguity that's
+load-bearing for sync. Order below is roughly by severity at audit
+time.
+
+---
+
+### Audit Item 1 — Lenient-mode unrecoverable sync loss is silent in the data plane
+
+**Status:** **Open.** Overlaps with Team Review Item 2 (exit-code
+semantics) but is not fully covered by it — Item 2 is the
+*operational/exit-code* answer; this is the *API-layer* counterpart
+(what library callers see from the iterator, independent of the CLI).
+Both perspectives should be reconciled when Item 2 is implemented.
+
+`L2-SYN-011` says recovery "SHALL report when no valid record is found
+within the scan window." In strict mode the reader returns
+`Err(MieError)`. In lenient mode (`src/reader.rs:302–330`) the iterator
+just returns `None` and stops; the only "report" is a stderr
+`log_error!` line — not an `Err` item, not an exit code.
+
+Two reasonable consumers of this iterator get different stories: the
+CSV writer reaches end-of-stream and exits 0; a programmatic API
+consumer can't distinguish "clean EOF" from "gave up." Two options:
+
+- **(a)** Tighten the requirement to "SHALL log at ERROR; MAY surface
+  as `Err` only in strict mode" (codify current behavior).
+- **(b)** Have lenient mode yield a terminal `Err` item before
+  stopping, so library callers can react.
+
+Lean (a) for stability — it's how it already works — but (b) is the
+safer engineering answer if anyone consumes the iterator
+programmatically. The CLI exit-code work in Team Review Item 2 makes
+option (b) cheaper to implement because the partial-file unlink
+machinery already needs the terminal-Err signal.
+
+### Audit Item 2 — Truncated first record isn't covered
+
+**Status:** **Open.** Not covered by the team review. Standalone item.
+
+`L1-008` / `L2-RDR-002` / `L2-RDR-003` all cover truncation of the
+*final* record. Nothing covers truncation of the *first* record after
+header skip. Today: in lenient mode `find_first_record` silently
+returns `None` → `NoValidRecords`; in strict mode no distinct error
+class fires.
+
+**Proposed addition:** new L2-RDR requirement reading: "Header
+detection followed by a truncated record SHALL surface a distinct
+error in strict mode and SHALL terminate cleanly in lenient mode."
+
+Effort: very small (one validation branch + one test per impl).
+
+### Audit Item 3 — Timestamp-format selection isn't a requirement at all
+
+**Status:** **Open.** Not covered by the team review.
+
+The ROADMAP "Stronger timestamp-format auto-detection" backlog item
+(below) is a *feature* request — but there's no L2 requirement defining
+the *current* behavior either:
+
+- Whether detection is file-level (current behavior: locked on the
+  first record at `src/reader.rs:114–118` / `src/decode.rs:215`) or
+  could be per-record.
+- The tie-break rule (current: IRIG wins, hardcoded comment "more
+  common in flight test recordings").
+- Whether CLI `--time-format` overrides auto-detect (it does, but
+  `L2-CFG-003` only generically covers precedence).
+
+This matters because a future "smarter detection" PR could quietly
+change file-level → per-record and break consumers. Pin the current
+behavior with an L2-DEC requirement now, *before* anyone touches the
+detection logic.
+
+**Proposed additions:**
+- `L2-DEC-011`: Timestamp-format detection SHALL be file-level —
+  resolved on the first valid record and used unchanged for all
+  subsequent records.
+- `L2-DEC-012`: When IRIG and Standard score equally during
+  auto-detection, IRIG SHALL be selected.
+- `L2-DEC-013`: An explicit `--time-format` CLI flag or
+  `decode.time_format` config value SHALL bypass auto-detection.
+
+### Audit Item 4 — Look-ahead at EOF is correct but spec-ambiguous
+
+**Status:** **Open.** Not covered by the team review.
+
+`L2-SYN-005` says look-ahead is done "when look-ahead bytes are
+available." The code (`src/sync.rs:78–89`) treats "<2 bytes remaining"
+as "skip check 6 and accept." That's correct, but `available` is fuzzy
+— does a partial next Type Word count?
+
+**Proposed tightening:** "when at least 2 bytes are available at
+`offset + record_bytes`; otherwise checks 1–5 alone are authoritative."
+
+Mirror the same in `find_first_record`. Both Python and Rust already
+match this behavior; the requirement just needs to catch up.
+
+### Audit Item 5 — DELTA edge cases the spec doesn't address
+
+**Status:** **Resolved.** Landed as part of the Item 1 (DELTA) work
+on 2026-06-05. Both sub-items below are now in `docs/REQUIREMENTS.md`:
+
+- Error-record participation: original audit said *pick one* — either
+  "DELTA is 0.000000 for errored and spurious records" or "errored
+  records participate in DELTA tracking." Resolved as **participation**
+  via `L2-RDR-009a`. Errored records track per RT/MSG; SPURIOUS_DATA
+  has no key so emits empty (`L2-RDR-009c`).
+- Negative DELTA from out-of-order timestamps: original audit said
+  this is silently emitted as `-N.NNNNNN`. Resolved as **empty CSV
+  cell + one-WARN-per-key** via `L2-RDR-009b`.
+
+Both are exercised in the `delta-tracking-irig` conformance fixture.
+Captured here for history.
+
+### Audit Item 6 — SPURIOUS continuation classification under filtering
+
+**Status:** **Partially open.** The filter-drops-error case was
+verified correct at audit time; the classification-failure case is
+still a latent subtle bug not yet addressed.
+
+Verified in `src/reader.rs:419`: `prev_was_error` is set at the reader,
+before filtering — so a SPURIOUS following a filtered-out error is
+still correctly classified as `0x2000` continuation.
+
+**However:** the classification-failure path at `src/reader.rs:433`
+resets `prev_was_error = false`. If a corrupt-but-passable record sits
+between an error and a spurious, the spurious gets mislabeled as
+`0x2001` (standalone) instead of `0x2000` (continuation). This is a
+genuine subtle bug in a corruption-cascade scenario.
+
+**Proposed addition:** a one-line note in `L2-ERR-005` clarifying that
+continuation status depends on the *immediately preceding decoded
+record*, not the immediately preceding error. Then decide whether the
+classification-failure-resets-flag behavior is intentional (and
+matches the spec) or a bug to fix.
+
+Recommendation: leave the behavior as-is (a classification failure is
+itself a real corruption boundary, and resetting is defensible), but
+write the spec to match. Add a unit test that pins the behavior so
+future refactors don't change it accidentally.
+
+### Audit Item 7 — Inline-vs-separate suffix rule for multi-dot stems
+
+**Status:** **Open.** Not covered by the team review.
+
+`src/writer.rs:255–267` and `python/src/mie_decoder/writer.py:276–278`
+both produce:
+- `foo.csv` → `foo_errors.csv`
+- `foo` → `foo_errors`
+- `foo.bar.csv` → `foo.bar_errors.csv` (Python uses
+  `.with_name(stem + _errors + suffix)`; Rust splits on last extension).
+
+They happen to agree on the common cases, but `L2-ERR-008` just says
+`<stem>_errors<suffix>` without defining `stem`/`suffix`.
+
+**Proposed tightening:** "`stem` = filename up to and excluding the
+final `.`; `suffix` = the final `.` and extension, or empty if no
+extension."
+
+Effort: pure spec; both impls already match.
+
+### Audit Item 8 — Pathological-regular files (0x20-padded)
+
+**Status:** **Open.** Existing "Reject pathological-regular inputs"
+ROADMAP backlog item (below) captures the implementation work; this
+audit item adds the *spec* dimension.
+
+The 0x20-fill case (a file padded with ASCII space bytes parses as a
+contiguous stream of "valid" SPURIOUS_DATA records) is called out in
+the backlog but isn't a requirement. Worth promoting:
+
+**Proposed addition:** "Header detection SHALL reject inputs where the
+first N candidate records share an identical bit pattern in payload
+positions" — or whatever defense is chosen.
+
+Without this in the spec, a future refactor that "simplifies" the
+look-ahead can reintroduce the false-positive without test coverage
+flagging it.
+
+### Audit Item 9 — Smaller items worth a sentence each
+
+Five small items surfaced during the audit. Status tagged per item.
+
+- **Concurrent file modification under mmap** (`src/reader.rs:82`,
+  Python `mmap.ACCESS_READ`): undefined on POSIX if truncated
+  mid-decode. **Status: Open**, superseded in coverage by Team Review
+  Item 8 (`L1-025`); track there.
+
+- **`file_offset` is not exposed in any output** — it's in `MieMessage`
+  per `L2-DEC-010` but not surfaced in CSV or `dump`. **Status: Open.**
+  Either add a debug-only requirement to surface it (e.g., as an
+  optional CSV column behind a CLI flag) or note it's intentionally
+  internal and update `L2-DEC-010` to say "for internal/programmatic
+  use; CSV exposure is not required."
+
+- **L2-CLI-005 exit codes are not class-differentiated**: currently all
+  failure paths use exit 1 or 2 with no per-class distinction.
+  **Status: Open**, superseded by Team Review Item 2 (`L1-021` through
+  `L1-024`) which adds exit 2 and 3 with explicit semantics; track
+  there.
+
+- **`L2-CFG-008` ambiguity around per-implementation config keys**:
+  "key names remain supported" — but Rust accepts `include_*` keys
+  that Python doesn't. If `include_*` is intentionally Rust-only
+  (`RS-010`), the shared schema requirement should explicitly say
+  "shared keys remain supported; implementations MAY add additional
+  namespaced keys." **Status: Open**, partially overlaps with Team
+  Review Item 6 (`L2-CFG-009` unknown-key WARN) — but the
+  per-implementation-namespace clarification is distinct and still
+  worth landing.
+
+- **`L2-MSG-001` enumerates "10 supported transaction formats" but the
+  doc never lists them**. **Status: Open.** Add a one-line list to
+  REQUIREMENTS.md, or reference
+  `src/decode.rs::classify_message_format` as authoritative. Either
+  way the enum membership becomes part of the spec rather than buried
+  in code.
+
+---
+
+### Original Recommendation (preserved verbatim)
+
+> Don't try to land all of this at once. Two suggested PRs:
+>
+> 1. **Spec-only PR** updating REQUIREMENTS.md to capture items 1, 2,
+>    3, 4, 5, 7 — these are all "code already does this, lock it in."
+>    Low risk, high value.
+> 2. **Behavior PR** for the negative-DELTA WARN diagnostic and the
+>    lenient-mode terminal-Err item (if you pick option (b) on item
+>    1). These actually change observable output.
+
+**Status of the original recommendation:**
+- The behavior PR's first piece (negative-DELTA WARN) **landed** as
+  part of the DELTA work (`L2-RDR-009b`).
+- The behavior PR's second piece (lenient-mode terminal-Err) is now
+  rolled into Team Review Item 2 / Phase 3.
+- The spec-only PR was never drafted. Audit Items 2, 3, 4, 6, 7, 8,
+  and the five sub-items in 9 are still candidates for it. Combined
+  with Team Review Phase 1, this could be a single consolidated
+  spec-only PR.
+
+---
+
+### Suggested Consolidated Spec-Only PR (open work from this audit)
+
+Combining the open audit items above into a single spec-only PR that
+adds no behavior changes:
+
+| Source | Change |
+|--------|--------|
+| Audit Item 2 | New L2-RDR requirement for truncated first record |
+| Audit Item 3 | New `L2-DEC-011`/`L2-DEC-012`/`L2-DEC-013` pinning timestamp-format detection behavior |
+| Audit Item 4 | Tighten `L2-SYN-005` look-ahead-at-EOF wording |
+| Audit Item 6 | Clarify `L2-ERR-005` "immediately preceding decoded record" |
+| Audit Item 7 | Define `stem`/`suffix` in `L2-ERR-008` |
+| Audit Item 8 | New requirement rejecting homogeneous-payload pathological inputs |
+| Audit Item 9 (sub) | List the 10 transaction formats in `L2-MSG-001` |
+| Audit Item 9 (sub) | Clarify `file_offset` as internal-only in `L2-DEC-010` |
+| Audit Item 9 (sub) | Clarify `L2-CFG-008` per-impl key namespacing vs `RS-010` |
+
+This consolidated PR would slot into **Team Review Phase 1** (spec
+PR, 1 day) — landing both the team review's spec changes (Items 2, 3,
+4, 6) *and* the audit's remaining spec changes in one reviewable
+batch. **Combined effort: 1-2 days.**
+
+---
+
 ## Robustness & validation backlog
 
 Items surfaced during the Rust v1.0.0 review. These are not regressions —
@@ -73,10 +883,18 @@ here so they don't get dropped.
   appears to vary between firmware versions; needs reverse-engineering
   across a sample set with cross-references against vendor CSV.
 - **Standard-timestamp tick calibration.** The Standard format is a
-  free-running counter; tick rate is card-dependent and not encoded in
-  the file. Today `to_total_microseconds()` returns raw counter ticks.
-  A future option could accept an external calibration constant (TMATS
-  field or CLI flag) and emit true microseconds.
+  free-running counter; the tick rate is card-dependent and not encoded
+  in the file. The current shared contract (see L2-RDR-009d in
+  `docs/REQUIREMENTS.md`) emits an empty `DELTA` for every
+  Standard-timestamp record because raw ticks cannot be truthfully
+  represented as seconds. The follow-up feature here is a
+  configuration value (TMATS field or CLI flag, e.g.
+  `standard_tick_rate_hz`) that — when supplied — converts ticks to
+  microseconds and re-enables DELTA participation for Standard
+  records. Until that lands, the `Timestamp::to_microseconds`
+  (Rust) / `Timestamp.to_microseconds` (Python) APIs return `None`
+  for Standard so callers cannot accidentally treat ticks as
+  microseconds.
 
 ### Lint policy
 
@@ -121,10 +939,10 @@ here so they don't get dropped.
 
 ### Diagnostics
 
-- **Negative DELTA reporting.** Per-RT/MSG delta is a signed `f64`
-  difference. Out-of-order timestamps produce negative deltas silently.
-  Worth a WARN-level log when this occurs, gated to avoid log-flooding
-  on a chronically out-of-order file.
+- **~~Negative DELTA reporting.~~** *Resolved.* The shared contract
+  (L2-RDR-009b in `docs/REQUIREMENTS.md`) now emits an empty `DELTA`
+  on non-monotonic timestamps and a WARN gated to one line per RT/MSG
+  key per recording.
 - **Strict-mode error classification for IRIG-range and look-ahead
   failures.** When per-record validation fails for an IRIG-range or
   look-ahead reason, strict mode currently surfaces a `PayloadError`
