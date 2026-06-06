@@ -177,9 +177,9 @@ fn delta_tracker_per_rt_msg_key() {
     let reader = MieFileReader::new(f.path()).unwrap();
     let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
     assert_eq!(msgs.len(), 2);
-    assert_eq!(msgs[0].delta, 0.0);
+    assert_eq!(msgs[0].delta, Some(0.0));
     // Same timestamp in both fixtures → delta should be exactly 0.0 (not negative)
-    assert_eq!(msgs[1].delta, 0.0);
+    assert_eq!(msgs[1].delta, Some(0.0));
 }
 
 #[test]

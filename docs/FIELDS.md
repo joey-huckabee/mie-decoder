@@ -160,7 +160,8 @@ Redundant bus identifier: `A` or `B`.
 ### DELTA
 
 **Inter-arrival time** for each unique message type, measured in seconds
-with microsecond resolution (six decimal places).
+with microsecond resolution (six decimal places). May also be **empty**
+under the conditions listed below.
 
 DELTA is the elapsed wall-clock time between the current message and the
 most recent prior message that shares the **same** Remote Terminal address
@@ -175,6 +176,31 @@ Messages are grouped by the composite key `<RT>:<MSG>`. For example:
 
 For the **first occurrence** of any RT/MSG combination in a recording
 file, DELTA is `0.000000`.
+
+**Errored records** (Type Word bit 14 set) participate in DELTA tracking.
+An errored RT 15 SA 11 Receive record advances the `15:11R` cursor, and
+the next message with that same key — whether errored or not — computes
+its DELTA against the errored record's timestamp. This preserves the
+diagnostic signal for flaky RT/MSG pairs whose anomalies cluster in time.
+
+**DELTA is empty** (an empty CSV cell, not `0.000000`) in any of these
+cases:
+
+- **SPURIOUS_DATA records.** A spurious record has no Command Word, so
+  it has no RT/MSG key to track against. It contributes nothing to the
+  per-key cursor.
+- **Standard-format timestamps.** The Standard timestamp is a free-running
+  counter whose tick rate is card-dependent and not encoded in the file.
+  Without a calibration value, raw ticks cannot be truthfully converted
+  to seconds. DELTA is therefore empty for every record carrying a
+  Standard timestamp. (A future configuration value, expected in a
+  follow-up release, will enable DELTA when the tick rate is supplied.)
+- **Non-monotonic timestamps.** When a record's timestamp is older than
+  the prior record for the same RT/MSG key (year rollover, freerun
+  reset, out-of-order capture), DELTA is empty and the implementation
+  emits a single WARN per key per file. Subsequent occurrences for the
+  same key continue to compute DELTA against the most recent timestamp
+  (which may itself have produced an empty DELTA).
 
 **Operational significance:** DELTA directly reveals the Bus Controller's
 scheduling rate for each unique message type:

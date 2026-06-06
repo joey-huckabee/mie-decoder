@@ -231,9 +231,11 @@ pub struct StandardTimestamp {
 }
 
 impl StandardTimestamp {
-    /// Raw counter value (tick units, not microseconds).
-    pub fn to_total_microseconds(self) -> u64 {
-        u64::from(self.raw_value)
+    /// Raw 32-bit free-running counter value, in unknown tick units.
+    /// The tick rate is card-dependent and not encoded in the file, so
+    /// callers cannot convert this to seconds without external calibration.
+    pub fn raw_ticks(self) -> u32 {
+        self.raw_value
     }
 
     /// Format as `0xNNNNNNNN`.
@@ -249,10 +251,16 @@ pub enum Timestamp {
 }
 
 impl Timestamp {
-    pub fn to_total_microseconds(&self) -> u64 {
+    /// Absolute microseconds from a known epoch, if convertible.
+    ///
+    /// `Some(us)` for IRIG (microseconds from start of year).
+    /// `None` for Standard — raw counter ticks have no known tick rate
+    /// or epoch, so DELTA in seconds cannot be computed truthfully.
+    /// A future calibration feature will widen this for Standard.
+    pub fn to_microseconds(&self) -> Option<u64> {
         match self {
-            Self::Irig(t) => t.to_total_microseconds(),
-            Self::Standard(t) => t.to_total_microseconds(),
+            Self::Irig(t) => Some(t.to_total_microseconds()),
+            Self::Standard(_) => None,
         }
     }
 
@@ -416,8 +424,13 @@ pub struct MieMessage {
     pub status_word_2: Option<u16>,
     pub data_words: DataWords,
     pub error_word: Option<u16>,
-    /// Seconds since prior message with the same RT+MSG. Zero on first occurrence.
-    pub delta: f64,
+    /// Seconds since prior message with the same RT+MSG.
+    ///
+    /// `Some(0.0)` on first occurrence of an RT/MSG key with a calibrated
+    /// timestamp. `Some(s)` for a non-negative gap. `None` when no DELTA
+    /// is meaningful: SPURIOUS_DATA (no RT/MSG key), uncalibrated Standard
+    /// timestamps (no known tick rate), and non-monotonic timestamps.
+    pub delta: Option<f64>,
     pub file_offset: u64,
 }
 
@@ -619,7 +632,7 @@ mod tests {
             status_word_2: None,
             data_words: DataWords::new(),
             error_word: None,
-            delta: 0.0,
+            delta: Some(0.0),
             file_offset: 0,
         }
     }

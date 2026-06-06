@@ -180,6 +180,7 @@ class MieFileReader:
             Decoded MieMessage instances, one per binary record.
         """
         delta_tracker: dict[str, int] = {}
+        warned_ooo_keys: set[str] = set()
         msg_count = 0
         sync_losses = 0
         prev_was_error = False
@@ -317,6 +318,8 @@ class MieFileReader:
                             "continuation" if prev_was_error else "standalone",
                         )
 
+                        # SPURIOUS_DATA has no RT/MSG key. DELTA is None
+                        # so the CSV writer emits an empty cell.
                         yield MieMessage(
                             timestamp=timestamp,
                             type_word=tw,
@@ -327,7 +330,7 @@ class MieFileReader:
                             status_word_2=None,
                             data_words=data_words,
                             error_word=error_code,
-                            delta=0.0,
+                            delta=None,
                             file_offset=offset,
                         )
 
@@ -346,27 +349,27 @@ class MieFileReader:
                             mm, offset, tw, timestamp, cmd,
                             cmd_byte_offset, ts_words, self._strict,
                         )
-                        delta_key = msg.delta_key
-                        if delta_key:
-                            total_us = timestamp.to_total_microseconds()
-                            if delta_key in delta_tracker:
-                                delta = (total_us - delta_tracker[delta_key]) / 1_000_000.0
-                            else:
-                                delta = 0.0
-                            delta_tracker[delta_key] = total_us
-                            msg = MieMessage(
-                                timestamp=msg.timestamp,
-                                type_word=msg.type_word,
-                                message_format=msg.message_format,
-                                command_word=msg.command_word,
-                                command_word_2=msg.command_word_2,
-                                status_word=msg.status_word,
-                                status_word_2=msg.status_word_2,
-                                data_words=msg.data_words,
-                                error_word=msg.error_word,
-                                delta=delta,
-                                file_offset=msg.file_offset,
-                            )
+                        # Error records participate in DELTA tracking under
+                        # the shared contract: the diagnostic value of
+                        # knowing inter-arrival gaps to a flaky RT/MSG is
+                        # higher than the cost of including anomaly rows.
+                        delta = _compute_delta(
+                            delta_tracker, warned_ooo_keys,
+                            msg.delta_key, timestamp, offset,
+                        )
+                        msg = MieMessage(
+                            timestamp=msg.timestamp,
+                            type_word=msg.type_word,
+                            message_format=msg.message_format,
+                            command_word=msg.command_word,
+                            command_word_2=msg.command_word_2,
+                            status_word=msg.status_word,
+                            status_word_2=msg.status_word_2,
+                            data_words=msg.data_words,
+                            error_word=msg.error_word,
+                            delta=delta,
+                            file_offset=msg.file_offset,
+                        )
 
                         yield msg
                         msg_count += 1
@@ -403,12 +406,10 @@ class MieFileReader:
                         "T" if cmd.direction == Direction.TRANSMIT else "R"
                     )
                     delta_key = f"{cmd.rt}:{cmd.subaddress}{direction_char}"
-                    total_us = timestamp.to_total_microseconds()
-                    if delta_key in delta_tracker:
-                        delta = (total_us - delta_tracker[delta_key]) / 1_000_000.0
-                    else:
-                        delta = 0.0
-                    delta_tracker[delta_key] = total_us
+                    delta = _compute_delta(
+                        delta_tracker, warned_ooo_keys,
+                        delta_key, timestamp, offset,
+                    )
 
                     yield MieMessage(
                         timestamp=timestamp,
@@ -500,9 +501,48 @@ def _decode_error_record(
         status_word_2=None,
         data_words=data_words,
         error_word=error_code,
-        delta=0.0,
+        delta=None,
         file_offset=offset,
     )
+
+
+def _compute_delta(
+    delta_tracker: dict[str, int],
+    warned_ooo_keys: set[str],
+    key: str,
+    timestamp: Timestamp,
+    offset: int,
+) -> float | None:
+    """Compute DELTA for ``key`` per the shared contract and update tracker.
+
+    - ``timestamp.to_microseconds()`` returns ``None`` (Standard, uncalibrated)
+      → return ``None`` and skip tracker update.
+    - SPURIOUS_DATA passes an empty key → return ``None``.
+    - First occurrence of ``key`` → return ``0.0``, record current us.
+    - Subsequent with non-negative gap → return ``seconds``, record current us.
+    - Subsequent with negative gap (non-monotonic) → return ``None``, record
+      current us, emit a WARN once per ``key`` per recording.
+    """
+    if not key:
+        return None
+    curr_us = timestamp.to_microseconds()
+    if curr_us is None:
+        return None
+    prev = delta_tracker.get(key)
+    delta_tracker[key] = curr_us
+    if prev is None:
+        return 0.0
+    if curr_us < prev:
+        if key not in warned_ooo_keys:
+            warned_ooo_keys.add(key)
+            logger.warning(
+                "Non-monotonic timestamp at 0x%X for RT/MSG %s: "
+                "prev_us=%d curr_us=%d (further out-of-order occurrences "
+                "for this key suppressed)",
+                offset, key, prev, curr_us,
+            )
+        return None
+    return (curr_us - prev) / 1_000_000.0
 
 
 def _extract_payload(

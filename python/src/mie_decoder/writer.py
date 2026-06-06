@@ -152,7 +152,7 @@ def message_to_row(msg: MieMessage) -> dict[str, str]:
         "MUX": "",
         "TERM_NAME": "",
         "BUS": msg.bus.name,
-        "DELTA": f"{msg.delta:.6f}",
+        "DELTA": f"{msg.delta:.6f}" if msg.delta is not None else "",
         "ERROR": msg.error_label,
         "ERROR_CODE": f"{msg.error_word:04X}" if msg.error_word is not None else "",
         "IM_GAP": "",

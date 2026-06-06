@@ -158,7 +158,7 @@ mod tests {
             status_word_2: None,
             data_words: DataWords::new(),
             error_word: None,
-            delta: 0.0,
+            delta: Some(0.0),
             file_offset: 0,
         }
     }

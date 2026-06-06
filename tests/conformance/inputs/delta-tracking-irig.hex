@@ -1,0 +1,32 @@
+# Cross-implementation oracle for DELTA tracking under the shared contract:
+# - First occurrence of an RT/MSG key has DELTA = 0.000000.
+# - Errored records participate in DELTA tracking (Rust originally
+#   hardcoded 0.0, Python computed; the new contract aligns both).
+# - Subsequent normal records compute against the prior errored record,
+#   and subsequent errored records compute against the prior normal record.
+#
+# IRIG timestamps. All records target RT15 SA11 Receive (key 15:11R).
+# Timestamps: t0=50.000000, t1=50.250000, t2=50.500000 — expected DELTAs are
+# 0.000000, 0.250000, 0.250000 respectively.
+
+# Errored RT15 SA11 Receive at 192:15:54:50.000000 (first occurrence of 15:11R).
+# TW 0x4702 (type=0x02, Bus A, wc=7, error=1) + IRIG (upper 0x180F, middle 0xDB20, lower 0x0000).
+0247 0F18 20DB 0000
+7E79 0004 1E01
+
+# Normal RT15 SA11 Receive at 192:15:54:50.250000 — must DELTA against the
+# preceding errored record (Rust used to discard the error timestamp).
+# TW 0x2402 (type=0x02, Bus A, wc=36, no error) + IRIG (0x180F, 0xDB23, 0xD090).
+0224 0F18 23DB 90D0
+7E79
+0004 0000 0000 2F00 22CA 2F00 22CA
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000
+71C7 0078
+
+# Errored RT15 SA11 Receive at 192:15:54:50.500000 — must DELTA against the
+# preceding normal record (proves the path is symmetric).
+# TW 0x4702 + IRIG (0x180F, 0xDB27, 0xA120).
+0247 0F18 27DB 20A1
+7E79 0004 1E01

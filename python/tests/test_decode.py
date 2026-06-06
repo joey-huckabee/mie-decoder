@@ -302,10 +302,19 @@ class TestDecodeStandardTimestamp:
         ts = decode_standard_timestamp(0x0001, 0x86A0)
         assert ts.format() == "0x000186A0"
 
-    def test_to_total_microseconds_returns_raw(self) -> None:
+    def test_raw_ticks_returns_counter_value(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
         ts = decode_standard_timestamp(0x0001, 0x86A0)
-        assert ts.to_total_microseconds() == 100000
+        # Raw 32-bit counter value. Tick rate is card-dependent and not
+        # encoded in the file, so this is not microseconds.
+        assert ts.raw_ticks() == 100000
+
+    def test_to_microseconds_returns_none(self) -> None:
+        from mie_decoder.decode import decode_standard_timestamp
+        ts = decode_standard_timestamp(0x0001, 0x86A0)
+        # Standard timestamps have no known microsecond basis under the
+        # shared DELTA contract; callers must treat this as "no DELTA".
+        assert ts.to_microseconds() is None
 
 
 class TestDetectTimestampFormat:

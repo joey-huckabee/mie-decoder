@@ -7,7 +7,7 @@
 //! Sync recovery happens internally — only unrecoverable errors (or strict
 //! mode opt-ins) surface as `Err` items from the iterator.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
@@ -161,6 +161,7 @@ impl MieFileReader {
             resolved_format,
             prev_was_error: false,
             delta_tracker: HashMap::new(),
+            warned_ooo_keys: HashSet::new(),
             msg_count: 0,
             sync_losses: 0,
             path_for_log: &self.path,
@@ -189,7 +190,15 @@ pub struct RecordIter<'a> {
     strict: bool,
     resolved_format: Option<TimestampFormat>,
     prev_was_error: bool,
+    /// Per-RT/MSG last-seen timestamp in microseconds. Only populated when
+    /// the source timestamp has a microsecond basis (IRIG today). Standard
+    /// timestamps yield None from `Timestamp::to_microseconds()` and bypass
+    /// the tracker entirely.
     delta_tracker: HashMap<u32, u64>,
+    /// RT/MSG keys for which a non-monotonic-timestamp WARN has already
+    /// been emitted. Limits log volume on chronically out-of-order files
+    /// to one line per key per recording.
+    warned_ooo_keys: HashSet<u32>,
     msg_count: u64,
     sync_losses: u64,
     path_for_log: &'a Path,
@@ -387,6 +396,8 @@ impl<'a> Iterator for RecordIter<'a> {
                     }
                 );
 
+                // SPURIOUS_DATA has no RT/MSG key and is never tracked
+                // for DELTA. The CSV writer emits an empty DELTA cell.
                 let msg = MieMessage {
                     timestamp,
                     type_word: tw,
@@ -397,7 +408,7 @@ impl<'a> Iterator for RecordIter<'a> {
                     status_word_2: None,
                     data_words,
                     error_word: Some(error_code),
-                    delta: 0.0,
+                    delta: None,
                     file_offset: self.offset as u64,
                 };
                 self.advance_after_yield(record_bytes);
@@ -414,7 +425,20 @@ impl<'a> Iterator for RecordIter<'a> {
 
             // ── Errored record (bit 14 set) ─────────────────────────
             if tw.error {
-                let msg = self.decode_error_record(&tw, timestamp, &cmd, cmd_byte_offset, ts_words);
+                let key = delta_key(
+                    cmd.rt,
+                    cmd.subaddress,
+                    matches!(cmd.direction, crate::models::Direction::Transmit),
+                );
+                let delta = self.delta_for(key, &timestamp);
+                let msg = self.decode_error_record(
+                    &tw,
+                    timestamp,
+                    &cmd,
+                    cmd_byte_offset,
+                    ts_words,
+                    delta,
+                );
                 self.advance_after_yield(record_bytes);
                 self.prev_was_error = true;
                 return Some(msg);
@@ -461,12 +485,7 @@ impl<'a> Iterator for RecordIter<'a> {
                 cmd.subaddress,
                 matches!(cmd.direction, crate::models::Direction::Transmit),
             );
-            let total_us = timestamp.to_total_microseconds();
-            let delta = match self.delta_tracker.get(&key) {
-                Some(&prev) => (total_us as f64 - prev as f64) / 1_000_000.0,
-                None => 0.0,
-            };
-            self.delta_tracker.insert(key, total_us);
+            let delta = self.delta_for(key, &timestamp);
 
             let msg = MieMessage {
                 timestamp,
@@ -521,6 +540,7 @@ impl<'a> RecordIter<'a> {
         cmd: &CommandWord,
         cmd_byte_offset: usize,
         ts_words: u16,
+        delta: Option<f64>,
     ) -> MieResult<MieMessage> {
         let error_word_offset = self.offset + (usize::from(tw.word_count) - 1) * 2;
         let error_code = match read_u16(self.data, error_word_offset) {
@@ -587,9 +607,42 @@ impl<'a> RecordIter<'a> {
             status_word_2: None,
             data_words,
             error_word: Some(error_code),
-            delta: 0.0,
+            delta,
             file_offset: self.offset as u64,
         })
+    }
+
+    /// Compute DELTA for `key` given the current record's `timestamp`,
+    /// and update the tracker accordingly. Implements the shared contract:
+    ///
+    /// - `Timestamp::to_microseconds()` returns `None` (Standard, uncalibrated)
+    ///   → return `None` and skip tracker update (nothing to compare against).
+    /// - First occurrence of `key` → return `Some(0.0)`, record current us.
+    /// - Subsequent with non-negative gap → return `Some(seconds)`, record current us.
+    /// - Subsequent with negative gap (non-monotonic) → return `None`, record
+    ///   current us, emit a WARN once per key per recording.
+    fn delta_for(&mut self, key: u32, timestamp: &Timestamp) -> Option<f64> {
+        let curr_us = timestamp.to_microseconds()?;
+        let result = match self.delta_tracker.get(&key) {
+            None => Some(0.0),
+            Some(&prev) if curr_us >= prev => Some((curr_us - prev) as f64 / 1_000_000.0),
+            Some(&prev) => {
+                if self.warned_ooo_keys.insert(key) {
+                    log_warn!(
+                        "non-monotonic timestamp at 0x{:X} for RT/MSG key 0x{:08X}: \
+                         prev_us={} curr_us={} (further out-of-order occurrences for \
+                         this key suppressed)",
+                        self.offset,
+                        key,
+                        prev,
+                        curr_us
+                    );
+                }
+                None
+            }
+        };
+        self.delta_tracker.insert(key, curr_us);
+        result
     }
 }
 

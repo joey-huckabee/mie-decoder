@@ -40,6 +40,18 @@
       "input": "inputs/basic-multi-record.hex",
       "expected": "expected/config-filter.csv",
       "config": "configs/exclude-transmit.toml"
+    },
+    {
+      "name": "delta-tracking-irig",
+      "input": "inputs/delta-tracking-irig.hex",
+      "expected": "expected/delta-tracking-irig.csv",
+      "rust_args": [
+        "--inline-errors"
+      ],
+      "python_args": [
+        "--error-mode",
+        "inline"
+      ]
     }
   ]
 }

@@ -119,8 +119,11 @@ fn write_row<W: Write>(out: &mut W, msg: &MieMessage) -> std::io::Result<()> {
     out.write_all(msg.bus().as_str().as_bytes())?;
     out.write_all(b",")?;
 
-    // DELTA
-    write!(out, "{:.6}", msg.delta)?;
+    // DELTA — empty cell when delta is None (SPURIOUS_DATA, uncalibrated
+    // Standard timestamps, or non-monotonic timestamps).
+    if let Some(d) = msg.delta {
+        write!(out, "{:.6}", d)?;
+    }
     out.write_all(b",")?;
 
     // ERROR
@@ -301,7 +304,7 @@ mod tests {
             status_word_2: None,
             data_words: DataWords::from_slice(&[0x0400, 0x0000, 0x0000, 0x002F]),
             error_word: None,
-            delta: 0.123456,
+            delta: Some(0.123456),
             file_offset: 0,
         }
     }

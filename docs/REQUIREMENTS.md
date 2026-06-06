@@ -40,7 +40,7 @@ behavior remains covered by each implementation's own tests.
 | L1-002 | Each implementation SHALL produce CSV output matching the DDC vendor-compatible column layout and field formatting defined in `docs/FIELDS.md`. |
 | L1-003 | Each implementation SHALL decode IRIG timestamps with microsecond resolution and SHALL support Standard free-running timestamps. |
 | L1-004 | Each implementation SHALL correctly decode all supported MIL-STD-1553 message formats and preserve bus wire order. |
-| L1-005 | Each implementation SHALL compute per-RT/MSG inter-arrival time (`DELTA`) in seconds. |
+| L1-005 | Each implementation SHALL compute per-RT/MSG inter-arrival time (`DELTA`) in seconds when the source timestamp has a known microsecond basis. Where no microsecond basis is available, `DELTA` SHALL be empty. |
 | L1-006 | Each implementation SHALL support Bus A and Bus B recordings. |
 | L1-007 | Each implementation SHALL provide CLI capabilities for decoding, message counting, configuration, filtering, timestamp selection, logging, and diagnostic dump output. CLI syntax MAY differ. |
 | L1-008 | Each implementation SHALL handle truncated final records without crashing. |
@@ -104,6 +104,10 @@ behavior remains covered by each implementation's own tests.
 | L2-RDR-008 | L1-004 | Transmit records SHALL extract Status Word before Data Words. |
 | L2-RDR-009 | L1-005 | `DELTA` SHALL be calculated against the most recent prior message sharing the same RT and MSG identifier. |
 | L2-RDR-010 | L1-005 | The first occurrence of each RT/MSG key SHALL have `DELTA` equal to `0.000000`. |
+| L2-RDR-009a | L1-005 | Errored records (Type Word bit 14 set) SHALL participate in `DELTA` tracking — they update the per-RT/MSG cursor and SHALL receive a `DELTA` computed against the prior message sharing the same key. |
+| L2-RDR-009b | L1-005 | When a record's timestamp is older than the prior message for the same RT/MSG key, `DELTA` SHALL be empty and the implementation SHALL log a WARN. The WARN SHALL be emitted at most once per RT/MSG key per decoded file to avoid log flooding. |
+| L2-RDR-009c | L1-005 | `SPURIOUS_DATA` records have no RT/MSG key and SHALL have an empty `DELTA`; they SHALL NOT update any per-key cursor. |
+| L2-RDR-009d | L1-005 | Standard-format timestamps have no known microsecond tick rate. Records carrying a Standard timestamp SHALL have an empty `DELTA` and SHALL NOT participate in per-key tracking until a future tick-rate calibration feature is configured. |
 | L2-RDR-015 | L1-015 | Every record SHALL pass the full shared validation path before decoding. |
 
 ### L2-MSG - Message Semantics
@@ -136,7 +140,7 @@ behavior remains covered by each implementation's own tests.
 | L2-WRT-001 | L1-002 | CSV columns SHALL appear in this order: `TIME_STAMP`, `RT`, `MSG`, `WD01`-`WD32`, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, `DELTA`, `ERROR`, `ERROR_CODE`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`. |
 | L2-WRT-002 | L1-002 | Unused Data Word columns and unavailable fields SHALL be empty. |
 | L2-WRT-003 | L1-002 | Data Words, Status Word, Command Word, and Error Word SHALL use 4-character uppercase hexadecimal without a `0x` prefix. |
-| L2-WRT-004 | L1-002 | `DELTA` SHALL use exactly six decimal places. |
+| L2-WRT-004 | L1-002 | `DELTA` SHALL use exactly six decimal places when populated, and SHALL be an empty CSV cell when no `DELTA` is computed (see L2-RDR-009a through L2-RDR-009d). |
 | L2-WRT-007 | L1-002 | CSV output SHALL support a file destination and stdout. |
 | L2-WRT-011 | L1-002 | IRIG timestamp text SHALL use `DAY:HH:MM:SS.uuuuuu`. |
 | L2-WRT-012 | L1-002 | CSV output SHALL use LF (`\n`) line endings on every supported platform. |
@@ -234,9 +238,10 @@ These requirements apply only to the root Rust crate.
 |------|-----------------------------|
 | `basic-multi-record` | L1-001, L1-002, L1-004 through L1-006; L2-DEC-001, L2-DEC-002, L2-DEC-004, L2-DEC-008; L2-RDR-007 through L2-RDR-010; L2-MSG-002, L2-MSG-003; L2-WRT-001 through L2-WRT-004, L2-WRT-007, L2-WRT-011 through L2-WRT-013 |
 | `header-and-sync-recovery` | L1-015; L2-SYN-001 through L2-SYN-003, L2-SYN-005 through L2-SYN-007, L2-SYN-009, L2-SYN-014, L2-SYN-015; L2-RDR-015 |
-| `errors-inline` | L1-016; L2-ERR-001 through L2-ERR-003, L2-ERR-005, L2-ERR-007, L2-ERR-010, L2-ERR-011 |
+| `errors-inline` | L1-016; L2-ERR-001 through L2-ERR-003, L2-ERR-005, L2-ERR-007, L2-ERR-010, L2-ERR-011; L2-RDR-009c |
 | `exclude-subaddress` | L1-018; L2-CFG-006; L2-FLT-001, L2-FLT-002; L2-CLI-010 |
 | `config-filter` | L1-017, L1-018; L2-CFG-001, L2-CFG-005, L2-CFG-006, L2-CFG-008; L2-FLT-001, L2-FLT-002 |
+| `delta-tracking-irig` | L1-005; L2-RDR-009, L2-RDR-010, L2-RDR-009a; L2-WRT-004 |
 
 ### Implementation Evidence
 

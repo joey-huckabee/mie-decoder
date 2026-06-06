@@ -235,6 +235,15 @@ class IrigTimestamp:
             + self.microsecond
         )
 
+    def to_microseconds(self) -> int | None:
+        """Absolute microseconds from a known epoch.
+
+        Always returns the IRIG conversion. Defined on both timestamp
+        types so the reader can call ``timestamp.to_microseconds()``
+        without a type check; Standard returns None.
+        """
+        return self.to_total_microseconds()
+
     def format(self) -> str:
         """Format as ``DAY:HH:MM:SS.uuuuuu`` string."""
         return (
@@ -257,9 +266,23 @@ class StandardTimestamp:
     upper_word: int
     lower_word: int
 
-    def to_total_microseconds(self) -> int:
-        """Return the raw counter value (tick units, not microseconds)."""
+    def raw_ticks(self) -> int:
+        """Raw 32-bit free-running counter value, in unknown tick units.
+
+        The tick rate is card-dependent and not encoded in the file, so
+        callers cannot convert this to seconds without external calibration.
+        """
         return self.raw_value
+
+    def to_microseconds(self) -> int | None:
+        """Standard timestamps have no known microsecond basis.
+
+        Returns ``None`` so callers (DELTA computation) can treat the
+        absence of a microsecond conversion explicitly rather than
+        silently using raw ticks as if they were microseconds.
+        A future calibration feature will widen this.
+        """
+        return None
 
     def format(self) -> str:
         """Format as ``0xNNNNNNNN`` hexadecimal string."""
@@ -365,8 +388,12 @@ class MieMessage:
         error_word: DDC error code (0x01xx) for errored records, or
             custom decoder code (0x20xx) for SPURIOUS_DATA records.
             None for normal messages.
-        delta: Seconds since prior message with same RT+MSG. Zero for
-            first occurrence. Not computed for SPURIOUS_DATA.
+        delta: Seconds since prior message with same RT+MSG.
+            ``0.0`` on first occurrence of an RT/MSG key with a calibrated
+            timestamp. A positive float for a non-negative gap. ``None``
+            when no DELTA is meaningful: SPURIOUS_DATA (no RT/MSG key),
+            uncalibrated Standard timestamps (no known tick rate), and
+            non-monotonic timestamps.
         file_offset: Byte offset of this record in the source file.
     """
 
@@ -379,7 +406,7 @@ class MieMessage:
     status_word_2: int | None
     data_words: tuple[int, ...]
     error_word: int | None
-    delta: float
+    delta: float | None
     file_offset: int
 
     @property
