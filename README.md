@@ -4,9 +4,17 @@ Decoder for DDC MIL-STD-1553 MIE binary recording files.
 
 MIE-Decoder reads proprietary binary files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI recording cards and outputs decoded messages in CSV format compatible with DDC's own recording software output.
 
-**v1.0.0** — Rust port. Streaming CSV writer (constant memory), CLI redesign (`--inline-errors`, `--include-*` filters, `count` subcommand), single static-musl binary for SLES 12 deployment. The original Python implementation is preserved at [`python-reference/`](python-reference/) as historical documentation.
+MIE-Decoder is maintained in two implementations:
 
-## Build
+- **Rust v1.0.0** — streaming CSV writer (constant memory), redesigned CLI,
+  and a single static-musl binary for SLES 12 deployment.
+- **Python v1.1.0** — the Python package and CLI, maintained in
+  [`python/`](python/).
+
+The implementations may evolve independently, but share the MIE format
+documentation and vendor-compatible CSV behavior.
+
+## Rust Build
 
 ```bash
 # Native dev build
@@ -253,7 +261,7 @@ docs/
 tests/
 └── integration.rs   End-to-end tests with byte-exact fixtures
 
-python-reference/    Original Python implementation (preserved, unmaintained)
+python/              Maintained Python package and CLI
 ```
 
 ## Roadmap
@@ -262,11 +270,21 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Development
 
+Rust:
+
 ```bash
 cargo test                  # All unit + integration tests
 cargo test --test integration -- multi_record_stream   # One integration test
 cargo build --release       # Release binary at target/release/mie-decoder
 cargo clippy --all-targets  # Lint (if installed)
+```
+
+Python:
+
+```bash
+poetry -C python install
+poetry -C python run pytest
+poetry -C python run mie-decoder --help
 ```
 
 ## Known Limitations

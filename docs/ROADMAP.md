@@ -2,13 +2,17 @@
 
 | Version | Feature |
 |---------|---------|
-| Python v1.1 | Sync recovery, error handling, config, filtering _(historical, frozen at `python-reference/`)_ |
-| **Rust v1.0.0** | Rust port. CLI redesign (`--inline-errors`, `--include-*` filters, `count` subcommand, `--format csv` forward-compat). Streaming CSV writer (constant memory). Static musl build for SLES 12. _(current)_ |
+| **Python v1.1.0** | Sync recovery, error handling, config, and filtering. Maintained at `python/`. _(current Python release)_ |
+| **Rust v1.0.0** | Rust port. CLI redesign (`--inline-errors`, `--include-*` filters, `count` subcommand, `--format csv` forward-compat). Streaming CSV writer (constant memory). Static musl build for SLES 12. _(current Rust release)_ |
+| Python next | Continue feature and robustness work while preserving shared MIE format and CSV behavior. |
 | Rust v1.1 | Multi-file input, time-sorted merge to single CSV |
 | Rust v2.0 | Data word decoders, additional per-message-type CSVs |
 | Rust v3.0 | Apache Parquet output |
 
-## Commitments carried through the Rust port
+The two implementations may release independently. Shared format semantics,
+fixtures, and vendor-compatible CSV behavior should remain aligned.
+
+## Shared Commitments
 
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.
 - **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including currently-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`).
@@ -23,17 +27,15 @@ here so they don't get dropped.
 
 ### Documentation
 
-- **Comprehensive `docs/REQUIREMENTS.md` refresh.** The doc was authored
-  against the Python implementation and references Python-specific tooling
-  (Poetry, pandas, tomli, struct, dataclasses) and module names
-  (`writer.py`, etc.). Semantic requirements are still correct; the
-  implementation-level rows (L1-010, L1-014, L2-DEC-005, L2-CFG-002,
-  L2-WRT-005/006, L3-001/002/009/010) need rewriting against the Rust
-  crate. New Rust-port requirements (e.g., `L2-RDR-015`) are added inline
-  rather than as a wholesale rewrite.
+- **Comprehensive `docs/REQUIREMENTS.md` refresh.** Separate shared
+  behavioral requirements from Python- and Rust-specific implementation
+  traceability. The semantic requirements remain relevant to both
+  implementations, while tooling and module references need explicit
+  implementation ownership.
 - **Refresh `docs/diagrams/*.puml`.** Class, dataflow, and component
-  diagrams still reference Python module names (`__main__.py`, `cli.py`,
-  `pandas`, etc.). Need redrawing against the Rust module layout.
+  diagrams currently describe the Python implementation. Add clearly labeled
+  Python and Rust architecture diagrams rather than replacing one with the
+  other.
 
 ### Validation strength
 

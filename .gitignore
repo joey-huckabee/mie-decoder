@@ -23,7 +23,7 @@ target
 # Claude Code session-local settings
 .claude/
 
-# Python (python-reference/ retained for documentation only)
+# Python
 __pycache__/
 *.py[cod]
 *$py.class

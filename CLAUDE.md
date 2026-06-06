@@ -4,9 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MIE-Decoder (v1.0.0) is a Rust library + CLI that decodes proprietary binary recording files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI cards. CSV output is column-compatible with DDC's own recording software so a decoded file can be diffed against vendor output for validation.
+MIE-Decoder contains actively maintained Rust and Python libraries + CLIs that
+decode proprietary binary recording files produced by Data Device Corporation
+(DDC) MIL-STD-1553 PCI cards. CSV output is column-compatible with DDC's own
+recording software so a decoded file can be diffed against vendor output for
+validation.
 
-The Rust port replaces a Python implementation that lives at `python-reference/` for historical reference (do **not** maintain or modify it). v1.0.0 was a clean rewrite, not a transliteration: the CLI was redesigned, the writer is now streaming (constant memory), and the data-words container is an inline `[u16; 32]` buffer.
+The Rust v1.0.0 implementation lives at the repository root. The Python v1.1.0
+implementation lives at `python/`. The Rust implementation was a clean rewrite,
+not a transliteration: its CLI was redesigned, its writer is streaming
+(constant memory), and its data-words container is an inline `[u16; 32]`
+buffer. Maintain each implementation according to its own architecture while
+keeping shared format and CSV behavior aligned.
 
 Edition 2024, MSRV 1.85. The crate has exactly one external dependency: `memmap2`. Argument parsing, CSV writing, TOML config, logging, and error types are all hand-rolled — preserve this property when adding features.
 
@@ -35,6 +44,11 @@ cargo clippy --all-targets -- -D warnings
 cargo run --release -- decode path/to/recording.mie -o decoded.csv
 cargo run --release -- count path/to/recording.mie
 cargo run --release -- dump path/to/recording.mie --records 10
+
+# Python setup, test, and CLI
+poetry -C python install
+poetry -C python run pytest
+poetry -C python run mie-decoder --help
 ```
 
 ## Architecture
@@ -75,7 +89,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - `docs/REQUIREMENTS.md` — L1/L2/L3 requirements traceability.
 - `docs/ROADMAP.md` — versioned roadmap with explicit "do not drop" commitments (TOML config, CSV byte-compat, sync semantics).
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
-- `python-reference/` — original Python implementation, for historical reference only. Not maintained.
+- `python/` — maintained Python package and CLI with its own source and tests.
 
 ## Conventions worth preserving
 
@@ -87,3 +101,6 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - **CSV column names and order are dictated by DDC vendor output.** Don't "clean up" `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` even though they're empty in v1.0.0 — they're columns by spec.
 - **`sync.rs` is pure** (no logging, no I/O). The reader handles any user-facing messaging based on returned values. Don't move logging into validation helpers.
 - **Test fixtures are byte-exact** translations of records that have been cross-referenced against vendor CSV output. Treat them as oracles; if a test fails, suspect the code, not the fixture.
+- **Both implementations are maintained.** Keep Rust-specific design decisions
+  in the Rust crate and Python-specific design decisions in `python/`; align
+  shared format semantics and vendor-compatible CSV behavior.

@@ -1,8 +1,9 @@
 # Contributing to MIE-Decoder
 
-Thanks for working on MIE-Decoder. This document covers local setup,
-the pre-commit workflow, commit conventions, and how to produce the
-SLES 12 production build.
+Thanks for working on MIE-Decoder. This repository contains maintained Rust
+and Python implementations. This document covers local setup, the pre-commit
+workflow, commit conventions, and how to produce the SLES 12 Rust production
+build.
 
 > Note: the canonical filename for this document is `CONTRIBUTING.md`
 > (Git/GitHub convention). If you arrive here looking for `CONTRIBUTION.md`,
@@ -12,6 +13,7 @@ SLES 12 production build.
 
 - Rust toolchain ≥ 1.85 (`rustup toolchain install stable`). The crate
   uses edition 2024.
+- Python 3.10 or newer and Poetry for work under `python/`.
 - A Bash shell. On Windows, Git for Windows ships **Git Bash**, which
   Git invokes for hooks transparently — no extra setup.
 
@@ -130,6 +132,8 @@ emergencies; CI runs the same checks and will fail the merge anyway.
 
 ## Daily commands
 
+Rust:
+
 ```bash
 # Build
 cargo build               # Dev
@@ -147,6 +151,17 @@ cargo fmt                                  # Auto-format
 cargo fmt --check                          # CI-style check (no rewrites)
 cargo clippy --all-targets -- -D warnings  # Lint manually
 ```
+
+Python:
+
+```bash
+poetry -C python install
+poetry -C python run pytest
+poetry -C python run mie-decoder --help
+```
+
+The current pre-commit hook runs the Rust checks documented above. Run the
+Python tests manually when changing `python/`.
 
 ## Coverage
 
@@ -243,7 +258,7 @@ Examples from this repo:
 - `feat(reader): port mmap-backed iterator with sync recovery`
 - `fix(reader): apply full sync::validate_record path per record`
 - `docs(roadmap): catalogue robustness corner cases for future work`
-- `chore: relocate Python implementation to python-reference/`
+- `chore: rename Python project directory to python/`
 
 Body conventions:
 
@@ -278,6 +293,9 @@ These are codified in `CLAUDE.md`; the highlights:
 - **Test fixtures are byte-exact** translations of records cross-
   referenced against vendor CSV. Treat them as oracles; if a test
   fails, suspect the code first.
+- **Both implementations are maintained.** Changes under `src/` and `tests/`
+  apply to Rust; changes under `python/` apply to Python. Preserve shared MIE
+  format semantics and vendor-compatible CSV behavior across both.
 
 ## Reporting issues / proposing changes
 

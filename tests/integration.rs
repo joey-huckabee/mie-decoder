@@ -12,7 +12,7 @@ use mie_decoder::models::{Bus, Direction, MessageFormat};
 use mie_decoder::reader::MieFileReader;
 use mie_decoder::writer::write_csv;
 
-// ── Fixtures (byte-exact from python-reference/tests/conftest.py) ─────
+// ── Fixtures (byte-exact from python/tests/conftest.py) ───────────────
 
 fn record_rt15_sa11_rcv() -> Vec<u8> {
     let mut s = String::new();
