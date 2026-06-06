@@ -70,7 +70,7 @@ pub enum MieError {
     ClobberRefused { path: PathBuf },
 
     /// Mid-file sync loss in lenient mode that `recover_sync` could not
-    /// reacquire within the scan window. Per L1-023 this maps to CLI
+    /// reacquire within the scan window. Per L1-EXIT-004 this maps to CLI
     /// exit code `3` by default, or to a `.partial` commit + exit `0`
     /// when `--allow-partial` is set. `sync_losses` is the cumulative
     /// recovery-attempt count for the decode invocation.
@@ -249,6 +249,7 @@ pub type MieResult<T> = std::result::Result<T, MieError>;
 mod tests {
     use super::*;
 
+    /// Requirements: L3-RS-006
     #[test]
     fn display_includes_offset_in_hex() {
         let err = MieError::InvalidTypeWord {
@@ -261,6 +262,7 @@ mod tests {
         assert!(s.contains("0x1234"));
     }
 
+    /// Requirements: L3-RS-006
     #[test]
     fn kind_classification() {
         let e = MieError::FileEmpty {
@@ -277,6 +279,7 @@ mod tests {
         assert!(e.is_record_error());
     }
 
+    /// Requirements: L3-RS-006
     #[test]
     fn source_chain_for_io_errors() {
         let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "nope");

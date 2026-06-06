@@ -410,7 +410,7 @@ def write_csv(
         output: Destination for CSV output (file path, stream, or None for stdout).
         opts: Output safety options. When ``output`` is a file path, the
             L2-WRT-014 input/output collision check, L2-WRT-017 no-clobber
-            check, and L1-023 allow_partial handling are applied. Stream
+            check, and L1-EXIT-004 allow_partial handling are applied. Stream
             destinations ignore these (no on-disk identity, no partial).
 
     Returns:

@@ -211,7 +211,7 @@ impl IrigTimestamp {
 
     /// Format as `DAY:HH:MM:SS.uuuuuu` (matches DDC vendor CSV layout).
     ///
-    /// Per L2-DEC-002a the microsecond field SHALL be exactly six
+    /// Per L2-DEC-014 the microsecond field SHALL be exactly six
     /// digits. Validation in `sync::validate_record` should reject any
     /// record whose microsecond is >= 1_000_000 (L2-SYN-004), so this
     /// truncation is a defensive belt-and-suspenders: if a caller
@@ -503,6 +503,7 @@ impl MieMessage {
 mod tests {
     use super::*;
 
+    /// Requirements: L2-MSG-001
     #[test]
     fn message_type_round_trip() {
         for code in [0x01u8, 0x02, 0x04, 0x08, 0x10, 0x18, 0x20] {
@@ -514,6 +515,7 @@ mod tests {
         assert!(!is_valid_message_type(0x03));
     }
 
+    /// Requirements: L2-WRT-011
     #[test]
     fn irig_format_matches_python_layout() {
         let t = IrigTimestamp {
@@ -527,9 +529,10 @@ mod tests {
         assert_eq!(t.format(), "10:15:54:50.456225");
     }
 
+    /// Requirements: L2-DEC-014
     #[test]
     fn irig_format_truncates_out_of_range_microseconds() {
-        // L2-DEC-002a: formatter SHALL emit exactly six microsecond
+        // L2-DEC-014: formatter SHALL emit exactly six microsecond
         // digits. Validation (L2-SYN-004) rejects records with
         // microsecond >= 1_000_000 before we get here, but a caller
         // who constructs an IrigTimestamp directly with a bad
@@ -549,6 +552,7 @@ mod tests {
         assert_eq!(micro_part.len(), 6);
     }
 
+    /// Requirements: L2-DEC-007
     #[test]
     fn standard_format_hex() {
         let t = StandardTimestamp {
@@ -559,6 +563,7 @@ mod tests {
         assert_eq!(t.format(), "0x1234ABCD");
     }
 
+    /// Requirements: L3-RS-005
     #[test]
     fn data_words_inline_buffer() {
         let dw = DataWords::from_slice(&[1, 2, 3]);
@@ -569,6 +574,7 @@ mod tests {
         assert!(empty.is_empty());
     }
 
+    /// Requirements: L3-RS-005
     #[test]
     fn data_words_max_capacity() {
         let words: Vec<u16> = (0..MAX_DATA_WORDS as u16).collect();
@@ -576,6 +582,7 @@ mod tests {
         assert_eq!(dw.len(), MAX_DATA_WORDS);
     }
 
+    /// Requirements: L3-RS-005
     #[test]
     #[should_panic]
     fn data_words_overflow_panics() {
@@ -583,6 +590,7 @@ mod tests {
         let _ = DataWords::from_slice(&words);
     }
 
+    /// Requirements: L2-DEC-004
     #[test]
     fn command_word_predicates() {
         let bcast = CommandWord {
@@ -606,6 +614,7 @@ mod tests {
         assert!(mode.is_mode_code());
     }
 
+    /// Requirements: L2-ERR-003
     #[test]
     fn error_code_classification() {
         assert!(is_known_ddc_error_code(ERROR_MANCHESTER_PARITY));
@@ -619,12 +628,14 @@ mod tests {
         assert_eq!(ddc_error_description(0x9999), "");
     }
 
+    /// Requirements: L2-DEC-002, L2-DEC-007
     #[test]
     fn timestamp_word_counts() {
         assert_eq!(timestamp_word_count(TimestampFormat::Irig), 3);
         assert_eq!(timestamp_word_count(TimestampFormat::Standard), 2);
     }
 
+    /// Requirements: L2-MSG-003
     #[test]
     fn msg_label_and_delta_key() {
         let msg = make_msg(15, Direction::Receive, 11);

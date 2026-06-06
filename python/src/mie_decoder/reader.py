@@ -151,7 +151,7 @@ class MieFileReader:
         self._time_format = time_format
         # Cumulative sync-recovery count from the most recent __iter__
         # call. Reset to 0 on each iteration so the CLI can read it
-        # after the loop completes (for L1-022 / L1-024 exit-class
+        # after the loop completes (for L1-EXIT-003 / L1-EXIT-005 exit-class
         # summary). Mirrors `MieFileReader::sync_losses` in Rust.
         self._sync_losses: int = 0
         if not self._path.exists():
@@ -179,7 +179,7 @@ class MieFileReader:
         """Cumulative sync-recovery count from the most recent
         ``__iter__`` call. Reset to 0 each iteration.
 
-        Used by the CLI's L1-024 exit-class summary to distinguish
+        Used by the CLI's L1-EXIT-005 exit-class summary to distinguish
         Complete (sync_losses == 0) from PartialRecovered (sync_losses
         > 0 with a successful full decode).
         """
@@ -227,7 +227,7 @@ class MieFileReader:
                     ts_format=resolved_format,
                 )
                 if start_offset is None:
-                    # L1-021: surface as an exception so the CLI maps
+                    # L1-EXIT-002: surface as an exception so the CLI maps
                     # to exit 2 (and so library callers can react)
                     # rather than silently yielding zero messages.
                     from mie_decoder.sync import MAX_SCAN_BYTES
@@ -301,9 +301,9 @@ class MieFileReader:
                             # the 64 KB scan window exhausted) from
                             # genuine mid-file corruption.
                             #
-                            # - Truncation → L1-008 / L2-RDR-002:
+                            # - Truncation → L1-DEC-005 / L2-RDR-002:
                             #   lenient mode stops cleanly.
-                            # - Corruption → L1-023: raise so the CLI
+                            # - Corruption → L1-EXIT-004: raise so the CLI
                             #   maps to exit 3 (or `.partial` + exit 0
                             #   with --allow-partial).
                             from mie_decoder.sync import MAX_SCAN_BYTES
@@ -440,7 +440,7 @@ class MieFileReader:
                         prev_was_error = False
                         continue
 
-                    # L2-SYN-INV: structural invariants. Strict mode
+                    # L2-SYN-020..025: structural invariants. Strict mode
                     # aborts via MiePayloadError; lenient mode WARNs and
                     # skips the record.
                     inv = validate_structural_invariants(
@@ -450,10 +450,10 @@ class MieFileReader:
                         if self._strict:
                             raise MiePayloadError(
                                 offset,
-                                f"L2-SYN-INV violation: {inv.detail}",
+                                f"L2-SYN structural invariant violation: {inv.detail}",
                             )
                         logger.warning(
-                            "L2-SYN-INV violation at 0x%X: %s; skipping record",
+                            "L2-SYN structural invariant violation at 0x%X: %s; skipping record",
                             offset, inv.detail,
                         )
                         offset += record_bytes
@@ -471,28 +471,28 @@ class MieFileReader:
                         mm, payload_byte_offset, tw.word_count, msg_fmt, cmd,
                     )
 
-                    # L2-SYN-INV-004: post-extract Reject-class check.
+                    # L2-SYN-023: post-extract Reject-class check.
                     # Same strict/lenient policy as the pre-extract checks.
                     post_inv = validate_post_extract_invariants(msg_fmt, cmd2)
                     if post_inv is not None:
                         if self._strict:
                             raise MiePayloadError(
                                 offset,
-                                f"L2-SYN-INV violation: {post_inv.detail}",
+                                f"L2-SYN structural invariant violation: {post_inv.detail}",
                             )
                         logger.warning(
-                            "L2-SYN-INV violation at 0x%X: %s; skipping record",
+                            "L2-SYN structural invariant violation at 0x%X: %s; skipping record",
                             offset, post_inv.detail,
                         )
                         offset += record_bytes
                         prev_was_error = False
                         continue
 
-                    # L2-SYN-INV-005 / INV-006: AnomalyWarn-class.
+                    # L2-SYN-024 / L2-SYN-025: AnomalyWarn-class.
                     # Both modes log a WARN and continue emitting.
                     for anomaly in detect_record_anomalies(tw, cmd, status):
                         logger.warning(
-                            "L2-SYN-INV anomaly at 0x%X: %s",
+                            "L2-SYN anomaly at 0x%X: %s",
                             offset, anomaly.detail,
                         )
 

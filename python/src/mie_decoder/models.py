@@ -247,7 +247,7 @@ class IrigTimestamp:
     def format(self) -> str:
         """Format as ``DAY:HH:MM:SS.uuuuuu`` string.
 
-        Per L2-DEC-002a the microsecond field SHALL be exactly six
+        Per L2-DEC-014 the microsecond field SHALL be exactly six
         digits. Validation in :mod:`mie_decoder.sync` should reject
         any record with ``microsecond >= 1_000_000`` (L2-SYN-004), so
         the modulo here is a defensive belt-and-suspenders: a caller

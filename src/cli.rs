@@ -49,7 +49,7 @@ DECODE OPTIONS:
   --allow-partial                       On unrecoverable mid-file sync
                                         loss, write a <output>.partial
                                         file and exit 0 instead of 3
-                                        (L1-023)
+                                        (L1-EXIT-004)
   --time-format auto|irig|standard      Default auto
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
@@ -644,7 +644,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String>
 
     // WriteOptions populated once with both file-output safety checks
     // (input/output collision per L2-WRT-014 and no-clobber per
-    // L2-WRT-017) and L1-023 allow_partial.
+    // L2-WRT-017) and L1-EXIT-004 allow_partial.
     let write_opts = WriteOptions {
         input_path: Some(args.input.clone()),
         no_clobber: cfg.no_clobber,
@@ -677,7 +677,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String>
     };
 
     // After the iterator is exhausted, the reader's atomic sync_losses
-    // counter is authoritative for the L1-024 exit-class summary
+    // counter is authoritative for the L1-EXIT-005 exit-class summary
     // (Complete vs PartialRecovered). Querying here is safe because
     // the iterator (which borrows the reader) was already moved into
     // and consumed by write_csv* above.
@@ -687,8 +687,8 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String>
 }
 
 /// Map a writer-side result + the reader's sync-loss count to an
-/// `ExitCode` per L1-021 through L1-024 and L2-CLI-005a. Emits the
-/// one-line exit-class summary required by L1-024 in every branch.
+/// `ExitCode` per L1-EXIT-002 through L1-EXIT-005 and L2-CLI-011. Emits the
+/// one-line exit-class summary required by L1-EXIT-005 in every branch.
 fn classify_decode_exit(
     r: crate::error::MieResult<crate::writer::WriteOutcome>,
     sync_losses: u64,
@@ -782,6 +782,7 @@ mod tests {
 
     /// `--help` must propagate as `ParseError::HelpRequested`, never as
     /// `process::exit`. The whole point of the refactor.
+    /// Requirements: L2-CLI-001
     #[test]
     fn parse_decode_help_returns_help_requested() {
         let mut it = args(&["--help"]);
@@ -791,6 +792,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-008, L3-RS-008
     #[test]
     fn parse_count_help_returns_help_requested() {
         let mut it = args(&["-h"]);
@@ -800,6 +802,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-009
     #[test]
     fn parse_dump_help_returns_help_requested() {
         let mut it = args(&["--help"]);
@@ -811,6 +814,7 @@ mod tests {
 
     /// Parse errors should still surface as ParseError::Other, not panics
     /// or exits.
+    /// Requirements: L2-CLI-005
     #[test]
     fn parse_decode_unknown_flag_returns_other() {
         let mut it = args(&["--nope"]);
@@ -820,6 +824,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-001
     #[test]
     fn parse_decode_missing_input_returns_other() {
         let mut it = args(&[]);
@@ -830,6 +835,7 @@ mod tests {
     }
 
     /// Happy path still produces a value.
+    /// Requirements: L2-CLI-002
     #[test]
     fn parse_decode_minimal_ok() {
         let mut it = args(&["recording.mie"]);
@@ -841,6 +847,7 @@ mod tests {
     /// `decode --include-rts 15 file.mie` previously consumed `file.mie`
     /// as another RT value (greedy multi-value). Now filter flags take
     /// exactly one value, so the positional input binds correctly.
+    /// Requirements: L2-CLI-010
     #[test]
     fn filter_flag_does_not_eat_positional_input() {
         let mut it = args(&["--include-rts", "15", "file.mie"]);
@@ -850,6 +857,7 @@ mod tests {
     }
 
     /// Comma-separated values within a single flag.
+    /// Requirements: L2-CLI-010
     #[test]
     fn filter_flag_accepts_comma_separated_values() {
         let mut it = args(&["--include-rts", "15,20,31", "file.mie"]);
@@ -859,6 +867,7 @@ mod tests {
     }
 
     /// Repeating a filter flag accumulates values.
+    /// Requirements: L2-CLI-010
     #[test]
     fn filter_flag_repeats_accumulate() {
         let mut it = args(&["--include-rts", "15", "--include-rts", "31", "file.mie"]);
@@ -868,6 +877,7 @@ mod tests {
     }
 
     /// `--flag=value` syntax with comma-separation.
+    /// Requirements: L2-CLI-010
     #[test]
     fn filter_flag_accepts_eq_form() {
         let mut it = args(&["--include-rts=15,20", "file.mie"]);
@@ -877,6 +887,7 @@ mod tests {
     }
 
     /// Sanity-check the same property for the other filter flags.
+    /// Requirements: L2-CLI-010
     #[test]
     fn all_filter_flags_take_single_value() {
         let mut it = args(&[
@@ -897,6 +908,7 @@ mod tests {
 
     /// Old greedy-form usage now produces a clear error rather than
     /// silently misbinding the filename.
+    /// Requirements: L2-CLI-010
     #[test]
     fn filter_flag_old_greedy_form_fails_loudly() {
         // `--include-rts 15 31 file.mie` used to put 15+31 in include
@@ -932,6 +944,7 @@ mod tests {
         p
     }
 
+    /// Requirements: L2-CLI-005
     #[test]
     fn run_count_propagates_config_load_error() {
         let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
@@ -951,6 +964,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-005
     #[test]
     fn run_dump_propagates_config_load_error() {
         let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
@@ -973,6 +987,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CFG-005
     #[test]
     fn run_count_propagates_missing_config_file() {
         let globals = GlobalArgs {
@@ -998,6 +1013,7 @@ mod tests {
     //   - Config-file value fails at config load time with exit 1
     //     (runtime error)
 
+    /// Requirements: L2-CLI-004
     #[test]
     fn apply_log_level_accepts_known_names() {
         for name in [
@@ -1008,6 +1024,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-004
     #[test]
     fn apply_log_level_rejects_unknown_names() {
         match apply_log_level("--log-level", "NOPE") {
@@ -1020,6 +1037,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-004
     #[test]
     fn apply_log_level_includes_source_in_error() {
         let err = apply_log_level("[logging].level (in config)", "WHATEVER")
@@ -1029,6 +1047,7 @@ mod tests {
         assert!(err.contains("WHATEVER"));
     }
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn run_count_with_invalid_config_log_level_fails() {
         let bad = write_temp_file(".toml", b"[logging]\nlevel = \"NOPE\"\n");
@@ -1047,6 +1066,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-004
     #[test]
     fn run_count_with_invalid_cli_log_level_fails_via_resolve_config() {
         // The run() entry-point catches bad CLI levels first (exit 2),

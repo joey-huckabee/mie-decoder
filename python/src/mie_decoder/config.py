@@ -405,7 +405,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     no_clobber = _require_bool(
         "output", "no_clobber", output_section.get("no_clobber", False)
     )
-    # L1-023: --allow-partial / decode.allow_partial — turns
+    # L1-EXIT-004: --allow-partial / decode.allow_partial — turns
     # unrecoverable mid-file sync loss into a `.partial` commit + exit 0
     # instead of exit 3.
     allow_partial = _require_bool(

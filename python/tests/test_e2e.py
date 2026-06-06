@@ -21,11 +21,13 @@ from mie_decoder.writer import CSV_HEADER, write_csv
 class TestMieFileReader:
     """Integration tests for MieFileReader."""
 
+    @pytest.mark.requirement("L2-RDR-015")
     def test_read_three_records(self, tmp_mie_file: Path) -> None:
         """Should decode exactly 3 messages from the multi-record fixture."""
         messages = list(MieFileReader(tmp_mie_file))
         assert len(messages) == 3
 
+    @pytest.mark.requirement("L2-RDR-007")
     def test_first_record_matches_csv(self, tmp_mie_file: Path) -> None:
         """First record should match validated CSV row exactly.
 
@@ -51,6 +53,7 @@ class TestMieFileReader:
         assert msg.is_spurious is False
         assert msg.error_label == ""
 
+    @pytest.mark.requirement("L2-RDR-007")
     def test_second_record_receive(self, tmp_mie_file: Path) -> None:
         """Second record: RT15 SA22 Receive, 11 data words."""
         msg = list(MieFileReader(tmp_mie_file))[1]
@@ -61,6 +64,7 @@ class TestMieFileReader:
         assert len(msg.data_words) == 11
         assert msg.status_word == 0x7800
 
+    @pytest.mark.requirement("L2-RDR-008")
     def test_third_record_transmit(self, tmp_mie_file: Path) -> None:
         """Third record: RT15 SA22 Transmit, 30 data words.
 
@@ -75,6 +79,7 @@ class TestMieFileReader:
         assert msg.data_words[0] == 0x1020
         assert msg.message_format == MessageFormat.TRANSMIT
 
+    @pytest.mark.requirement("L2-MSG-002")
     def test_bus_b_record(self, tmp_busb_file: Path) -> None:
         """Bus B file should decode bus=B correctly."""
         msg = list(MieFileReader(tmp_busb_file))[0]
@@ -82,6 +87,7 @@ class TestMieFileReader:
         assert msg.rt == 15
         assert msg.msg_label == "10T"
 
+    @pytest.mark.requirement("L2-RDR-010")
     def test_delta_first_occurrence_is_zero(self, tmp_mie_file: Path) -> None:
         """First occurrence of any RT/MSG should have delta=0."""
         messages = list(MieFileReader(tmp_mie_file))
@@ -89,6 +95,7 @@ class TestMieFileReader:
             # All three have unique RT/MSG combos, so all should be 0
             assert msg.delta == 0.0
 
+    @pytest.mark.requirement("L2-RDR-009")
     def test_delta_same_rtmsg(self, tmp_path: Path) -> None:
         """Two identical RT/MSG records should produce correct delta."""
         from tests.conftest import RECORD_RT15_SA11_RCV
@@ -103,6 +110,7 @@ class TestMieFileReader:
         # but validates the calculation path)
         assert messages[1].delta == 0.0
 
+    @pytest.mark.requirement("L2-RDR-005")
     def test_file_not_found(self) -> None:
         """Should raise MieFileNotFoundError for missing files."""
         from mie_decoder.exceptions import MieFileNotFoundError
@@ -110,6 +118,7 @@ class TestMieFileReader:
         with pytest.raises(MieFileNotFoundError):
             MieFileReader("/nonexistent/file.mie")
 
+    @pytest.mark.requirement("L2-RDR-006")
     def test_empty_file(self, tmp_path: Path) -> None:
         """Should raise MieFileEmptyError for empty files."""
         from mie_decoder.exceptions import MieFileEmptyError
@@ -119,6 +128,7 @@ class TestMieFileReader:
         with pytest.raises(MieFileEmptyError, match="empty"):
             MieFileReader(fpath)
 
+    @pytest.mark.requirement("L2-RDR-002")
     def test_truncated_record(self, tmp_path: Path) -> None:
         """Truncated final record should be silently skipped."""
         from tests.conftest import RECORD_RT15_SA11_RCV
@@ -128,6 +138,7 @@ class TestMieFileReader:
         messages = list(MieFileReader(fpath))
         assert len(messages) == 1
 
+    @pytest.mark.requirement("L2-RDR-003")
     def test_truncated_record_strict(self, tmp_path: Path) -> None:
         """Strict mode should raise MieRecordTruncatedError on truncation."""
         from tests.conftest import RECORD_RT15_SA11_RCV
@@ -138,6 +149,7 @@ class TestMieFileReader:
         with pytest.raises(MieRecordTruncatedError):
             list(MieFileReader(fpath, strict=True))
 
+    @pytest.mark.requirement("L2-SYN-016")
     def test_invalid_record_strict(self, tmp_path: Path) -> None:
         """Strict mode should raise on invalid record after good data."""
         from mie_decoder.exceptions import MieDecoderError
@@ -149,6 +161,7 @@ class TestMieFileReader:
         with pytest.raises(MieDecoderError):
             list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
 
+    @pytest.mark.requirement("L2-DEC-010")
     def test_file_offset_tracking(self, tmp_mie_file: Path) -> None:
         """Each message should report its byte offset in the file."""
         messages = list(MieFileReader(tmp_mie_file))
@@ -160,6 +173,7 @@ class TestMieFileReader:
 class TestCsvWriter:
     """Integration tests for CSV output."""
 
+    @pytest.mark.requirement("L2-WRT-001")
     def test_csv_header(self, tmp_mie_file: Path) -> None:
         """CSV output should start with the correct header row."""
         buf = io.StringIO()
@@ -169,6 +183,7 @@ class TestCsvWriter:
         header = next(reader)
         assert header == CSV_HEADER
 
+    @pytest.mark.requirement("L2-WRT-001")
     def test_csv_row_count(self, tmp_mie_file: Path) -> None:
         """Should produce one header + 3 data rows."""
         buf = io.StringIO()
@@ -177,6 +192,7 @@ class TestCsvWriter:
         lines = buf.getvalue().strip().split("\n")
         assert len(lines) == 4  # header + 3 records
 
+    @pytest.mark.requirement("L2-WRT-003")
     def test_csv_first_row_fields(self, tmp_mie_file: Path) -> None:
         """First CSV data row should match validated vendor output."""
         buf = io.StringIO()
@@ -197,6 +213,7 @@ class TestCsvWriter:
         assert row[41] == ""                     # ERROR (normal message)
         assert row[42] == ""                     # ERROR_CODE (normal message)
 
+    @pytest.mark.requirement("L2-WRT-002")
     def test_csv_data_word_padding(self, tmp_mie_file: Path) -> None:
         """Records with <32 data words should have empty trailing WD cols."""
         buf = io.StringIO()
@@ -210,6 +227,7 @@ class TestCsvWriter:
         assert row[14] == ""  # WD12
         assert row[34 - 1] == ""  # WD32
 
+    @pytest.mark.requirement("L2-WRT-012")
     def test_csv_to_file(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         """Writing to a file path should produce a valid CSV file."""
         out = tmp_path / "output.csv"
@@ -222,6 +240,7 @@ class TestCsvWriter:
         assert outcome.normal_count == 3
         assert outcome.partial is None
 
+    @pytest.mark.requirement("L3-PY-012")
     def test_write_csv_returns_count(self, tmp_mie_file: Path) -> None:
         """write_csv should return a WriteOutcome whose normal_count
         matches the number of messages written."""
@@ -230,6 +249,7 @@ class TestCsvWriter:
         assert outcome.normal_count == 3
         assert outcome.partial is None
 
+    @pytest.mark.requirement("L3-PY-004")
     def test_messages_to_dataframe(self, tmp_mie_file: Path) -> None:
         """messages_to_dataframe should produce a DataFrame with correct shape."""
         from mie_decoder.writer import messages_to_dataframe, CSV_HEADER
@@ -242,6 +262,7 @@ class TestCsvWriter:
 class TestAtomicWriteSafety:
     """L2-WRT-014 through L2-WRT-018 enforcement tests for the Python writer."""
 
+    @pytest.mark.requirement("L2-WRT-014")
     def test_paths_refer_to_same_file_existing(self, tmp_path: Path) -> None:
         from mie_decoder.writer import paths_refer_to_same_file
 
@@ -249,6 +270,7 @@ class TestAtomicWriteSafety:
         p.write_bytes(b"x")
         assert paths_refer_to_same_file(p, p) is True
 
+    @pytest.mark.requirement("L2-WRT-014")
     def test_paths_refer_to_same_file_distinct(self, tmp_path: Path) -> None:
         from mie_decoder.writer import paths_refer_to_same_file
 
@@ -257,6 +279,7 @@ class TestAtomicWriteSafety:
         b = tmp_path / "b.dat"  # doesn't exist
         assert paths_refer_to_same_file(a, b) is False
 
+    @pytest.mark.requirement("L2-WRT-014")
     def test_write_csv_rejects_input_output_collision(
         self, tmp_mie_file: Path
     ) -> None:
@@ -276,6 +299,7 @@ class TestAtomicWriteSafety:
         # Input file MUST be unchanged.
         assert tmp_mie_file.read_bytes() == original_bytes
 
+    @pytest.mark.requirement("L2-WRT-017")
     def test_write_csv_rejects_clobber_with_no_clobber(
         self, tmp_mie_file: Path, tmp_path: Path
     ) -> None:
@@ -291,6 +315,7 @@ class TestAtomicWriteSafety:
         # Existing file untouched.
         assert out.read_text(encoding="utf-8") == "EXISTING\n"
 
+    @pytest.mark.requirement("L2-WRT-017")
     def test_write_csv_overwrites_by_default(
         self, tmp_mie_file: Path, tmp_path: Path
     ) -> None:
@@ -302,10 +327,11 @@ class TestAtomicWriteSafety:
         text = out.read_text(encoding="utf-8")
         assert text.startswith("TIME_STAMP,RT,MSG,")
 
+    @pytest.mark.requirement("L3-WRT-001")
     def test_write_csv_to_file_cleans_up_temp(
         self, tmp_mie_file: Path, tmp_path: Path
     ) -> None:
-        """L2-WRT-015: after a successful write, no temp file should remain."""
+        """L3-WRT-001: after a successful write, no temp file should remain."""
         out = tmp_path / "out.csv"
         write_csv(MieFileReader(tmp_mie_file), output=out)
         # Temp pattern: <output>.mie-decoder.tmp.<pid>
@@ -315,6 +341,7 @@ class TestAtomicWriteSafety:
         ]
         assert leftovers == [], f"unexpected temp file(s): {leftovers}"
 
+    @pytest.mark.requirement("L2-WRT-014")
     def test_write_csv_split_rejects_input_output_collision(
         self, tmp_mie_file: Path
     ) -> None:
@@ -325,8 +352,10 @@ class TestAtomicWriteSafety:
         with pytest.raises(MieInputOutputCollisionError):
             write_csv_split(MieFileReader(tmp_mie_file), output=tmp_mie_file, opts=opts)
 
+    @pytest.mark.requirement("L2-SYN-011")
+    @pytest.mark.requirement("L1-EXIT-002")
     def test_no_valid_records_raises(self, tmp_path: Path) -> None:
-        """L1-021: input with no decodable records raises MieNoValidRecordsError."""
+        """L1-EXIT-002: input with no decodable records raises MieNoValidRecordsError."""
         from mie_decoder.exceptions import MieNoValidRecordsError
 
         bad = tmp_path / "garbage.bin"
@@ -335,10 +364,12 @@ class TestAtomicWriteSafety:
         with pytest.raises(MieNoValidRecordsError):
             list(reader)
 
+    @pytest.mark.requirement("L2-SYN-011")
+    @pytest.mark.requirement("L1-EXIT-004")
     def test_lenient_unrecoverable_sync_loss_raises(
         self, tmp_path: Path
     ) -> None:
-        """L1-023: lenient-mode mid-file sync loss (not truncation) raises."""
+        """L1-EXIT-004: lenient-mode mid-file sync loss (not truncation) raises."""
         from mie_decoder.exceptions import MieUnrecoverableSyncLossError
         from tests.conftest import RECORD_RT15_SA11_RCV
 
@@ -353,6 +384,8 @@ class TestAtomicWriteSafety:
             list(reader)
         assert exc_info.value.sync_losses >= 1
 
+    @pytest.mark.requirement("L3-WRT-002")
+    @pytest.mark.requirement("L1-EXIT-004")
     def test_write_csv_with_allow_partial_commits_dot_partial(
         self, tmp_path: Path
     ) -> None:
@@ -379,8 +412,10 @@ class TestAtomicWriteSafety:
         assert body.startswith("TIME_STAMP,RT,MSG,")
         assert "11R" in body
 
+    @pytest.mark.requirement("L2-CLI-011")
+    @pytest.mark.requirement("L1-EXIT-002")
     def test_cli_no_valid_records_returns_exit_2(self, tmp_path: Path) -> None:
-        """CLI maps MieNoValidRecordsError to exit code 2 (L1-021)."""
+        """CLI maps MieNoValidRecordsError to exit code 2 (L1-EXIT-002)."""
         from mie_decoder.cli import main
 
         bad = tmp_path / "garbage.bin"
@@ -390,10 +425,12 @@ class TestAtomicWriteSafety:
         # No output file should have been created.
         assert not (tmp_path / "out.csv").exists()
 
+    @pytest.mark.requirement("L2-CLI-011")
+    @pytest.mark.requirement("L1-EXIT-004")
     def test_cli_unrecoverable_default_returns_exit_3(
         self, tmp_path: Path
     ) -> None:
-        """CLI maps MieUnrecoverableSyncLossError to exit code 3 (L1-023)."""
+        """CLI maps MieUnrecoverableSyncLossError to exit code 3 (L1-EXIT-004)."""
         from mie_decoder.cli import main
         from tests.conftest import RECORD_RT15_SA11_RCV
 
@@ -406,6 +443,8 @@ class TestAtomicWriteSafety:
         assert not out.exists()
         assert not (tmp_path / "out.csv.partial").exists()
 
+    @pytest.mark.requirement("L2-CLI-011")
+    @pytest.mark.requirement("L1-EXIT-004")
     def test_cli_unrecoverable_allow_partial_returns_exit_0(
         self, tmp_path: Path
     ) -> None:
@@ -421,6 +460,7 @@ class TestAtomicWriteSafety:
         assert (tmp_path / "out.csv.partial").exists()
         assert not out.exists()
 
+    @pytest.mark.requirement("L2-WRT-017")
     def test_write_csv_split_no_clobber_checks_errors_file(
         self, tmp_mie_file: Path, tmp_path: Path
     ) -> None:
@@ -444,6 +484,7 @@ class TestAtomicWriteSafety:
 class TestCliEndToEnd:
     """End-to-end CLI tests."""
 
+    @pytest.mark.requirement("L2-WRT-007")
     def test_cli_decode_stdout(self, tmp_mie_file: Path) -> None:
         """CLI decode should produce CSV on stdout."""
         from mie_decoder.cli import main
@@ -460,6 +501,7 @@ class TestCliEndToEnd:
         lines = buf.getvalue().strip().split("\n")
         assert len(lines) == 4
 
+    @pytest.mark.requirement("L2-CLI-002")
     def test_cli_decode_output_file(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         """CLI decode with -o should write to the specified file."""
         from mie_decoder.cli import main
@@ -469,6 +511,7 @@ class TestCliEndToEnd:
         assert rc == 0
         assert out.exists()
 
+    @pytest.mark.requirement("L3-PY-010")
     def test_cli_decode_count(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """CLI decode --count should print message count to stderr."""
         from mie_decoder.cli import main
@@ -478,6 +521,7 @@ class TestCliEndToEnd:
         captured = capsys.readouterr()
         assert "3 messages" in captured.err
 
+    @pytest.mark.requirement("L2-CLI-005")
     def test_cli_decode_missing_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         """CLI decode with nonexistent file should return exit code 1."""
         from mie_decoder.cli import main
@@ -485,6 +529,7 @@ class TestCliEndToEnd:
         rc = main(["decode", "/nonexistent/file.mie"])
         assert rc == 1
 
+    @pytest.mark.requirement("L2-CLI-004")
     def test_cli_log_level_info(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         """CLI --log-level INFO should emit log messages to stderr."""
         from mie_decoder.cli import main
@@ -494,6 +539,7 @@ class TestCliEndToEnd:
         assert rc == 0
         assert out.exists()
 
+    @pytest.mark.requirement("L2-CLI-004")
     def test_cli_log_level_debug(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         """CLI --log-level DEBUG should succeed without error."""
         from mie_decoder.cli import main
@@ -502,6 +548,7 @@ class TestCliEndToEnd:
         rc = main(["--log-level", "DEBUG", "decode", str(tmp_mie_file), "-o", str(out)])
         assert rc == 0
 
+    @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_records(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """CLI dump should print record-aware hex dump to stdout."""
         from mie_decoder.cli import main
@@ -519,6 +566,7 @@ class TestCliEndToEnd:
         assert "Record #0" in output
         assert "Record #1" in output
 
+    @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_raw(self, tmp_mie_file: Path) -> None:
         """CLI dump --raw should print raw hex to stdout."""
         from mie_decoder.cli import main
@@ -535,6 +583,7 @@ class TestCliEndToEnd:
         output = buf.getvalue()
         assert "00000000" in output
 
+    @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_missing_file(self) -> None:
         """CLI dump with nonexistent file should return exit code 1."""
         from mie_decoder.cli import main
@@ -542,6 +591,7 @@ class TestCliEndToEnd:
         rc = main(["dump", "/nonexistent/file.mie"])
         assert rc == 1
 
+    @pytest.mark.requirement("L2-CLI-005")
     def test_cli_no_subcommand(self) -> None:
         """CLI with no subcommand should return exit code 1."""
         from mie_decoder.cli import main
@@ -551,7 +601,7 @@ class TestCliEndToEnd:
 
 
 class TestFuzzHarness:
-    """L1-027: fuzz harness asserting no panic on arbitrary input bytes.
+    """L1-ROB-001: fuzz harness asserting no panic on arbitrary input bytes.
 
     Mirrors the Rust harness in tests/integration.rs. Same seed and
     PRNG (xorshift64), same iteration count, same size band — so a
@@ -567,6 +617,7 @@ class TestFuzzHarness:
         x &= 0xFFFFFFFFFFFFFFFF
         return x, x  # new state, output
 
+    @pytest.mark.requirement("L1-ROB-001")
     def test_arbitrary_bytes_never_raise_unexpected_exceptions(
         self, tmp_path,
     ) -> None:

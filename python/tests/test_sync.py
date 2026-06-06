@@ -17,27 +17,31 @@ from mie_decoder.sync import find_first_record, recover_sync, validate_record
 class TestValidateRecord:
     """Tests for validate_record."""
 
+    @pytest.mark.requirement("L2-SYN-005")
     def test_valid_irig_record(self, single_receive_record: bytes) -> None:
         """Known-good IRIG receive record should validate."""
         # Append a second record for look-ahead
         data = single_receive_record * 2
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is True
 
+    @pytest.mark.requirement("L2-SYN-001")
     def test_invalid_type_at_offset(self) -> None:
         """Random data should not validate."""
         data = b"\xFF\xFF" * 40
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
+    @pytest.mark.requirement("L2-SYN-003")
     def test_too_short(self) -> None:
         """Data shorter than Type Word should not validate."""
         assert validate_record(b"\x02", 0, 1, TimestampFormat.IRIG) is False
 
+    @pytest.mark.requirement("L2-SYN-002")
     def test_zero_word_count(self) -> None:
         """Type Word with zero word count should fail."""
         data = b"\x02\x00" + b"\x00" * 20
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
-    # ── IRIG range validation (L2-SYN-004, L2-SYN-004a) ──────────────
+    # ── IRIG range validation (L2-SYN-004, L2-SYN-019) ──────────────
 
     @staticmethod
     def _irig_record(upper: int, middle: int, lower: int) -> bytes:
@@ -63,6 +67,7 @@ class TestValidateRecord:
     def _irig_middle(minute: int, second: int, us_hi4: int) -> int:
         return ((minute & 0x3F) << 10) | ((second & 0x3F) << 4) | (us_hi4 & 0xF)
 
+    @pytest.mark.requirement("L2-SYN-004")
     def test_irig_accepts_valid_ranges(self) -> None:
         data = self._irig_record(
             self._irig_upper(False, 192, 15),
@@ -71,6 +76,7 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is True
 
+    @pytest.mark.requirement("L2-SYN-004")
     def test_irig_rejects_day_zero(self) -> None:
         data = self._irig_record(
             self._irig_upper(False, 0, 15),
@@ -79,6 +85,7 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
+    @pytest.mark.requirement("L2-SYN-004")
     def test_irig_rejects_day_above_366(self) -> None:
         data = self._irig_record(
             self._irig_upper(False, 367, 15),
@@ -87,8 +94,9 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
+    @pytest.mark.requirement("L2-SYN-019")
     def test_irig_accepts_day_zero_when_freerun(self) -> None:
-        """L2-SYN-004a: freerun bypasses the day-of-year range check."""
+        """L2-SYN-019: freerun bypasses the day-of-year range check."""
         data = self._irig_record(
             self._irig_upper(True, 0, 15),
             self._irig_middle(54, 50, 0),
@@ -96,6 +104,7 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is True
 
+    @pytest.mark.requirement("L2-SYN-004")
     def test_irig_rejects_microsecond_at_one_million(self) -> None:
         # 1_000_000 = (0xF << 16) | 0x4240
         data = self._irig_record(
@@ -105,6 +114,7 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
+    @pytest.mark.requirement("L2-SYN-004")
     def test_irig_accepts_microsecond_at_max_valid(self) -> None:
         # 999_999 = (0xF << 16) | 0x423F
         data = self._irig_record(
@@ -114,8 +124,9 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is True
 
+    @pytest.mark.requirement("L2-SYN-019")
     def test_irig_rejects_microsecond_even_when_freerun(self) -> None:
-        """L2-SYN-004a relaxes only the DAY check; microseconds still
+        """L2-SYN-019 relaxes only the DAY check; microseconds still
         enforced."""
         data = self._irig_record(
             self._irig_upper(True, 0, 15),
@@ -128,12 +139,14 @@ class TestValidateRecord:
 class TestFindFirstRecord:
     """Tests for find_first_record (header detection)."""
 
+    @pytest.mark.requirement("L2-SYN-006")
     def test_no_header(self, single_receive_record: bytes) -> None:
         """File starting directly with records should find offset 0."""
         data = single_receive_record * 2
         offset = find_first_record(data, len(data), TimestampFormat.IRIG)
         assert offset == 0
 
+    @pytest.mark.requirement("L2-SYN-006")
     def test_with_header(self, single_receive_record: bytes) -> None:
         """File with a header before records should skip the header."""
         header = b"\x00" * 20  # 20 bytes of padding
@@ -141,12 +154,14 @@ class TestFindFirstRecord:
         offset = find_first_record(data, len(data), TimestampFormat.IRIG)
         assert offset == 20
 
+    @pytest.mark.requirement("L2-SYN-008")
     def test_all_garbage(self) -> None:
         """File with no valid records should return None."""
         data = b"\xFF\xFF" * 100
         offset = find_first_record(data, len(data), TimestampFormat.IRIG)
         assert offset is None
 
+    @pytest.mark.requirement("L2-SYN-006")
     def test_reader_skips_header(self, tmp_path: Path, single_receive_record: bytes) -> None:
         """MieFileReader should skip headers and decode records after."""
         from mie_decoder.reader import MieFileReader
@@ -157,6 +172,7 @@ class TestFindFirstRecord:
         messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
         assert len(messages) == 2
 
+    @pytest.mark.requirement("L2-SYN-006")
     def test_reader_real_header(self, tmp_path: Path, multi_record_data: bytes) -> None:
         """Simulate a file header (non-record data before first record)."""
         from mie_decoder.reader import MieFileReader
@@ -173,6 +189,7 @@ class TestFindFirstRecord:
 class TestRecoverSync:
     """Tests for recover_sync."""
 
+    @pytest.mark.requirement("L2-SYN-009")
     def test_recovery_after_garbage(self, single_receive_record: bytes) -> None:
         """Should find a valid record after a gap of garbage."""
         garbage = b"\xFF\xFF" * 10  # 20 bytes of garbage
@@ -180,12 +197,15 @@ class TestRecoverSync:
         recovered = recover_sync(data, 0, len(data), TimestampFormat.IRIG)
         assert recovered == 20
 
+    @pytest.mark.requirement("L2-SYN-011")
     def test_no_recovery_possible(self) -> None:
         """Should return None when no valid record exists."""
         data = b"\xFF\xFF" * 100
         recovered = recover_sync(data, 0, len(data), TimestampFormat.IRIG)
         assert recovered is None
 
+    @pytest.mark.requirement("L2-SYN-015")
+    @pytest.mark.requirement("L1-EXIT-003")
     def test_reader_recovers_from_corruption(
         self, tmp_path: Path, single_receive_record: bytes
     ) -> None:
@@ -204,6 +224,7 @@ class TestRecoverSync:
         # remain.
         assert len(messages) == 3
 
+    @pytest.mark.requirement("L2-SYN-016")
     def test_reader_strict_raises_on_corruption(
         self, tmp_path: Path, single_receive_record: bytes
     ) -> None:

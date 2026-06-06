@@ -65,7 +65,7 @@ class MieFileNotFoundError(MieFileError):
 class MieNoValidRecordsError(MieFileError):
     """Raised when the input file contains no decodable MIE records.
 
-    Per L1-021 the CLI maps this to exit code ``2``. Typically means the
+    Per L1-EXIT-002 the CLI maps this to exit code ``2``. Typically means the
     file is not an MIE recording at all (e.g., a TOML file passed as
     input by mistake) or the records begin past the 64 KB header scan
     window.
@@ -270,7 +270,7 @@ class MieWriterError(MieDecoderError):
 class MieUnrecoverableSyncLossError(MieRecordError):
     """Raised in lenient mode when sync recovery exhausts mid-file.
 
-    Per L1-023 the CLI maps this to exit code ``3`` by default, or to a
+    Per L1-EXIT-004 the CLI maps this to exit code ``3`` by default, or to a
     ``.partial`` commit + exit ``0`` when ``--allow-partial`` is set.
     Carries the cumulative recovery-attempt count for the decode
     invocation so the operator can correlate with sync-loss WARN logs.

@@ -29,6 +29,9 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "requirement(req_id): tag a test with the L1/L2/L3 requirement id it verifies (see docs/L1-REQ.md, L2-REQ.md, L3-REQ.md)",
+]
 
 [tool.mypy]
 python_version = "3.10"

@@ -135,24 +135,24 @@ pub fn classify_message_format(
 /// path otherwise maps every violation to a single `PayloadError`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WhichInvariant {
-    /// L2-SYN-INV-001: Type 0x02 (BC→RT) requires Cmd direction = Receive.
+    /// L2-SYN-020: Type 0x02 (BC→RT) requires Cmd direction = Receive.
     DirectionBcToRt,
-    /// L2-SYN-INV-002: Type 0x04 (RT→BC) requires Cmd direction = Transmit.
+    /// L2-SYN-021: Type 0x04 (RT→BC) requires Cmd direction = Transmit.
     DirectionRtToBc,
-    /// L2-SYN-INV-003: Type Word word_count too small for declared payload.
+    /// L2-SYN-022: Type Word word_count too small for declared payload.
     WordCountCapacity,
-    /// L2-SYN-INV-004: Cmd2 direction for RT-to-RT must be Receive.
+    /// L2-SYN-023: Cmd2 direction for RT-to-RT must be Receive.
     DirectionRtToRtCmd2,
-    /// L2-SYN-INV-005: Status Word RT field does not match Cmd RT.
+    /// L2-SYN-024: Status Word RT field does not match Cmd RT.
     /// AnomalyWarn-class — real-bus noise possible.
     StatusRtMismatch,
-    /// L2-SYN-INV-006: Type Word bit 15 (reserved) is set.
+    /// L2-SYN-025: Type Word bit 15 (reserved) is set.
     /// AnomalyWarn-class — possible vendor extension.
     TypeWordReservedBit,
 }
 
 /// Policy class for a structural invariant violation, per the locked
-/// schema in `docs/REQUIREMENTS.md` (Phase 7 severity classes).
+/// schema in `docs/L2-REQ.md` (L2-SYN-020 through L2-SYN-025 severity classes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvariantSeverity {
     /// Strict mode aborts with a record-error class; lenient mode
@@ -160,7 +160,7 @@ pub enum InvariantSeverity {
     Reject,
     /// Both modes log a WARN and continue emitting the record. Used
     /// where outright rejection would produce false negatives on
-    /// real-bus noise or vendor extensions (L2-SYN-INV-005, 006).
+    /// real-bus noise or vendor extensions (L2-SYN-024, 006).
     AnomalyWarn,
 }
 
@@ -172,7 +172,7 @@ pub struct InvariantViolation {
 }
 
 /// Per-format minimum payload word count, computed from the primary
-/// Command Word's declared data_word_count. Used by the L2-SYN-INV-003
+/// Command Word's declared data_word_count. Used by the L2-SYN-022
 /// capacity check. `SpuriousData` has variable size so returns 0
 /// (skip the check). For RT-to-RT formats the second Command Word is
 /// not yet decoded at the time we call this; we use Cmd1's
@@ -194,7 +194,7 @@ fn min_payload_words(fmt: MessageFormat, cmd: &CommandWord) -> u16 {
     }
 }
 
-/// L2-SYN-INV: structural invariants per the locked schema. Caller
+/// L2-SYN-020..025: structural invariants per the locked schema. Caller
 /// has already framing-validated (sync.rs) and classified the format
 /// (classify_message_format). Returns Err describing the first
 /// invariant the record violates; Ok if all hold.
@@ -212,7 +212,7 @@ pub fn validate_structural_invariants(
     msg_fmt: MessageFormat,
     ts_words: u16,
 ) -> Result<(), InvariantViolation> {
-    // L2-SYN-INV-001 / INV-002: per-type direction.
+    // L2-SYN-020 / L2-SYN-021: per-type direction.
     if tw.message_type == MessageType::BcToRt as u8 && cmd.direction != Direction::Receive {
         return Err(InvariantViolation {
             kind: WhichInvariant::DirectionBcToRt,
@@ -236,7 +236,7 @@ pub fn validate_structural_invariants(
         });
     }
 
-    // L2-SYN-INV-003: word-count capacity check.
+    // L2-SYN-022: word-count capacity check.
     let min_wc = 1 + ts_words + 1 + min_payload_words(msg_fmt, cmd);
     if tw.word_count < min_wc {
         return Err(InvariantViolation {
@@ -253,7 +253,7 @@ pub fn validate_structural_invariants(
     Ok(())
 }
 
-/// L2-SYN-INV-004: Cmd2 direction check for RT-to-RT formats.
+/// L2-SYN-023: Cmd2 direction check for RT-to-RT formats.
 ///
 /// Called post-extract because Cmd2 lives inside the payload and is
 /// only available after `extract_payload`. For non-RT-to-RT formats
@@ -286,7 +286,7 @@ pub fn validate_post_extract_invariants(
     Ok(())
 }
 
-/// L2-SYN-INV-005 / L2-SYN-INV-006: AnomalyWarn-class observations.
+/// L2-SYN-024 / L2-SYN-025: AnomalyWarn-class observations.
 ///
 /// Both invariants are anomaly detectors rather than corruption
 /// rejections; the reader logs each violation as a WARN and continues
@@ -300,7 +300,7 @@ pub fn detect_record_anomalies(
 ) -> Vec<InvariantViolation> {
     let mut out = Vec::new();
 
-    // L2-SYN-INV-005: Status RT vs Cmd RT.
+    // L2-SYN-024: Status RT vs Cmd RT.
     if let Some(status_raw) = status_word {
         let status_rt = ((status_raw >> 11) & 0x1F) as u8;
         if status_rt != cmd.rt {
@@ -316,7 +316,7 @@ pub fn detect_record_anomalies(
         }
     }
 
-    // L2-SYN-INV-006: Type Word bit 15 reserved.
+    // L2-SYN-025: Type Word bit 15 reserved.
     if (tw.raw >> 15) & 1 != 0 {
         out.push(InvariantViolation {
             kind: WhichInvariant::TypeWordReservedBit,
@@ -433,6 +433,7 @@ pub fn message_type_is_valid(code: u8) -> bool {
 mod tests {
     use super::*;
 
+    /// Requirements: L2-DEC-001
     #[test]
     fn type_word_layout() {
         // 0x2402: word_count=36 in upper byte (0x24), type=0x02 in lower
@@ -444,6 +445,7 @@ mod tests {
         assert_eq!(tw.raw, 0x2402);
     }
 
+    /// Requirements: L2-DEC-001, L2-ERR-001
     #[test]
     fn type_word_bus_b_and_error_bit() {
         // bit 7 set → Bus B, bit 14 set → error
@@ -453,6 +455,7 @@ mod tests {
         assert!(tw.error);
     }
 
+    /// Requirements: L2-DEC-002
     #[test]
     fn irig_timestamp_known_value() {
         // From Python doctest fixture
@@ -464,12 +467,14 @@ mod tests {
         assert!(!ts.freerun);
     }
 
+    /// Requirements: L2-DEC-003
     #[test]
     fn irig_freerun_bit() {
         let ts = decode_irig_timestamp(0x8000, 0, 0);
         assert!(ts.freerun);
     }
 
+    /// Requirements: L2-DEC-007
     #[test]
     fn standard_timestamp_round_trip() {
         let ts = decode_standard_timestamp(0x0001, 0x86A0);
@@ -478,6 +483,7 @@ mod tests {
         assert_eq!(ts.lower_word, 0x86A0);
     }
 
+    /// Requirements: L2-DEC-004
     #[test]
     fn command_word_known_value() {
         // 0x797E → RT 15, Receive, SA 11, 30 data words
@@ -488,6 +494,7 @@ mod tests {
         assert_eq!(cw.data_word_count, 30);
     }
 
+    /// Requirements: L2-DEC-004
     #[test]
     fn command_word_zero_means_thirty_two() {
         // raw bits 0..4 = 0 → 32 data words
@@ -495,12 +502,14 @@ mod tests {
         assert_eq!(cw.data_word_count, 32);
     }
 
+    /// Requirements: L2-DEC-008
     #[test]
     fn read_u16_le() {
         assert_eq!(read_u16(&[0x34, 0x12], 0), Some(0x1234));
         assert_eq!(read_u16(&[0x34], 0), None);
     }
 
+    /// Requirements: L2-DEC-008
     #[test]
     fn read_u16_array_into_slice() {
         let bytes = [0x01, 0x00, 0x02, 0x00, 0x03, 0x00];
@@ -509,6 +518,7 @@ mod tests {
         assert_eq!(out, [1, 2, 3]);
     }
 
+    /// Requirements: L2-MSG-001
     #[test]
     fn classify_simple_types() {
         let cmd = decode_command_word(0x797E);
@@ -530,6 +540,7 @@ mod tests {
         );
     }
 
+    /// Requirements: L2-MSG-001
     #[test]
     fn classify_mode_code_broadcast_no_data() {
         let cmd = CommandWord {
@@ -549,6 +560,7 @@ mod tests {
         );
     }
 
+    /// Requirements: L2-MSG-001
     #[test]
     fn classify_mode_code_tx_data() {
         let cmd = CommandWord {
@@ -564,6 +576,7 @@ mod tests {
         );
     }
 
+    /// Requirements: L2-MSG-001
     #[test]
     fn classify_mode_code_rx_vs_no_data() {
         let cmd = CommandWord {
@@ -583,13 +596,14 @@ mod tests {
         );
     }
 
+    /// Requirements: L2-SYN-001
     #[test]
     fn classify_unknown_type() {
         let cmd = decode_command_word(0);
         assert!(classify_message_format(0x03, &cmd, 5).is_err());
     }
 
-    // ── L2-SYN-INV structural invariants (Phase 7a) ──────────────────
+    // ── L2-SYN-020..025 structural invariants (Phase 7a) ──────────────────
 
     fn tw(message_type: u8, word_count: u16) -> TypeWord {
         TypeWord {
@@ -611,6 +625,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-SYN-020
     #[test]
     fn invariants_pass_for_canonical_bc_to_rt() {
         let t = tw(0x02, 36); // 1 + 3 + 1 + 30 + 1 = 36
@@ -618,6 +633,7 @@ mod tests {
         validate_structural_invariants(&t, &c, MessageFormat::Receive, 3).unwrap();
     }
 
+    /// Requirements: L2-SYN-021
     #[test]
     fn invariants_pass_for_canonical_rt_to_bc() {
         let t = tw(0x04, 36);
@@ -625,6 +641,7 @@ mod tests {
         validate_structural_invariants(&t, &c, MessageFormat::Transmit, 3).unwrap();
     }
 
+    /// Requirements: L2-SYN-020
     #[test]
     fn invariants_reject_bc_to_rt_with_transmit_cmd() {
         let t = tw(0x02, 36);
@@ -633,6 +650,7 @@ mod tests {
         assert_eq!(err.kind, WhichInvariant::DirectionBcToRt);
     }
 
+    /// Requirements: L2-SYN-021
     #[test]
     fn invariants_reject_rt_to_bc_with_receive_cmd() {
         let t = tw(0x04, 36);
@@ -641,6 +659,7 @@ mod tests {
         assert_eq!(err.kind, WhichInvariant::DirectionRtToBc);
     }
 
+    /// Requirements: L2-SYN-022
     #[test]
     fn invariants_reject_capacity_short() {
         // wc=5 too small for Receive with dwc=30 (needs 1+3+1+31=36).
@@ -650,6 +669,7 @@ mod tests {
         assert_eq!(err.kind, WhichInvariant::WordCountCapacity);
     }
 
+    /// Requirements: L2-SYN-022
     #[test]
     fn invariants_accept_capacity_exact() {
         // wc=36 is exactly the minimum for Receive with dwc=30.
@@ -658,6 +678,7 @@ mod tests {
         validate_structural_invariants(&t, &c, MessageFormat::Receive, 3).unwrap();
     }
 
+    /// Requirements: L2-SYN-022
     #[test]
     fn invariants_skip_capacity_for_spurious() {
         // SpuriousData has variable payload so the capacity check is
@@ -667,6 +688,7 @@ mod tests {
         validate_structural_invariants(&t, &c, MessageFormat::SpuriousData, 3).unwrap();
     }
 
+    /// Requirements: L2-SYN-020
     #[test]
     fn invariants_mode_code_not_constrained_by_direction() {
         // Mode codes (type 0x01) can be Transmit OR Receive. The
@@ -678,8 +700,9 @@ mod tests {
         validate_structural_invariants(&t, &c_rx, MessageFormat::ModeCodeRxData, 3).unwrap();
     }
 
-    // ── L2-SYN-INV-004 (post-extract Cmd2 direction) ─────────────────
+    // ── L2-SYN-023 (post-extract Cmd2 direction) ─────────────────
 
+    /// Requirements: L2-SYN-023
     #[test]
     fn post_extract_invariant_rt_to_rt_cmd2_receive_passes() {
         let c2 = CommandWord {
@@ -692,6 +715,7 @@ mod tests {
         validate_post_extract_invariants(MessageFormat::RtToRt, Some(&c2)).unwrap();
     }
 
+    /// Requirements: L2-SYN-023
     #[test]
     fn post_extract_invariant_rt_to_rt_cmd2_transmit_rejected() {
         let c2 = CommandWord {
@@ -706,6 +730,7 @@ mod tests {
         assert_eq!(err.severity, InvariantSeverity::Reject);
     }
 
+    /// Requirements: L2-SYN-023
     #[test]
     fn post_extract_invariant_rt_to_rt_broadcast_also_checked() {
         let c2 = CommandWord {
@@ -720,6 +745,7 @@ mod tests {
         assert_eq!(err.kind, WhichInvariant::DirectionRtToRtCmd2);
     }
 
+    /// Requirements: L2-SYN-023
     #[test]
     fn post_extract_invariant_non_rt_to_rt_is_noop() {
         // No cmd2 for non-RT-to-RT formats; function returns Ok.
@@ -736,8 +762,9 @@ mod tests {
         validate_post_extract_invariants(MessageFormat::Receive, Some(&c2)).unwrap();
     }
 
-    // ── L2-SYN-INV-005 / INV-006 (anomaly detectors) ─────────────────
+    // ── L2-SYN-024 / L2-SYN-025 (anomaly detectors) ─────────────────
 
+    /// Requirements: L2-SYN-024
     #[test]
     fn anomaly_status_rt_match_no_violation() {
         // RT=15 in Cmd; status's bits 15-11 also = 15 (raw 0x7800).
@@ -747,6 +774,7 @@ mod tests {
         assert!(anomalies.is_empty());
     }
 
+    /// Requirements: L2-SYN-024
     #[test]
     fn anomaly_status_rt_mismatch_logged() {
         // Cmd RT=15 but Status raw 0x2800 → status RT = 5.
@@ -758,6 +786,7 @@ mod tests {
         assert_eq!(anomalies[0].severity, InvariantSeverity::AnomalyWarn);
     }
 
+    /// Requirements: L2-SYN-024
     #[test]
     fn anomaly_no_status_no_violation() {
         // Broadcast formats and SPURIOUS_DATA have no Status Word;
@@ -768,6 +797,7 @@ mod tests {
         assert!(anomalies.is_empty());
     }
 
+    /// Requirements: L2-SYN-025
     #[test]
     fn anomaly_type_word_reserved_bit_set_logged() {
         // Type word raw with bit 15 set: 0x8402 (wc=4, bit15=1, type=0x02).
@@ -787,6 +817,7 @@ mod tests {
         assert_eq!(anomalies[0].severity, InvariantSeverity::AnomalyWarn);
     }
 
+    /// Requirements: L2-SYN-025
     #[test]
     fn anomaly_multiple_can_fire_on_one_record() {
         // Status RT mismatch + reserved bit set: expect TWO anomalies.

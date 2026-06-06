@@ -349,7 +349,7 @@ pub struct WriteOptions {
     pub input_path: Option<PathBuf>,
     /// L2-WRT-017: refuse to overwrite an existing destination.
     pub no_clobber: bool,
-    /// L1-023 / L2-WRT-016: when the decode hits an unrecoverable mid-
+    /// L1-EXIT-004 / L2-WRT-016: when the decode hits an unrecoverable mid-
     /// file sync loss, commit the rows decoded so far as
     /// `<destination>.partial` and treat the run as successful (exit 0)
     /// rather than unlinking the temp + propagating the error (exit 3).
@@ -695,6 +695,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-WRT-001
     #[test]
     fn header_present() {
         let mut buf = Vec::new();
@@ -705,6 +706,7 @@ mod tests {
         assert!(s.trim_end().ends_with("XMT_GAP"));
     }
 
+    /// Requirements: L2-WRT-001, L2-WRT-003
     #[test]
     fn row_format_matches_python_layout() {
         let mut buf = Vec::new();
@@ -729,6 +731,7 @@ mod tests {
         assert!(row.ends_with(",,,,"));
     }
 
+    /// Requirements: L2-WRT-002
     #[test]
     fn data_words_padded_to_32() {
         let mut buf = Vec::new();
@@ -743,6 +746,7 @@ mod tests {
         assert_eq!(commas, 45);
     }
 
+    /// Requirements: L2-ERR-008
     #[test]
     fn error_path_naming() {
         assert_eq!(
@@ -773,6 +777,7 @@ mod tests {
         std::env::temp_dir().join(format!("mie-atomic-test-{pid}-{n}{suffix}"))
     }
 
+    /// Requirements: L3-WRT-001
     #[test]
     fn make_temp_path_lives_next_to_destination() {
         let dest = std::env::temp_dir().join("out.csv");
@@ -784,6 +789,7 @@ mod tests {
         assert!(name.ends_with(&std::process::id().to_string()));
     }
 
+    /// Requirements: L2-WRT-015
     #[test]
     fn atomic_commit_renames_temp_over_destination() {
         let dest = unique_path(".csv");
@@ -800,6 +806,7 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
+    /// Requirements: L2-WRT-015, L2-WRT-016
     #[test]
     fn atomic_drop_without_commit_unlinks_temp_and_leaves_destination() {
         let dest = unique_path(".csv");
@@ -818,6 +825,7 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
+    /// Requirements: L2-WRT-014
     #[test]
     fn paths_refer_to_same_file_existing() {
         let p = unique_path(".dat");
@@ -826,6 +834,7 @@ mod tests {
         let _ = std::fs::remove_file(&p);
     }
 
+    /// Requirements: L2-WRT-014
     #[test]
     fn paths_refer_to_same_file_nonexistent_output_under_same_parent() {
         // Input exists; output names the same path but doesn't exist yet
@@ -843,6 +852,7 @@ mod tests {
         let _ = std::fs::remove_file(&p);
     }
 
+    /// Requirements: L2-WRT-014
     #[test]
     fn write_csv_rejects_input_output_collision() {
         let p = unique_path(".csv");
@@ -865,6 +875,7 @@ mod tests {
         let _ = std::fs::remove_file(&p);
     }
 
+    /// Requirements: L2-WRT-017
     #[test]
     fn write_csv_rejects_clobber_when_no_clobber_set() {
         let p = unique_path(".csv");
@@ -885,6 +896,7 @@ mod tests {
         let _ = std::fs::remove_file(&p);
     }
 
+    /// Requirements: L2-WRT-017
     #[test]
     fn write_csv_overwrites_by_default() {
         let p = unique_path(".csv");
@@ -897,6 +909,7 @@ mod tests {
         let _ = std::fs::remove_file(&p);
     }
 
+    /// Requirements: L2-WRT-014
     #[test]
     fn write_csv_split_rejects_input_output_collision() {
         let p = unique_path(".csv");
@@ -914,6 +927,7 @@ mod tests {
         let _ = std::fs::remove_file(&p);
     }
 
+    /// Requirements: L2-WRT-017
     #[test]
     fn write_csv_split_no_clobber_checks_errors_file_too() {
         // No-clobber should reject if the *errors* file exists, even
@@ -936,6 +950,7 @@ mod tests {
         let _ = std::fs::remove_file(&err_dest);
     }
 
+    /// Requirements: L3-WRT-002
     #[test]
     fn atomic_commit_partial_writes_dot_partial_and_leaves_destination() {
         let dest = unique_path(".csv");
@@ -969,6 +984,7 @@ mod tests {
         let _ = std::fs::remove_file(&partial_path);
     }
 
+    /// Requirements: L2-WRT-016, L1-EXIT-004
     #[test]
     fn write_csv_with_allow_partial_commits_on_unrecoverable() {
         let dest = unique_path(".csv");
@@ -998,6 +1014,7 @@ mod tests {
         let _ = std::fs::remove_file(&partial.main_path);
     }
 
+    /// Requirements: L2-WRT-016, L1-EXIT-004
     #[test]
     fn write_csv_without_allow_partial_propagates_unrecoverable() {
         let dest = unique_path(".csv");
@@ -1033,6 +1050,7 @@ mod tests {
         assert!(!partial.exists());
     }
 
+    /// Requirements: L2-WRT-018
     #[test]
     fn is_broken_pipe_predicate() {
         let e = MieError::WriterError {

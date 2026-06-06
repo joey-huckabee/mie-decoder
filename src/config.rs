@@ -32,7 +32,7 @@ pub struct DecoderConfig {
     /// behavior. Set via `output.no_clobber = true` in TOML or
     /// `--no-clobber` on the CLI.
     pub no_clobber: bool,
-    /// L1-023: on unrecoverable mid-file sync loss, commit the rows
+    /// L1-EXIT-004: on unrecoverable mid-file sync loss, commit the rows
     /// decoded so far as `<destination>.partial` and exit 0, rather
     /// than unlinking and exiting 3. Set via `decode.allow_partial =
     /// true` in TOML or `--allow-partial` on the CLI.
@@ -576,6 +576,7 @@ fn split_array_items(s: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// Requirements: L2-CFG-001
     #[test]
     fn parse_minimal_doc() {
         let text = r#"
@@ -608,6 +609,7 @@ format = "csv"
         assert!(cfg.filters.exclude_subaddresses.is_empty());
     }
 
+    /// Requirements: L2-CFG-001
     #[test]
     fn comments_are_stripped() {
         let text = r#"
@@ -621,6 +623,7 @@ time_format = "auto"
         assert_eq!(cfg.time_format, TimestampFormat::Auto);
     }
 
+    /// Requirements: L2-CFG-001
     #[test]
     fn hash_in_string_not_a_comment() {
         // Verify the parser preserves `#` inside a quoted string rather
@@ -639,6 +642,7 @@ format = "csv#weird"
         }
     }
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn unknown_time_format_rejected() {
         let text = r#"
@@ -648,6 +652,7 @@ time_format = "potato"
         assert!(parse_into_config(text).is_err());
     }
 
+    /// Requirements: L2-CFG-007
     #[test]
     fn unknown_type_name_rejected() {
         let text = r#"
@@ -657,6 +662,7 @@ exclude_types = ["UNICORN"]
         assert!(parse_into_config(text).is_err());
     }
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn unknown_log_level_rejected_at_parse_time() {
         // Regression: previously the config parser accepted any string
@@ -673,6 +679,7 @@ exclude_types = ["UNICORN"]
         assert!(err.0.contains("NOPE"));
     }
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn known_log_levels_accepted_case_insensitively() {
         for level in ["DEBUG", "info", "Warning", "WARN", "error"] {
@@ -684,6 +691,7 @@ exclude_types = ["UNICORN"]
 
     // ── L2-CFG schema validations (Phase 5) ──────────────────────────
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn unknown_output_format_rejected() {
         let text = "[output]\nformat = \"json\"\n";
@@ -696,6 +704,7 @@ exclude_types = ["UNICORN"]
         assert!(err.0.contains("json"));
     }
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn output_format_csv_still_accepted() {
         let text = "[output]\nformat = \"csv\"\n";
@@ -703,6 +712,7 @@ exclude_types = ["UNICORN"]
         assert_eq!(cfg.output_format, "csv");
     }
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn exclude_rts_out_of_range_rejected() {
         // L2-CFG: RT must be in [0, 31]. 32 is out of range.
@@ -715,6 +725,7 @@ exclude_types = ["UNICORN"]
         );
     }
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn exclude_subaddresses_negative_rejected() {
         let text = "[filter]\nexclude_subaddresses = [-1]\n";
@@ -726,6 +737,7 @@ exclude_types = ["UNICORN"]
         );
     }
 
+    /// Requirements: L2-CFG-010
     #[test]
     fn exclude_rts_zero_and_thirty_one_accepted() {
         // Boundary values must still parse.
@@ -734,6 +746,7 @@ exclude_types = ["UNICORN"]
         assert_eq!(cfg.filters.exclude_rts, vec![0, 31]);
     }
 
+    /// Requirements: L2-CFG-009
     #[test]
     fn unknown_top_level_key_is_warned_not_rejected() {
         // L2-CFG-009: unknown keys WARN at load time but do not fail
@@ -743,6 +756,7 @@ exclude_types = ["UNICORN"]
         assert_eq!(cfg.output_format, "csv");
     }
 
+    /// Requirements: L2-CFG-009
     #[test]
     fn unknown_filter_key_is_warned_not_rejected() {
         // Common typo: exclude_subdresses (missing 'ad').
@@ -753,6 +767,7 @@ exclude_types = ["UNICORN"]
         assert!(cfg.filters.exclude_subaddresses.is_empty());
     }
 
+    /// Requirements: L2-CFG-001
     #[test]
     fn missing_eq_returns_line_number() {
         let text = "[decode]\nstrict true\n";
@@ -760,6 +775,7 @@ exclude_types = ["UNICORN"]
         assert!(err.0.contains("line 2"));
     }
 
+    /// Requirements: L2-CFG-003
     #[test]
     fn defaults_when_no_path() {
         let cfg = load_config(None).unwrap();
@@ -769,6 +785,7 @@ exclude_types = ["UNICORN"]
         assert!(!cfg.strict);
     }
 
+    /// Requirements: L2-CFG-003, L2-CFG-004
     #[test]
     fn overrides_apply_and_filter_merge() {
         let cfg = DecoderConfig {
@@ -787,6 +804,7 @@ exclude_types = ["UNICORN"]
         assert_eq!(merged.filters.exclude_rts, vec![31, 0]);
     }
 
+    /// Requirements: L2-CFG-007
     #[test]
     fn type_name_parsing() {
         assert_eq!(parse_type_name("BC_TO_RT").unwrap(), 0x02);
@@ -794,6 +812,7 @@ exclude_types = ["UNICORN"]
         assert!(parse_type_name("nope").is_err());
     }
 
+    /// Requirements: L2-CFG-008
     #[test]
     fn parses_default_toml_from_disk() {
         let path = Path::new("config/default.toml");

@@ -104,6 +104,7 @@ macro_rules! log_error {
 mod tests {
     use super::*;
 
+    /// Requirements: L2-CLI-004
     #[test]
     fn level_parse() {
         assert_eq!(Level::parse("DEBUG"), Some(Level::Debug));
@@ -112,6 +113,7 @@ mod tests {
         assert_eq!(Level::parse("nope"), None);
     }
 
+    /// Requirements: L1-LOG-001
     #[test]
     fn level_ordering() {
         assert!(Level::Debug < Level::Info);

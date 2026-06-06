@@ -414,7 +414,7 @@ def _classify_mode_code(cmd: CommandWord, word_count: int) -> MessageFormat:
 
 
 class WhichInvariant(IntEnum):
-    """Which structural invariant a record violated (L2-SYN-INV).
+    """Which structural invariant a record violated (L2-SYN-020 through L2-SYN-025).
 
     Used by callers (the reader) to phrase a precise diagnostic; the
     strict-mode path otherwise maps every violation to a single
@@ -422,23 +422,23 @@ class WhichInvariant(IntEnum):
     """
 
     DIRECTION_BC_TO_RT = 1
-    """L2-SYN-INV-001: Type 0x02 requires Cmd direction = Receive."""
+    """L2-SYN-020: Type 0x02 requires Cmd direction = Receive."""
 
     DIRECTION_RT_TO_BC = 2
-    """L2-SYN-INV-002: Type 0x04 requires Cmd direction = Transmit."""
+    """L2-SYN-021: Type 0x04 requires Cmd direction = Transmit."""
 
     WORD_COUNT_CAPACITY = 3
-    """L2-SYN-INV-003: TW.word_count too small for declared payload."""
+    """L2-SYN-022: TW.word_count too small for declared payload."""
 
     DIRECTION_RT_TO_RT_CMD2 = 4
-    """L2-SYN-INV-004: Cmd2 direction for RT-to-RT must be Receive."""
+    """L2-SYN-023: Cmd2 direction for RT-to-RT must be Receive."""
 
     STATUS_RT_MISMATCH = 5
-    """L2-SYN-INV-005: Status RT does not match Cmd RT.
+    """L2-SYN-024: Status RT does not match Cmd RT.
     AnomalyWarn-class — real-bus noise possible."""
 
     TYPE_WORD_RESERVED_BIT = 6
-    """L2-SYN-INV-006: Type Word bit 15 (reserved) is set.
+    """L2-SYN-025: Type Word bit 15 (reserved) is set.
     AnomalyWarn-class — possible vendor extension."""
 
 
@@ -499,7 +499,7 @@ def validate_structural_invariants(
     msg_fmt: MessageFormat,
     ts_words: int,
 ) -> InvariantViolation | None:
-    """L2-SYN-INV: structural invariants per the locked schema.
+    """L2-SYN-020..025: structural invariants per the locked schema.
 
     Returns ``None`` if all invariants hold; otherwise returns an
     :class:`InvariantViolation` describing the first failure.
@@ -559,7 +559,7 @@ def validate_post_extract_invariants(
     msg_fmt: MessageFormat,
     cmd2: CommandWord | None,
 ) -> InvariantViolation | None:
-    """L2-SYN-INV-004: Cmd2 direction check for RT-to-RT formats.
+    """L2-SYN-023: Cmd2 direction check for RT-to-RT formats.
 
     Called post-extract because Cmd2 lives inside the payload. For
     non-RT-to-RT formats (or when cmd2 is None) this is a no-op.
@@ -585,7 +585,7 @@ def detect_record_anomalies(
     command_word: CommandWord,
     status_word: int | None,
 ) -> list[InvariantViolation]:
-    """L2-SYN-INV-005 / L2-SYN-INV-006: anomaly-class observations.
+    """L2-SYN-024 / L2-SYN-025: anomaly-class observations.
 
     Both invariants are anomaly detectors rather than corruption
     rejections; the reader logs each violation as a WARN and continues

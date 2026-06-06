@@ -110,6 +110,7 @@ impl Drop for TempFile {
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
+/// Requirements: L2-RDR-007
 #[test]
 fn single_receive_record_decodes_to_expected_fields() {
     let bytes = record_rt15_sa11_rcv();
@@ -133,6 +134,7 @@ fn single_receive_record_decodes_to_expected_fields() {
     assert_eq!(m.error_label(), "");
 }
 
+/// Requirements: L2-RDR-008
 #[test]
 fn single_transmit_record_layout() {
     let bytes = record_rt15_sa22_xmt();
@@ -148,6 +150,7 @@ fn single_transmit_record_layout() {
     assert_eq!(m.data_words.len(), 30);
 }
 
+/// Requirements: L2-RDR-015
 #[test]
 fn multi_record_stream() {
     let mut bytes = Vec::new();
@@ -168,9 +171,10 @@ fn multi_record_stream() {
     assert_eq!(msgs[2].file_offset, 72 + 34); // sa22 rcv = 17 words = 34 bytes
 }
 
+/// Requirements: L2-SYN-011, L1-EXIT-004
 #[test]
 fn lenient_mode_unrecoverable_sync_loss_yields_terminal_error() {
-    // L1-023 lenient-mode contract: when sync recovery exhausts within
+    // L1-EXIT-004 lenient-mode contract: when sync recovery exhausts within
     // the 64 KB scan window, the iterator must yield a terminal
     // Err(UnrecoverableSyncLoss) item before stopping. Previously this
     // returned None silently and the CLI exited 0 with truncated data.
@@ -214,11 +218,12 @@ fn lenient_mode_unrecoverable_sync_loss_yields_terminal_error() {
 
     drop(it);
     // Reader-level counter is consistent with what the terminal error
-    // reported. (Reader's getter is now exposed for the CLI's L1-024
+    // reported. (Reader's getter is now exposed for the CLI's L1-EXIT-005
     // exit-class summary.)
     assert!(reader.sync_losses() >= 1);
 }
 
+/// Requirements: L2-RDR-009
 #[test]
 fn delta_tracker_per_rt_msg_key() {
     let mut bytes = Vec::new();
@@ -233,6 +238,7 @@ fn delta_tracker_per_rt_msg_key() {
     assert_eq!(msgs[1].delta, Some(0.0));
 }
 
+/// Requirements: L2-FLT-001
 #[test]
 fn filtering_drops_excluded_rts() {
     let mut bytes = Vec::new();
@@ -254,6 +260,7 @@ fn filtering_drops_excluded_rts() {
     assert_eq!(msgs[0].command_word.unwrap().subaddress, 22);
 }
 
+/// Requirements: L2-WRT-001
 #[test]
 fn csv_output_has_one_row_per_message_plus_header() {
     let mut bytes = Vec::new();
@@ -280,6 +287,7 @@ fn csv_output_has_one_row_per_message_plus_header() {
     let _ = std::fs::remove_file(&out_path);
 }
 
+/// Requirements: L2-SYN-015
 #[test]
 fn corrupt_irig_record_skipped_by_per_record_validation() {
     // Regression test for the validation-parity fix: a record that
@@ -312,13 +320,14 @@ fn corrupt_irig_record_skipped_by_per_record_validation() {
     );
 }
 
+/// Requirements: L2-SYN-022
 #[test]
 fn payload_capacity_mismatch_skipped_in_lenient_mode() {
     // Originally a regression test for payload-extraction overrun: a
     // record whose Type Word claims wc=5 but whose Command Word
     // declares data_word_count=30 used to let extract_payload consume
     // bytes from the next record. The extract_payload bounding (Phase
-    // 2-era) plus the new L2-SYN-INV-003 capacity check (Phase 7a)
+    // 2-era) plus the new L2-SYN-022 capacity check (Phase 7a)
     // both defend against this. The capacity check now fires first:
     // in lenient mode the bad record is logged and skipped before
     // extract_payload runs.
@@ -343,7 +352,7 @@ fn payload_capacity_mismatch_skipped_in_lenient_mode() {
     let reader = MieFileReader::new(f.path()).unwrap();
     let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
 
-    // Record A is rejected by L2-SYN-INV-003 (wc=5 < 1+3+1+31=36).
+    // Record A is rejected by L2-SYN-022 (wc=5 < 1+3+1+31=36).
     // Lenient mode WARN+skips it and continues. Only Record B emits.
     assert_eq!(msgs.len(), 1);
     let m = &msgs[0];
@@ -354,6 +363,7 @@ fn payload_capacity_mismatch_skipped_in_lenient_mode() {
     assert_eq!(m.status_word, Some(0x7800));
 }
 
+/// Requirements: L2-SYN-011, L1-EXIT-002
 #[test]
 fn non_mie_file_surfaces_error_not_silent_zero_messages() {
     // Regression test for the team's "Cargo.toml" reproducer: passing a
@@ -389,6 +399,7 @@ fn non_mie_file_surfaces_error_not_silent_zero_messages() {
     }
 }
 
+/// Requirements: L2-SYN-006
 #[test]
 fn header_skip_via_proprietary_prefix() {
     let mut bytes = Vec::with_capacity(32 + 72);
@@ -402,11 +413,11 @@ fn header_skip_via_proprietary_prefix() {
     assert_eq!(msgs[0].file_offset, header_len as u64);
 }
 
-// ── L1-027 fuzz harness ──────────────────────────────────────────────
+// ── L1-ROB-001 fuzz harness ──────────────────────────────────────────────
 //
 // Deterministic xorshift64 PRNG keeps the test fully reproducible and
 // avoids pulling in `rand` (the crate stays at a single external dep,
-// per RS-002). Every iteration:
+// per L3-RS-002). Every iteration:
 //   1. generates a random byte sequence (32 B - 8 KB),
 //   2. writes it to a temp file,
 //   3. opens it with MieFileReader,
@@ -420,6 +431,7 @@ fn header_skip_via_proprietary_prefix() {
 //
 // The PRNG seed is hard-coded so a failure can be reproduced exactly
 // (and locked in via the panic-printed seed when triaging).
+/// Requirements: L1-ROB-001
 #[test]
 fn fuzz_arbitrary_bytes_never_panic() {
     fn xorshift64(state: &mut u64) -> u64 {

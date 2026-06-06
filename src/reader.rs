@@ -39,8 +39,8 @@ pub struct MieFileReader {
     /// Cumulative sync-recovery attempts during the most recent iter()
     /// call. Reset to 0 at the start of each iter(). Shared with the
     /// active RecordIter via a reference so the CLI can query it
-    /// post-iteration (e.g., to distinguish L1-022 partial-recovered
-    /// from L1-021 complete in the exit-class summary).
+    /// post-iteration (e.g., to distinguish L1-EXIT-003 partial-recovered
+    /// from L1-EXIT-002 complete in the exit-class summary).
     sync_losses: AtomicU64,
 }
 
@@ -119,7 +119,7 @@ impl MieFileReader {
 
     /// Cumulative sync-recovery count from the most recent iter() call.
     /// Reset to 0 each time `iter()` is invoked. Query after the
-    /// iterator is exhausted to derive the L1-022/024 exit class.
+    /// iterator is exhausted to derive the L1-EXIT-003/005 exit class.
     pub fn sync_losses(&self) -> u64 {
         self.sync_losses.load(Ordering::Relaxed)
     }
@@ -212,7 +212,7 @@ pub struct RecordIter<'a> {
     /// next() call yields this terminal Err once, then transitions to
     /// done = true. Distinct from `pending_error` so the message-decoding
     /// loop can populate it without entangling with construction-time
-    /// errors. Per L1-023 the CLI catches this variant to decide
+    /// errors. Per L1-EXIT-004 the CLI catches this variant to decide
     /// between exit 3 (default) and a `.partial` commit + exit 0
     /// (when `--allow-partial` is set).
     pending_unrecoverable: Option<MieError>,
@@ -378,9 +378,9 @@ impl<'a> Iterator for RecordIter<'a> {
                         // genuine mid-file corruption (full 64 KB
                         // window scanned, no valid record).
                         //
-                        // - Truncation → L1-008 / L2-RDR-002: lenient
+                        // - Truncation → L1-DEC-005 / L2-RDR-002: lenient
                         //   mode stops cleanly with no error.
-                        // - Corruption → L1-023: surface as terminal
+                        // - Corruption → L1-EXIT-004: surface as terminal
                         //   `UnrecoverableSyncLoss` so the CLI maps to
                         //   exit 3 (or to a `.partial` commit + exit
                         //   0 when `--allow-partial` is set).
@@ -550,7 +550,7 @@ impl<'a> Iterator for RecordIter<'a> {
                 cmd.subaddress
             );
 
-            // L2-SYN-INV: structural invariants. Strict mode aborts;
+            // L2-SYN-020..025: structural invariants. Strict mode aborts;
             // lenient mode logs a WARN, advances past the record, and
             // continues iteration.
             if let Err(v) =
@@ -560,11 +560,11 @@ impl<'a> Iterator for RecordIter<'a> {
                     self.done = true;
                     return Some(Err(crate::error::MieError::PayloadError {
                         offset: self.offset as u64,
-                        detail: format!("L2-SYN-INV violation: {}", v.detail),
+                        detail: format!("L2-SYN structural invariant violation: {}", v.detail),
                     }));
                 }
                 log_warn!(
-                    "L2-SYN-INV violation at 0x{:X}: {}; skipping record",
+                    "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
                     self.offset,
                     v.detail
                 );
@@ -585,7 +585,7 @@ impl<'a> Iterator for RecordIter<'a> {
             let (cmd2, status, status2, data_words) =
                 extract_payload(record_data, payload_offset, msg_fmt, &cmd);
 
-            // L2-SYN-INV-004: post-extract Reject-class check (Cmd2
+            // L2-SYN-023: post-extract Reject-class check (Cmd2
             // direction for RT-to-RT formats). Same strict/lenient
             // policy as the pre-extract invariants.
             if let Err(v) = crate::decode::validate_post_extract_invariants(msg_fmt, cmd2.as_ref())
@@ -594,11 +594,11 @@ impl<'a> Iterator for RecordIter<'a> {
                     self.done = true;
                     return Some(Err(crate::error::MieError::PayloadError {
                         offset: self.offset as u64,
-                        detail: format!("L2-SYN-INV violation: {}", v.detail),
+                        detail: format!("L2-SYN structural invariant violation: {}", v.detail),
                     }));
                 }
                 log_warn!(
-                    "L2-SYN-INV violation at 0x{:X}: {}; skipping record",
+                    "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
                     self.offset,
                     v.detail
                 );
@@ -607,10 +607,10 @@ impl<'a> Iterator for RecordIter<'a> {
                 continue;
             }
 
-            // L2-SYN-INV-005 / INV-006: AnomalyWarn-class observations.
+            // L2-SYN-024 / L2-SYN-025: AnomalyWarn-class observations.
             // Both modes log a WARN and continue emitting the record.
             for v in crate::decode::detect_record_anomalies(&tw, &cmd, status) {
-                log_warn!("L2-SYN-INV anomaly at 0x{:X}: {}", self.offset, v.detail);
+                log_warn!("L2-SYN anomaly at 0x{:X}: {}", self.offset, v.detail);
             }
 
             let key = delta_key(
@@ -930,6 +930,7 @@ mod tests {
         TempFile::write(bytes)
     }
 
+    /// Requirements: L2-RDR-005
     #[test]
     fn rejects_missing_file() {
         match MieFileReader::new("/no/such/path/12345.mie") {
@@ -938,6 +939,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-RDR-006
     #[test]
     fn rejects_empty_file() {
         let f = write_temp(&[]);
@@ -947,6 +949,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-RDR-007, L3-RS-003
     #[test]
     fn decodes_rt15_sa11_record() {
         let bytes = rt15_sa11_rcv();
@@ -964,6 +967,7 @@ mod tests {
         assert_eq!(m.file_offset, 0);
     }
 
+    /// Requirements: L2-SYN-006
     #[test]
     fn skips_proprietary_header() {
         let mut bytes = b"DDC-EQUIPMENT-NAME\0\0".to_vec(); // 20 bytes, even
@@ -981,6 +985,7 @@ mod tests {
     /// silently marked done so callers like `count` and `decode` saw
     /// zero messages and exited successfully — producing a header-only
     /// CSV for a TOML file passed as input.
+    /// Requirements: L2-SYN-011, L1-EXIT-002
     #[test]
     fn no_valid_records_surfaces_as_iter_error() {
         // 1 KB of 0xFF — definitely no valid Type Word (message_type

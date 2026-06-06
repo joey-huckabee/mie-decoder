@@ -307,6 +307,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-009
     #[test]
     fn raw_dump_format() {
         let f = TempFile::write(b"AB\x00\x01\x02\x03");
@@ -318,6 +319,7 @@ mod tests {
         assert!(s.contains("|AB"));
     }
 
+    /// Requirements: L2-CLI-009
     #[test]
     fn record_dump_handles_one_record() {
         // Minimal valid record: type 0x2402, then 35 zero words = 70 bytes
@@ -333,6 +335,7 @@ mod tests {
         assert!(s.contains("1 records dumped"));
     }
 
+    /// Requirements: L2-RDR-005
     #[test]
     fn missing_file_returns_error() {
         let mut out = Vec::new();
@@ -344,6 +347,7 @@ mod tests {
     /// panic on the `start_offset + n` computation. The fix uses
     /// saturating_add and clamps to file_len; the result is an empty
     /// dump rather than a crash.
+    /// Requirements: L1-ROB-001
     #[test]
     fn raw_dump_offset_max_length_one_does_not_panic() {
         let f = TempFile::write(b"AB\x00\x01\x02\x03");
@@ -354,6 +358,7 @@ mod tests {
         assert!(s.contains("File:"));
     }
 
+    /// Requirements: L1-ROB-001
     #[test]
     fn raw_dump_offset_max_length_max_does_not_panic() {
         let f = TempFile::write(b"AB\x00\x01");
@@ -362,6 +367,7 @@ mod tests {
         // No assertion on contents; the test passes if no panic.
     }
 
+    /// Requirements: L2-CLI-009
     #[test]
     fn raw_dump_offset_beyond_eof_yields_empty() {
         let f = TempFile::write(b"AB\x00\x01");
@@ -376,6 +382,7 @@ mod tests {
     /// `offset + MIN_RECORD_BYTES <= file_len` overflows if offset is
     /// near usize::MAX; the fix uses checked_add so the loop simply
     /// doesn't enter.
+    /// Requirements: L1-ROB-001
     #[test]
     fn record_dump_offset_max_does_not_panic() {
         let f = TempFile::write(b"AB\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09");
@@ -385,6 +392,7 @@ mod tests {
         assert!(s.contains("0 records dumped"));
     }
 
+    /// Requirements: L1-ROB-001
     #[test]
     fn record_dump_offset_just_short_of_max_does_not_panic() {
         let f = TempFile::write(b"AB\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09");

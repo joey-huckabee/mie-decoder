@@ -171,7 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help=(
             "On unrecoverable mid-file sync loss, write <output>.partial "
-            "and exit 0 instead of exit 3 (L1-023). Mirrors the "
+            "and exit 0 instead of exit 3 (L1-EXIT-004). Mirrors the "
             "decode.allow_partial config key."
         ),
     )
@@ -298,7 +298,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         return 0
 
     # WriteOptions populated once with all three file-output safety
-    # checks (L2-WRT-014 collision, L2-WRT-017 no-clobber, L1-023
+    # checks (L2-WRT-014 collision, L2-WRT-017 no-clobber, L1-EXIT-004
     # allow_partial). File-path destinations consume these; stdout
     # output ignores them.
     write_opts = WriteOptions(
@@ -333,13 +333,13 @@ def _run_decode(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except MieNoValidRecordsError as exc:
-        # L1-021 → exit 2.
+        # L1-EXIT-002 → exit 2.
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         logger.info("decode exit class: no-records")
         return 2
     except MieUnrecoverableSyncLossError as exc:
-        # L1-023 → exit 3 (allow_partial would have caught this
+        # L1-EXIT-004 → exit 3 (allow_partial would have caught this
         # inside the writer and returned a WriteOutcome instead).
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
@@ -363,7 +363,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    # L1-024 exit-class summary. Distinguish complete from
+    # L1-EXIT-005 exit-class summary. Distinguish complete from
     # partial-recovered via reader.sync_losses, partial-committed
     # via outcome.partial.
     sync_losses = reader.sync_losses

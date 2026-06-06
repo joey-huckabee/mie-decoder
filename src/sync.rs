@@ -60,7 +60,7 @@ pub fn validate_record(
     }
 
     // Check 5: IRIG timestamp field range checks per L2-SYN-004
-    // and L2-SYN-004a. We need all three timestamp words to evaluate
+    // and L2-SYN-019. We need all three timestamp words to evaluate
     // microsecond and day; offset + 8 <= file_len covers reading
     // upper (offset+2), middle (offset+4), and lower (offset+6) words.
     if ts_format == Some(TimestampFormat::Irig) && offset + 8 <= file_len {
@@ -84,7 +84,7 @@ pub fn validate_record(
             if microsecond > 999_999 {
                 return false;
             }
-            // L2-SYN-004a: skip the day-of-year range check when
+            // L2-SYN-019: skip the day-of-year range check when
             // freerun is set, because the card's free-running
             // oscillator is not calendar-locked. Hour/minute/second/
             // microsecond constraints still apply because those are
@@ -190,12 +190,14 @@ mod tests {
         buf
     }
 
+    /// Requirements: L2-SYN-005
     #[test]
     fn validate_accepts_clean_record() {
         let buf = make_valid_record_36w(2);
         assert!(validate_record(&buf, 0, buf.len(), None));
     }
 
+    /// Requirements: L2-SYN-001
     #[test]
     fn validate_rejects_invalid_type() {
         // Type word with bad message type 0x03
@@ -203,6 +205,7 @@ mod tests {
         assert!(!validate_record(&buf, 0, buf.len(), None));
     }
 
+    /// Requirements: L2-SYN-003
     #[test]
     fn validate_rejects_truncated() {
         // Type word claims 36 words = 72 bytes, but only 4 bytes available
@@ -210,6 +213,7 @@ mod tests {
         assert!(!validate_record(&buf, 0, buf.len(), None));
     }
 
+    /// Requirements: L2-SYN-006
     #[test]
     fn find_first_record_at_zero() {
         let buf = make_valid_record_36w(2);
@@ -218,6 +222,7 @@ mod tests {
         assert_eq!(hit.skipped, 0);
     }
 
+    /// Requirements: L2-SYN-006
     #[test]
     fn find_first_record_skips_header() {
         // 16-byte ASCII header + valid records
@@ -228,12 +233,14 @@ mod tests {
         assert_eq!(hit.skipped, 16);
     }
 
+    /// Requirements: L2-SYN-008
     #[test]
     fn find_first_record_returns_none_when_no_valid() {
         let buf = vec![0xFFu8; 64];
         assert!(find_first_record(&buf, buf.len(), None, MAX_SCAN_BYTES).is_none());
     }
 
+    /// Requirements: L2-SYN-009
     #[test]
     fn recover_sync_walks_forward() {
         let mut buf = vec![0xFFu8; 6]; // 6 bytes of garbage
@@ -243,6 +250,7 @@ mod tests {
         assert_eq!(hit.skipped, 6);
     }
 
+    /// Requirements: L2-SYN-010, L1-SYN-002
     #[test]
     fn recover_sync_capped_at_max_scan() {
         let mut buf = vec![0xFFu8; 200];
@@ -254,7 +262,7 @@ mod tests {
         assert!(recover_sync(&buf, 0, buf.len(), None, 400).is_some());
     }
 
-    // ── IRIG range validation (L2-SYN-004, L2-SYN-004a) ──────────────
+    // ── IRIG range validation (L2-SYN-004, L2-SYN-019) ──────────────
 
     /// Build a minimal IRIG-shaped record from explicit timestamp word
     /// values. word_count = 5 (Type + 3 TS + Cmd, no data, no status).
@@ -288,6 +296,7 @@ mod tests {
             | (u16::from(us_hi4) & 0xF)
     }
 
+    /// Requirements: L2-SYN-004
     #[test]
     fn validate_accepts_irig_with_valid_ranges() {
         // day=192, hour=15, minute=54, second=50, microsecond=456_225,
@@ -304,6 +313,7 @@ mod tests {
         ));
     }
 
+    /// Requirements: L2-SYN-004
     #[test]
     fn validate_rejects_irig_day_zero() {
         // day=0 is out of range per L2-SYN-004.
@@ -318,6 +328,7 @@ mod tests {
         ));
     }
 
+    /// Requirements: L2-SYN-004
     #[test]
     fn validate_rejects_irig_day_above_366() {
         // day=367 is out of range per L2-SYN-004.
@@ -332,9 +343,10 @@ mod tests {
         ));
     }
 
+    /// Requirements: L2-SYN-019
     #[test]
     fn validate_accepts_irig_day_zero_when_freerun() {
-        // L2-SYN-004a: freerun bypasses the day-of-year check.
+        // L2-SYN-019: freerun bypasses the day-of-year check.
         let upper = irig_upper(true, 0, 15);
         let middle = irig_middle(54, 50, 0);
         let buf = make_irig_record_with_ts(upper, middle, 0);
@@ -346,6 +358,7 @@ mod tests {
         ));
     }
 
+    /// Requirements: L2-SYN-004
     #[test]
     fn validate_rejects_irig_microsecond_at_one_million() {
         // microsecond = 1_000_000 = (0xF << 16) | 0x4240 = 0xF4240.
@@ -362,6 +375,7 @@ mod tests {
         ));
     }
 
+    /// Requirements: L2-SYN-004
     #[test]
     fn validate_accepts_irig_microsecond_at_max_valid() {
         // microsecond = 999_999 = (0xF << 16) | 0x423F = 0xF423F.
@@ -377,9 +391,10 @@ mod tests {
         ));
     }
 
+    /// Requirements: L2-SYN-019
     #[test]
     fn validate_rejects_irig_microsecond_when_freerun_too() {
-        // L2-SYN-004a only relaxes the DAY check, not microsecond.
+        // L2-SYN-019 only relaxes the DAY check, not microsecond.
         // freerun=true with out-of-range microseconds is still rejected.
         let upper = irig_upper(true, 0, 15);
         let middle = irig_middle(54, 50, 0xF);
@@ -393,6 +408,7 @@ mod tests {
         ));
     }
 
+    /// Requirements: L2-SYN-002
     #[test]
     fn min_word_count_helper() {
         assert_eq!(min_word_count(Some(TimestampFormat::Irig)), 5);

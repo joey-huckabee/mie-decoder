@@ -163,6 +163,7 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-FLT-001
     #[test]
     fn empty_config_is_inactive() {
         let cfg = FilterConfig::default();
@@ -170,6 +171,7 @@ mod tests {
         assert!(!cfg.should_exclude(&msg(1, 1, Bus::A, 0x02)));
     }
 
+    /// Requirements: L2-CFG-006
     #[test]
     fn exclude_by_rt() {
         let cfg = FilterConfig {
@@ -180,6 +182,7 @@ mod tests {
         assert!(!cfg.should_exclude(&msg(15, 0, Bus::A, 0x02)));
     }
 
+    /// Requirements: L2-CFG-006
     #[test]
     fn exclude_by_type_and_bus() {
         let cfg = FilterConfig {
@@ -192,6 +195,7 @@ mod tests {
         assert!(!cfg.should_exclude(&msg(1, 1, Bus::A, 0x02)));
     }
 
+    /// Requirements: L3-RS-010
     #[test]
     fn include_filters_drop_non_matches() {
         let cfg = FilterConfig {
@@ -202,6 +206,7 @@ mod tests {
         assert!(cfg.should_exclude(&msg(14, 0, Bus::A, 0x02)));
     }
 
+    /// Requirements: L2-FLT-001
     #[test]
     fn iterator_adapter() {
         let msgs: Vec<Result<MieMessage, ()>> = vec![
