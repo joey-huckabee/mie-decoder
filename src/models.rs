@@ -210,14 +210,22 @@ impl IrigTimestamp {
     }
 
     /// Format as `DAY:HH:MM:SS.uuuuuu` (matches DDC vendor CSV layout).
+    ///
+    /// Per L2-DEC-002a the microsecond field SHALL be exactly six
+    /// digits. Validation in `sync::validate_record` should reject any
+    /// record whose microsecond is >= 1_000_000 (L2-SYN-004), so this
+    /// truncation is a defensive belt-and-suspenders: if a caller
+    /// constructs an out-of-range `IrigTimestamp` directly (bypassing
+    /// validation), the formatter still produces a well-formed string.
     pub fn format(&self) -> String {
+        let micro = self.microsecond % 1_000_000;
         format!(
             "{day}:{h:02}:{m:02}:{s:02}.{u:06}",
             day = self.day,
             h = self.hour,
             m = self.minute,
             s = self.second,
-            u = self.microsecond
+            u = micro
         )
     }
 }
@@ -517,6 +525,28 @@ mod tests {
             freerun: false,
         };
         assert_eq!(t.format(), "10:15:54:50.456225");
+    }
+
+    #[test]
+    fn irig_format_truncates_out_of_range_microseconds() {
+        // L2-DEC-002a: formatter SHALL emit exactly six microsecond
+        // digits. Validation (L2-SYN-004) rejects records with
+        // microsecond >= 1_000_000 before we get here, but a caller
+        // who constructs an IrigTimestamp directly with a bad
+        // microsecond MUST still produce a well-formed string.
+        let t = IrigTimestamp {
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            microsecond: 1_234_567, // > 999_999
+            freerun: false,
+        };
+        let s = t.format();
+        assert_eq!(s, "1:00:00:00.234567");
+        // Sanity: the part after the '.' is exactly six characters.
+        let micro_part = s.rsplit('.').next().unwrap();
+        assert_eq!(micro_part.len(), 6);
     }
 
     #[test]

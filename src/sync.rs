@@ -59,15 +59,38 @@ pub fn validate_record(
         return false;
     }
 
-    // Check 5: IRIG timestamp field range checks.
+    // Check 5: IRIG timestamp field range checks per L2-SYN-004
+    // and L2-SYN-004a. We need all three timestamp words to evaluate
+    // microsecond and day; offset + 8 <= file_len covers reading
+    // upper (offset+2), middle (offset+4), and lower (offset+6) words.
     if ts_format == Some(TimestampFormat::Irig) && offset + 8 <= file_len {
-        if let (Some(ts_upper), Some(ts_middle)) =
-            (read_u16(data, offset + 2), read_u16(data, offset + 4))
-        {
+        if let (Some(ts_upper), Some(ts_middle), Some(ts_lower)) = (
+            read_u16(data, offset + 2),
+            read_u16(data, offset + 4),
+            read_u16(data, offset + 6),
+        ) {
+            let freerun = (ts_upper >> 15) & 1 == 1;
+            let day = (ts_upper >> 5) & 0x1FF; // bits 13-5
             let hour = ts_upper & 0x1F;
             let minute = (ts_middle >> 10) & 0x3F;
             let second = (ts_middle >> 4) & 0x3F;
+            let microsecond_hi4 = u32::from(ts_middle & 0xF);
+            let microsecond_lo16 = u32::from(ts_lower);
+            let microsecond = (microsecond_hi4 << 16) | microsecond_lo16;
+
             if hour >= 24 || minute >= 60 || second >= 60 {
+                return false;
+            }
+            if microsecond > 999_999 {
+                return false;
+            }
+            // L2-SYN-004a: skip the day-of-year range check when
+            // freerun is set, because the card's free-running
+            // oscillator is not calendar-locked. Hour/minute/second/
+            // microsecond constraints still apply because those are
+            // a function of the counter modulus, not the external
+            // IRIG-B feed.
+            if !freerun && !(1..=366).contains(&day) {
                 return false;
             }
         }
@@ -229,6 +252,145 @@ mod tests {
         assert!(recover_sync(&buf, 0, buf.len(), None, 100).is_none());
         // Cap at 400 → found
         assert!(recover_sync(&buf, 0, buf.len(), None, 400).is_some());
+    }
+
+    // ── IRIG range validation (L2-SYN-004, L2-SYN-004a) ──────────────
+
+    /// Build a minimal IRIG-shaped record from explicit timestamp word
+    /// values. word_count = 5 (Type + 3 TS + Cmd, no data, no status).
+    /// Two records back-to-back so the look-ahead check passes.
+    fn make_irig_record_with_ts(upper: u16, middle: u16, lower: u16) -> Vec<u8> {
+        // Type word 0x0502: type=0x02 BcToRt, bus A, wc=5, error=0.
+        const TYPE_RAW: u16 = 0x0502;
+        // Command Word: rt=5, dir=Recv, sa=1, dwc=30 (raw 0x283E).
+        const CMD_RAW: u16 = 0x283E;
+
+        let mut buf = Vec::with_capacity(20);
+        for _ in 0..2 {
+            buf.extend_from_slice(&TYPE_RAW.to_le_bytes());
+            buf.extend_from_slice(&upper.to_le_bytes());
+            buf.extend_from_slice(&middle.to_le_bytes());
+            buf.extend_from_slice(&lower.to_le_bytes());
+            buf.extend_from_slice(&CMD_RAW.to_le_bytes());
+        }
+        buf
+    }
+
+    /// Helper: build upper TS word from explicit fields.
+    fn irig_upper(freerun: bool, day: u16, hour: u8) -> u16 {
+        ((freerun as u16) << 15) | ((day & 0x1FF) << 5) | u16::from(hour & 0x1F)
+    }
+
+    /// Helper: build middle TS word from explicit fields.
+    fn irig_middle(minute: u8, second: u8, us_hi4: u8) -> u16 {
+        ((u16::from(minute) & 0x3F) << 10)
+            | ((u16::from(second) & 0x3F) << 4)
+            | (u16::from(us_hi4) & 0xF)
+    }
+
+    #[test]
+    fn validate_accepts_irig_with_valid_ranges() {
+        // day=192, hour=15, minute=54, second=50, microsecond=456_225,
+        // freerun=0 — matches the canonical conformance fixture.
+        let upper = irig_upper(false, 192, 15);
+        let middle = irig_middle(54, 50, 6); // us_hi4 = 6
+        let lower = 0xF621u16; // us_lo16 = 0xF621
+        let buf = make_irig_record_with_ts(upper, middle, lower);
+        assert!(validate_record(
+            &buf,
+            0,
+            buf.len(),
+            Some(TimestampFormat::Irig)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_irig_day_zero() {
+        // day=0 is out of range per L2-SYN-004.
+        let upper = irig_upper(false, 0, 15);
+        let middle = irig_middle(54, 50, 0);
+        let buf = make_irig_record_with_ts(upper, middle, 0);
+        assert!(!validate_record(
+            &buf,
+            0,
+            buf.len(),
+            Some(TimestampFormat::Irig)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_irig_day_above_366() {
+        // day=367 is out of range per L2-SYN-004.
+        let upper = irig_upper(false, 367, 15);
+        let middle = irig_middle(54, 50, 0);
+        let buf = make_irig_record_with_ts(upper, middle, 0);
+        assert!(!validate_record(
+            &buf,
+            0,
+            buf.len(),
+            Some(TimestampFormat::Irig)
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_irig_day_zero_when_freerun() {
+        // L2-SYN-004a: freerun bypasses the day-of-year check.
+        let upper = irig_upper(true, 0, 15);
+        let middle = irig_middle(54, 50, 0);
+        let buf = make_irig_record_with_ts(upper, middle, 0);
+        assert!(validate_record(
+            &buf,
+            0,
+            buf.len(),
+            Some(TimestampFormat::Irig)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_irig_microsecond_at_one_million() {
+        // microsecond = 1_000_000 = (0xF << 16) | 0x4240 = 0xF4240.
+        // us_hi4 = 0xF, us_lo16 = 0x4240. Rejected per L2-SYN-004.
+        let upper = irig_upper(false, 192, 15);
+        let middle = irig_middle(54, 50, 0xF);
+        let lower = 0x4240u16;
+        let buf = make_irig_record_with_ts(upper, middle, lower);
+        assert!(!validate_record(
+            &buf,
+            0,
+            buf.len(),
+            Some(TimestampFormat::Irig)
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_irig_microsecond_at_max_valid() {
+        // microsecond = 999_999 = (0xF << 16) | 0x423F = 0xF423F.
+        let upper = irig_upper(false, 192, 15);
+        let middle = irig_middle(54, 50, 0xF);
+        let lower = 0x423Fu16;
+        let buf = make_irig_record_with_ts(upper, middle, lower);
+        assert!(validate_record(
+            &buf,
+            0,
+            buf.len(),
+            Some(TimestampFormat::Irig)
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_irig_microsecond_when_freerun_too() {
+        // L2-SYN-004a only relaxes the DAY check, not microsecond.
+        // freerun=true with out-of-range microseconds is still rejected.
+        let upper = irig_upper(true, 0, 15);
+        let middle = irig_middle(54, 50, 0xF);
+        let lower = 0x4240u16; // 1_000_000
+        let buf = make_irig_record_with_ts(upper, middle, lower);
+        assert!(!validate_record(
+            &buf,
+            0,
+            buf.len(),
+            Some(TimestampFormat::Irig)
+        ));
     }
 
     #[test]

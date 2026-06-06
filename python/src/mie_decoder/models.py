@@ -245,10 +245,19 @@ class IrigTimestamp:
         return self.to_total_microseconds()
 
     def format(self) -> str:
-        """Format as ``DAY:HH:MM:SS.uuuuuu`` string."""
+        """Format as ``DAY:HH:MM:SS.uuuuuu`` string.
+
+        Per L2-DEC-002a the microsecond field SHALL be exactly six
+        digits. Validation in :mod:`mie_decoder.sync` should reject
+        any record with ``microsecond >= 1_000_000`` (L2-SYN-004), so
+        the modulo here is a defensive belt-and-suspenders: a caller
+        constructing an :class:`IrigTimestamp` directly with an out-of-
+        range microsecond still gets a well-formed string.
+        """
+        micro = self.microsecond % 1_000_000
         return (
             f"{self.day}:{self.hour:02d}:{self.minute:02d}"
-            f":{self.second:02d}.{self.microsecond:06d}"
+            f":{self.second:02d}.{micro:06d}"
         )
 
 

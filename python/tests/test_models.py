@@ -37,6 +37,16 @@ class TestIrigTimestamp:
         ts = IrigTimestamp(0, 0, 0, 1, 500000, False)
         assert ts.to_total_microseconds() == 1_500_000
 
+    def test_format_truncates_out_of_range_microseconds(self) -> None:
+        """L2-DEC-002a: formatter SHALL emit exactly six microsecond
+        digits even if the caller bypasses validation and constructs
+        an IrigTimestamp with microsecond >= 1_000_000."""
+        ts = IrigTimestamp(1, 0, 0, 0, 1_234_567, False)
+        s = ts.format()
+        assert s == "1:00:00:00.234567"
+        # The microsecond suffix must be exactly six characters.
+        assert len(s.rsplit(".", 1)[1]) == 6
+
 
 class TestMessageType:
     """Tests for MessageType enum."""

@@ -37,6 +37,93 @@ class TestValidateRecord:
         data = b"\x02\x00" + b"\x00" * 20
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
+    # ── IRIG range validation (L2-SYN-004, L2-SYN-004a) ──────────────
+
+    @staticmethod
+    def _irig_record(upper: int, middle: int, lower: int) -> bytes:
+        """Build two minimal IRIG records back-to-back (so look-ahead
+        succeeds) with the given timestamp word values. wc=5, type=0x02,
+        Cmd raw 0x283E. Two records of 10 bytes each = 20 bytes."""
+        type_raw = 0x0502  # type=0x02, bus A, wc=5, error=0
+        cmd_raw = 0x283E   # rt=5, dir=Recv, sa=1, dwc=30
+        rec = (
+            type_raw.to_bytes(2, "little")
+            + upper.to_bytes(2, "little")
+            + middle.to_bytes(2, "little")
+            + lower.to_bytes(2, "little")
+            + cmd_raw.to_bytes(2, "little")
+        )
+        return rec * 2
+
+    @staticmethod
+    def _irig_upper(freerun: bool, day: int, hour: int) -> int:
+        return ((1 if freerun else 0) << 15) | ((day & 0x1FF) << 5) | (hour & 0x1F)
+
+    @staticmethod
+    def _irig_middle(minute: int, second: int, us_hi4: int) -> int:
+        return ((minute & 0x3F) << 10) | ((second & 0x3F) << 4) | (us_hi4 & 0xF)
+
+    def test_irig_accepts_valid_ranges(self) -> None:
+        data = self._irig_record(
+            self._irig_upper(False, 192, 15),
+            self._irig_middle(54, 50, 6),
+            0xF621,
+        )
+        assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is True
+
+    def test_irig_rejects_day_zero(self) -> None:
+        data = self._irig_record(
+            self._irig_upper(False, 0, 15),
+            self._irig_middle(54, 50, 0),
+            0,
+        )
+        assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
+
+    def test_irig_rejects_day_above_366(self) -> None:
+        data = self._irig_record(
+            self._irig_upper(False, 367, 15),
+            self._irig_middle(54, 50, 0),
+            0,
+        )
+        assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
+
+    def test_irig_accepts_day_zero_when_freerun(self) -> None:
+        """L2-SYN-004a: freerun bypasses the day-of-year range check."""
+        data = self._irig_record(
+            self._irig_upper(True, 0, 15),
+            self._irig_middle(54, 50, 0),
+            0,
+        )
+        assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is True
+
+    def test_irig_rejects_microsecond_at_one_million(self) -> None:
+        # 1_000_000 = (0xF << 16) | 0x4240
+        data = self._irig_record(
+            self._irig_upper(False, 192, 15),
+            self._irig_middle(54, 50, 0xF),
+            0x4240,
+        )
+        assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
+
+    def test_irig_accepts_microsecond_at_max_valid(self) -> None:
+        # 999_999 = (0xF << 16) | 0x423F
+        data = self._irig_record(
+            self._irig_upper(False, 192, 15),
+            self._irig_middle(54, 50, 0xF),
+            0x423F,
+        )
+        assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is True
+
+    def test_irig_rejects_microsecond_even_when_freerun(self) -> None:
+        """L2-SYN-004a relaxes only the DAY check; microseconds still
+        enforced."""
+        data = self._irig_record(
+            self._irig_upper(True, 0, 15),
+            self._irig_middle(54, 50, 0xF),
+            0x4240,
+        )
+        assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
+
 
 class TestFindFirstRecord:
     """Tests for find_first_record (header detection)."""

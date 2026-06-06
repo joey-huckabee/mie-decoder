@@ -331,8 +331,9 @@ fn payload_extraction_does_not_overrun_into_next_record() {
     let mut record_a = Vec::with_capacity(10);
     // Type Word LE: type=0x02, bus=A, wc=5, error=0  →  0x0502
     record_a.extend_from_slice(&0x0502u16.to_le_bytes());
-    // IRIG TS upper: hour=10, day=0, freerun=0  →  0x000A
-    record_a.extend_from_slice(&0x000Au16.to_le_bytes());
+    // IRIG TS upper: hour=10, day=1 (L2-SYN-004 requires [1,366]),
+    // freerun=0  →  (1 << 5) | 10 = 0x002A
+    record_a.extend_from_slice(&0x002Au16.to_le_bytes());
     // IRIG TS middle: minute=20<<10 | second=30<<4 | us_hi=0  →  0x51E0
     record_a.extend_from_slice(&0x51E0u16.to_le_bytes());
     // IRIG TS lower (microsecond low): 0

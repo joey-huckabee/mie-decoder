@@ -147,14 +147,33 @@ def validate_record(
     if offset + record_bytes > file_len:
         return False
 
-    # ── Check 5: IRIG timestamp field ranges ───────────────────────
+    # ── Check 5: IRIG timestamp field ranges (L2-SYN-004, L2-SYN-004a)
+    # All three timestamp words are needed to evaluate microsecond
+    # and day; offset + 8 <= file_len covers reading upper (offset+2),
+    # middle (offset+4), and lower (offset+6) words.
     if ts_format == TimestampFormat.IRIG and offset + 8 <= file_len:
         ts_upper = read_u16(data, offset + 2)
         ts_middle = read_u16(data, offset + 4)
+        ts_lower = read_u16(data, offset + 6)
+        freerun = bool((ts_upper >> 15) & 1)
+        day = (ts_upper >> 5) & 0x1FF  # bits 13-5
         hour = ts_upper & 0x1F
         minute = (ts_middle >> 10) & 0x3F
         second = (ts_middle >> 4) & 0x3F
+        microsecond_hi4 = ts_middle & 0xF
+        microsecond_lo16 = ts_lower
+        microsecond = (microsecond_hi4 << 16) | microsecond_lo16
+
         if hour >= 24 or minute >= 60 or second >= 60:
+            return False
+        if microsecond > 999_999:
+            return False
+        # L2-SYN-004a: skip the day-of-year range check when freerun
+        # is set, because the card's free-running oscillator is not
+        # calendar-locked. Hour/minute/second/microsecond constraints
+        # still apply because those are a function of the counter
+        # modulus, not the external IRIG-B feed.
+        if not freerun and not (1 <= day <= 366):
             return False
 
     # ── Check 6: Look-ahead — next record also valid ───────────────
