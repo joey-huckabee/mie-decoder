@@ -129,6 +129,18 @@ jobs:
       - name: Synchronize locked Python dependencies
         run: poetry -C python sync --no-interaction --no-ansi
 
+      - name: Install mie-decoder root package into Poetry's environment
+        # `poetry sync` installs the locked dependencies but in some
+        # Poetry 2.x configurations (PEP 621 [project] + [tool.poetry]
+        # hybrid pyproject, hosted-runner active interpreter, etc.)
+        # skips installing the root project itself. The python-tests
+        # job tolerates this because pytest's `pythonpath = ["src"]`
+        # injects the source layout, but `python -m mie_decoder` (used
+        # by the conformance runner) requires an actual installation.
+        # Doing an explicit editable pip install through Poetry's pip
+        # is idempotent if sync did install it and corrective if not.
+        run: poetry -C python run pip install -e .
+
       - name: Run cross-implementation conformance suite
         run: poetry -C python run python ../tests/conformance/run.py
 
