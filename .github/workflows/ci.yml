@@ -130,7 +130,7 @@ jobs:
         run: poetry -C python sync --no-interaction --no-ansi
 
       - name: Run cross-implementation conformance suite
-        run: python tests/conformance/run.py
+        run: poetry -C python run python ../tests/conformance/run.py
 
   trace-matrix:
     name: Requirements trace matrix
