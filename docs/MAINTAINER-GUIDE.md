@@ -385,16 +385,21 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 
 ## 9. CI architecture
 
-`.github/workflows/ci.yml` has four jobs:
+`.github/workflows/ci.yml` has five jobs:
 
-| Job | What it gates | Failure cost |
-|-----|---------------|--------------|
-| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets`, `cargo cov-ci` (70% line + region coverage floors) | Block merge |
-| `python` | `poetry sync` + `poetry run pytest` on Python 3.10, 3.11, 3.12, 3.13, 3.14 (matrix) | Block merge |
-| `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | Block merge |
-| `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | Block merge |
+| Job | What it gates | Platforms | Failure cost |
+|-----|---------------|-----------|--------------|
+| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets`; `cargo cov-ci` (70% line + region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
+| `python` | `poetry sync` + `poetry run pytest`; `poetry check --strict --lock` + `poetry build` Linux/3.12-only | 5 versions × Linux (3.10–3.14), 2 versions × Windows (3.12, 3.14) | Block merge |
+| `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | `ubuntu-latest`, `windows-latest` | Block merge |
+| `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
+| `diagrams` | Re-render every `docs/diagrams/*.puml` with the pinned PlantUML version and `git diff --exit-code` against the committed `*.svg` — fails if a `.puml` source was changed without regenerating the matching `.svg` | `ubuntu-latest` | Block merge |
 
-Pre-commit hooks (set up locally via `.git/hooks/pre-commit`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, Cargo.lock parity, `cargo fmt --check`, `cargo clippy`, `cargo test`. These mirror what CI checks so push-fails are rare.
+The Rust and Python deployment targets are Linux (`x86_64-unknown-linux-musl` for Rust; current SLES 12 / RHEL flavors for Python). Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gate, lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke.
+
+The `diagrams` job pins PlantUML to the version that produced the committed SVGs (read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg` to find it). Bumping that pin generally reflows every diagram and requires a matching local re-render + commit of all `*.svg` files in the same PR.
+
+Pre-commit hooks (set up locally via `.git/hooks/pre-commit`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, Cargo.lock parity, `cargo fmt --check`, `cargo clippy`, `cargo test`. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs — the `diagrams` CI job is your safety net there.
 
 ---
 
