@@ -471,9 +471,7 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-The resulting binary in `target/x86_64-unknown-linux-musl/release/mie-decoder` is self-contained.
-
-For a Cargo.io publish (if applicable), bump version in `Cargo.toml`, tag, and `cargo publish`.
+The resulting binary in `target/x86_64-unknown-linux-musl/release/mie-decoder` is self-contained and ships as the deliverable artifact. **MIE-Decoder is not published to crates.io**; downstream consumers either grab the static-musl binary directly or build from a source checkout.
 
 ### Python package
 
@@ -482,9 +480,7 @@ poetry -C python check --strict --lock
 poetry -P python build
 ```
 
-This produces `python/dist/mie_decoder-<version>.tar.gz` and `mie_decoder-<version>-py3-none-any.whl`.
-
-For a PyPI publish, `poetry publish` (with credentials).
+This produces `python/dist/mie_decoder-<version>.tar.gz` and `mie_decoder-<version>-py3-none-any.whl`. **MIE-Decoder is not published to PyPI**; downstream consumers install from the built wheel/sdist or via `pip install -e ./python` from a source checkout.
 
 ### Version coordination
 
@@ -498,7 +494,7 @@ Tagging scheme:
 Bump versions when:
 
 - **Rust (`Cargo.toml`)** — any change to the public crate API, the CLI surface, or the on-disk output.
-- **Python (`python/pyproject.toml` and `python/src/mie_decoder/__init__.py::__version__`)** — same axes for the Python package. Keep `pyproject.toml` and `__init__.py` in lockstep; `poetry check --strict --lock` (run by the `python` CI cell on Linux/3.12) catches `pyproject.toml`/`poetry.lock` drift but does not verify the `__init__.py` constant.
+- **Python (`python/pyproject.toml` only)** — same axes for the Python package. `python/src/mie_decoder/__init__.py::__version__` reads from package metadata via `importlib.metadata.version("mie-decoder")`, so `pyproject.toml` is the single source of truth — no second file to keep in lockstep. `poetry check --strict --lock` catches `pyproject.toml`/`poetry.lock` drift in CI.
 
 Add a new top-of-file entry to `CHANGELOG.md` in the same commit that bumps the version. The CHANGELOG entry, the version bump, and any user-visible behavior changes all land together so a tag points at a coherent unit of release.
 

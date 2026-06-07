@@ -22,4 +22,17 @@ Version history:
     1.0.0 - Joint Rust + Python initial release. See CHANGELOG.md.
 """
 
-__version__ = "1.0.0"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__ = _pkg_version("mie-decoder")
+except PackageNotFoundError:
+    # Source-tree fallback: the package isn't installed (e.g. imported
+    # directly from a clone before `pip install -e ./python` or
+    # `poetry sync` has run). All standard usage paths install the
+    # package first, so this branch is rarely hit; the sentinel value
+    # makes it obvious that the version came from this fallback rather
+    # than from real package metadata.
+    __version__ = "0.0.0+source"
+
+del PackageNotFoundError, _pkg_version
