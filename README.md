@@ -253,6 +253,7 @@ config/
 
 docs/
 ├── ARCHITECTURE.md     Module diagram, sync strategy, data flow
+├── CONFIG-REFERENCE.md Normative TOML key reference (type / default / CLI override)
 ├── ERROR-CATALOG.md    Operator reference: exit codes, error classes, DDC codes
 ├── FIELDS.md           Complete binary field + CSV column reference
 ├── L1-REQ.md           Level 1 SHALL statements (system requirements)
