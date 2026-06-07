@@ -261,6 +261,7 @@ docs/
 ├── L3-REQ.md           Level 3 implementation obligations (incl. PY/RS)
 ├── MAINTAINER-GUIDE.md Repo layout, dev setup, workflows for adding things
 ├── USER-GUIDE.md       End-to-end CLI walkthrough for analysts and operators
+├── VENDOR-CSV-DIFFS.md Alignment statement vs DDC vendor CSV (column-by-column)
 ├── TRACE-MATRIX.md     Auto-generated trace matrix (L1 -> L2 -> L3 -> tests)
 ├── ROADMAP.md          Versioned roadmap
 └── diagrams/           PlantUML sources
