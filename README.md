@@ -252,15 +252,16 @@ config/
 └── default.toml     Fully commented reference configuration
 
 docs/
-├── ARCHITECTURE.md  Module diagram, sync strategy, data flow
-├── ERROR-CATALOG.md Operator reference: exit codes, error classes, DDC codes
-├── FIELDS.md        Complete binary field + CSV column reference
-├── L1-REQ.md        Level 1 SHALL statements (system requirements)
-├── L2-REQ.md        Level 2 architectural derivations
-├── L3-REQ.md        Level 3 implementation obligations (incl. PY/RS)
-├── TRACE-MATRIX.md  Auto-generated trace matrix (L1 -> L2 -> L3 -> tests)
-├── ROADMAP.md       Versioned roadmap
-└── diagrams/        PlantUML sources
+├── ARCHITECTURE.md     Module diagram, sync strategy, data flow
+├── ERROR-CATALOG.md    Operator reference: exit codes, error classes, DDC codes
+├── FIELDS.md           Complete binary field + CSV column reference
+├── L1-REQ.md           Level 1 SHALL statements (system requirements)
+├── L2-REQ.md           Level 2 architectural derivations
+├── L3-REQ.md           Level 3 implementation obligations (incl. PY/RS)
+├── MAINTAINER-GUIDE.md Repo layout, dev setup, workflows for adding things
+├── TRACE-MATRIX.md     Auto-generated trace matrix (L1 -> L2 -> L3 -> tests)
+├── ROADMAP.md          Versioned roadmap
+└── diagrams/           PlantUML sources
 
 tests/
 └── integration.rs   End-to-end tests with byte-exact fixtures
