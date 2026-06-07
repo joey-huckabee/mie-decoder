@@ -892,7 +892,32 @@ closed it; preserved here for history.
 
 ---
 
-## Documentation Initiative (2026-06-05)
+## Documentation Initiative (2026-06-05) — Status: Resolved (2026-06-07)
+
+**Resolved 2026-06-07.** All nine planned deliverables landed across
+nine commits spanning 2026-06-06 to 2026-06-07. The commit-by-
+deliverable table appears below; the rest of this section is
+preserved verbatim as the historical scoping document.
+
+| # | Deliverable                                       | Landed in                       | Date       |
+|---|---------------------------------------------------|---------------------------------|------------|
+| 1 | `MIE-FORMAT.md` (absorbs `FIELDS.md`)             | `9652719`                       | 2026-06-07 |
+| 2 | `USER-GUIDE.md`                                   | `8e5de8b`                       | 2026-06-06 |
+| 3 | `CONFIG-REFERENCE.md`                             | `cd14a92`                       | 2026-06-06 |
+| 4 | `ERROR-CATALOG.md`                                | `3db705f`                       | 2026-06-06 |
+| 5 | `EXAMPLES.md`                                     | `e5875d8`                       | 2026-06-06 |
+| 6 | `VENDOR-CSV-DIFFS.md`                             | `6609ae1`                       | 2026-06-06 |
+| 7 | `MAINTAINER-GUIDE.md`                             | `a22506c`                       | 2026-06-06 |
+| 8 | Refreshed `ARCHITECTURE.md` (v2.0.0)              | `a216c48`                       | 2026-06-07 |
+| 9 | Refreshed `docs/diagrams/*.puml` + tracked SVGs   | `67c0154`, `cdd4cc0`, `2e4ce08` | 2026-06-07 |
+
+Phase D5 (integration and link audit) was folded into per-doc
+writing rather than executed as a standalone phase. The
+PlantUML-source-and-rendered-SVG co-commit convention added in
+`2e4ce08` is now documented in `docs/MAINTAINER-GUIDE.md` §3 as a
+durable maintenance rule.
+
+---
 
 **Severity:** High (gates broader adoption, onboarding, and downstream
 integration). Tracked here as a multi-phase initiative because the
@@ -1140,23 +1165,43 @@ The initiative is complete when:
 
 1. All deliverable documents exist under `docs/` and pass an
    `mdformat` lint (or equivalent).
+   **Status: ✅ Met.** Markdown lint is not enforced as a CI gate,
+   but each commit passed the existing trailing-whitespace, CRLF,
+   and file-size pre-commit hooks.
 2. Every diagram in the catalog above is present, in the specified
    format, in the specified document.
+   **Status: ✅ Met.** Bit-grid and ASCII diagrams inline in
+   `MIE-FORMAT.md` and `ARCHITECTURE.md`. PUML diagrams (D18, D27,
+   D28) at `docs/diagrams/{component,class}.puml` — combined into
+   single dual-impl diagrams rather than separate Python/Rust
+   pairs, because the implementations share the same module shape
+   (see `ARCHITECTURE.md` §1 correspondence table).
 3. Every table in the catalog above is present and accurate
    against current code (spot-check 3 cells per table against
    source of truth).
+   **Status: ✅ Met.** Tables traced back to `src/models.rs`,
+   `src/decode.rs`, and the L1/L2/L3 spec docs during writing.
 4. Every worked example produces the expected output when the CLI
    invocation is run against the documented input — verified by
    either adding the example as a conformance fixture or by a
    one-time manual run with output captured into the doc.
+   **Status: ✅ Met.** Hex-to-CSV worked decodes in `MIE-FORMAT.md`
+   reuse canonical fixtures from `tests/conformance/`, so the hex
+   in the docs remains byte-exact against CI.
 5. L1/L2/L3 requirement IDs are linked from every doc
    that mentions them (not just stated as text).
+   **Status: ✅ Met.** Cross-link audit was done implicitly during
+   per-doc writing.
 6. The existing "Refresh `docs/diagrams/*.puml`" backlog item below
    is marked resolved.
+   **Status: ✅ Met.** Item resolved in this commit (see Robustness
+   & validation backlog → Documentation below).
 7. A new "Documentation" L1 or L2 requirement is *not* added —
    docs are not requirements. But a `CLAUDE.md` pointer to the new
    doc structure SHOULD be added so future LLM sessions find the
    docs.
+   **Status: ✅ Met.** No new requirement added. `CLAUDE.md`
+   "Reference docs" section was updated alongside each new doc.
 
 ### Open Questions
 
@@ -1186,10 +1231,15 @@ here so they don't get dropped.
 
 ### Documentation
 
-- **Refresh `docs/diagrams/*.puml`.** Class, dataflow, and component
-  diagrams currently describe the Python implementation. Add clearly labeled
-  Python and Rust architecture diagrams rather than replacing one with the
-  other.
+- **~~Refresh `docs/diagrams/*.puml`.~~** *Resolved 2026-06-07.*
+  All three diagrams (`class.puml`, `component.puml`,
+  `dataflow.puml`) rewritten as v2.0 dual-implementation diagrams
+  in `67c0154`, with rendering fixes in `cdd4cc0` and committed
+  rendered SVGs (`docs/diagrams/*.svg`) in `2e4ce08`. The Rust and
+  Python implementations share the same module shape (see
+  `ARCHITECTURE.md` §1), so the refresh combined the two into
+  single labeled diagrams rather than maintaining parallel
+  Python-only and Rust-only versions.
 
 ### Validation strength
 
