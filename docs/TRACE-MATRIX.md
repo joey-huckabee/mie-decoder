@@ -56,7 +56,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-OUT-001 | L2-DEC-014, L2-ERR-007, L2-ERR-010, L2-WRT-001, L2-WRT-002, L2-WRT-003, L2-WRT-004, L2-WRT-007, L2-WRT-011, L2-WRT-012, L2-WRT-013 | Partially Implemented |
+| L1-OUT-001 | L2-DEC-014, L2-ERR-007, L2-ERR-010, L2-WRT-001, L2-WRT-002, L2-WRT-003, L2-WRT-004, L2-WRT-007, L2-WRT-011, L2-WRT-012, L2-WRT-013 | Implemented |
 | L1-OUT-002 | L2-WRT-014, L2-WRT-015, L2-WRT-017 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
@@ -64,16 +64,16 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L2-DEC-014 | _(none)_ | `python/tests/test_models.py::test_format_truncates_out_of_range_microseconds`<br>`src/models.rs::irig_format_truncates_out_of_range_microseconds` | Implemented |
-| L2-ERR-007 | _(none)_ | _(TBD)_ | Draft |
+| L2-ERR-007 | _(none)_ | `python/tests/test_e2e.py::test_csv_first_row_fields` | Implemented |
 | L2-ERR-010 | _(none)_ | `python/tests/test_models.py::test_normal_message_error_label` | Implemented |
 | L2-WRT-001 | L3-PY-004, L3-PY-012, L3-RS-004, L3-RS-012 | `python/tests/test_e2e.py::test_csv_header`<br>`python/tests/test_e2e.py::test_csv_row_count`<br>`python/tests/test_e2e.py::test_messages_to_dataframe`<br>`python/tests/test_e2e.py::test_write_csv_returns_count`<br>`src/writer.rs::header_present`<br>`src/writer.rs::row_format_matches_python_layout`<br>`tests/integration.rs::csv_output_has_one_row_per_message_plus_header` | Implemented |
 | L2-WRT-002 | _(none)_ | `python/tests/test_e2e.py::test_csv_data_word_padding`<br>`src/writer.rs::data_words_padded_to_32` | Implemented |
 | L2-WRT-003 | _(none)_ | `python/tests/test_e2e.py::test_csv_first_row_fields`<br>`src/writer.rs::row_format_matches_python_layout` | Implemented |
-| L2-WRT-004 | _(none)_ | _(TBD)_ | Draft |
+| L2-WRT-004 | _(none)_ | `python/tests/test_e2e.py::test_csv_first_row_fields` | Implemented |
 | L2-WRT-007 | _(none)_ | `python/tests/test_e2e.py::test_cli_decode_stdout` | Implemented |
 | L2-WRT-011 | _(none)_ | `python/tests/test_decode.py::test_format_string`<br>`python/tests/test_models.py::test_format`<br>`python/tests/test_models.py::test_format_zero_padded`<br>`src/models.rs::irig_format_matches_python_layout` | Implemented |
 | L2-WRT-012 | _(none)_ | `python/tests/test_e2e.py::test_csv_to_file` | Implemented |
-| L2-WRT-013 | _(none)_ | _(TBD)_ | Draft |
+| L2-WRT-013 | _(none)_ | `python/tests/test_e2e.py::test_csv_first_row_fields`<br>`python/tests/test_e2e.py::test_csv_header` | Implemented |
 | L2-WRT-014 | _(none)_ | `python/tests/test_e2e.py::test_paths_refer_to_same_file_distinct`<br>`python/tests/test_e2e.py::test_paths_refer_to_same_file_existing`<br>`python/tests/test_e2e.py::test_write_csv_rejects_input_output_collision`<br>`python/tests/test_e2e.py::test_write_csv_split_rejects_input_output_collision`<br>`src/writer.rs::paths_refer_to_same_file_existing`<br>`src/writer.rs::paths_refer_to_same_file_nonexistent_output_under_same_parent`<br>`src/writer.rs::write_csv_rejects_input_output_collision`<br>`src/writer.rs::write_csv_split_rejects_input_output_collision` | Implemented |
 | L2-WRT-015 | L3-WRT-001 | `python/tests/test_e2e.py::test_write_csv_to_file_cleans_up_temp`<br>`src/writer.rs::atomic_commit_renames_temp_over_destination`<br>`src/writer.rs::atomic_drop_without_commit_unlinks_temp_and_leaves_destination`<br>`src/writer.rs::make_temp_path_lives_next_to_destination` | Implemented |
 | L2-WRT-017 | _(none)_ | `python/tests/test_e2e.py::test_write_csv_overwrites_by_default`<br>`python/tests/test_e2e.py::test_write_csv_rejects_clobber_with_no_clobber`<br>`python/tests/test_e2e.py::test_write_csv_split_no_clobber_checks_errors_file`<br>`src/writer.rs::write_csv_overwrites_by_default`<br>`src/writer.rs::write_csv_rejects_clobber_when_no_clobber_set`<br>`src/writer.rs::write_csv_split_no_clobber_checks_errors_file_too` | Implemented |
@@ -260,7 +260,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1-EXIT-002 | _(none)_ | Implemented |
 | L1-EXIT-003 | _(none)_ | Implemented |
 | L1-EXIT-004 | L2-WRT-016 | Implemented |
-| L1-EXIT-005 | _(none)_ | Draft |
+| L1-EXIT-005 | _(none)_ | Implemented |
 | L1-EXIT-006 | L2-RDR-020 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
@@ -304,22 +304,22 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | LOG | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MODE | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | SYN | 2 | 25 | 0 | 19 | 0 | 19 | 0 |
-| ERR | 1 | 10 | 0 | 7 | 0 | 7 | 0 |
+| ERR | 1 | 10 | 0 | 8 | 0 | 8 | 0 |
 | CFG | 1 | 9 | 0 | 9 | 0 | 9 | 0 |
 | CONF | 1 | 5 | 0 | 0 | 0 | 3 | 0 |
 | EXIT | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | RDR | 0 | 15 | 0 | 10 | 0 | 11 | 0 |
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
-| WRT | 0 | 13 | 2 | 11 | 2 | 11 | 2 |
+| WRT | 0 | 13 | 2 | 13 | 2 | 13 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
-| **Total** | **24** | **103** | **26** | **80** | **13** | **84** | **25** |
+| **Total** | **24** | **103** | **26** | **83** | **13** | **87** | **25** |
 
-**Tested by at least one test marker**: 93 of 129 (72.1%).
+**Tested by at least one test marker**: 96 of 129 (74.4%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 109 of 129 (84.5%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 112 of 129 (86.8%).
 
 ### Orphan check
 

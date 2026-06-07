@@ -174,6 +174,7 @@ class TestCsvWriter:
     """Integration tests for CSV output."""
 
     @pytest.mark.requirement("L2-WRT-001")
+    @pytest.mark.requirement("L2-WRT-013")
     def test_csv_header(self, tmp_mie_file: Path) -> None:
         """CSV output should start with the correct header row."""
         buf = io.StringIO()
@@ -193,6 +194,9 @@ class TestCsvWriter:
         assert len(lines) == 4  # header + 3 records
 
     @pytest.mark.requirement("L2-WRT-003")
+    @pytest.mark.requirement("L2-WRT-004")
+    @pytest.mark.requirement("L2-WRT-013")
+    @pytest.mark.requirement("L2-ERR-007")
     def test_csv_first_row_fields(self, tmp_mie_file: Path) -> None:
         """First CSV data row should match validated vendor output."""
         buf = io.StringIO()
@@ -483,6 +487,59 @@ class TestAtomicWriteSafety:
 
 class TestCliEndToEnd:
     """End-to-end CLI tests."""
+
+    @pytest.mark.requirement("L1-EXIT-005")
+    def test_cli_emits_exit_class_summary_on_complete_decode(
+        self,
+        tmp_mie_file: Path,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """L1-EXIT-005: decode SHALL log a one-line exit-class summary
+        naming one of {complete, partial-recovered, partial-unrecoverable,
+        no-records}. This case exercises the `complete` branch."""
+        from mie_decoder.cli import main
+        import logging
+
+        out = tmp_path / "summary.csv"
+        with caplog.at_level(logging.INFO, logger="mie_decoder.cli"):
+            rc = main(["--log-level", "INFO", "decode", str(tmp_mie_file), "-o", str(out)])
+        assert rc == 0
+        summary_lines = [
+            r.getMessage() for r in caplog.records
+            if "decode exit class:" in r.getMessage()
+        ]
+        assert summary_lines, (
+            "expected at least one `decode exit class:` summary line; "
+            f"got {[r.getMessage() for r in caplog.records]}"
+        )
+        assert any("complete" in line for line in summary_lines), (
+            f"expected `complete` in summary; got {summary_lines}"
+        )
+
+    @pytest.mark.requirement("L1-EXIT-005")
+    def test_cli_emits_no_records_exit_class_summary(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """L1-EXIT-005: the `no-records` exit-class summary branch."""
+        from mie_decoder.cli import main
+        import logging
+
+        bad = tmp_path / "garbage.bin"
+        bad.write_bytes(b"\xff" * 1024)
+        out = tmp_path / "summary.csv"
+        with caplog.at_level(logging.INFO, logger="mie_decoder.cli"):
+            rc = main(["--log-level", "INFO", "decode", str(bad), "-o", str(out)])
+        assert rc == 2
+        summary_lines = [
+            r.getMessage() for r in caplog.records
+            if "decode exit class:" in r.getMessage()
+        ]
+        assert any("no-records" in line for line in summary_lines), (
+            f"expected `no-records` in summary; got {summary_lines}"
+        )
 
     @pytest.mark.requirement("L2-WRT-007")
     def test_cli_decode_stdout(self, tmp_mie_file: Path) -> None:
