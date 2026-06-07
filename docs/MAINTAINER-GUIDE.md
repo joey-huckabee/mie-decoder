@@ -437,7 +437,7 @@ The Rust and Python deployment targets are Linux (`x86_64-unknown-linux-musl` fo
 
 The `diagrams` job pins PlantUML to the version that produced the committed SVGs (read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg` to find it). Bumping that pin generally reflows every diagram and requires a matching local re-render + commit of all `*.svg` files in the same PR.
 
-Pre-commit hooks (set up locally via `.git/hooks/pre-commit`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, Cargo.lock parity, `cargo fmt --check`, `cargo clippy`, `cargo test`. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs — the `diagrams` CI job is your safety net there.
+Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs — the `diagrams` CI job is your safety net there.
 
 ---
 

@@ -16,12 +16,16 @@
 #     6. Cargo.lock parity with Cargo.toml
 #     7. shellcheck on .githooks/* and scripts/* (if shellcheck installed)
 #
+#   Trace-matrix parity (runs if Rust source, Python tests, the spec
+#   docs, the matrix itself, or the generator are staged):
+#     8. python scripts/build-trace-matrix.py --check
+#
 #   Rust-only (skipped if no .rs / .toml staged):
-#     8. cargo fmt --check
-#     9. cargo clippy --all-targets -- -D warnings
-#    10. cargo test --all-targets
-#    11. dbg!() scan in staged .rs
-#    12. unsafe blocks require `// SAFETY:` comment
+#     9. cargo fmt --check
+#    10. cargo clippy --all-targets -- -D warnings
+#    11. cargo test --all-targets
+#    12. dbg!() scan in staged .rs
+#    13. unsafe blocks require `// SAFETY:` comment
 
 set -euo pipefail
 
@@ -148,6 +152,28 @@ if command -v shellcheck >/dev/null 2>&1; then
     fi
 fi
 
+# ── 8. Trace matrix parity ────────────────────────────────────────────
+# docs/TRACE-MATRIX.md is regenerated from /// Requirements: doc
+# comments in Rust source and @pytest.mark.requirement markers in
+# Python tests, layered over the L1/L2/L3 spec docs. CI gates on
+# `python scripts/build-trace-matrix.py --check`; running the same
+# check here turns the "push, CI fails, regen, push again" loop into
+# "commit fails, regen, retry commit." Triggered when any input to the
+# generator is staged.
+need_trace=0
+for file in "${STAGED[@]}"; do
+    case "$file" in
+        *.rs|python/tests/*.py|docs/L1-REQ.md|docs/L2-REQ.md|docs/L3-REQ.md|docs/TRACE-MATRIX.md|scripts/build-trace-matrix.py)
+            need_trace=1; break ;;
+    esac
+done
+if (( need_trace == 1 )); then
+    step "python scripts/build-trace-matrix.py --check"
+    if ! python scripts/build-trace-matrix.py --check; then
+        fail "trace matrix out of date — run \`python scripts/build-trace-matrix.py\` then stage docs/TRACE-MATRIX.md"
+    fi
+fi
+
 # ── Skip cargo checks if no Rust/TOML changes ─────────────────────────
 need_cargo=0
 for file in "${STAGED[@]}"; do
@@ -160,25 +186,25 @@ if (( need_cargo == 0 )); then
     exit 0
 fi
 
-# ── 8. cargo fmt --check ──────────────────────────────────────────────
+# ── 9. cargo fmt --check ──────────────────────────────────────────────
 step "cargo fmt --check"
 if ! cargo fmt --check; then
     fail "formatting issues — run 'cargo fmt' to fix, then re-stage"
 fi
 
-# ── 9. cargo clippy --all-targets -- -D warnings ──────────────────────
+# ── 10. cargo clippy --all-targets -- -D warnings ─────────────────────
 step "cargo clippy --all-targets -- -D warnings"
 if ! cargo clippy --all-targets -- -D warnings; then
     fail "clippy lint failed — fix warnings or justify with #[allow(...)]"
 fi
 
-# ── 10. cargo test ────────────────────────────────────────────────────
+# ── 11. cargo test ────────────────────────────────────────────────────
 step "cargo test --all-targets"
 if ! cargo test --all-targets; then
     fail "tests failed"
 fi
 
-# ── 11. dbg!() scan ───────────────────────────────────────────────────
+# ── 12. dbg!() scan ───────────────────────────────────────────────────
 step "scanning staged .rs files for dbg!()"
 dbg_files=()
 for file in "${STAGED[@]}"; do
@@ -195,7 +221,7 @@ if (( ${#dbg_files[@]} > 0 )); then
     fail "dbg!() found in staged files"
 fi
 
-# ── 12. unsafe blocks require // SAFETY: ──────────────────────────────
+# ── 13. unsafe blocks require // SAFETY: ──────────────────────────────
 # Each `unsafe {` or `unsafe fn` in a staged file should be preceded by
 # a comment line containing `SAFETY:` within the previous 3 lines.
 # Catches new unsafe code added without justification.
