@@ -1204,20 +1204,20 @@ here so they don't get dropped.
   defeated by two consecutive same-shape corruptions. An N-record
   (configurable) look-ahead would catch a wider class of failures at the
   cost of small additional per-record reads.
-- **T/R consistency check during decode.** For Type Word 0x02 (BC→RT),
-  the Command Word direction bit should be Receive; for 0x04, Transmit.
-  Today this is used during auto-detect but not enforced afterwards.
-  Adding it as a sixth validation check would catch additional corruption
-  modes.
-- **Type Word ↔ Command Word capacity consistency.** A record whose
-  Type Word claims `word_count = N` but whose Command Word claims
-  `data_word_count = M` such that the implied payload can't fit in
-  `N` words is internally inconsistent. Today this is mitigated by
-  bounding payload reads to the Type Word's record extent (so we
-  don't leak past the record), but the resulting CSV row has empty
-  data words rather than being flagged as malformed. A future
-  validation pass could detect the inconsistency in both lenient
-  mode (log + skip) and strict mode (raise `MieValidationError`).
+- **~~T/R consistency check during decode.~~** *Resolved.* Landed as
+  L2-SYN-020 (BC→RT requires Cmd direction = Receive) and L2-SYN-021
+  (RT→BC requires Cmd direction = Transmit) in `docs/L2-REQ.md`,
+  implemented in both crates. Strict mode raises a record error;
+  lenient mode logs WARN and skips the record. Verified by the
+  `invariant-direction-mismatch` conformance fixture.
+- **~~Type Word ↔ Command Word capacity consistency.~~** *Resolved.*
+  Landed as L2-SYN-022 in `docs/L2-REQ.md`, implemented in both
+  crates. Records whose Type Word `word_count` is too small for the
+  declared Command Word payload are rejected (strict: record error;
+  lenient: WARN + skip). The structured "which invariant fired"
+  enum is exposed via `WhichInvariant` (Rust) /
+  `WhichInvariant` (Python) so callers can branch on the specific
+  failure rather than parsing a string detail.
 - **Header-detection look-ahead depth.** `find_first_record` shares the
   same two-record look-ahead as continuous validation. For files with
   deeply embedded headers that contain valid-looking byte patterns, an
@@ -1259,30 +1259,29 @@ here so they don't get dropped.
 
 ### Output cosmetics
 
-- **Defer `decode` output-file creation until after first record
-  validates.** Today `write_csv(messages, Some(path))` opens the
-  output file and writes the CSV header BEFORE the iterator yields
-  its first item. If the very first item is an error (e.g.
-  `MieError::NoValidRecords` on a non-MIE input), the program
-  correctly returns exit 1 and prints a clear error, but a
-  header-only CSV is still left on disk. Cosmetic, not a correctness
-  bug, but mildly confusing. Fix: peek the iterator (or capture the
-  first item) before opening the output file; on Err, return without
-  touching the filesystem. Same applies to `write_csv_split`.
+- **~~Defer `decode` output-file creation until after first record
+  validates.~~** *Resolved.* The header-only-CSV-on-error symptom no
+  longer occurs: per L2-WRT-015 the writer creates a temporary file
+  (`<dest>.mie-decoder.tmp.<pid>`) and renames it atomically over
+  the destination only on success. Per L2-WRT-016 the temp file is
+  unlinked on the default failure path. The destination is therefore
+  never written until decoding completes, so a non-MIE input
+  produces exit 2 + clean filesystem state with no half-written
+  output. `--allow-partial` is the explicit opt-in for preserving
+  the temp as `<dest>.partial`.
 
 ### Validation strength (cont.)
 
-- **Reject pathological-regular inputs that pass the 5-check
-  heuristic.** Surfaced while writing the no-valid-records regression
-  test: a file padded with 0x20 (ASCII space) bytes parses as a
-  contiguous stream of "valid" SPURIOUS_DATA records. The byte pair
-  `0x20 0x20` is a Type Word with `message_type = 0x20`
-  (SPURIOUS_DATA, valid), `word_count = 32` (valid), and the
-  two-record look-ahead sees more identical bytes ahead and accepts
-  them too. Possible mitigations: detect homogeneous byte patterns
-  in the first N records, require some entropy in payload bytes, or
-  add a stronger initial header-detection heuristic for the file
-  start specifically.
+- **~~Reject pathological-regular inputs that pass the 5-check
+  heuristic.~~** *Resolved.* Landed as L2-SYN-018 in
+  `docs/L2-REQ.md` and implemented in commit `80d0884`. After
+  header detection accepts a candidate, the reader compares the
+  first N=4 consecutive candidate-sized chunks for byte identity in
+  non-timestamp positions; on a match it surfaces
+  `MieError::HomogeneousPayload` / `MieHomogeneousPayloadError` and
+  the CLI exits 2 (same exit-code class as NoValidRecords). The
+  `homogeneous-payload` conformance fixture verifies cross-impl
+  agreement on a 1 KB 0x20-fill input.
 
 ### Diagnostics
 
