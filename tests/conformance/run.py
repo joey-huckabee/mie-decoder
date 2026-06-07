@@ -18,6 +18,54 @@ ROOT = Path(__file__).resolve().parents[2]
 SUITE = Path(__file__).resolve().parent
 MANIFEST = SUITE / "manifest.json"
 
+# Closed schema for case objects. ``tests/conformance/README.md``
+# specifies that unknown fields SHALL be rejected by the runner so a
+# typo (e.g. ``rust_arg`` instead of ``rust_args``) cannot silently
+# disable a per-case override. Keep this set in lockstep with the
+# schema table in the README.
+ALLOWED_CASE_FIELDS: frozenset[str] = frozenset({
+    "name",
+    "input",
+    "expected",
+    "expected_errors",
+    "config",
+    "mode",
+    "rust_args",
+    "python_args",
+    "expected_stderr_contains",
+    "expected_exit",
+})
+
+
+def validate_case_schema(case: Any, index: int) -> None:
+    """Reject unknown manifest fields with a clear, actionable error.
+
+    The README pins this as a runner contract — a misspelled field
+    name would otherwise be silently ignored (Python dict access via
+    ``.get(..., default)`` swallows the typo), so the case would run
+    with default behavior instead of the intended override. This
+    function fails fast on the first malformed case; rerun after
+    fixing to see any subsequent ones.
+    """
+    if not isinstance(case, dict):
+        raise RuntimeError(
+            f"manifest case at index {index}: expected an object, "
+            f"got {type(case).__name__}"
+        )
+    name = case.get("name") if isinstance(case.get("name"), str) else None
+    label = repr(name) if name else f"at index {index}"
+    if "name" not in case:
+        raise RuntimeError(f"manifest case {label}: missing required 'name' field")
+    if "input" not in case:
+        raise RuntimeError(f"manifest case {label}: missing required 'input' field")
+    unknown = sorted(set(case) - ALLOWED_CASE_FIELDS)
+    if unknown:
+        raise RuntimeError(
+            f"manifest case {label}: unknown field(s) {unknown}. "
+            f"Allowed fields are {sorted(ALLOWED_CASE_FIELDS)}. "
+            "Check tests/conformance/README.md for the schema."
+        )
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -276,10 +324,18 @@ def require_equal(
 
 def main() -> int:
     args = parse_args()
+
+    # Load + validate the manifest BEFORE prepare_rust_bin /
+    # prepare_python_bin so a malformed manifest fails fast with a
+    # schema error instead of getting masked behind a slow Rust
+    # build or a Python interpreter probe failure.
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    for index, case in enumerate(manifest["cases"]):
+        validate_case_schema(case, index)
+
     prepare_rust_bin(args)
     prepare_python_bin(args)
 
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     passed = 0
     if args.temp_root:
         args.temp_root.mkdir(parents=True, exist_ok=True)
