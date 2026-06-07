@@ -33,7 +33,9 @@ cargo build --release --target x86_64-unknown-linux-musl
 # Test
 cargo test                                                     # All tests
 cargo test --lib                                               # Unit tests only
-cargo test --test integration                                  # Integration only
+cargo test --test integration                                  # Integration only (library API)
+cargo test --test cli                                          # CLI acceptance only (spawns built binary)
+cargo test --test cli -- --nocapture                           # CLI suite + show subprocess stderr
 cargo test --test integration -- multi_record_stream           # Single integration test
 cargo test config::tests::parses_default_toml_from_disk        # Single unit test
 

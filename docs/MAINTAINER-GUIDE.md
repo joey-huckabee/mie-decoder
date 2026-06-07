@@ -240,6 +240,24 @@ If you forget, CI's `trace-matrix` job (`python scripts/build-trace-matrix.py --
 
 ## 5. Adding a test
 
+### Test pyramid
+
+The project uses four test tiers, narrowest scope at the bottom:
+
+| Tier                  | Subject                                  | Location                            | Run with                                         | Cross-platform |
+|-----------------------|------------------------------------------|-------------------------------------|--------------------------------------------------|----------------|
+| **Unit**              | one function / one module, in-process    | `src/<module>.rs` `#[cfg(test)] mod tests` (Rust); `python/tests/test_*.py` (Python) | `cargo test --lib` / `pytest`                    | Linux + Windows |
+| **Integration**       | multiple modules via the library API, in-process | `tests/integration.rs` (Rust); `python/tests/test_integration_*.py` (Python) | `cargo test --test integration` / `pytest`       | Linux + Windows |
+| **CLI acceptance**    | the **built binary** as a subprocess — exit codes, stdout, stderr, filesystem effects | `tests/cli.rs` (Rust)               | `cargo test --test cli`                          | Linux + Windows |
+| **Conformance**       | byte-exact cross-impl equivalence (Rust ↔ Python CLI) | `tests/conformance/`                | `python tests/conformance/run.py`                | Linux + Windows |
+
+The two upper tiers both spawn the actual binary, but they serve different purposes:
+
+- **CLI acceptance** (`tests/cli.rs`) is Rust-only. It covers behaviors that conformance can't or doesn't: `--no-clobber`, input/output collision rejection, `--include-*` filter syntax (a Rust-only axis per L3-RS-010), `--help` / `--version`, exit-class taxonomy, and other CLI surfaces where stdout/stderr/exit-code semantics matter more than CSV byte-equality.
+- **Conformance** (`tests/conformance/`) holds Rust and Python to byte-identical CSV output (or matching exit code for negative cases). Anything that affects the CSV contract should land here so both implementations stay aligned.
+
+When you add a behavior, ask: **does this need to behave the same in Python?** If yes, add it to conformance. If no (Rust-only feature, atomic-write artifact, exit-class taxonomy detail), add it to `tests/cli.rs`. Both tiers run on Linux and Windows automatically via `cargo test --all-targets`.
+
 ### Python
 
 Tests live in `python/tests/test_*.py`. Use the synthetic-record builders in `python/tests/conftest.py` if you need varied IRIG timestamps or errored / SPURIOUS records:
@@ -250,13 +268,33 @@ Tests live in `python/tests/test_*.py`. Use the synthetic-record builders in `py
 
 For end-to-end CLI tests, use `pytest.LogCaptureFixture` to assert on log messages, e.g. the `decode exit class:` summary line.
 
-### Rust
+### Rust unit and integration
 
-Unit tests live next to the code they test in `src/<module>.rs` under `#[cfg(test)] mod tests { ... }`. Integration tests live in `tests/integration.rs`.
+Unit tests live next to the code they test in `src/<module>.rs` under `#[cfg(test)] mod tests { ... }`. Library-level integration tests live in `tests/integration.rs`.
 
 Use the existing `TempFile` helper at the bottom of `src/reader.rs` (private) or `tests/integration.rs` (also private but copy-paste-friendly). For new variants, construct minimal byte sequences from the canonical `RECORD_RT15_SA11_RCV` shape.
 
 Always tag new tests with `/// Requirements:` so the trace matrix credits them.
+
+### Rust CLI acceptance
+
+CLI acceptance tests in `tests/cli.rs` spawn the actual built binary located via `env!("CARGO_BIN_EXE_mie-decoder")` (Cargo populates this per test target and appends `.exe` on Windows automatically — no per-OS code paths needed) and use `std::process::Command::output()` to invoke it. Style conventions:
+
+- Use the `TempDir` helper in the same file: per-test scratch directories under `std::env::temp_dir()`, keyed by pid + atomic counter, removed on drop. Tests can then use plain `dir/input.mie`, `dir/output.csv` paths.
+- Use the `run([...])` helper rather than `Command::new` directly. It echoes any captured stderr into test output so a Windows CI failure can be triaged from the runner log without re-running locally.
+- Assert on exit code via the `exit_code(&out)` helper, on stdout/stderr via `String::from_utf8_lossy` + `.contains(...)`, and on filesystem effects with `std::fs::read[_to_string]`.
+- Don't byte-compare CSV output — that's conformance's job. Acceptance tests should assert on coarser invariants (header row exists, row count >= 2, sentinel preserved when `--no-clobber` refused).
+- Cross-platform considerations: never hard-code `/` or `\\` in paths (use `PathBuf::join` and pass paths as `OsStr`); never assert on `\n` vs `\r\n` (use substring `.contains()` on stdout/stderr).
+
+Always tag new tests with `/// Requirements:` so the trace matrix credits them.
+
+Run locally with:
+
+```bash
+cargo test --test cli                  # CLI suite only
+cargo test --test cli -- --nocapture   # also show stdout / stderr from the spawned binary
+cargo test --all-targets               # unit + integration + cli together (what CI runs)
+```
 
 ---
 
@@ -389,7 +427,7 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 
 | Job | What it gates | Platforms | Failure cost |
 |-----|---------------|-----------|--------------|
-| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets`; `cargo cov-ci` (70% line + region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
+| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `tests/integration.rs` + `tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (70% line + region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
 | `python` | `poetry sync` + `poetry run pytest`; `poetry check --strict --lock` + `poetry build` Linux/3.12-only | 5 versions × Linux (3.10–3.14), 2 versions × Windows (3.12, 3.14) | Block merge |
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
