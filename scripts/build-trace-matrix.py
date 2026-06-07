@@ -46,9 +46,17 @@ L1_HEADER = re.compile(r"^###\s+(L1-[A-Z]+-\d+)\s*$", re.MULTILINE)
 L2_HEADER = re.compile(r"^####\s+(L2-[A-Z]+-\d+)\s*$", re.MULTILINE)
 L2_PARENT_LINE = re.compile(r"^\*\*Parent\*\*:\s+(L1-[A-Z]+-\d+)\s*$", re.MULTILINE)
 L3_LINE = re.compile(
-    r"^\*\*L3-([A-Z]+)-(\d+)\*\*\s+·\s+Parent:\s+(L2-[A-Z]+-\d+)",
+    r"^\*\*L3-([A-Z]+)-(\d+)\*\*\s+·\s+Parent:\s+(L2-[A-Z]+-\d+)\s+·\s+Verification:\s+([^\n]+)",
     re.MULTILINE,
 )
+L1_L2_VM_LINE = re.compile(
+    r"^\*\*Verification Method\*\*:\s+([^\n]+)$",
+    re.MULTILINE,
+)
+# Single-letter DO-178 verification codes embedded in either the
+# free-form L1/L2 "Test (T), Inspection (I)" phrasing or the compact
+# L3 "T, I" form. Each letter sits at a word boundary in both shapes.
+_METHOD_LETTER = re.compile(r"\b([TIAD])\b")
 
 # Categories in declaration order. L1 categories appear in L1-REQ.md;
 # L2-only categories (RDR/MSG/WRT/FLT) have no L1 parent of their own —
@@ -84,6 +92,29 @@ def parse_l1_ids(doc: str) -> list[str]:
     return L1_HEADER.findall(doc)
 
 
+def _extract_methods(text: str) -> set[str]:
+    """Extract DO-178 verification method letters from free-form text.
+
+    Handles both the L1/L2 phrasing ("Test (T), Inspection (I)") and
+    the L3 compact form ("T, I"). Returns a set of single-letter codes
+    drawn from ``{T, I, A, D}``.
+    """
+    return set(_METHOD_LETTER.findall(text))
+
+
+def parse_l1_methods(doc: str) -> dict[str, set[str]]:
+    """Return mapping L1-id -> set of verification-method letters."""
+    result: dict[str, set[str]] = {}
+    blocks = re.split(r"^###\s+(L1-[A-Z]+-\d+)\s*$", doc, flags=re.MULTILINE)
+    for i in range(1, len(blocks), 2):
+        l1_id = blocks[i]
+        body = blocks[i + 1] if i + 1 < len(blocks) else ""
+        m = L1_L2_VM_LINE.search(body)
+        if m:
+            result[l1_id] = _extract_methods(m.group(1))
+    return result
+
+
 def parse_l2_parent_map(doc: str) -> dict[str, str]:
     """Return mapping L2-id -> L1-parent-id from L2-REQ.md."""
     result: dict[str, str] = {}
@@ -97,12 +128,34 @@ def parse_l2_parent_map(doc: str) -> dict[str, str]:
     return result
 
 
+def parse_l2_methods(doc: str) -> dict[str, set[str]]:
+    """Return mapping L2-id -> set of verification-method letters."""
+    result: dict[str, set[str]] = {}
+    blocks = re.split(r"^####\s+(L2-[A-Z]+-\d+)\s*$", doc, flags=re.MULTILINE)
+    for i in range(1, len(blocks), 2):
+        l2_id = blocks[i]
+        body = blocks[i + 1] if i + 1 < len(blocks) else ""
+        m = L1_L2_VM_LINE.search(body)
+        if m:
+            result[l2_id] = _extract_methods(m.group(1))
+    return result
+
+
 def parse_l3_parent_map(doc: str) -> dict[str, str]:
     """Return mapping L3-id -> L2-parent-id from L3-REQ.md."""
     result: dict[str, str] = {}
     for match in L3_LINE.finditer(doc):
-        cat, num, parent = match.groups()
+        cat, num, parent, _verification = match.groups()
         result[f"L3-{cat}-{num}"] = parent
+    return result
+
+
+def parse_l3_methods(doc: str) -> dict[str, set[str]]:
+    """Return mapping L3-id -> set of verification-method letters."""
+    result: dict[str, set[str]] = {}
+    for match in L3_LINE.finditer(doc):
+        cat, num, _parent, verification = match.groups()
+        result[f"L3-{cat}-{num}"] = _extract_methods(verification)
     return result
 
 
@@ -226,8 +279,11 @@ def build_matrix() -> str:
     l3_doc = L3_DOC.read_text(encoding="utf-8")
 
     l1_ids = parse_l1_ids(l1_doc)
+    l1_methods = parse_l1_methods(l1_doc)
     l2_parent = parse_l2_parent_map(l2_doc)
+    l2_methods = parse_l2_methods(l2_doc)
     l3_parent = parse_l3_parent_map(l3_doc)
+    l3_methods = parse_l3_methods(l3_doc)
     test_markers = collect_all_markers()
 
     l1_to_l2: dict[str, list[str]] = defaultdict(list)
@@ -265,19 +321,21 @@ def build_matrix() -> str:
         "docs `L1-REQ.md`, `L2-REQ.md`, and `L3-REQ.md` carry only spec content."
     )
     lines.append("")
-    lines.append("* **Draft** — no verification artifact anywhere in the subtree.")
+    lines.append("* **Draft** — Test verification is required but no test marker found.")
     lines.append(
-        "* **Partially Implemented** — at least one child has artifacts but"
-        " not all are Implemented; or the row itself has direct artifacts but"
-        " its children include Drafts."
+        "* **Implemented** — at least one test marker exists (leaf), or every"
+        " child rolls up to Implemented."
     )
     lines.append(
-        "* **Implemented** — every child rolls up to Implemented (or, for a"
-        " leaf, the row has at least one direct verification artifact)."
+        "* **Implemented (I)** / **(A)** / **(D)** — the spec declares"
+        " verification by Inspection / Analysis / Demonstration only;"
+        " satisfied by spec review without a test marker. Combinations"
+        " appear as e.g. ``Implemented (A+I)``."
     )
     lines.append(
-        "* **Verified** — *(future)* every required Verification Method"
-        " category has at least one corresponding artifact."
+        "* **Partially Implemented** — at least one child is Implemented but"
+        " others are Draft, or the row itself has direct artifacts but its"
+        " children include Drafts."
     )
     lines.append("")
     lines.append("---")
@@ -298,11 +356,13 @@ def build_matrix() -> str:
             children = l1_to_l2.get(l1_id, [])
             children_str = ", ".join(children) if children else "_(none)_"
             child_statuses = [
-                _l2_status(l2_id, l2_to_l3, test_markers) for l2_id in children
+                _l2_status(l2_id, l2_to_l3, test_markers, l2_methods, l3_methods)
+                for l2_id in children
             ]
             status = compute_status(
                 has_direct_artifacts=bool(test_markers.get(l1_id)),
                 children_statuses=child_statuses,
+                verification_methods=l1_methods.get(l1_id),
             )
             lines.append(f"| {l1_id} | {children_str} | {status} |")
         lines.append("")
@@ -327,7 +387,7 @@ def build_matrix() -> str:
             artifacts_str = (
                 "<br>".join(f"`{a}`" for a in artifacts) if artifacts else "_(TBD)_"
             )
-            status = _l2_status(l2_id, l2_to_l3, test_markers)
+            status = _l2_status(l2_id, l2_to_l3, test_markers, l2_methods, l3_methods)
             lines.append(f"| {l2_id} | {children_str} | {artifacts_str} | {status} |")
         lines.append("")
 
@@ -335,36 +395,68 @@ def build_matrix() -> str:
     lines.append("")
     lines.append("## Coverage summary")
     lines.append("")
-    lines.append("| Category | L1 | L2 | L3 | L2s with tests | L3s with tests |")
-    lines.append("|----------|----|----|-----|----------------|----------------|")
+    lines.append(
+        "* **Tested** — at least one test marker (`@pytest.mark.requirement`"
+        " or `/// Requirements:`) names this requirement."
+    )
+    lines.append(
+        "* **Verified** — Tested, OR the spec declares verification by"
+        " Inspection / Analysis / Demonstration only (no test required)."
+    )
+    lines.append("")
+    lines.append("| Category | L1 | L2 | L3 | L2 tested | L3 tested | L2 verified | L3 verified |")
+    lines.append("|----------|----|----|-----|-----------|-----------|-------------|-------------|")
     total_l1 = total_l2 = total_l3 = 0
     total_l2_tested = total_l3_tested = 0
+    total_l2_verified = total_l3_verified = 0
+
+    def _is_verified(
+        req_id: str, methods: dict[str, set[str]]
+    ) -> bool:
+        if test_markers.get(req_id):
+            return True
+        m = methods.get(req_id, set())
+        return bool(m) and "T" not in m
+
     for cat_code, _ in CATEGORIES:
         l1s = [req for req in l1_ids if req.startswith(f"L1-{cat_code}-")]
         l2s = [req for req in l2_parent if req.startswith(f"L2-{cat_code}-")]
         l3s = [req for req in l3_parent if req.startswith(f"L3-{cat_code}-")]
         l2_tested = sum(1 for l2 in l2s if test_markers.get(l2))
         l3_tested = sum(1 for l3 in l3s if test_markers.get(l3))
+        l2_verified = sum(1 for l2 in l2s if _is_verified(l2, l2_methods))
+        l3_verified = sum(1 for l3 in l3s if _is_verified(l3, l3_methods))
         lines.append(
             f"| {cat_code} | {len(l1s)} | {len(l2s)} | {len(l3s)} | "
-            f"{l2_tested} | {l3_tested} |"
+            f"{l2_tested} | {l3_tested} | {l2_verified} | {l3_verified} |"
         )
         total_l1 += len(l1s)
         total_l2 += len(l2s)
         total_l3 += len(l3s)
         total_l2_tested += l2_tested
         total_l3_tested += l3_tested
+        total_l2_verified += l2_verified
+        total_l3_verified += l3_verified
     lines.append(
         f"| **Total** | **{total_l1}** | **{total_l2}** | **{total_l3}** | "
-        f"**{total_l2_tested}** | **{total_l3_tested}** |"
+        f"**{total_l2_tested}** | **{total_l3_tested}** | "
+        f"**{total_l2_verified}** | **{total_l3_verified}** |"
     )
     lines.append("")
     if total_l2 + total_l3 > 0:
-        pct = (total_l2_tested + total_l3_tested) * 100 / (total_l2 + total_l3)
+        total_reqs = total_l2 + total_l3
+        tested_pct = (total_l2_tested + total_l3_tested) * 100 / total_reqs
+        verified_pct = (total_l2_verified + total_l3_verified) * 100 / total_reqs
         lines.append(
-            f"**Requirements verified by at least one test**: "
-            f"{total_l2_tested + total_l3_tested} of {total_l2 + total_l3} "
-            f"({pct:.1f}%)."
+            f"**Tested by at least one test marker**: "
+            f"{total_l2_tested + total_l3_tested} of {total_reqs} "
+            f"({tested_pct:.1f}%)."
+        )
+        lines.append("")
+        lines.append(
+            f"**Verified (Test or declared Inspection/Analysis/Demonstration)**: "
+            f"{total_l2_verified + total_l3_verified} of {total_reqs} "
+            f"({verified_pct:.1f}%)."
         )
         lines.append("")
 
@@ -412,18 +504,40 @@ def compute_status(
     *,
     has_direct_artifacts: bool,
     children_statuses: list[str],
+    verification_methods: set[str] | None = None,
 ) -> str:
-    """Roll up status for one requirement node."""
+    """Roll up status for one requirement node.
+
+    Verification-method awareness: a leaf with no test marker that
+    declares only Inspection / Analysis / Demonstration verification
+    is treated as ``Implemented (I)`` / ``(A)`` / ``(D)`` (or a
+    combination), reflecting that those methods are satisfied by
+    review of the spec doc itself rather than a test artifact. A leaf
+    that lists Test among its methods still requires a test marker —
+    absent the marker, it remains ``Draft`` to surface the gap.
+
+    Parent rollup treats any ``Implemented...`` child as a positive
+    credit when deciding ``Implemented`` vs ``Partially Implemented``
+    vs ``Draft``.
+    """
     if not children_statuses:
-        return "Implemented" if has_direct_artifacts else "Draft"
+        if has_direct_artifacts:
+            return "Implemented"
+        if verification_methods is None or "T" in verification_methods:
+            return "Draft"
+        non_test = sorted(verification_methods)
+        return f"Implemented ({'+'.join(non_test)})" if non_test else "Draft"
 
     n = len(children_statuses)
-    impl_count = sum(1 for s in children_statuses if s == "Implemented")
+    impl_count = sum(1 for s in children_statuses if s.startswith("Implemented"))
     draft_count = sum(1 for s in children_statuses if s == "Draft")
 
     if impl_count == n:
         return "Implemented"
     if draft_count == n and not has_direct_artifacts:
+        if verification_methods and "T" not in verification_methods:
+            non_test = sorted(verification_methods)
+            return f"Implemented ({'+'.join(non_test)})"
         return "Draft"
     return "Partially Implemented"
 
@@ -432,6 +546,8 @@ def _l2_status(
     l2_id: str,
     l2_to_l3: dict[str, list[str]],
     test_markers: dict[str, list[str]],
+    l2_methods: dict[str, set[str]],
+    l3_methods: dict[str, set[str]],
 ) -> str:
     """Compute one L2's status by rolling up its L3 children + direct markers."""
     l3_children = l2_to_l3.get(l2_id, [])
@@ -439,12 +555,14 @@ def _l2_status(
         compute_status(
             has_direct_artifacts=bool(test_markers.get(l3_id)),
             children_statuses=[],
+            verification_methods=l3_methods.get(l3_id),
         )
         for l3_id in l3_children
     ]
     return compute_status(
         has_direct_artifacts=bool(test_markers.get(l2_id)),
         children_statuses=child_statuses,
+        verification_methods=l2_methods.get(l2_id),
     )
 
 

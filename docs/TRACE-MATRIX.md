@@ -10,10 +10,10 @@ Forward trace from L1 through L2 and L3 to verification artifacts. This file is 
 
 Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix is the single source of truth for live status; the source docs `L1-REQ.md`, `L2-REQ.md`, and `L3-REQ.md` carry only spec content.
 
-* **Draft** — no verification artifact anywhere in the subtree.
-* **Partially Implemented** — at least one child has artifacts but not all are Implemented; or the row itself has direct artifacts but its children include Drafts.
-* **Implemented** — every child rolls up to Implemented (or, for a leaf, the row has at least one direct verification artifact).
-* **Verified** — *(future)* every required Verification Method category has at least one corresponding artifact.
+* **Draft** — Test verification is required but no test marker found.
+* **Implemented** — at least one test marker exists (leaf), or every child rolls up to Implemented.
+* **Implemented (I)** / **(A)** / **(D)** — the spec declares verification by Inspection / Analysis / Demonstration only; satisfied by spec review without a test marker. Combinations appear as e.g. ``Implemented (A+I)``.
+* **Partially Implemented** — at least one child is Implemented but others are Draft, or the row itself has direct artifacts but its children include Drafts.
 
 ---
 
@@ -66,7 +66,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-DEC-014 | _(none)_ | `python/tests/test_models.py::test_format_truncates_out_of_range_microseconds`<br>`src/models.rs::irig_format_truncates_out_of_range_microseconds` | Implemented |
 | L2-ERR-007 | _(none)_ | _(TBD)_ | Draft |
 | L2-ERR-010 | _(none)_ | `python/tests/test_models.py::test_normal_message_error_label` | Implemented |
-| L2-WRT-001 | L3-PY-004, L3-PY-012, L3-RS-004, L3-RS-012 | `python/tests/test_e2e.py::test_csv_header`<br>`python/tests/test_e2e.py::test_csv_row_count`<br>`python/tests/test_e2e.py::test_messages_to_dataframe`<br>`python/tests/test_e2e.py::test_write_csv_returns_count`<br>`src/writer.rs::header_present`<br>`src/writer.rs::row_format_matches_python_layout`<br>`tests/integration.rs::csv_output_has_one_row_per_message_plus_header` | Partially Implemented |
+| L2-WRT-001 | L3-PY-004, L3-PY-012, L3-RS-004, L3-RS-012 | `python/tests/test_e2e.py::test_csv_header`<br>`python/tests/test_e2e.py::test_csv_row_count`<br>`python/tests/test_e2e.py::test_messages_to_dataframe`<br>`python/tests/test_e2e.py::test_write_csv_returns_count`<br>`src/writer.rs::header_present`<br>`src/writer.rs::row_format_matches_python_layout`<br>`tests/integration.rs::csv_output_has_one_row_per_message_plus_header` | Implemented |
 | L2-WRT-002 | _(none)_ | `python/tests/test_e2e.py::test_csv_data_word_padding`<br>`src/writer.rs::data_words_padded_to_32` | Implemented |
 | L2-WRT-003 | _(none)_ | `python/tests/test_e2e.py::test_csv_first_row_fields`<br>`src/writer.rs::row_format_matches_python_layout` | Implemented |
 | L2-WRT-004 | _(none)_ | _(TBD)_ | Draft |
@@ -103,7 +103,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-CLI-001 | L2-CLI-001, L2-CLI-002, L2-CLI-008, L2-CLI-009, L2-CLI-010 | Partially Implemented |
+| L1-CLI-001 | L2-CLI-001, L2-CLI-002, L2-CLI-008, L2-CLI-009, L2-CLI-010 | Implemented |
 | L1-CLI-002 | L2-CFG-004, L2-CFG-006, L2-CFG-007, L2-FLT-001, L2-FLT-002 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
@@ -114,7 +114,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CFG-006 | _(none)_ | `python/tests/test_config.py::test_case_insensitive`<br>`python/tests/test_config.py::test_invalid_raises`<br>`python/tests/test_config.py::test_should_exclude_by_bus`<br>`python/tests/test_config.py::test_should_exclude_by_rt`<br>`python/tests/test_config.py::test_should_exclude_by_subaddress`<br>`python/tests/test_config.py::test_should_exclude_by_type`<br>`python/tests/test_config.py::test_type_filter_active`<br>`python/tests/test_config.py::test_valid`<br>`src/filter.rs::exclude_by_rt`<br>`src/filter.rs::exclude_by_type_and_bus` | Implemented |
 | L2-CFG-007 | _(none)_ | `python/tests/test_config.py::test_by_hex`<br>`python/tests/test_config.py::test_by_name`<br>`python/tests/test_config.py::test_case_insensitive`<br>`python/tests/test_config.py::test_invalid_hex_raises`<br>`python/tests/test_config.py::test_invalid_name_raises`<br>`src/config.rs::type_name_parsing`<br>`src/config.rs::unknown_type_name_rejected` | Implemented |
 | L2-CLI-001 | _(none)_ | `src/cli.rs::parse_decode_help_returns_help_requested`<br>`src/cli.rs::parse_decode_missing_input_returns_other` | Implemented |
-| L2-CLI-002 | L3-PY-003 | `python/tests/test_e2e.py::test_cli_decode_output_file`<br>`src/cli.rs::parse_decode_minimal_ok` | Partially Implemented |
+| L2-CLI-002 | L3-PY-003 | `python/tests/test_e2e.py::test_cli_decode_output_file`<br>`src/cli.rs::parse_decode_minimal_ok` | Implemented |
 | L2-CLI-008 | L3-PY-010, L3-RS-008 | `python/tests/test_e2e.py::test_cli_decode_count`<br>`src/cli.rs::parse_count_help_returns_help_requested` | Implemented |
 | L2-CLI-009 | _(none)_ | `python/tests/test_e2e.py::test_cli_dump_missing_file`<br>`python/tests/test_e2e.py::test_cli_dump_raw`<br>`python/tests/test_e2e.py::test_cli_dump_records`<br>`src/cli.rs::parse_dump_help_returns_help_requested`<br>`src/dump.rs::raw_dump_format`<br>`src/dump.rs::raw_dump_offset_beyond_eof_yields_empty`<br>`src/dump.rs::record_dump_handles_one_record` | Implemented |
 | L2-CLI-010 | _(none)_ | `python/tests/test_config.py::test_exclude_rts_cli`<br>`python/tests/test_config.py::test_exclude_types_cli`<br>`src/cli.rs::all_filter_flags_take_single_value`<br>`src/cli.rs::filter_flag_accepts_comma_separated_values`<br>`src/cli.rs::filter_flag_accepts_eq_form`<br>`src/cli.rs::filter_flag_does_not_eat_positional_input`<br>`src/cli.rs::filter_flag_old_greedy_form_fails_loudly`<br>`src/cli.rs::filter_flag_repeats_accumulate` | Implemented |
@@ -238,17 +238,17 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-CONF-001 | L2-CONF-001, L2-CONF-002, L2-CONF-003, L2-CONF-004, L2-CONF-005 | Draft |
+| L1-CONF-001 | L2-CONF-001, L2-CONF-002, L2-CONF-003, L2-CONF-004, L2-CONF-005 | Partially Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L2-CONF-001 | _(none)_ | _(TBD)_ | Draft |
-| L2-CONF-002 | L3-PY-007 | _(TBD)_ | Draft |
+| L2-CONF-001 | _(none)_ | _(TBD)_ | Implemented (I) |
+| L2-CONF-002 | L3-PY-007 | _(TBD)_ | Implemented |
 | L2-CONF-003 | _(none)_ | _(TBD)_ | Draft |
-| L2-CONF-004 | _(none)_ | _(TBD)_ | Draft |
-| L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-007, L3-RS-011 | _(TBD)_ | Draft |
+| L2-CONF-004 | _(none)_ | _(TBD)_ | Implemented (I) |
+| L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-007, L3-RS-011 | _(TBD)_ | Implemented |
 
 ### L1-EXIT: Exit-code semantics and operational contract
 
@@ -261,7 +261,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1-EXIT-003 | _(none)_ | Implemented |
 | L1-EXIT-004 | L2-WRT-016 | Implemented |
 | L1-EXIT-005 | _(none)_ | Draft |
-| L1-EXIT-006 | L2-RDR-020 | Partially Implemented |
+| L1-EXIT-006 | L2-RDR-020 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -271,7 +271,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CLI-011 | L3-PY-006 | `python/tests/test_e2e.py::test_cli_no_valid_records_returns_exit_2`<br>`python/tests/test_e2e.py::test_cli_unrecoverable_allow_partial_returns_exit_0`<br>`python/tests/test_e2e.py::test_cli_unrecoverable_default_returns_exit_3`<br>`python/tests/test_exceptions.py::test_catch_all_with_base_class`<br>`python/tests/test_exceptions.py::test_file_empty_is_file_error`<br>`python/tests/test_exceptions.py::test_file_not_found_is_file_error`<br>`python/tests/test_exceptions.py::test_invalid_type_word_is_record_error`<br>`python/tests/test_exceptions.py::test_payload_error_is_record_error`<br>`python/tests/test_exceptions.py::test_record_truncated_is_record_error`<br>`python/tests/test_exceptions.py::test_unknown_error_code_is_record_error`<br>`python/tests/test_exceptions.py::test_unknown_type_word_is_record_error`<br>`python/tests/test_exceptions.py::test_writer_error_is_decoder_error` | Implemented |
 | L2-RDR-005 | _(none)_ | `python/tests/test_e2e.py::test_file_not_found`<br>`python/tests/test_exceptions.py::test_file_not_found_path`<br>`src/dump.rs::missing_file_returns_error`<br>`src/reader.rs::rejects_missing_file` | Implemented |
 | L2-RDR-006 | _(none)_ | `python/tests/test_e2e.py::test_empty_file`<br>`python/tests/test_exceptions.py::test_file_empty_path`<br>`src/reader.rs::rejects_empty_file` | Implemented |
-| L2-RDR-020 | L3-PY-009, L3-RS-003 | `src/reader.rs::decodes_rt15_sa11_record` | Partially Implemented |
+| L2-RDR-020 | L3-PY-009, L3-RS-003 | `src/reader.rs::decodes_rt15_sa11_record` | Implemented |
 | L2-WRT-016 | L3-WRT-002 | `python/tests/test_e2e.py::test_write_csv_with_allow_partial_commits_dot_partial`<br>`src/writer.rs::atomic_commit_partial_writes_dot_partial_and_leaves_destination`<br>`src/writer.rs::atomic_drop_without_commit_unlinks_temp_and_leaves_destination`<br>`src/writer.rs::write_csv_with_allow_partial_commits_on_unrecoverable`<br>`src/writer.rs::write_csv_without_allow_partial_propagates_unrecoverable` | Implemented |
 | L2-WRT-018 | _(none)_ | `python/tests/test_exceptions.py::test_writer_error_fields`<br>`src/writer.rs::is_broken_pipe_predicate` | Implemented |
 
@@ -292,29 +292,34 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 ## Coverage summary
 
-| Category | L1 | L2 | L3 | L2s with tests | L3s with tests |
-|----------|----|----|-----|----------------|----------------|
-| DEC | 5 | 12 | 0 | 10 | 0 |
-| OUT | 2 | 0 | 0 | 0 | 0 |
-| DLT | 1 | 0 | 0 | 0 | 0 |
-| CLI | 2 | 9 | 0 | 9 | 0 |
-| LOG | 1 | 0 | 0 | 0 | 0 |
-| MODE | 1 | 0 | 0 | 0 | 0 |
-| SYN | 2 | 25 | 0 | 19 | 0 |
-| ERR | 1 | 10 | 0 | 7 | 0 |
-| CFG | 1 | 9 | 0 | 9 | 0 |
-| CONF | 1 | 5 | 0 | 0 | 0 |
-| EXIT | 6 | 0 | 0 | 0 | 0 |
-| ROB | 1 | 0 | 0 | 0 | 0 |
-| RDR | 0 | 15 | 0 | 10 | 0 |
-| MSG | 0 | 3 | 0 | 3 | 0 |
-| WRT | 0 | 13 | 2 | 11 | 2 |
-| FLT | 0 | 2 | 0 | 2 | 0 |
-| PY | 0 | 0 | 12 | 0 | 6 |
-| RS | 0 | 0 | 12 | 0 | 5 |
-| **Total** | **24** | **103** | **26** | **80** | **13** |
+* **Tested** — at least one test marker (`@pytest.mark.requirement` or `/// Requirements:`) names this requirement.
+* **Verified** — Tested, OR the spec declares verification by Inspection / Analysis / Demonstration only (no test required).
 
-**Requirements verified by at least one test**: 93 of 129 (72.1%).
+| Category | L1 | L2 | L3 | L2 tested | L3 tested | L2 verified | L3 verified |
+|----------|----|----|-----|-----------|-----------|-------------|-------------|
+| DEC | 5 | 12 | 0 | 10 | 0 | 10 | 0 |
+| OUT | 2 | 0 | 0 | 0 | 0 | 0 | 0 |
+| DLT | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| CLI | 2 | 9 | 0 | 9 | 0 | 9 | 0 |
+| LOG | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| MODE | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| SYN | 2 | 25 | 0 | 19 | 0 | 19 | 0 |
+| ERR | 1 | 10 | 0 | 7 | 0 | 7 | 0 |
+| CFG | 1 | 9 | 0 | 9 | 0 | 9 | 0 |
+| CONF | 1 | 5 | 0 | 0 | 0 | 3 | 0 |
+| EXIT | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| RDR | 0 | 15 | 0 | 10 | 0 | 11 | 0 |
+| MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
+| WRT | 0 | 13 | 2 | 11 | 2 | 11 | 2 |
+| FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
+| PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
+| RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
+| **Total** | **24** | **103** | **26** | **80** | **13** | **84** | **25** |
+
+**Tested by at least one test marker**: 93 of 129 (72.1%).
+
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 109 of 129 (84.5%).
 
 ### Orphan check
 
