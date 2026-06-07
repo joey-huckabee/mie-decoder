@@ -10,8 +10,11 @@ decode proprietary binary recording files produced by Data Device Corporation
 recording software so a decoded file can be diffed against vendor output for
 validation.
 
-The Rust v1.0.0 implementation lives at the repository root. The Python v1.1.0
-implementation lives at `python/`. The Rust implementation was a clean rewrite,
+Both implementations ship at v1.0.0 as a joint cut from a single
+repository tag (`v1.0.0`); future releases may diverge in version
+via impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`). The Rust
+implementation lives at the repository root; the Python
+implementation lives at `python/`. See `CHANGELOG.md`. The Rust implementation was a clean rewrite,
 not a transliteration: its CLI was redesigned, its writer is streaming
 (constant memory), and its data-words container is an inline `[u16; 32]`
 buffer. Maintain each implementation according to its own architecture while

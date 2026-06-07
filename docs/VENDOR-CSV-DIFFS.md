@@ -6,7 +6,7 @@ Documented column-by-column alignment between MIE-Decoder's CSV output and DDC's
 - You ran `diff` against vendor output and found a mismatch.
 - You're integrating MIE-Decoder into a system that previously consumed vendor CSV.
 
-The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **column-name and column-order compatible** with the DDC vendor recorder's output. The 19-case cross-implementation conformance suite asserts byte-identical CSV between the Rust and Python implementations; that suite's oracles are derived from validated vendor output. In practice, except for the documented exceptions below, a single `diff` should produce zero lines of difference between MIE-Decoder output and a vendor CSV of the same recording.
+The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **column-name and column-order compatible** with the DDC vendor recorder's output. The 20-case cross-implementation conformance suite asserts byte-identical CSV between the Rust and Python implementations; that suite's oracles are derived from validated vendor output. In practice, except for the documented exceptions below, a single `diff` should produce zero lines of difference between MIE-Decoder output and a vendor CSV of the same recording.
 
 ---
 

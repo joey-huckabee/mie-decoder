@@ -30,7 +30,7 @@ mie-decoder/
 │       ├── expected/*.csv  byte-exact CSV oracles
 │       ├── configs/*.toml  per-case TOML config
 │       └── run.py          the runner
-├── python/                 Python package (v1.1.0, supports 3.10–3.14)
+├── python/                 Python package (v1.0.0, supports 3.10–3.14)
 │   ├── pyproject.toml      Poetry + PEP 621 hybrid; pytest markers registered here
 │   ├── poetry.lock         pinned dependencies; committed
 │   ├── src/mie_decoder/    package source (mirrors Rust module names)
@@ -488,10 +488,19 @@ For a PyPI publish, `poetry publish` (with credentials).
 
 ### Version coordination
 
-The two implementations release independently. Cross-implementation conformance is the contract; CSV behavior must match byte-for-byte at any compatible version pair. Bump versions when:
+**v1.0.0 is a joint release** — both implementations ship together at v1.0.0 from a single repository tag (`v1.0.0`). Subsequent releases may diverge in version, but the cross-implementation conformance contract (CSV byte-for-byte equivalence on shared behavior) holds at any compatible version pair.
 
-- **Rust** — any change to the public crate API, the CLI surface, or the on-disk output.
-- **Python** — same axes for the Python package.
+Tagging scheme:
+
+- **`v1.0.0`** — single tag for the v1.0.0 joint cut. Used because both impls ship simultaneously from one commit.
+- **`rust-vX.Y.Z` / `python-vX.Y.Z`** — impl-prefixed tags for future divergent releases. Avoid SemVer-style suffix tags like `v1.0.0-rust` because the hyphen marks a pre-release identifier and tools treat such tags as *less than* `v1.0.0`.
+
+Bump versions when:
+
+- **Rust (`Cargo.toml`)** — any change to the public crate API, the CLI surface, or the on-disk output.
+- **Python (`python/pyproject.toml` and `python/src/mie_decoder/__init__.py::__version__`)** — same axes for the Python package. Keep `pyproject.toml` and `__init__.py` in lockstep; `poetry check --strict --lock` (run by the `python` CI cell on Linux/3.12) catches `pyproject.toml`/`poetry.lock` drift but does not verify the `__init__.py` constant.
+
+Add a new top-of-file entry to `CHANGELOG.md` in the same commit that bumps the version. The CHANGELOG entry, the version bump, and any user-visible behavior changes all land together so a tag points at a coherent unit of release.
 
 ---
 

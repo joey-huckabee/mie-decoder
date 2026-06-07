@@ -19,7 +19,7 @@ Typical usage::
         print(message.timestamp, message.rt, message.subaddress)
 
 Version history:
-    1.0.0 - Single-file binary decode to CSV output.
+    1.0.0 - Joint Rust + Python initial release. See CHANGELOG.md.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.0.0"

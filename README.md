@@ -8,11 +8,15 @@ MIE-Decoder is maintained in two implementations:
 
 - **Rust v1.0.0** — streaming CSV writer (constant memory), redesigned CLI,
   and a single static-musl binary for SLES 12 deployment.
-- **Python v1.1.0** — the Python package and CLI, maintained in
+- **Python v1.0.0** — the Python package and CLI, maintained in
   [`python/`](python/).
 
-The implementations may evolve independently, but share the MIE format
-documentation and vendor-compatible CSV behavior.
+Both implementations ship together as the joint **v1.0.0** release from a
+single repository tag (`v1.0.0`). Future releases may diverge in version
+via impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`). The implementations
+share the MIE format documentation, the vendor-compatible CSV behavior, and
+a 20-case byte-exact cross-implementation conformance suite. See
+[`CHANGELOG.md`](CHANGELOG.md) for the full v1.0.0 deliverables.
 
 ## Rust Build
 
