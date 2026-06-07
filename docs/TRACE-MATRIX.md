@@ -84,7 +84,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-DLT-001 | L2-RDR-009, L2-RDR-010, L2-RDR-016, L2-RDR-017, L2-RDR-018, L2-RDR-019 | Partially Implemented |
+| L1-DLT-001 | L2-RDR-009, L2-RDR-010, L2-RDR-016, L2-RDR-017, L2-RDR-018, L2-RDR-019 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -92,9 +92,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 |-------|-------------|----------------|--------|
 | L2-RDR-009 | _(none)_ | `python/tests/test_e2e.py::test_delta_same_rtmsg`<br>`python/tests/test_models.py::test_delta_key`<br>`tests/integration.rs::delta_tracker_per_rt_msg_key` | Implemented |
 | L2-RDR-010 | _(none)_ | `python/tests/test_e2e.py::test_delta_first_occurrence_is_zero` | Implemented |
-| L2-RDR-016 | _(none)_ | _(TBD)_ | Draft |
-| L2-RDR-017 | _(none)_ | _(TBD)_ | Draft |
-| L2-RDR-018 | _(none)_ | _(TBD)_ | Draft |
+| L2-RDR-016 | _(none)_ | `python/tests/test_e2e.py::test_errored_record_participates_in_delta` | Implemented |
+| L2-RDR-017 | _(none)_ | `python/tests/test_e2e.py::test_non_monotonic_timestamp_warns_once_per_key` | Implemented |
+| L2-RDR-018 | _(none)_ | `python/tests/test_e2e.py::test_spurious_data_empty_delta_and_continuation_code` | Implemented |
 | L2-RDR-019 | _(none)_ | `python/tests/test_decode.py::test_to_microseconds_returns_none` | Implemented |
 
 ### L1-CLI: CLI capability surface
@@ -127,7 +127,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-LOG-001 | L2-CLI-004, L2-CLI-006, L2-SYN-012, L2-SYN-013 | Partially Implemented |
+| L1-LOG-001 | L2-CLI-004, L2-CLI-006, L2-SYN-012, L2-SYN-013 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -135,8 +135,8 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 |-------|-------------|----------------|--------|
 | L2-CLI-004 | _(none)_ | `python/tests/test_e2e.py::test_cli_log_level_debug`<br>`python/tests/test_e2e.py::test_cli_log_level_info`<br>`python/tests/test_exceptions.py::test_case_insensitive`<br>`python/tests/test_exceptions.py::test_invalid_level_raises`<br>`python/tests/test_exceptions.py::test_no_duplicate_handlers`<br>`python/tests/test_exceptions.py::test_sets_info_level`<br>`python/tests/test_exceptions.py::test_sets_level`<br>`src/cli.rs::apply_log_level_accepts_known_names`<br>`src/cli.rs::apply_log_level_includes_source_in_error`<br>`src/cli.rs::apply_log_level_rejects_unknown_names`<br>`src/cli.rs::run_count_with_invalid_cli_log_level_fails_via_resolve_config`<br>`src/log.rs::level_parse` | Implemented |
 | L2-CLI-006 | _(none)_ | `python/tests/test_exceptions.py::test_outputs_to_stderr_by_default` | Implemented |
-| L2-SYN-012 | _(none)_ | _(TBD)_ | Draft |
-| L2-SYN-013 | _(none)_ | _(TBD)_ | Draft |
+| L2-SYN-012 | _(none)_ | `python/tests/test_sync.py::test_header_detection_logs_size_at_info` | Implemented |
+| L2-SYN-013 | _(none)_ | `python/tests/test_sync.py::test_sync_loss_warns_and_recovery_logs_info` | Implemented |
 
 ### L1-MODE: Strict and lenient handling
 
@@ -163,7 +163,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
 | L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025 | Partially Implemented |
-| L1-SYN-002 | L2-SYN-007, L2-SYN-010 | Partially Implemented |
+| L1-SYN-002 | L2-SYN-007, L2-SYN-010 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -176,7 +176,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-SYN-004 | _(none)_ | `python/tests/test_sync.py::test_irig_accepts_microsecond_at_max_valid`<br>`python/tests/test_sync.py::test_irig_accepts_valid_ranges`<br>`python/tests/test_sync.py::test_irig_rejects_day_above_366`<br>`python/tests/test_sync.py::test_irig_rejects_day_zero`<br>`python/tests/test_sync.py::test_irig_rejects_microsecond_at_one_million`<br>`src/sync.rs::validate_accepts_irig_microsecond_at_max_valid`<br>`src/sync.rs::validate_accepts_irig_with_valid_ranges`<br>`src/sync.rs::validate_rejects_irig_day_above_366`<br>`src/sync.rs::validate_rejects_irig_day_zero`<br>`src/sync.rs::validate_rejects_irig_microsecond_at_one_million` | Implemented |
 | L2-SYN-005 | _(none)_ | `python/tests/test_sync.py::test_valid_irig_record`<br>`src/sync.rs::validate_accepts_clean_record` | Implemented |
 | L2-SYN-006 | _(none)_ | `python/tests/test_sync.py::test_no_header`<br>`python/tests/test_sync.py::test_reader_real_header`<br>`python/tests/test_sync.py::test_reader_skips_header`<br>`python/tests/test_sync.py::test_with_header`<br>`src/reader.rs::skips_proprietary_header`<br>`src/sync.rs::find_first_record_at_zero`<br>`src/sync.rs::find_first_record_skips_header`<br>`tests/integration.rs::header_skip_via_proprietary_prefix` | Implemented |
-| L2-SYN-007 | _(none)_ | _(TBD)_ | Draft |
+| L2-SYN-007 | _(none)_ | `python/tests/test_sync.py::test_find_first_record_capped_at_max_scan` | Implemented |
 | L2-SYN-008 | _(none)_ | `python/tests/test_sync.py::test_all_garbage`<br>`src/sync.rs::find_first_record_returns_none_when_no_valid` | Implemented |
 | L2-SYN-009 | _(none)_ | `python/tests/test_sync.py::test_recovery_after_garbage`<br>`src/sync.rs::recover_sync_walks_forward` | Implemented |
 | L2-SYN-010 | _(none)_ | `src/sync.rs::recover_sync_capped_at_max_scan` | Implemented |
@@ -203,13 +203,13 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L2-ERR-001 | _(none)_ | `python/tests/test_decode.py::test_error_flag_clear`<br>`python/tests/test_decode.py::test_error_flag_set`<br>`python/tests/test_models.py::test_errored_message_label`<br>`src/decode.rs::type_word_bus_b_and_error_bit` | Implemented |
-| L2-ERR-002 | _(none)_ | _(TBD)_ | Draft |
+| L2-ERR-002 | _(none)_ | `python/tests/test_e2e.py::test_errored_record_participates_in_delta` | Implemented |
 | L2-ERR-003 | _(none)_ | `src/models.rs::error_code_classification` | Implemented |
-| L2-ERR-005 | _(none)_ | _(TBD)_ | Draft |
+| L2-ERR-005 | _(none)_ | `python/tests/test_e2e.py::test_spurious_data_empty_delta_and_continuation_code` | Implemented |
 | L2-ERR-006 | _(none)_ | `python/tests/test_models.py::test_spurious_message_label` | Implemented |
 | L2-ERR-008 | _(none)_ | `python/tests/test_config.py::test_cli_error_mode_separate`<br>`src/writer.rs::error_path_naming` | Implemented |
 | L2-ERR-011 | L3-PY-011, L3-RS-009 | `python/tests/test_config.py::test_cli_error_mode_inline`<br>`python/tests/test_config.py::test_load_from_toml` | Partially Implemented |
-| L2-SYN-017 | _(none)_ | _(TBD)_ | Draft |
+| L2-SYN-017 | _(none)_ | `python/tests/test_e2e.py::test_error_and_spurious_records_pass_validation` | Implemented |
 | L2-SYN-024 | _(none)_ | `python/tests/test_decode.py::test_no_status_no_violation`<br>`python/tests/test_decode.py::test_status_rt_match_no_violation`<br>`python/tests/test_decode.py::test_status_rt_mismatch_anomaly`<br>`src/decode.rs::anomaly_no_status_no_violation`<br>`src/decode.rs::anomaly_status_rt_match_no_violation`<br>`src/decode.rs::anomaly_status_rt_mismatch_logged` | Implemented |
 
 ### L1-CFG: Configuration
@@ -303,23 +303,23 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | CLI | 2 | 9 | 0 | 9 | 0 | 9 | 0 |
 | LOG | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MODE | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| SYN | 2 | 25 | 0 | 19 | 0 | 19 | 0 |
-| ERR | 1 | 10 | 0 | 8 | 0 | 8 | 0 |
+| SYN | 2 | 25 | 0 | 23 | 0 | 23 | 0 |
+| ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 9 | 0 | 9 | 0 | 9 | 0 |
 | CONF | 1 | 5 | 0 | 0 | 0 | 3 | 0 |
 | EXIT | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| RDR | 0 | 15 | 0 | 10 | 0 | 11 | 0 |
+| RDR | 0 | 15 | 0 | 13 | 0 | 14 | 0 |
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
 | WRT | 0 | 13 | 2 | 13 | 2 | 13 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
-| **Total** | **24** | **103** | **26** | **83** | **13** | **87** | **25** |
+| **Total** | **24** | **103** | **26** | **92** | **13** | **96** | **25** |
 
-**Tested by at least one test marker**: 96 of 129 (74.4%).
+**Tested by at least one test marker**: 105 of 129 (81.4%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 112 of 129 (86.8%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 121 of 129 (93.8%).
 
 ### Orphan check
 

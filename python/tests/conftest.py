@@ -142,6 +142,69 @@ RECORD_RT15_SA10_XMT_BUSB = bytes.fromhex(
 )
 
 
+# ── Synthetic record builders ────────────────────────────────────────
+#
+# Used by tests that need to exercise DELTA edge cases, errored-record
+# decoding, and recovery anchors with timestamps the canonical fixtures
+# above don't cover. All builders produce IRIG-format records with
+# day=192, hour=15, minute=54, second=50 so they pair cleanly with
+# RECORD_RT15_SA11_RCV (whose timestamp matches) for look-ahead.
+
+
+def _irig_timestamp_bytes(microseconds: int) -> bytes:
+    """3-word IRIG timestamp LE bytes for day=192, hour=15, min=54, sec=50."""
+    upper = ((0 << 15) | (192 << 5) | 15) & 0xFFFF
+    middle = (54 << 10) | (50 << 4) | ((microseconds >> 16) & 0xF)
+    lower = microseconds & 0xFFFF
+    return (
+        upper.to_bytes(2, "little")
+        + middle.to_bytes(2, "little")
+        + lower.to_bytes(2, "little")
+    )
+
+
+def normal_record_rt15_sa11_us(microseconds: int) -> bytes:
+    """Build a normal RT15 SA11 Receive record with the given microsecond.
+
+    Reuses every field of RECORD_RT15_SA11_RCV except the timestamp, so the
+    resulting bytes are byte-identical apart from the IRIG timestamp triple.
+    """
+    return (
+        RECORD_RT15_SA11_RCV[:2]
+        + _irig_timestamp_bytes(microseconds)
+        + RECORD_RT15_SA11_RCV[8:]
+    )
+
+
+def errored_record_rt15_sa11_us(microseconds: int) -> bytes:
+    """Build an errored RT15 SA11 Receive record (Type Word bit 14 set).
+
+    Layout: TypeWord + IRIG timestamp + CmdWord + 2 data words + Error Word.
+    Total wc = 8 = 16 bytes. Error code is 0x011E (Manchester/Parity).
+    """
+    type_raw = 0x02 | (8 << 8) | (1 << 14)
+    return (
+        type_raw.to_bytes(2, "little")
+        + _irig_timestamp_bytes(microseconds)
+        + (0x797E).to_bytes(2, "little")  # RT15, R, SA11, dwc=30
+        + b"\x00\x00\x00\x00"             # 2 data words
+        + (0x011E).to_bytes(2, "little")  # Error Word
+    )
+
+
+def spurious_record_us(microseconds: int, data_word: int = 0x0000) -> bytes:
+    """Build a SPURIOUS_DATA record (message type 0x20, no Command Word).
+
+    Layout: TypeWord + IRIG timestamp + 1 data word. Total wc = 5 = 10 bytes.
+    """
+    type_raw = 0x20 | (5 << 8)
+    return (
+        type_raw.to_bytes(2, "little")
+        + _irig_timestamp_bytes(microseconds)
+        + data_word.to_bytes(2, "little")
+    )
+
+
 @pytest.fixture
 def single_receive_record() -> bytes:
     """A single RT15 SA11 Receive record (72 bytes)."""

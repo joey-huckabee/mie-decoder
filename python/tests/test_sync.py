@@ -239,3 +239,85 @@ class TestRecoverSync:
         fpath.write_bytes(data)
         with pytest.raises(MiePayloadError, match="look-ahead validation"):
             list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+
+
+class TestSyncBoundsAndLogging:
+    """L2-SYN-007, L2-SYN-012, L2-SYN-013: bounded scans and diagnostic logging."""
+
+    @pytest.mark.requirement("L2-SYN-007")
+    def test_find_first_record_capped_at_max_scan(self) -> None:
+        """L2-SYN-007: header detection SHALL cap its scan at 64 KB. A valid
+        record placed past that cap SHALL NOT be found."""
+        from mie_decoder.sync import MAX_SCAN_BYTES, find_first_record
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        garbage = b"\xFF" * (MAX_SCAN_BYTES + 1024)
+        # Two valid records past the cap so look-ahead would succeed if
+        # the scanner reached them — but it shouldn't.
+        data = garbage + RECORD_RT15_SA11_RCV * 2
+        offset = find_first_record(data, len(data), TimestampFormat.IRIG)
+        assert offset is None
+
+    @pytest.mark.requirement("L2-SYN-012")
+    def test_header_detection_logs_size_at_info(
+        self,
+        single_receive_record: bytes,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """L2-SYN-012: header detection SHALL log detected header size at INFO."""
+        import logging
+
+        from mie_decoder.sync import find_first_record
+
+        header = b"\x00" * 24
+        data = header + single_receive_record * 2
+        with caplog.at_level(logging.INFO, logger="mie_decoder.sync"):
+            offset = find_first_record(data, len(data), TimestampFormat.IRIG)
+        assert offset == 24
+        info_msgs = [
+            r.getMessage() for r in caplog.records
+            if r.levelno == logging.INFO
+        ]
+        assert any("header" in m.lower() for m in info_msgs), (
+            f"expected INFO log naming the header; got {info_msgs}"
+        )
+        # The header size (24 bytes) should appear in the message.
+        assert any("24" in m for m in info_msgs), (
+            f"expected header-size byte count in INFO log; got {info_msgs}"
+        )
+
+    @pytest.mark.requirement("L2-SYN-013")
+    def test_sync_loss_warns_and_recovery_logs_info(
+        self,
+        tmp_path: Path,
+        single_receive_record: bytes,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """L2-SYN-013: sync recovery SHALL log sync loss at WARNING and
+        successful recovery at INFO."""
+        import logging
+
+        from mie_decoder.reader import MieFileReader
+
+        good = single_receive_record * 2
+        corruption = b"\xFF\xFF" * 10
+        data = good + corruption + single_receive_record * 2
+        fpath = tmp_path / "sync_logging.mie"
+        fpath.write_bytes(data)
+        with caplog.at_level(logging.INFO, logger="mie_decoder.reader"):
+            messages = list(MieFileReader(fpath))
+        assert len(messages) >= 1
+        warn_msgs = [
+            r.getMessage() for r in caplog.records
+            if r.levelno >= logging.WARNING
+        ]
+        info_msgs = [
+            r.getMessage() for r in caplog.records
+            if r.levelno == logging.INFO
+        ]
+        assert any("sync" in m.lower() for m in warn_msgs), (
+            f"expected WARN about sync loss; got warns={warn_msgs}"
+        )
+        assert any("recover" in m.lower() for m in info_msgs), (
+            f"expected INFO about recovery; got infos={info_msgs}"
+        )

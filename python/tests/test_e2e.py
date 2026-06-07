@@ -657,6 +657,127 @@ class TestCliEndToEnd:
         assert rc == 1
 
 
+class TestDeltaAndErrorRecords:
+    """L2-RDR-016/017/018 and L2-ERR-002/005: DELTA edge cases and
+    error/SPURIOUS record decoding. Synthetic records are built via the
+    helpers in conftest.py so the fixtures stay reviewable in hex form."""
+
+    @pytest.mark.requirement("L2-RDR-016")
+    @pytest.mark.requirement("L2-ERR-002")
+    def test_errored_record_participates_in_delta(self, tmp_path: Path) -> None:
+        """L2-RDR-016: errored records (Type Word bit 14 set) update the per-
+        RT/MSG cursor and SHALL receive a DELTA computed against the prior
+        message sharing the same key.
+
+        L2-ERR-002: the final word of an errored record decodes as the DDC
+        Error Word.
+        """
+        from tests.conftest import errored_record_rt15_sa11_us, normal_record_rt15_sa11_us
+
+        normal = normal_record_rt15_sa11_us(456_225)
+        errored = errored_record_rt15_sa11_us(456_484)  # +0.000259 s
+        anchor = normal_record_rt15_sa11_us(456_500)    # for look-ahead
+        fpath = tmp_path / "errored_delta.mie"
+        fpath.write_bytes(normal + errored + anchor)
+        messages = list(MieFileReader(fpath))
+        assert len(messages) == 3
+        assert messages[0].delta == 0.0
+        assert messages[1].is_error
+        assert messages[1].error_word == 0x011E
+        assert messages[1].delta is not None
+        assert messages[1].delta == pytest.approx(0.000259, abs=1e-6)
+
+    @pytest.mark.requirement("L2-RDR-017")
+    def test_non_monotonic_timestamp_warns_once_per_key(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """L2-RDR-017: when a record's timestamp is older than the prior
+        message for the same RT/MSG key, DELTA SHALL be empty and a WARN
+        SHALL be logged, at most once per key per file."""
+        import logging
+        from tests.conftest import normal_record_rt15_sa11_us
+
+        late = normal_record_rt15_sa11_us(500_000)
+        early = normal_record_rt15_sa11_us(400_000)
+        earlier = normal_record_rt15_sa11_us(350_000)
+        fpath = tmp_path / "out_of_order.mie"
+        fpath.write_bytes(late + early + earlier)
+        with caplog.at_level(logging.WARNING, logger="mie_decoder.reader"):
+            messages = list(MieFileReader(fpath))
+        assert len(messages) == 3
+        assert messages[0].delta == 0.0
+        assert messages[1].delta is None
+        assert messages[2].delta is None
+        warns = [
+            r for r in caplog.records
+            if "non-monotonic" in r.getMessage().lower()
+        ]
+        assert len(warns) == 1, (
+            f"expected exactly one non-monotonic WARN per key; got "
+            f"{[w.getMessage() for w in warns]}"
+        )
+
+    @pytest.mark.requirement("L2-RDR-018")
+    @pytest.mark.requirement("L2-ERR-005")
+    def test_spurious_data_empty_delta_and_continuation_code(
+        self, tmp_path: Path,
+    ) -> None:
+        """L2-RDR-018: SPURIOUS_DATA records have no RT/MSG key, SHALL have
+        an empty DELTA, and SHALL NOT update any per-key cursor.
+
+        L2-ERR-005: SPURIOUS_DATA immediately following an errored record
+        uses decoder code 0x2000 (continuation).
+        """
+        from tests.conftest import (
+            errored_record_rt15_sa11_us,
+            normal_record_rt15_sa11_us,
+            spurious_record_us,
+        )
+
+        normal = normal_record_rt15_sa11_us(450_000)
+        errored = errored_record_rt15_sa11_us(500_000)
+        spurious = spurious_record_us(550_000)
+        anchor = normal_record_rt15_sa11_us(560_000)
+        fpath = tmp_path / "spurious.mie"
+        fpath.write_bytes(normal + errored + spurious + anchor)
+        messages = list(MieFileReader(fpath))
+        assert len(messages) == 4
+        # Index 2 is SPURIOUS — empty DELTA, continuation code 0x2000.
+        assert messages[2].is_spurious
+        assert messages[2].delta is None
+        assert messages[2].error_word == 0x2000
+        # The SPURIOUS record did NOT update the RT15:11R cursor, so the
+        # anchor's DELTA tracks back to the errored record (index 1):
+        # (560_000 - 500_000) microseconds = 0.06 seconds.
+        assert messages[3].delta is not None
+        assert messages[3].delta == pytest.approx(0.06, abs=1e-6)
+
+    @pytest.mark.requirement("L2-SYN-017")
+    def test_error_and_spurious_records_pass_validation(
+        self, tmp_path: Path,
+    ) -> None:
+        """L2-SYN-017: valid error records and SPURIOUS_DATA records SHALL
+        remain eligible record boundaries during validation and recovery —
+        i.e. they pass validate_record like normal records."""
+        from tests.conftest import (
+            errored_record_rt15_sa11_us,
+            normal_record_rt15_sa11_us,
+            spurious_record_us,
+        )
+
+        normal = normal_record_rt15_sa11_us(450_000)
+        errored = errored_record_rt15_sa11_us(500_000)
+        spurious = spurious_record_us(550_000)
+        anchor = normal_record_rt15_sa11_us(560_000)
+        fpath = tmp_path / "err_spurious_validation.mie"
+        fpath.write_bytes(normal + errored + spurious + anchor)
+        messages = list(MieFileReader(fpath))
+        # All four records emit cleanly without any skip-due-to-invalid path.
+        assert len(messages) == 4
+        assert messages[1].is_error
+        assert messages[2].is_spurious
+
+
 class TestFuzzHarness:
     """L1-ROB-001: fuzz harness asserting no panic on arbitrary input bytes.
 
