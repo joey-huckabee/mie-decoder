@@ -229,29 +229,33 @@ fn rejects_input_equal_to_output_path() {
     );
 }
 
-/// Requirements: L2-CLI-008
+/// Requirements: L2-CLI-008, L3-RS-008
 ///
-/// NOTE: L3-RS-008 currently says the `count` subcommand "SHALL
-/// print only the integer record count to stdout", but both the
-/// Rust and Python implementations actually print
-/// `"<N> messages in <basename>"` to **stderr** (see
-/// `src/cli.rs::run_count` and `python/src/mie_decoder/cli.py`).
-/// The two implementations agree, so conformance hasn't surfaced
-/// the drift. This test pins the *implemented* contract; resolving
-/// the L3 wording vs. implementation discrepancy is tracked
-/// separately.
+/// Two-channel output contract:
+/// - stdout: ONLY the integer record count (machine-parseable for
+///   pipelines: `n=$(mie-decoder count rec.mie)`).
+/// - stderr: human-readable status line including the input path
+///   so an interactive operator still sees context. Always emitted
+///   (not gated by --log-level).
 #[test]
-fn count_subcommand_reports_record_count() {
+fn count_subcommand_emits_integer_to_stdout_and_status_to_stderr() {
     let tmp = TempDir::new();
     let input = tmp.write("rec.mie", &one_valid_record());
 
     let out = run([std::ffi::OsStr::new("count"), input.as_os_str()]);
     assert_eq!(exit_code(&out), 0, "count must exit 0 on valid input");
 
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.trim(),
+        "1",
+        "stdout must contain only the integer count (got: {stdout:?})"
+    );
+
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("1 messages in"),
-        "count output should report '1 messages in <path>' on stderr (got: {stderr:?})"
+        stderr.contains("counted 1 messages"),
+        "stderr must include the human-readable status line (got: {stderr:?})"
     );
 }
 

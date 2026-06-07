@@ -756,7 +756,12 @@ fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), String> {
             Err(e) => return Err(format_mie_error(e)),
         }
     }
-    eprintln!("{count} messages in {}", reader.path().display());
+    // L3-RS-008: integer count to stdout (the machine-readable data),
+    // human-friendly status with path context to stderr (always emitted,
+    // not gated by --log-level so an interactive operator sees it
+    // without having to opt into INFO logging).
+    println!("{count}");
+    eprintln!("counted {count} messages in {}", reader.path().display());
     Ok(())
 }
 

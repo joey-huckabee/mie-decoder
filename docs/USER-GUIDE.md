@@ -127,19 +127,26 @@ mie-decoder decode flight.mie -o flight.csv --config site.toml
 
 Counts decodable records without producing CSV. Useful for sanity-checking a file size before a long decode or comparing two recordings.
 
+Both implementations follow a two-channel output contract (L3-RS-008 / L3-PY-010): **stdout** contains only the integer count followed by a newline (so it pipes cleanly), and **stderr** carries a human-readable status line with the input path so an interactive operator still sees context.
+
 **Rust:**
 ```bash
 $ mie-decoder count flight.mie
 14523
+# (stderr, always emitted: "counted 14523 messages in flight.mie")
+
+$ n=$(mie-decoder count flight.mie); echo "got $n"
+got 14523
 ```
 
-**Python** (uses `decode --count` instead of a separate subcommand):
+**Python** (uses `decode --count` instead of a separate subcommand, but the output contract is the same):
 ```bash
 $ mie-decoder decode flight.mie --count
-14523 messages
+14523
+# (stderr, always emitted: "counted 14523 messages in flight.mie")
 ```
 
-The two CLI shapes differ but both meet the L1-CLI-001 message-counting capability.
+The two CLI shapes differ but both meet the L1-CLI-001 message-counting capability and produce identical stdout output.
 
 ### `dump` — diagnostic hex dump
 

@@ -145,6 +145,13 @@
       "name": "homogeneous-payload",
       "input": "inputs/homogeneous-payload.hex",
       "expected_exit": 2
+    },
+    {
+      "name": "count-one",
+      "mode": "count",
+      "input": "inputs/count-one.hex",
+      "expected": "expected/count-one.txt",
+      "expected_stderr_contains": "counted 1 messages in"
     }
   ]
 }

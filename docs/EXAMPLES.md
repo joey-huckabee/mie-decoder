@@ -53,13 +53,17 @@ For multi-GB recordings, you may want to know the message count before committin
 ```bash
 $ mie-decoder count flight.mie
 14523
+# (stderr, always emitted: "counted 14523 messages in flight.mie")
 ```
 
 **Python** (uses `decode --count`):
 ```bash
 $ mie-decoder decode flight.mie --count
-14523 messages
+14523
+# (stderr, always emitted: "counted 14523 messages in flight.mie")
 ```
+
+Both implementations follow the same two-channel contract (L3-RS-008 / L3-PY-010): only the integer goes to stdout (so `n=$(mie-decoder count flight.mie)` works cleanly), while the human-readable status line goes to stderr.
 
 The count walks the entire file but doesn't write CSV — much faster than a full decode, useful for sanity checks (does this file have the ~15K records I expect, or is something off?). Filters apply if configured, so a config-file `exclude_types = ["SPURIOUS_DATA"]` would count only non-spurious records.
 

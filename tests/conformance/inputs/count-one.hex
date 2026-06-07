@@ -1,0 +1,14 @@
+# Single valid record fixture for the `count` mode conformance case.
+#
+# 72 bytes: one RT15 SA11 Receive, Bus A, 30 data words. Byte-exact
+# with the `record_rt15_sa11_rcv` fixture in `tests/integration.rs` /
+# `tests/cli.rs::one_valid_record()` — kept here independently so the
+# conformance suite doesn't take a build-time dependency on either
+# test crate.
+02240F1826DB21F6
+7E79
+0004 0000 0000 2F00 22CA 2F00 22CA
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 71C7
+0078

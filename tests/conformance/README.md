@@ -42,11 +42,14 @@ array of case objects. Each case object accepts the following fields:
 |-------|------|----------|---------|
 | `name` | string | yes | Unique case identifier used for temp files and log output. |
 | `input` | string | yes | Path (relative to `tests/conformance/`) to the hex-text input fixture. |
-| `expected` | string | yes | Path to the checked-in CSV oracle. |
+| `expected` | string | when `expected_exit == 0` | Path to the checked-in oracle. For `mode == "decode"` (default) this is the expected CSV; for `mode == "count"` this is a text file containing the expected integer count plus a trailing newline. |
+| `expected_errors` | string | no | Path to the expected `<stem>_errors.csv` oracle for split-error-mode (`mode == "decode"` only). |
 | `config` | string | no | Optional path to a shared TOML config applied to both implementations. |
+| `mode` | string | no | Either `"decode"` (default — both impls run their decode pipeline; CSV output is compared) or `"count"` (Rust runs the `count` subcommand, Python runs `decode --count`; stdout is compared). |
 | `rust_args` | array of string | no | Additional CLI arguments appended to the Rust invocation only. |
 | `python_args` | array of string | no | Additional CLI arguments appended to the Python invocation only. |
-| `expected_exit` | integer | no | Expected exit code for both implementations. Defaults to `0`. Reserved for negative cases that intentionally exercise non-zero exit classes per `L1-EXIT-002` through `L1-EXIT-004` (e.g., a no-valid-records fixture asserting exit `2`). Runner support lands with Team Review Phase 6. |
+| `expected_stderr_contains` | string | no | Substring assertion applied to each impl's captured stderr. Used by `mode == "count"` cases to pin the human-readable status line without byte-comparing a temp path. |
+| `expected_exit` | integer | no | Expected exit code for both implementations. Defaults to `0`. Negative cases (exit `1`/`2`/`3` per `L1-EXIT-002`..`L1-EXIT-004`) may omit `expected`; the exit code alone is the assertion. |
 
 Unknown fields SHALL be rejected by the runner with a clear error so typos do
 not silently disable per-case behavior.

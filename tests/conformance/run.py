@@ -53,17 +53,24 @@ def read_hex(path: Path) -> bytes:
 
 def run_command(
     command: list[str],
-    output: Path,
+    output: Path | None,
     case_name: str,
     implementation: str,
     expected_exit: int = 0,
-) -> bytes | None:
+) -> tuple[bytes | None, str]:
     """Run one implementation's CLI and assert its exit code matches.
 
-    Returns the CSV bytes from `output` when `expected_exit == 0`, or
-    `None` for negative cases (no output file expected). Raises
-    RuntimeError on unexpected exit codes, command timeouts, or
-    missing output.
+    Returns ``(payload, stderr)`` where ``payload`` is:
+      - the CSV bytes from ``output`` when ``output`` is a path and
+        ``expected_exit == 0`` (the historic decode-mode behavior);
+      - the captured stdout bytes when ``output is None`` (used by the
+        ``count`` mode, where stdout *is* the data being compared);
+      - ``None`` for negative cases (no payload expected).
+    ``stderr`` is always returned so call sites can run substring
+    checks against the human-readable status lines.
+
+    Raises RuntimeError on unexpected exit codes, command timeouts,
+    or missing output.
     """
     print(f"RUN  {case_name} ({implementation})", flush=True)
     try:
@@ -94,23 +101,39 @@ def run_command(
             f"stderr:\n{result.stderr}"
         )
     if expected_exit != 0:
-        # Negative case — no output file expected.
-        return None
+        # Negative case — no payload expected, but stderr is still
+        # useful for diagnosing why a positive case unexpectedly fell
+        # into this branch.
+        return None, result.stderr
+    if output is None:
+        # Stdout-comparison mode (e.g. `count`). Encode to bytes so the
+        # comparison helpers downstream can treat all payloads uniformly.
+        return result.stdout.encode("utf-8"), result.stderr
     if not output.exists():
         raise RuntimeError(f"{case_name}: {implementation} did not create {output}")
-    return output.read_bytes()
+    return output.read_bytes(), result.stderr
 
 
 def rust_command(
     args: argparse.Namespace,
     case: dict[str, Any],
     source: Path,
-    output: Path,
+    output: Path | None,
 ) -> list[str]:
+    """Build the Rust CLI invocation for a case.
+
+    ``output`` is the per-case scratch CSV path for ``mode == "decode"``
+    cases, or ``None`` for ``mode == "count"`` (stdout-comparison mode,
+    no -o flag).
+    """
     command = [str(args.rust_bin)]
     if config := case.get("config"):
         command += ["--config", str((SUITE / config).resolve())]
-    command += ["decode", str(source), "-o", str(output)]
+    mode = case.get("mode", "decode")
+    if mode == "count":
+        command += ["count", str(source)]
+    else:
+        command += ["decode", str(source), "-o", str(output)]
     command += case.get("rust_args", [])
     return command
 
@@ -119,17 +142,28 @@ def python_command(
     args: argparse.Namespace,
     case: dict[str, Any],
     source: Path,
-    output: Path,
+    output: Path | None,
 ) -> list[str]:
-    command = [
-        str(args.python_bin),
-        "-m",
-        "mie_decoder",
-        "decode",
-        str(source),
-        "-o",
-        str(output),
-    ]
+    """Build the Python CLI invocation for a case.
+
+    Note on flag positioning: the Rust CLI accepts ``--config`` as a
+    global flag *before* the subcommand selector; the Python CLI
+    accepts it as a flag on the ``decode`` subcommand and so it must
+    appear *after* the subcommand token. The Python invocation below
+    therefore places ``--config`` after the source/output args, not
+    immediately after the ``-m mie_decoder`` entrypoint.
+
+    Python exposes message counting as a flag on the ``decode``
+    subcommand (``decode --count``) rather than as its own subcommand,
+    so ``mode == "count"`` translates to ``decode --count`` here, not
+    a hypothetical ``count`` subcommand.
+    """
+    command = [str(args.python_bin), "-m", "mie_decoder"]
+    mode = case.get("mode", "decode")
+    if mode == "count":
+        command += ["decode", str(source), "--count"]
+    else:
+        command += ["decode", str(source), "-o", str(output)]
     if config := case.get("config"):
         command += ["--config", str((SUITE / config).resolve())]
     command += case.get("python_args", [])
@@ -259,18 +293,26 @@ def main() -> int:
             name = case["name"]
             source = temp / f"{name}.mie"
             source.write_bytes(read_hex(SUITE / case["input"]))
-            rust_output = temp / f"{name}-rust.csv"
-            python_output = temp / f"{name}-python.csv"
             expected_exit = int(case.get("expected_exit", 0))
+            mode = case.get("mode", "decode")
 
-            rust = run_command(
+            # ``count`` mode compares stdout (the integer count) rather
+            # than a CSV file, so the per-impl output paths are unused.
+            if mode == "count":
+                rust_output = None
+                python_output = None
+            else:
+                rust_output = temp / f"{name}-rust.csv"
+                python_output = temp / f"{name}-python.csv"
+
+            rust, rust_stderr = run_command(
                 rust_command(args, case, source, rust_output),
                 rust_output,
                 name,
                 "Rust",
                 expected_exit=expected_exit,
             )
-            python = run_command(
+            python, python_stderr = run_command(
                 python_command(args, case, source, python_output),
                 python_output,
                 name,
@@ -287,6 +329,20 @@ def main() -> int:
                 continue
 
             require_equal(rust, python, f"{name} Rust output", f"{name} Python output")
+
+            # Optional stderr substring assertion. Used by ``count`` mode
+            # to pin the "counted N messages in <path>" human-readable
+            # status line in both implementations without requiring a
+            # byte-exact comparison (the path basename varies with the
+            # temp directory and so can't be oracled directly).
+            stderr_needle = case.get("expected_stderr_contains")
+            if stderr_needle:
+                for impl, captured in (("Rust", rust_stderr), ("Python", python_stderr)):
+                    if stderr_needle not in captured:
+                        raise AssertionError(
+                            f"{name}: {impl} stderr does not contain "
+                            f"{stderr_needle!r}\n--- stderr ---\n{captured}"
+                        )
 
             expected_path = SUITE / case["expected"]
             if args.update_expected:

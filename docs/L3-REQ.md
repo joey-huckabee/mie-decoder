@@ -77,7 +77,7 @@ The Python CI workflow SHALL run pytest under Python 3.10, 3.11, 3.12, 3.13, and
 The Python reader SHALL open the input file with `mmap.mmap(fileno, 0, access=mmap.ACCESS_READ)` (or platform equivalent). Writable or copy-on-write mmap modes SHALL NOT be used.
 
 **L3-PY-010** · Parent: L2-CLI-008 · Verification: T
-Python message counting SHALL be available through the `decode --count` flag. The flag SHALL suppress CSV output and print only the integer record count to stdout.
+Python message counting SHALL be available through the `decode --count` flag. The flag SHALL suppress CSV output. Stdout SHALL contain only the integer record count followed by a single newline — no prose, no path, no leading or trailing whitespace beyond that newline — so the output is directly consumable in shell pipelines (`n=$(mie-decoder decode --count rec.mie)`). A human-readable status line including the input path name SHALL be written to stderr so an interactive operator still sees context; this stderr line is not gated by `--log-level` and is always emitted on a successful count.
 
 **L3-PY-011** · Parent: L2-ERR-011 · Verification: T
 Python inline error output SHALL be available through the `--error-mode inline` CLI flag. When this flag is set, error and SPURIOUS_DATA records SHALL appear in the same CSV as clean records, with the `ERROR` and `ERROR_CODE` columns populated per L2-ERR-010.
@@ -111,7 +111,7 @@ Rust fallible APIs SHALL return `Result<T, MieError>`. `MieError` SHALL be a sin
 The Rust production build SHALL support static linking against musl via the `x86_64-unknown-linux-musl` target for deployment on SLES 12 (glibc 2.22). The static-musl build SHALL be exercisable via `cargo build --release --target x86_64-unknown-linux-musl`.
 
 **L3-RS-008** · Parent: L2-CLI-008 · Verification: T
-Rust message counting SHALL be available through the `count` subcommand. The subcommand SHALL print only the integer record count to stdout.
+Rust message counting SHALL be available through the `count` subcommand. Stdout SHALL contain only the integer record count followed by a single newline — no prose, no path, no leading or trailing whitespace beyond that newline — so the output is directly consumable in shell pipelines (`n=$(mie-decoder count rec.mie)`). A human-readable status line including the input path SHALL be written to stderr so an interactive operator still sees context; this stderr line is not gated by `--log-level` and is always emitted on a successful count.
 
 **L3-RS-009** · Parent: L2-ERR-011 · Verification: T
 Rust inline error output SHALL be available through the `--inline-errors` flag on the `decode` subcommand. Stdout output SHALL force inline mode automatically (you cannot split stdout into two streams).

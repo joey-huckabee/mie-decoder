@@ -295,7 +295,12 @@ def _run_decode(args: argparse.Namespace) -> int:
         count = sum(1 for _ in messages)
         elapsed = time.perf_counter() - t0
         logger.info("Counted %d messages in %.3fs", count, elapsed)
-        print(f"{count} messages in {reader.path.name}", file=sys.stderr)
+        # L3-PY-010: integer count to stdout (the machine-readable data),
+        # human-friendly status with path context to stderr (always
+        # emitted, not gated by --log-level so an interactive operator
+        # sees it without having to opt into INFO logging).
+        print(count)
+        print(f"counted {count} messages in {reader.path.name}", file=sys.stderr)
         return 0
 
     # WriteOptions populated once with all three file-output safety
