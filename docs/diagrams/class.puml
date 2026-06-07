@@ -1,156 +1,335 @@
 @startuml MIE-Decoder Class Diagram
 !theme plain
-title MIE-Decoder v1.1 — Class Diagram
+title MIE-Decoder v2.0 — Class Diagram (Rust + Python)
 
-package models {
+' ============================================================================
+'  Cross-implementation note
+' ============================================================================
+' The boxes below describe the SHARED semantic model. Every Python class shown
+' here has a Rust struct or enum with the same name and the same fields. The
+' two implementations are kept in sync by the conformance suite under
+' tests/conformance/. See docs/ARCHITECTURE.md §1 for the full Rust↔Python
+' module correspondence table.
+' ============================================================================
+
+package "Domain Model (models)" {
+
     enum Bus { A=0, B=1 }
     enum Direction { RECEIVE=0, TRANSMIT=1 }
-    enum MessageType {
-        MODE_COMMAND=0x01
-        BC_TO_RT=0x02
-        RT_TO_BC=0x04
-        RT_TO_RT=0x08
-        BROADCAST_BC_TO_RT=0x10
-        BROADCAST_RT_TO_RT=0x18
-        SPURIOUS_DATA=0x20
-    }
-    enum MessageFormat {
-        RECEIVE=1 .. SPURIOUS_DATA=11
-    }
-    enum TimestampFormat { AUTO=0, IRIG=1, STANDARD=2 }
-    enum ErrorMode { SEPARATE=0, INLINE=1 }
 
-    class IrigTimestamp <<frozen>> <<slots>> {
+    enum MessageType {
+        MODE_COMMAND           = 0x01
+        BC_TO_RT               = 0x02
+        RT_TO_BC               = 0x04
+        RT_TO_RT               = 0x08
+        BROADCAST_BC_TO_RT     = 0x10
+        BROADCAST_RT_TO_RT     = 0x18
+        SPURIOUS_DATA          = 0x20
+    }
+
+    enum MessageFormat {
+        RECEIVE
+        TRANSMIT
+        RT_TO_RT
+        BROADCAST_RECEIVE
+        BROADCAST_RT_TO_RT
+        MODE_NO_DATA
+        MODE_WITH_DATA_TRANSMIT
+        MODE_WITH_DATA_RECEIVE
+        BROADCAST_MODE_NO_DATA
+        BROADCAST_MODE_WITH_DATA
+        SPURIOUS_DATA
+    }
+
+    enum TimestampFormat { AUTO, IRIG, STANDARD }
+    enum ErrorMode      { SEPARATE, INLINE }
+
+    class IrigTimestamp <<frozen>> {
         +day, hour, minute, second: int
         +microsecond: int
         +freerun: bool
-        +to_total_microseconds(): int
-        +format(): str
-    }
-    class StandardTimestamp <<frozen>> <<slots>> {
-        +raw_value, upper_word, lower_word: int
-        +to_total_microseconds(): int
+        +to_total_microseconds(): u64
         +format(): str
     }
 
-    class TypeWord <<frozen>> <<slots>> {
-        +message_type: int
-        +bus: Bus
-        +word_count: int
-        +error: bool
-        +raw: int
+    class StandardTimestamp <<frozen>> {
+        +raw_value, upper_word, lower_word: int
+        +to_total_microseconds(): u64
+        +format(): str
     }
-    class CommandWord <<frozen>> <<slots>> {
-        +rt: int
+
+    class TypeWord <<frozen>> {
+        +message_type: u8
+        +bus: Bus
+        +word_count: u16
+        +error: bool
+        +raw: u16
+    }
+
+    class CommandWord <<frozen>> {
+        +rt: u8
         +direction: Direction
-        +subaddress: int
-        +data_word_count: int
-        +raw: int
+        +subaddress: u8
+        +data_word_count: u8
+        +raw: u16
         +is_broadcast: bool
         +is_mode_code: bool
     }
-    class MieMessage <<frozen>> <<slots>> {
+
+    class DataWords <<inline buffer>> {
+        +MAX_DATA_WORDS = 32
+        +len: u8
+        +words: [u16; 32]
+    }
+
+    class MieMessage <<frozen>> {
         +timestamp: Timestamp
         +type_word: TypeWord
         +message_format: MessageFormat
-        +command_word: CommandWord | None
-        +command_word_2: CommandWord | None
-        +status_word: int | None
-        +status_word_2: int | None
-        +data_words: tuple[int, ...]
-        +error_word: int | None
-        +delta: float
-        +file_offset: int
+        +command_word: CommandWord?
+        +command_word_2: CommandWord?
+        +status_word: u16?
+        +status_word_2: u16?
+        +data_words: DataWords
+        +error_word: u16?
+        +delta: f64
+        +file_offset: u64
         --
-        +rt: int | None
+        +rt: u8?
         +bus: Bus
         +msg_label: str
-        +delta_key: str
         +is_error: bool
         +is_spurious: bool
         +error_label: str
     }
+
+    MieMessage *-- DataWords
+    MieMessage o-- TypeWord
+    MieMessage o-- CommandWord
 }
 
-package config {
-    class FilterConfig {
-        +exclude_types: set[int]
-        +exclude_rts: set[int]
-        +exclude_buses: set[Bus]
-        +exclude_subaddresses: set[int]
-        +is_active: bool
-        +should_exclude(...): bool
+' ============================================================================
+'  Structural-invariants subsystem (new in v2.0 — see ARCHITECTURE.md §4)
+' ============================================================================
+package "Structural Invariants (decode)" {
+
+    enum WhichInvariant {
+        STATUS_RT_MATCHES_CMD
+        STATUS_RT_MATCHES_CMD2
+        STATUS_RT2_MATCHES_CMD2
+        DATA_WORD_COUNT_MATCHES_CMD
+        TX_HAS_STATUS
+        RT_RT_HAS_STATUSES
     }
+
+    enum InvariantSeverity {
+        Reject       /' L2-SYN-022..025: raise MieRecordError '/
+        AnomalyWarn  /' L2-SYN-020..021: log warning, keep    '/
+    }
+
+    class InvariantViolation <<frozen>> {
+        +which: WhichInvariant
+        +severity: InvariantSeverity
+        +detail: str
+        +offset: u64
+    }
+
+    class "<<helper>> validate_structural_invariants()" as inv_pre
+    class "<<helper>> validate_post_extract_invariants()" as inv_post
+
+    inv_pre  ..> InvariantViolation : produces
+    inv_post ..> InvariantViolation : produces
+    InvariantViolation o-- WhichInvariant
+    InvariantViolation o-- InvariantSeverity
+}
+
+' ============================================================================
+'  Configuration
+' ============================================================================
+package "Configuration (config)" {
+
+    class FilterConfig {
+        +exclude_types: set<u8>
+        +exclude_rts: set<u8>
+        +exclude_buses: set<Bus>
+        +exclude_subaddresses: set<u8>
+        +include_types: set<u8>
+        +include_rts: set<u8>
+        +include_buses: set<Bus>
+        +include_subaddresses: set<u8>
+        +is_active: bool
+        +should_emit(msg): bool
+    }
+
     class DecoderConfig {
         +log_level: str
         +time_format: TimestampFormat
         +strict: bool
         +error_mode: ErrorMode
+        +allow_partial: bool          /' v2.0: L1-OUT-002 '/
+        +no_clobber: bool             /' v2.0: L2-WRT-014 '/
         +filters: FilterConfig
         +output_format: str
-        +with_overrides(**kwargs): DecoderConfig
+        +with_overrides(over: ConfigOverrides): DecoderConfig
     }
+
+    DecoderConfig *-- FilterConfig
+    DecoderConfig --> ErrorMode
+    DecoderConfig --> TimestampFormat
 }
 
-package sync {
-    class "<<module>>" as sync_mod {
-        +MAX_SCAN_BYTES: int = 65536
+' ============================================================================
+'  Synchronization
+' ============================================================================
+package "Sync (sync)" {
+
+    class "<<module>> sync" as sync_mod {
+        +MAX_SCAN_BYTES       = 65 536
+        +MAX_RECORD_BYTES     = 126
+        +HOMOGENEITY_SAMPLE_RECORDS = 4
+        --
         +validate_record(data, offset, ...): bool
-        +find_first_record(data, ...): int | None
-        +recover_sync(data, offset, ...): int | None
+        +find_first_record(data, ...): ScanHit?
+        +recover_sync(data, offset, ...): u64?
+        +is_homogeneous_payload(data, offset, len): bool   /' v2.0 '/
+        +diagnose_header_scan_failure(data, ...): HeaderScanFailure   /' v2.0 '/
     }
+
+    enum HeaderScanFailure {
+        NoValidRecords
+        FirstRecordTruncated   /' v2.0 '/
+        HomogeneousPayload     /' v2.0 '/
+    }
+
+    sync_mod ..> HeaderScanFailure : returns
 }
 
-package exceptions {
-    class MieDecoderError
-    class MieFileError
-    class MieFileNotFoundError
-    class MieFileEmptyError
-    class MieRecordError
-    class MieInvalidTypeWordError
-    class MieUnknownTypeWordError
-    class MieRecordTruncatedError
-    class MiePayloadError
-    class MieUnknownErrorCodeError
+' ============================================================================
+'  Error hierarchy (Python class tree + Rust enum)
+' ============================================================================
+package "Errors" {
+
+    note as RustErrorNote
+      <b>Rust:</b> single flat enum <i>MieError</i> with 15 variants,
+      one per Python concrete class. Discriminant via
+      <i>MieErrorKind</i> and predicates
+      <i>is_file_error()</i> / <i>is_record_error()</i>.
+    end note
+
+    class MieDecoderError <<abstract>>
+    class MieFileError    <<abstract>>
+    class MieRecordError  <<abstract>>
     class MieWriterError
 
     MieDecoderError <|-- MieFileError
     MieDecoderError <|-- MieRecordError
     MieDecoderError <|-- MieWriterError
+
+    class MieFileNotFoundError
+    class MieFileEmptyError
+    class MieFileIoError
+    class MieNoValidRecordsError
+    class MieHomogeneousPayloadError      /' v2.0 '/
+    class MieInputOutputCollisionError    /' v2.0 '/
+    class MieClobberRefusedError          /' v2.0 '/
+
     MieFileError <|-- MieFileNotFoundError
     MieFileError <|-- MieFileEmptyError
+    MieFileError <|-- MieFileIoError
+    MieFileError <|-- MieNoValidRecordsError
+    MieFileError <|-- MieHomogeneousPayloadError
+    MieFileError <|-- MieInputOutputCollisionError
+    MieFileError <|-- MieClobberRefusedError
+
+    class MieInvalidTypeWordError
+    class MieUnknownTypeWordError
+    class MieRecordTruncatedError
+    class MieFirstRecordTruncatedError    /' v2.0 '/
+    class MiePayloadError
+    class MieUnknownErrorCodeError
+    class MieUnrecoverableSyncLossError
+
     MieRecordError <|-- MieInvalidTypeWordError
     MieRecordError <|-- MieUnknownTypeWordError
     MieRecordError <|-- MieRecordTruncatedError
+    MieRecordError <|-- MieFirstRecordTruncatedError
     MieRecordError <|-- MiePayloadError
     MieRecordError <|-- MieUnknownErrorCodeError
+    MieRecordError <|-- MieUnrecoverableSyncLossError
 }
 
-package reader {
+' ============================================================================
+'  Reader (driver of the pipeline)
+' ============================================================================
+package "Reader (reader)" {
     class MieFileReader {
-        -_path: Path
-        -_file_size: int
-        -_strict: bool
-        -_time_format: TimestampFormat
+        -path: Path
+        -file_size: u64
+        -strict: bool
+        -time_format: TimestampFormat
+        -prev_was_error: bool      /' classifies SPURIOUS_DATA continuation '/
+        --
         +path: Path
-        +file_size: int
-        +__iter__(): Iterator[MieMessage]
+        +file_size: u64
+        +__iter__() / IntoIterator: Iterator<MieResult<MieMessage>>
     }
 }
 
-package writer {
-    class "<<module>>" as writer_mod {
+' ============================================================================
+'  Writer (streaming + output safety)
+' ============================================================================
+package "Writer (writer)" {
+
+    class "<<module>> writer" as writer_mod {
         +CSV_COLUMNS, CSV_HEADER
-        +message_to_row(msg): dict
-        +messages_to_dataframe(msgs): DataFrame
-        +dataframe_to_csv(df, output)
-        +write_csv(msgs, output): int
-        +write_csv_split(msgs, output): (int, int)
+        +message_to_row(msg): Row
+        +write_csv(msgs, output, opts): WriteOutcome
+        +write_csv_split(msgs, output, opts): WriteOutcome
     }
+
+    class AtomicCsvFile {
+        -tmp_path: PathBuf
+        -final_path: PathBuf
+        -committed: bool
+        --
+        +write(bytes): IoResult
+        +commit(): PathBuf       /' rename(tmp → final) '/
+        +commit_as_partial(): PathBuf  /' rename(tmp → <stem>.partial.csv) '/
+        +discard(): IoResult     /' unlink tmp on drop '/
+    }
+
+    class WriteOptions <<frozen>> {
+        +error_mode: ErrorMode
+        +allow_partial: bool      /' v2.0 '/
+        +no_clobber: bool         /' v2.0 '/
+    }
+
+    class WriteOutcome <<frozen>> {
+        +main_rows: u64
+        +error_rows: u64
+        +partial: PartialCommit?
+    }
+
+    writer_mod ..> AtomicCsvFile : uses
+    writer_mod ..> WriteOptions
+    writer_mod ..> WriteOutcome : returns
 }
 
-MieFileReader ..> sync_mod : uses
-MieFileReader ..> MieMessage : yields
-DecoderConfig --> FilterConfig
-DecoderConfig --> ErrorMode
+' ============================================================================
+'  Cross-package relations
+' ============================================================================
+MieFileReader   ..> sync_mod           : uses
+MieFileReader   ..> inv_pre            : applies
+MieFileReader   ..> MieMessage         : yields
+MieFileReader   ..> MieRecordError     : raises (strict)
+MieFileReader   ..> MieFileError       : raises (file-level)
+
+writer_mod      ..> MieMessage         : reads
+writer_mod      ..> MieWriterError     : raises
+writer_mod      ..> MieInputOutputCollisionError : guards
+writer_mod      ..> MieClobberRefusedError       : guards
+
+DecoderConfig   ..> MieFileReader      : configures
+DecoderConfig   ..> writer_mod         : configures
+
 @enduml

@@ -2,77 +2,153 @@
 !theme plain
 skinparam componentStyle rectangle
 skinparam packageStyle rectangle
-title MIE-Decoder v1.1 — Component Architecture
+title MIE-Decoder v2.0 — Component Architecture (Rust + Python)
+
+' ============================================================================
+'  Two implementations, one architecture
+' ============================================================================
+' Every component named below exists in BOTH the Rust crate (src/*.rs) and
+' the Python package (python/src/mie_decoder/*.py). The conformance suite
+' under tests/conformance/ holds them to byte-exact equivalence on CSV
+' output. See docs/ARCHITECTURE.md §1 for the full module correspondence.
+' ============================================================================
 
 package "CLI Layer" {
-    [__main__.py] as main
-    [cli.py] as cli
-    [logger.py] as logmod
-    [config.py] as config
+    [entrypoint\n(main.rs / __main__.py)] as main
+    [cli\n(hand-rolled argparse)] as cli
+    [log\n(stderr, atomic level)] as logmod
+    [config\n(TOML loader,\nCLI overrides)] as config
 }
 
 package "Core Decode Pipeline" {
-    [reader.py\n(MieFileReader)] as reader
-    [decode.py\n(Pure Functions)] as decode
-    [sync.py\n(Validate/Recover)] as sync
+    [reader\n(MieFileReader,\nmmap iterator)] as reader
+    [decode\n(pure functions)] as decode
+    [sync\n(validate/recover/\ndiagnose)] as sync
+    [structural\ninvariants\n(WhichInvariant +\nSeverity)] as invariants
 }
 
 package "Filtering" {
-    [filters.py\n(apply_filters)] as filters
+    [filter\n(include + exclude:\ntype/RT/bus/SA)] as filters
 }
 
 package "Data Model" {
-    [models.py] as models
-    [exceptions.py] as exceptions
+    [models\n(MieMessage, TypeWord,\nDataWords inline buf,\nIrig/Std timestamps)] as models
+    [error\n(MieError enum /\nMie*Error tree)] as errors
 }
 
 package "Output Layer" {
-    [writer.py\n(Pandas CSV)] as writer
-    [dump.py\n(Hex Dump)] as dump
+    [writer\n(streaming CSV,\nseparate / inline)] as writer
+    [output safety\n(AtomicCsvFile,\nno-clobber,\n.partial commit)] as outsafe
+    [dump\n(hex dump,\nrecord dump)] as dump
 }
 
 package "External" {
-    database "MIE Binary\nFile (.mie)" as mie_file
-    file "CSV Output" as csv_file
-    file "Errors CSV" as err_file
-    component "pandas" as pandas
+    database "MIE Binary\nFile (.mie)"          as mie_file
+    file     "CSV Output\n(<stem>.csv)"         as csv_file
+    file     "Errors CSV\n(<stem>_errors.csv,\nseparate mode)" as err_file
+    file     "Partial CSV\n(<stem>.partial.csv,\n--allow-partial)" as partial_file
 }
 
-main --> cli : delegates
-cli --> logmod : configure_logging()
-cli --> config : load_config() + with_overrides()
-cli --> reader : MieFileReader(path, time_format, strict)
-cli --> filters : apply_filters(messages, config.filters)
-cli --> writer : write_csv() / write_csv_split()
-cli --> dump : hex_dump_raw() / hex_dump_records()
+' ============================================================================
+'  CLI wiring
+' ============================================================================
+main      --> cli            : dispatch (decode/count/dump)
+cli       --> logmod         : set global level
+cli       --> config         : load_config → with_overrides
+cli       --> reader         : open(path, time_format, strict)
+cli       --> filters        : wrap iterator
+cli       --> writer         : write_csv / write_csv_split
+cli       --> dump           : count/dump subcommands
+cli       --> outsafe        : checks --no-clobber / --allow-partial
 
-reader --> sync : find_first_record()\nvalidate_record()\nrecover_sync()
-reader --> decode : decode_type_word()\ndecode_irig/standard_timestamp()\ndecode_command_word()\nclassify_message_format()
-reader --> models : yields MieMessage
-reader --> exceptions : raises on strict
+' ============================================================================
+'  Decode pipeline wiring
+' ============================================================================
+reader    --> sync           : find_first_record\nvalidate_record\nrecover_sync
+reader    --> decode         : decode_type_word\ndecode_timestamp\ndecode_command_word\nclassify_message_format
+reader    --> invariants     : validate_structural_invariants\nvalidate_post_extract_invariants
+reader    --> models         : yields MieMessage
+reader    --> errors         : raises (strict mode)
 
-sync --> decode : decode_type_word()\nis_valid_message_type()
-decode --> models : TypeWord, CommandWord,\nIrigTimestamp, StandardTimestamp
+sync      --> decode         : decode_type_word\nis_valid_message_type\nis_homogeneous_payload
+sync      --> errors         : diagnose_header_scan_failure\n→ NoValidRecords /\n  FirstRecordTruncated /\n  HomogeneousPayload
 
-filters --> models : reads MieMessage fields
-writer --> models : reads MieMessage
-writer --> pandas : DataFrame.to_csv()
-writer ..> csv_file : main output
-writer ..> err_file : error output (separate mode)
-reader ..> mie_file : mmap read
+decode    --> models         : produces TypeWord, CommandWord,\nIrigTimestamp, StandardTimestamp,\nInvariantViolation
 
+invariants --> models        : MieMessage, MessageFormat
+invariants --> errors        : Reject → MieRecordError;\nAnomalyWarn → log only
+
+filters   --> models         : reads MieMessage fields
+
+' ============================================================================
+'  Writer / output safety wiring
+' ============================================================================
+writer    --> models         : reads MieMessage
+writer    --> outsafe        : delegates file I/O
+writer    --> errors         : raises MieWriterError
+outsafe   --> errors         : MieInputOutputCollisionError\nMieClobberRefusedError
+
+' ============================================================================
+'  External file edges
+' ============================================================================
+reader    ..> mie_file       : mmap read-only
+outsafe   ..> csv_file       : atomic temp → rename
+outsafe   ..> err_file       : (separate mode)
+outsafe   ..> partial_file   : (--allow-partial path)
+
+' ============================================================================
+'  Notes
+' ============================================================================
 note right of sync
-  Four-phase sync:
-  1. Header detection (find_first_record)
-  2. Continuous validation (validate_record)
-  3. Look-ahead confirmation (next record check)
-  4. Recovery scan (recover_sync)
+  <b>Four-phase sync</b> (docs/ARCHITECTURE.md §3):
+  1. find_first_record — header skip
+  2. validate_record   — six-check shape probe
+  3. look-ahead        — next record must also validate
+  4. recover_sync      — 2-byte step scan, ≤64 KB
+
+  <b>Homogeneity defense (v2.0):</b>
+  Reject homogeneous payloads (e.g. all-zero,
+  all-0xFFFF) that would otherwise spuriously
+  pass validation. Emits HomogeneousPayload.
+end note
+
+note right of invariants
+  <b>Structural invariants (v2.0):</b>
+  Six rules (L2-SYN-020..025) check the decoded
+  record against MIL-STD-1553 transaction shape.
+
+  Severity::Reject     → MieRecordError
+  Severity::AnomalyWarn → log + keep record
+
+  Errored records skip invariant checks
+  (payload is truncated by definition).
+end note
+
+note right of outsafe
+  <b>Output safety (v2.0, L1-OUT-002):</b>
+  1. Reject input == output       (L2-WRT-016)
+  2. Reject existing output + --no-clobber  (L2-WRT-014)
+  3. Write to <stem>.<pid>.tmp
+  4. On clean exit → rename to <stem>.csv
+  5. On error + --allow-partial → rename to
+     <stem>.partial.csv               (L2-WRT-015)
+  6. On error otherwise → unlink tmp  (L2-WRT-017)
 end note
 
 note right of config
-  Sources (priority order):
-  1. CLI arguments
+  <b>Precedence (highest first):</b>
+  1. CLI flags  (--no-clobber, --allow-partial,
+                 --inline-errors, --include-rt, ...)
   2. TOML config file
   3. Built-in defaults
 end note
+
+note left of main
+  <b>Exit-class summary (L1-EXIT-005):</b>
+  0 — complete / partial-recovered / broken-pipe
+  1 — record or usage error
+  2 — no records / homogeneous payload
+  3 — partial-unrecoverable (no --allow-partial)
+end note
+
 @enduml
