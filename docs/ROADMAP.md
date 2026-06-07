@@ -564,11 +564,17 @@ mostly independent and can parallelize across engineers.
 
 Findings from the initial architecture and requirements audit performed
 on 2026-06-05, **prior to** the team review that produced the Team
-Review Backlog above. Captured here verbatim (with light status
-annotations) so context and rationale are not lost. Some items have
-since landed as part of the DELTA work; others overlap with the team
-review; the remainder are genuinely open and not yet captured
-elsewhere.
+Review Backlog above. Captured here verbatim (with status annotations)
+so context and rationale are not lost.
+
+**Overall status: all nine items resolved.** Items 2 and 8 were the
+two distinct new error classes added in 2026-06 commits `b1ea897`
+(FirstRecordTruncated, L2-RDR-004) and `80d0884` (HomogeneousPayload,
+L2-SYN-018). Items 1 and 5 landed in earlier 2026-06 work
+(exit-code classes and DELTA edge cases). Items 3, 4, 6, 7, and 9
+landed as spec clarifications in the L1/L2/L3 requirements split.
+The Suggested Consolidated Spec-Only PR table at the end of this
+section maps every row to its landing commit / requirement.
 
 Source citations preserved. Status markers added inline.
 
@@ -586,11 +592,12 @@ time.
 
 ### Audit Item 1 — Lenient-mode unrecoverable sync loss is silent in the data plane
 
-**Status:** **Open.** Overlaps with Team Review Item 2 (exit-code
-semantics) but is not fully covered by it — Item 2 is the
-*operational/exit-code* answer; this is the *API-layer* counterpart
-(what library callers see from the iterator, independent of the CLI).
-Both perspectives should be reconciled when Item 2 is implemented.
+**Status:** **Resolved.** Option (b) landed in commit `286844e`
+(`feat(reader,cli): exit-code classes, --allow-partial, .partial
+commits`). Both Python (`MieUnrecoverableSyncLossError`) and Rust
+(`MieError::UnrecoverableSyncLoss`) lenient-mode iterators yield a
+terminal `Err` item before stopping, so library callers can react.
+The CLI maps it to exit 3 per L1-EXIT-004. Captured here for history.
 
 `L2-SYN-011` says recovery "SHALL report when no valid record is found
 within the scan window." In strict mode the reader returns
@@ -615,7 +622,14 @@ machinery already needs the terminal-Err signal.
 
 ### Audit Item 2 — Truncated first record isn't covered
 
-**Status:** **Open.** Not covered by the team review. Standalone item.
+**Status:** **Resolved.** Landed as L2-RDR-004 in `docs/L2-REQ.md`
+and implemented in commit `b1ea897` (`feat(reader): implement
+L2-RDR-004 FirstRecordTruncated diagnostic`). Both crates have a
+distinct error class (`MieError::FirstRecordTruncated` /
+`MieFirstRecordTruncatedError`), strict mode surfaces it, lenient
+mode terminates cleanly with zero records. The
+`first-record-truncated` conformance fixture verifies cross-impl
+agreement. Captured here for history.
 
 `L1-DEC-005` / `L2-RDR-002` / `L2-RDR-003` all cover truncation of the
 *final* record. Nothing covers truncation of the *first* record after
@@ -631,7 +645,14 @@ Effort: very small (one validation branch + one test per impl).
 
 ### Audit Item 3 — Timestamp-format selection isn't a requirement at all
 
-**Status:** **Open.** Not covered by the team review.
+**Status:** **Partially resolved.** All three proposed L2 additions
+landed: L2-DEC-011 pins file-level detection, L2-DEC-012 pins the
+IRIG-wins-on-tie tie-break, L2-DEC-013 pins the
+`--time-format` / `decode.time_format` override path. Only L2-DEC-012
+is still listed as Draft in `docs/TRACE-MATRIX.md` because writing a
+test that produces a true equal-score tie requires reverse-engineering
+the auto-detection heuristic; deferred. The spec dimension of the
+audit item is fully done. Captured here for history.
 
 The ROADMAP "Stronger timestamp-format auto-detection" backlog item
 (below) is a *feature* request — but there's no L2 requirement defining
@@ -661,7 +682,12 @@ detection logic.
 
 ### Audit Item 4 — Look-ahead at EOF is correct but spec-ambiguous
 
-**Status:** **Open.** Not covered by the team review.
+**Status:** **Resolved.** L2-SYN-005 in `docs/L2-REQ.md` now reads
+"when at least 2 bytes are available at `offset + (word_count × 2)`.
+When fewer than 2 bytes remain after the candidate record,
+look-ahead SHALL be skipped and validation checks 1 through 4 (type,
+word count, fits-in-file, IRIG range) SHALL be authoritative."
+Captured here for history.
 
 `L2-SYN-005` says look-ahead is done "when look-ahead bytes are
 available." The code (`src/sync.rs:78–89`) treats "<2 bytes remaining"
@@ -693,9 +719,15 @@ Captured here for history.
 
 ### Audit Item 6 — SPURIOUS continuation classification under filtering
 
-**Status:** **Partially open.** The filter-drops-error case was
-verified correct at audit time; the classification-failure case is
-still a latent subtle bug not yet addressed.
+**Status:** **Resolved.** L2-ERR-005 in `docs/L2-REQ.md` now states
+explicitly that continuation status depends on the immediately
+preceding *successfully decoded* record, and that "A classification
+failure or unrecoverable validation error between an error record
+and a SPURIOUS_DATA record SHALL reset the continuation flag." The
+behavior of resetting on a corruption boundary is now spec-pinned;
+test_e2e.py::test_spurious_data_empty_delta_and_continuation_code
+exercises the L2-ERR-005 continuation code path. Captured here for
+history.
 
 Verified in `src/reader.rs:419`: `prev_was_error` is set at the reader,
 before filtering — so a SPURIOUS following a filtered-out error is
@@ -720,7 +752,12 @@ future refactors don't change it accidentally.
 
 ### Audit Item 7 — Inline-vs-separate suffix rule for multi-dot stems
 
-**Status:** **Open.** Not covered by the team review.
+**Status:** **Resolved.** L2-ERR-008 in `docs/L2-REQ.md` now defines
+stem/suffix explicitly: "where `<stem>` is the destination filename
+up to and excluding the final `.`, and `<suffix>` is the final `.`
+and extension (or empty if the destination has no extension).
+Examples: `out.csv` → `out_errors.csv`; `out` → `out_errors`;
+`data.bar.csv` → `data.bar_errors.csv`." Captured here for history.
 
 `src/writer.rs:255–267` and `python/src/mie_decoder/writer.py:276–278`
 both produce:
@@ -740,9 +777,14 @@ Effort: pure spec; both impls already match.
 
 ### Audit Item 8 — Pathological-regular files (0x20-padded)
 
-**Status:** **Open.** Existing "Reject pathological-regular inputs"
-ROADMAP backlog item (below) captures the implementation work; this
-audit item adds the *spec* dimension.
+**Status:** **Resolved.** Landed as L2-SYN-018 in `docs/L2-REQ.md`
+and implemented in commit `80d0884` (`feat(sync,reader): implement
+L2-SYN-018 homogeneous-payload defense`). Both crates have a
+distinct error class (`MieError::HomogeneousPayload` /
+`MieHomogeneousPayloadError`), both modes reject (mirroring the
+NoValidRecords class), CLI maps to exit 2. The `homogeneous-payload`
+conformance fixture verifies cross-impl agreement. Captured here for
+history.
 
 The 0x20-fill case (a file padded with ASCII space bytes parses as a
 contiguous stream of "valid" SPURIOUS_DATA records) is called out in
@@ -758,42 +800,51 @@ flagging it.
 
 ### Audit Item 9 — Smaller items worth a sentence each
 
-Five small items surfaced during the audit. Status tagged per item.
+Five small items surfaced during the audit. All five are now
+resolved; status tagged per item for history.
 
 - **Concurrent file modification under mmap** (`src/reader.rs:82`,
   Python `mmap.ACCESS_READ`): undefined on POSIX if truncated
-  mid-decode. **Status: Open**, superseded in coverage by Team Review
-  Item 8 (`L1-EXIT-006`); track there.
+  mid-decode. **Status: Resolved** via L1-EXIT-006 (which pins the
+  operational contract that the input file SHALL NOT be modified
+  during decoding) and L2-RDR-020 (which pins read-only file access
+  as the implementation enforcement of that contract).
 
 - **`file_offset` is not exposed in any output** — it's in `MieMessage`
-  per `L2-DEC-010` but not surfaced in CSV or `dump`. **Status: Open.**
-  Either add a debug-only requirement to surface it (e.g., as an
-  optional CSV column behind a CLI flag) or note it's intentionally
-  internal and update `L2-DEC-010` to say "for internal/programmatic
-  use; CSV exposure is not required."
+  per `L2-DEC-010` but not surfaced in CSV or `dump`.
+  **Status: Resolved** via the L2-DEC-010 rationale, which now reads
+  "Offset and raw word values are needed by the reader to log
+  record-class diagnostics and by analysts using a programmatic API.
+  Surfacing these in CSV output is not required by L2-WRT-001 and is
+  reserved for future debug-only output paths." Intentionally
+  internal; future debug-only CSV exposure is a separate feature
+  request.
 
-- **L2-CLI-005 exit codes are not class-differentiated**: currently all
-  failure paths use exit 1 or 2 with no per-class distinction.
-  **Status: Open**, superseded by Team Review Item 2 (`L1-EXIT-002` through
-  `L1-EXIT-005`) which adds exit 2 and 3 with explicit semantics; track
-  there.
+- **L2-CLI-005 exit codes are not class-differentiated**:
+  **Status: Resolved** via L1-EXIT-002 through L1-EXIT-005 plus
+  L2-CLI-011 (the exit-code table), which collectively define four
+  exit classes — complete (0), partial-recovered (0 + INFO summary),
+  partial-unrecoverable (3 or 0 with --allow-partial), no-records
+  (2). The CLI's exit-class summary log line (also L1-EXIT-005) gives
+  operators a grep-able one-line classifier.
 
 - **`L2-CFG-008` ambiguity around per-implementation config keys**:
-  "key names remain supported" — but Rust accepts `include_*` keys
-  that Python doesn't. If `include_*` is intentionally Rust-only
-  (`L3-RS-010`), the shared schema requirement should explicitly say
-  "shared keys remain supported; implementations MAY add additional
-  namespaced keys." **Status: Open**, partially overlaps with Team
-  Review Item 6 (`L2-CFG-009` unknown-key WARN) — but the
-  per-implementation-namespace clarification is distinct and still
-  worth landing.
+  **Status: Resolved.** L2-CFG-008 now reads "The configuration
+  schema and key names demonstrated by `config/default.toml` SHALL
+  remain supported. Implementations MAY add additional keys under
+  namespaces that do not collide with shared keys (e.g., Rust-only
+  `filter.include_*` keys per `L3-RS-010`); such additional keys
+  SHALL be ignored or warned by implementations that do not support
+  them."
 
-- **`L2-MSG-001` enumerates "10 supported transaction formats" but the
-  doc never lists them**. **Status: Open.** Add a one-line list to
-  the requirement docs (L1-REQ / L2-REQ / L3-REQ), or reference
-  `src/decode.rs::classify_message_format` as authoritative. Either
-  way the enum membership becomes part of the spec rather than buried
-  in code.
+- **`L2-MSG-001` enumerates "10 supported transaction formats" but
+  the doc never lists them**. **Status: Resolved.** L2-MSG-001 now
+  lists all 10 inline: "(1) BC→RT Receive, (2) RT→BC Transmit,
+  (3) RT-to-RT, (4) Receive Broadcast (BC→RT broadcast),
+  (5) RT-to-RT Broadcast, (6) Mode Code Transmit with data,
+  (7) Mode Code Receive with data, (8) Mode Code with no data,
+  (9) Mode Code Broadcast with no data, (10) Mode Code Broadcast
+  with data. SPURIOUS_DATA is the 11th classification..."
 
 ---
 
@@ -820,27 +871,24 @@ Five small items surfaced during the audit. Status tagged per item.
 
 ---
 
-### Suggested Consolidated Spec-Only PR (open work from this audit)
+### Suggested Consolidated Spec-Only PR — Status: Resolved
 
-Combining the open audit items above into a single spec-only PR that
-adds no behavior changes:
+The consolidated spec-only PR proposed below was fully landed (mostly
+across the v3 requirements split + the L2-RDR-004 / L2-SYN-018
+implementations). Each row tagged with the commit/spec change that
+closed it; preserved here for history.
 
-| Source | Change |
-|--------|--------|
-| Audit Item 2 | New L2-RDR requirement for truncated first record |
-| Audit Item 3 | New `L2-DEC-011`/`L2-DEC-012`/`L2-DEC-013` pinning timestamp-format detection behavior |
-| Audit Item 4 | Tighten `L2-SYN-005` look-ahead-at-EOF wording |
-| Audit Item 6 | Clarify `L2-ERR-005` "immediately preceding decoded record" |
-| Audit Item 7 | Define `stem`/`suffix` in `L2-ERR-008` |
-| Audit Item 8 | New requirement rejecting homogeneous-payload pathological inputs |
-| Audit Item 9 (sub) | List the 10 transaction formats in `L2-MSG-001` |
-| Audit Item 9 (sub) | Clarify `file_offset` as internal-only in `L2-DEC-010` |
-| Audit Item 9 (sub) | Clarify `L2-CFG-008` per-impl key namespacing vs `L3-RS-010` |
-
-This consolidated PR would slot into **Team Review Phase 1** (spec
-PR, 1 day) — landing both the team review's spec changes (Items 2, 3,
-4, 6) *and* the audit's remaining spec changes in one reviewable
-batch. **Combined effort: 1-2 days.**
+| Source | Change | Landed in |
+|--------|--------|-----------|
+| Audit Item 2 | New L2-RDR requirement for truncated first record | L2-RDR-004 + commit `b1ea897` |
+| Audit Item 3 | New `L2-DEC-011`/`L2-DEC-012`/`L2-DEC-013` pinning timestamp-format detection behavior | Spec landed via v3 requirements split; L2-DEC-012 test deferred |
+| Audit Item 4 | Tighten `L2-SYN-005` look-ahead-at-EOF wording | L2-SYN-005 updated wording in `docs/L2-REQ.md` |
+| Audit Item 6 | Clarify `L2-ERR-005` "immediately preceding decoded record" | L2-ERR-005 updated wording in `docs/L2-REQ.md` |
+| Audit Item 7 | Define `stem`/`suffix` in `L2-ERR-008` | L2-ERR-008 examples in `docs/L2-REQ.md` |
+| Audit Item 8 | New requirement rejecting homogeneous-payload pathological inputs | L2-SYN-018 + commit `80d0884` |
+| Audit Item 9 (sub) | List the 10 transaction formats in `L2-MSG-001` | L2-MSG-001 enumeration in `docs/L2-REQ.md` |
+| Audit Item 9 (sub) | Clarify `file_offset` as internal-only in `L2-DEC-010` | L2-DEC-010 rationale in `docs/L2-REQ.md` |
+| Audit Item 9 (sub) | Clarify `L2-CFG-008` per-impl key namespacing vs `L3-RS-010` | L2-CFG-008 namespaced-keys clause in `docs/L2-REQ.md` |
 
 ---
 
