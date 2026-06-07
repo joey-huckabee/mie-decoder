@@ -59,7 +59,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 
 ### Python package
 
-MIE-Decoder is not published to PyPI; install from a source checkout:
+Install from a source checkout:
 
 ```bash
 pip install -e ./python

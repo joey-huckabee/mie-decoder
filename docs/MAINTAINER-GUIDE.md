@@ -471,7 +471,7 @@ rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-The resulting binary in `target/x86_64-unknown-linux-musl/release/mie-decoder` is self-contained and ships as the deliverable artifact. **MIE-Decoder is not published to crates.io**; downstream consumers either grab the static-musl binary directly or build from a source checkout.
+The resulting binary in `target/x86_64-unknown-linux-musl/release/mie-decoder` is self-contained and ships as the deliverable artifact.
 
 ### Python package
 
@@ -480,7 +480,7 @@ poetry -C python check --strict --lock
 poetry -P python build
 ```
 
-This produces `python/dist/mie_decoder-<version>.tar.gz` and `mie_decoder-<version>-py3-none-any.whl`. **MIE-Decoder is not published to PyPI**; downstream consumers install from the built wheel/sdist or via `pip install -e ./python` from a source checkout.
+This produces `python/dist/mie_decoder-<version>.tar.gz` and `mie_decoder-<version>-py3-none-any.whl`.
 
 ### Version coordination
 
