@@ -54,6 +54,21 @@ fn hex(s: &str) -> Vec<u8> {
         .collect()
 }
 
+/// One errored RT15 SA11 record: Type Word with bit 14 set (error),
+/// IRIG timestamp byte-identical with `one_valid_record`, Cmd Word
+/// 0x797E, two zero data words, and a trailing Error Word of 0x011E
+/// (Manchester/Parity). 16 bytes total. Mirrors the
+/// `errored_record_rt15_sa11_us(...)` builder in
+/// `python/tests/conftest.py`.
+fn errored_record() -> Vec<u8> {
+    let mut s = String::new();
+    s.push_str("02480F1826DB21F6"); // Type 0x4802 (err bit, wc=8) + IRIG TS
+    s.push_str("7E79"); // Cmd Word 0x797E
+    s.push_str("00000000"); // 2 zero data words
+    s.push_str("1E01"); // Error Word 0x011E
+    hex(&s)
+}
+
 // ── Scratch directory helper ─────────────────────────────────────────
 
 /// Per-test scratch directory, removed on drop. Tests work inside one
@@ -267,5 +282,183 @@ fn no_args_invocation_exits_non_zero() {
         exit_code(&out),
         0,
         "invoking the binary with no arguments must fail with a non-zero exit"
+    );
+}
+
+// ── Filter behavior (Rust-only include side per L3-RS-010) ───────────
+
+/// Helper: count data rows in a CSV (lines minus the one-line header).
+fn data_row_count(csv: &str) -> usize {
+    csv.lines().count().saturating_sub(1)
+}
+
+/// Requirements: L2-FLT-001, L3-RS-010
+#[test]
+fn include_rts_filter_keeps_only_matching_records() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+
+    // `--include-rts 15` matches the fixture's RT15: row retained.
+    let kept_out = tmp.path().join("kept.csv");
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--include-rts"),
+        std::ffi::OsStr::new("15"),
+        std::ffi::OsStr::new("-o"),
+        kept_out.as_os_str(),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+    let csv = std::fs::read_to_string(&kept_out).unwrap();
+    assert_eq!(
+        data_row_count(&csv),
+        1,
+        "RT15 record should be kept by --include-rts 15\n--- csv ---\n{csv}"
+    );
+
+    // `--include-rts 7` excludes RT15 (no match): zero data rows.
+    let dropped_out = tmp.path().join("dropped.csv");
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--include-rts"),
+        std::ffi::OsStr::new("7"),
+        std::ffi::OsStr::new("-o"),
+        dropped_out.as_os_str(),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+    let csv = std::fs::read_to_string(&dropped_out).unwrap();
+    assert_eq!(
+        data_row_count(&csv),
+        0,
+        "RT15 record should NOT pass --include-rts 7\n--- csv ---\n{csv}"
+    );
+}
+
+/// Requirements: L2-FLT-001
+#[test]
+fn exclude_rts_filter_drops_matching_records() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--exclude-rts"),
+        std::ffi::OsStr::new("15"),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+    let csv = std::fs::read_to_string(&output).unwrap();
+    assert_eq!(
+        data_row_count(&csv),
+        0,
+        "RT15 record should be dropped by --exclude-rts 15\n--- csv ---\n{csv}"
+    );
+}
+
+// ── Exit-class summary line (L1-EXIT-005) ────────────────────────────
+
+/// Requirements: L1-EXIT-005
+///
+/// The exit-class summary line is emitted via `log_info!` so it
+/// only surfaces at INFO level or below. Default is WARN, so the
+/// test explicitly raises the level. This exercises both the
+/// log-level CLI flag and the summary-line format.
+#[test]
+fn decode_emits_exit_class_summary_at_info_level() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("--log-level"),
+        std::ffi::OsStr::new("info"),
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("decode exit class: complete"),
+        "stderr must include the L1-EXIT-005 summary line on clean decode\n--- stderr ---\n{stderr}"
+    );
+}
+
+// ── dump subcommand (L2-CLI-009) ─────────────────────────────────────
+
+/// Requirements: L2-CLI-009
+#[test]
+fn dump_records_outputs_hex_to_stdout() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+
+    let out = run([
+        std::ffi::OsStr::new("dump"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--records"),
+        std::ffi::OsStr::new("1"),
+    ]);
+    assert_eq!(exit_code(&out), 0, "dump --records 1 must exit 0");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // dump output includes a Cmd Word and at least one hex word from
+    // the fixture's payload. Check coarse invariants only — the exact
+    // dump format is not part of the cross-impl contract.
+    assert!(
+        stdout.contains("797E") || stdout.contains("7e79") || stdout.contains("0x797E"),
+        "dump output should include the fixture's Cmd Word 0x797E in some form\n--- stdout ---\n{stdout}"
+    );
+}
+
+// ── Inline error output (L2-ERR-010, L2-ERR-011) ─────────────────────
+
+/// Requirements: L2-ERR-010, L2-ERR-011
+///
+/// `--inline-errors` keeps errored records in the main CSV with the
+/// ERROR and ERROR_CODE columns populated, instead of routing them
+/// to a separate `_errors.csv` (the default `separate` error mode).
+/// This test pins the inline behavior and confirms no split file is
+/// produced.
+#[test]
+fn inline_errors_populates_error_code_column() {
+    let tmp = TempDir::new();
+    let mut bytes = one_valid_record();
+    bytes.extend(errored_record());
+    let input = tmp.write("rec.mie", &bytes);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--inline-errors"),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+
+    let csv = std::fs::read_to_string(&output).expect("output CSV not created");
+    assert!(
+        data_row_count(&csv) >= 2,
+        "inline mode should keep both records in one file (got {} data rows)\n--- csv ---\n{csv}",
+        data_row_count(&csv)
+    );
+    assert!(
+        csv.contains("011E"),
+        "inline-errors must populate ERROR_CODE with the DDC code (0x011E)\n--- csv ---\n{csv}"
+    );
+
+    // The separate `_errors.csv` file must NOT have been created
+    // when inline mode is active (L2-ERR-011).
+    let errors_csv = tmp.path().join("out_errors.csv");
+    assert!(
+        !errors_csv.exists(),
+        "inline-errors must not produce a separate _errors.csv (found: {})",
+        errors_csv.display()
     );
 }
