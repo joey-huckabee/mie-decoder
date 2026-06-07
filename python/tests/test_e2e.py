@@ -169,6 +169,44 @@ class TestMieFileReader:
         assert messages[1].file_offset == 72  # 36 words * 2
         assert messages[2].file_offset == 72 + 34  # 36*2 + 17*2
 
+    @pytest.mark.requirement("L2-RDR-004")
+    def test_first_record_truncation_strict_raises_distinct_error(
+        self, tmp_path: Path
+    ) -> None:
+        """L2-RDR-004: a file containing a structurally-valid Type Word
+        whose declared extent runs past EOF SHALL surface a distinct
+        error class in strict mode (MieFirstRecordTruncatedError, NOT
+        the generic MieRecordTruncatedError)."""
+        from tests.conftest import RECORD_RT15_SA11_RCV
+        from mie_decoder.exceptions import (
+            MieFirstRecordTruncatedError,
+            MieRecordTruncatedError,
+        )
+
+        # First 20 bytes of a 72-byte record: Type Word valid (msg_type
+        # 0x02, wc=36), but the record needs 72 bytes and only 20 exist.
+        fpath = tmp_path / "first_truncated.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV[:20])
+        with pytest.raises(MieFirstRecordTruncatedError) as exc_info:
+            list(MieFileReader(fpath, strict=True))
+        # Distinct from the generic MieRecordTruncatedError.
+        assert not isinstance(exc_info.value, MieRecordTruncatedError)
+        assert exc_info.value.record_bytes == 72
+        assert exc_info.value.available_bytes == 20
+
+    @pytest.mark.requirement("L2-RDR-004")
+    def test_first_record_truncation_lenient_terminates_clean(
+        self, tmp_path: Path
+    ) -> None:
+        """L2-RDR-004: lenient mode SHALL terminate cleanly with zero
+        records emitted on first-record truncation."""
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "first_truncated_lenient.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV[:20])
+        messages = list(MieFileReader(fpath))
+        assert messages == []
+
 
 class TestCsvWriter:
     """Integration tests for CSV output."""

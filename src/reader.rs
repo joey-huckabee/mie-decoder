@@ -141,6 +141,10 @@ impl MieFileReader {
 
         let start_offset = find_first_record(data, file_len, resolved_format, MAX_SCAN_BYTES);
 
+        // Tracks whether the iterator should terminate immediately with
+        // no records and no error (the L2-RDR-004 lenient-mode case).
+        let mut early_done = false;
+
         let pending_error = match start_offset {
             Some(hit) => {
                 if hit.offset == 0 {
@@ -155,16 +159,55 @@ impl MieFileReader {
                 None
             }
             None => {
-                let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
-                log_error!(
-                    "no valid records found in first {} bytes of {}",
-                    scan_bytes,
-                    self.path.display()
+                // L2-RDR-004: distinguish "no MIE record at all" from
+                // "structurally-valid Type Word truncated past EOF".
+                let truncated = crate::sync::diagnose_header_scan_failure(
+                    data,
+                    file_len,
+                    resolved_format,
+                    MAX_SCAN_BYTES,
                 );
-                Some(MieError::NoValidRecords {
-                    path: self.path.clone(),
-                    scan_bytes,
-                })
+                match truncated {
+                    Some((trunc_offset, record_bytes, available)) => {
+                        if self.strict {
+                            log_error!(
+                                "first record after header detection is truncated \
+                                 at 0x{:X}: declared {} bytes, only {} available",
+                                trunc_offset,
+                                record_bytes,
+                                available
+                            );
+                            Some(MieError::FirstRecordTruncated {
+                                offset: trunc_offset as u64,
+                                record_bytes: record_bytes as u64,
+                                available_bytes: available as u64,
+                            })
+                        } else {
+                            log_warn!(
+                                "first record after header detection is truncated \
+                                 at 0x{:X}: declared {} bytes, only {} available — \
+                                 lenient mode terminates cleanly with zero records",
+                                trunc_offset,
+                                record_bytes,
+                                available
+                            );
+                            early_done = true;
+                            None
+                        }
+                    }
+                    None => {
+                        let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
+                        log_error!(
+                            "no valid records found in first {} bytes of {}",
+                            scan_bytes,
+                            self.path.display()
+                        );
+                        Some(MieError::NoValidRecords {
+                            path: self.path.clone(),
+                            scan_bytes,
+                        })
+                    }
+                }
             }
         };
 
@@ -174,7 +217,7 @@ impl MieFileReader {
             data,
             file_len,
             offset: start_offset.map(|h| h.offset).unwrap_or(file_len),
-            done: false,
+            done: early_done,
             pending_error,
             pending_unrecoverable: None,
             strict: self.strict,
@@ -1012,5 +1055,64 @@ mod tests {
         // Subsequent calls: None forever.
         assert!(it.next().is_none());
         assert!(it.next().is_none());
+    }
+
+    /// Regression: L2-RDR-004. A file that contains a structurally-
+    /// valid Type Word whose declared extent runs past EOF SHALL surface
+    /// MieError::FirstRecordTruncated in strict mode (distinct from the
+    /// generic RecordTruncated) and SHALL terminate cleanly with zero
+    /// records in lenient mode.
+    /// Requirements: L2-RDR-004
+    #[test]
+    fn first_record_truncated_strict_raises_distinct_error() {
+        // First 20 bytes of a 72-byte record: Type Word looks valid
+        // (msg_type=0x02, bus A, wc=36) but the declared 72-byte extent
+        // runs past EOF.
+        let full = rt15_sa11_rcv();
+        let truncated = &full[..20];
+        let f = write_temp(truncated);
+        let reader = MieFileReader::with_options(
+            f.path(),
+            ReaderOptions {
+                strict: true,
+                time_format: TimestampFormat::Auto,
+            },
+        )
+        .unwrap();
+        let mut it = reader.iter();
+        match it.next() {
+            Some(Err(e)) => {
+                assert_eq!(
+                    e.kind(),
+                    crate::error::MieErrorKind::FirstRecordTruncated,
+                    "expected FirstRecordTruncated, got {:?}",
+                    e.kind()
+                );
+                if let crate::error::MieError::FirstRecordTruncated {
+                    record_bytes,
+                    available_bytes,
+                    ..
+                } = e
+                {
+                    assert_eq!(record_bytes, 72);
+                    assert_eq!(available_bytes, 20);
+                } else {
+                    unreachable!()
+                }
+            }
+            other => panic!("expected Some(Err(FirstRecordTruncated)), got {other:?}"),
+        }
+        assert!(it.next().is_none());
+    }
+
+    /// Requirements: L2-RDR-004
+    #[test]
+    fn first_record_truncated_lenient_terminates_clean() {
+        let full = rt15_sa11_rcv();
+        let truncated = &full[..20];
+        let f = write_temp(truncated);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+        assert!(msgs.is_empty(), "lenient mode SHALL yield zero records");
     }
 }

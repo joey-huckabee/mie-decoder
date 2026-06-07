@@ -64,6 +64,7 @@ from mie_decoder.decode import (
 from mie_decoder.exceptions import (
     MieFileEmptyError,
     MieFileNotFoundError,
+    MieFirstRecordTruncatedError,
     MieInvalidTypeWordError,
     MieNoValidRecordsError,
     MiePayloadError,
@@ -227,10 +228,42 @@ class MieFileReader:
                     ts_format=resolved_format,
                 )
                 if start_offset is None:
+                    # L2-RDR-004: distinguish "no Type Word at all" from
+                    # "found a structurally-valid Type Word but its
+                    # declared extent runs past EOF". The latter gets
+                    # MieFirstRecordTruncatedError in strict mode and
+                    # terminates cleanly with zero records in lenient.
+                    from mie_decoder.sync import (
+                        MAX_SCAN_BYTES,
+                        diagnose_header_scan_failure,
+                    )
+                    truncated = diagnose_header_scan_failure(
+                        mm, file_len, ts_format=resolved_format,
+                    )
+                    if truncated is not None:
+                        offset_t, record_bytes, available = truncated
+                        if self._strict:
+                            logger.error(
+                                "First record after header detection is "
+                                "truncated at 0x%X: declared %d bytes, "
+                                "only %d available",
+                                offset_t, record_bytes, available,
+                            )
+                            raise MieFirstRecordTruncatedError(
+                                offset_t, record_bytes, available
+                            )
+                        logger.warning(
+                            "First record after header detection is "
+                            "truncated at 0x%X: declared %d bytes, "
+                            "only %d available — lenient mode terminates "
+                            "cleanly with zero records",
+                            offset_t, record_bytes, available,
+                        )
+                        return
+
                     # L1-EXIT-002: surface as an exception so the CLI maps
                     # to exit 2 (and so library callers can react)
                     # rather than silently yielding zero messages.
-                    from mie_decoder.sync import MAX_SCAN_BYTES
                     scan_bytes = min(file_len, MAX_SCAN_BYTES)
                     logger.error(
                         "No valid records found in %s", self._path.name

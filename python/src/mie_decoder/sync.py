@@ -239,6 +239,56 @@ def find_first_record(
     return None
 
 
+def diagnose_header_scan_failure(
+    data: bytes | memoryview,
+    file_len: int,
+    ts_format: TimestampFormat | None = None,
+    max_scan: int = MAX_SCAN_BYTES,
+) -> tuple[int, int, int] | None:
+    """Locate the first structurally-valid Type Word that's truncated.
+
+    Called after :func:`find_first_record` returns None to distinguish
+    "no MIE record at all" (L1-EXIT-002 / MieNoValidRecordsError) from
+    "valid Type Word found but its declared extent runs past EOF"
+    (L2-RDR-004 / MieFirstRecordTruncatedError).
+
+    Walks the same 2-byte-aligned grid as :func:`find_first_record` but
+    omits the fits-in-file check and the two-record look-ahead — so it
+    matches a Type Word that *would have been valid* if the file were
+    long enough.
+
+    Returns:
+        ``(offset, declared_bytes, available_bytes)`` for the first
+        structurally-valid Type Word that fails only the length check,
+        or ``None`` if no such Type Word exists in the scan window.
+    """
+    scan_end = min(file_len, max_scan)
+    for offset in range(0, scan_end, 2):
+        if offset + 2 > file_len:
+            break
+        type_raw = read_u16(data, offset)
+        tw = decode_type_word(type_raw)
+        if not is_valid_message_type(tw.message_type):
+            continue
+        # Minimum payload size depends on timestamp format; assume IRIG
+        # when unknown (the longer minimum is the more permissive bound
+        # for "what looks like a Type Word").
+        ts_words = 3 if (ts_format or TimestampFormat.IRIG) == TimestampFormat.IRIG else 2
+        if tw.word_count < 1 + ts_words + 1 or tw.word_count > 63:
+            continue
+        record_bytes = tw.word_count * 2
+        # Only the length check is allowed to fail; everything else
+        # must look right. If extent fits in file, find_first_record
+        # would have already returned this offset, so the only way to
+        # reach here is a length-driven rejection.
+        if offset + record_bytes > file_len:
+            return offset, record_bytes, file_len - offset
+        # Type Word looks valid and fits, but find_first_record didn't
+        # pick it — most likely the IRIG range check or two-record
+        # look-ahead rejected it. Keep scanning.
+    return None
+
+
 def recover_sync(
     data: bytes | memoryview,
     offset: int,

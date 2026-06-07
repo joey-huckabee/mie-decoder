@@ -144,7 +144,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-MODE-001 | L2-ERR-004, L2-RDR-003, L2-RDR-004, L2-SYN-015, L2-SYN-016 | Partially Implemented |
+| L1-MODE-001 | L2-ERR-004, L2-RDR-003, L2-RDR-004, L2-SYN-015, L2-SYN-016 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -152,7 +152,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 |-------|-------------|----------------|--------|
 | L2-ERR-004 | _(none)_ | `python/tests/test_exceptions.py::test_unknown_error_code_fields` | Implemented |
 | L2-RDR-003 | _(none)_ | `python/tests/test_e2e.py::test_truncated_record_strict`<br>`python/tests/test_exceptions.py::test_record_truncated_fields` | Implemented |
-| L2-RDR-004 | _(none)_ | _(TBD)_ | Draft |
+| L2-RDR-004 | _(none)_ | `python/tests/test_e2e.py::test_first_record_truncation_lenient_terminates_clean`<br>`python/tests/test_e2e.py::test_first_record_truncation_strict_raises_distinct_error`<br>`src/reader.rs::first_record_truncated_lenient_terminates_clean`<br>`src/reader.rs::first_record_truncated_strict_raises_distinct_error` | Implemented |
 | L2-SYN-015 | _(none)_ | `python/tests/test_sync.py::test_reader_recovers_from_corruption`<br>`tests/integration.rs::corrupt_irig_record_skipped_by_per_record_validation` | Implemented |
 | L2-SYN-016 | _(none)_ | `python/tests/test_e2e.py::test_invalid_record_strict`<br>`python/tests/test_sync.py::test_reader_strict_raises_on_corruption` | Implemented |
 
@@ -309,17 +309,17 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | CONF | 1 | 5 | 0 | 2 | 0 | 4 | 0 |
 | EXIT | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| RDR | 0 | 15 | 0 | 13 | 0 | 14 | 0 |
+| RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
 | WRT | 0 | 13 | 2 | 13 | 2 | 13 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
-| **Total** | **24** | **103** | **26** | **94** | **13** | **99** | **25** |
+| **Total** | **24** | **103** | **26** | **95** | **13** | **100** | **25** |
 
-**Tested by at least one test marker**: 107 of 129 (82.9%).
+**Tested by at least one test marker**: 108 of 129 (83.7%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 124 of 129 (96.1%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 125 of 129 (96.9%).
 
 ### Orphan check
 

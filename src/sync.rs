@@ -148,6 +148,59 @@ pub fn find_first_record(
     None
 }
 
+/// Diagnostic for L2-RDR-004: locate the first structurally-valid Type
+/// Word that fails only the length check.
+///
+/// Called after [`find_first_record`] returns `None` to distinguish
+/// "no MIE record at all" (`MieError::NoValidRecords`) from "valid
+/// Type Word found but its declared extent runs past EOF"
+/// (`MieError::FirstRecordTruncated`).
+///
+/// Walks the same 2-byte-aligned grid as `find_first_record` but
+/// omits the fits-in-file check and the two-record look-ahead, so it
+/// matches a Type Word that *would have been valid* if the file were
+/// long enough. Returns `Some((offset, record_bytes, available))` for
+/// the first such candidate, or `None`.
+pub fn diagnose_header_scan_failure(
+    data: &[u8],
+    file_len: usize,
+    ts_format: Option<TimestampFormat>,
+    max_scan: usize,
+) -> Option<(usize, usize, usize)> {
+    use crate::decode::{decode_type_word, message_type_is_valid, read_u16};
+    use crate::models::timestamp_word_count;
+
+    let scan_end = file_len.min(max_scan);
+    let resolved = ts_format.unwrap_or(TimestampFormat::Irig);
+    let ts_words = timestamp_word_count(resolved);
+    let min_wc: u16 = 1 + ts_words + 1;
+    let mut offset = 0;
+    while offset + 2 <= scan_end {
+        let Some(type_raw) = read_u16(data, offset) else {
+            break;
+        };
+        let tw = decode_type_word(type_raw);
+        if !message_type_is_valid(tw.message_type) {
+            offset += 2;
+            continue;
+        }
+        if tw.word_count < min_wc || tw.word_count > 63 {
+            offset += 2;
+            continue;
+        }
+        let record_bytes = usize::from(tw.word_count) * 2;
+        if offset + record_bytes > file_len {
+            return Some((offset, record_bytes, file_len - offset));
+        }
+        // Otherwise the Type Word looks valid AND fits; find_first_record
+        // would have already returned it unless IRIG range / look-ahead
+        // rejected it. Either way, not a length-driven failure — keep
+        // scanning for a candidate whose only problem is length.
+        offset += 2;
+    }
+    None
+}
+
 /// Walk forward from `offset` looking for the next valid record. Used after
 /// validation fails mid-file.
 pub fn recover_sync(

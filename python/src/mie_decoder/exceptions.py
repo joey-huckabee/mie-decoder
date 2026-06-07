@@ -240,6 +240,40 @@ class MieRecordTruncatedError(MieRecordError):
         )
 
 
+class MieFirstRecordTruncatedError(MieRecordError):
+    """Raised when the FIRST record after header detection is truncated.
+
+    Per L2-RDR-004 this is the post-header counterpart to L2-RDR-002 /
+    L2-RDR-003: the file contains a structurally-valid Type Word (known
+    message type, plausible word count, optional valid IRIG range) at
+    or after the header, but the Type Word's declared extent runs past
+    end-of-file. Strict mode surfaces this as a distinct error class
+    (separate from generic :class:`MieRecordTruncatedError`); lenient
+    mode terminates cleanly with zero records emitted.
+
+    The distinction matters operationally: a generic
+    :class:`MieRecordTruncatedError` usually means a mid-stream cut
+    after at least one valid record; a
+    :class:`MieFirstRecordTruncatedError` means the recording was
+    aborted before the first complete record was written.
+
+    Attributes:
+        offset: Byte offset of the structurally-valid Type Word.
+        record_bytes: Number of bytes the Type Word declares.
+        available_bytes: Bytes remaining in the file from ``offset``.
+    """
+
+    def __init__(self, offset: int, record_bytes: int, available_bytes: int) -> None:
+        self.record_bytes = record_bytes
+        self.available_bytes = available_bytes
+        super().__init__(
+            offset,
+            f"First record after header detection is truncated: "
+            f"Type Word declares {record_bytes} bytes but only "
+            f"{available_bytes} bytes remain in file",
+        )
+
+
 class MiePayloadError(MieRecordError):
     """Raised when a record's payload cannot be extracted.
 

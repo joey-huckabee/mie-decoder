@@ -41,6 +41,22 @@ pub enum MieError {
         available_bytes: u64,
     },
 
+    /// The first valid Type Word found after header detection has a
+    /// declared extent that runs past EOF. Per L2-RDR-004 this is a
+    /// distinct error class from [`Self::RecordTruncated`]: strict mode
+    /// surfaces it; lenient mode terminates cleanly with zero records
+    /// emitted (the reader returns `None` from `iter()` rather than
+    /// yielding the truncated record).
+    ///
+    /// Operationally this signals that the recording was aborted before
+    /// the first complete record was written — distinct from a
+    /// mid-stream truncation after at least one valid record.
+    FirstRecordTruncated {
+        offset: u64,
+        record_bytes: u64,
+        available_bytes: u64,
+    },
+
     /// Record's payload is inconsistent with Type Word / Command Word.
     PayloadError { offset: u64, detail: String },
 
@@ -86,6 +102,7 @@ pub enum MieErrorKind {
     InvalidTypeWord,
     UnknownTypeWord,
     RecordTruncated,
+    FirstRecordTruncated,
     PayloadError,
     UnknownErrorCode,
     NoValidRecords,
@@ -104,6 +121,7 @@ impl MieError {
             Self::InvalidTypeWord { .. } => MieErrorKind::InvalidTypeWord,
             Self::UnknownTypeWord { .. } => MieErrorKind::UnknownTypeWord,
             Self::RecordTruncated { .. } => MieErrorKind::RecordTruncated,
+            Self::FirstRecordTruncated { .. } => MieErrorKind::FirstRecordTruncated,
             Self::PayloadError { .. } => MieErrorKind::PayloadError,
             Self::UnknownErrorCode { .. } => MieErrorKind::UnknownErrorCode,
             Self::NoValidRecords { .. } => MieErrorKind::NoValidRecords,
@@ -139,6 +157,7 @@ impl MieError {
             MieErrorKind::InvalidTypeWord
                 | MieErrorKind::UnknownTypeWord
                 | MieErrorKind::RecordTruncated
+                | MieErrorKind::FirstRecordTruncated
                 | MieErrorKind::PayloadError
                 | MieErrorKind::UnknownErrorCode
         )
@@ -184,6 +203,17 @@ impl fmt::Display for MieError {
                 f,
                 "Record error at offset 0x{offset:X}: \
                  Record requires {record_bytes} bytes but only {available_bytes} bytes remain in file"
+            ),
+            Self::FirstRecordTruncated {
+                offset,
+                record_bytes,
+                available_bytes,
+            } => write!(
+                f,
+                "Record error at offset 0x{offset:X}: \
+                 First record after header detection is truncated — \
+                 Type Word declares {record_bytes} bytes but only \
+                 {available_bytes} bytes remain in file"
             ),
             Self::PayloadError { offset, detail } => {
                 write!(f, "Record error at offset 0x{offset:X}: {detail}")
