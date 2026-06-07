@@ -284,7 +284,7 @@ A typical receive row looks like:
 
 Line endings are LF (`\n`) on every platform — including Windows — so the CSV diffs cleanly between machines (L2-WRT-012).
 
-For the binary-level field reference (what's in the Type Word, how IRIG packing works, etc.), see [`FIELDS.md`](FIELDS.md).
+For the binary-level field reference (what's in the Type Word, how IRIG packing works, etc.), see [`MIE-FORMAT.md`](MIE-FORMAT.md).
 
 ---
 
@@ -344,7 +344,7 @@ For every accepted key, its type, default, validation behavior, and CLI override
 
 ## 10. What's next
 
-- **Hit a column you don't recognize?** [`FIELDS.md`](FIELDS.md) is the per-column reference (binary layout + CSV format).
+- **Hit a column you don't recognize?** [`MIE-FORMAT.md`](MIE-FORMAT.md) is the per-column reference (binary layout + CSV format).
 - **Hit an exit code or error message you don't recognize?** [`ERROR-CATALOG.md`](ERROR-CATALOG.md) covers every variant with operator guidance.
 - **Setting up site or campaign config?** [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md) is the normative TOML schema.
 - **Modifying the decoder itself?** [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) covers the development workflows.

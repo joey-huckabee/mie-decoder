@@ -256,11 +256,12 @@ docs/
 ├── CONFIG-REFERENCE.md Normative TOML key reference (type / default / CLI override)
 ├── ERROR-CATALOG.md    Operator reference: exit codes, error classes, DDC codes
 ├── EXAMPLES.md         Runnable cookbook of common operator tasks
-├── FIELDS.md           Complete binary field + CSV column reference
+├── FIELDS.md           Redirect to MIE-FORMAT.md
 ├── L1-REQ.md           Level 1 SHALL statements (system requirements)
 ├── L2-REQ.md           Level 2 architectural derivations
 ├── L3-REQ.md           Level 3 implementation obligations (incl. PY/RS)
 ├── MAINTAINER-GUIDE.md Repo layout, dev setup, workflows for adding things
+├── MIE-FORMAT.md       Comprehensive binary format + CSV column reference
 ├── USER-GUIDE.md       End-to-end CLI walkthrough for analysts and operators
 ├── VENDOR-CSV-DIFFS.md Alignment statement vs DDC vendor CSV (column-by-column)
 ├── TRACE-MATRIX.md     Auto-generated trace matrix (L1 -> L2 -> L3 -> tests)

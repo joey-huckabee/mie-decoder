@@ -110,7 +110,7 @@ The MIE-Decoder LF-only choice is pinned by L2-WRT-012 and is intentional — ke
 
 ## 5. IRIG day-of-year field — firmware-dependent discrepancy
 
-`docs/FIELDS.md` documents this in the IRIG Upper Word section. Summary:
+`docs/MIE-FORMAT.md` §5.1 documents this in the IRIG Upper Word section. Summary:
 
 > Empirical testing has shown a discrepancy between the binary-decoded value and vendor CSV output for the day-of-year field on some DDC card models. The bit extraction is correct per the DDC specification, but the card firmware may use a different encoding (possibly BCD or a different field width).
 
@@ -191,7 +191,7 @@ Plus the cross-implementation conformance suite, which asserts the Rust and Pyth
 
 - [`L1-REQ.md`](L1-REQ.md) — `L1-OUT-001` byte-compat contract; `L1-CONF-001` cross-impl conformance suite.
 - [`L2-REQ.md`](L2-REQ.md) — `L2-WRT-001` through `L2-WRT-013` writer contract; `L2-CONF-001` through `L2-CONF-005` conformance suite specifics.
-- [`FIELDS.md`](FIELDS.md) — Per-column reference (binary source and CSV format).
+- [`MIE-FORMAT.md`](MIE-FORMAT.md) — Comprehensive binary format + CSV column reference.
 - [`ERROR-CATALOG.md`](ERROR-CATALOG.md) — `ERROR_CODE` column values (DDC `0x01xx` and decoder `0x20xx` families).
 - [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6 — Adding a new conformance fixture.
 - [`USER-GUIDE.md`](USER-GUIDE.md) §7 — Reading the CSV from an operator perspective.

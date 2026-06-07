@@ -41,7 +41,7 @@ A successful row looks like this in the output CSV:
 - `A` — Bus A.
 - `0.000000` — DELTA in seconds (first occurrence of RT15/11R so it's zero).
 
-See [`USER-GUIDE.md`](USER-GUIDE.md) §7 or [`FIELDS.md`](FIELDS.md) for the full column reference.
+See [`USER-GUIDE.md`](USER-GUIDE.md) §7 or [`MIE-FORMAT.md`](MIE-FORMAT.md) for the full column reference.
 
 ---
 
@@ -421,4 +421,4 @@ Column indices reference the spec column order (1 = TIME_STAMP, 2 = RT, 3 = MSG,
 - [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md) — Every TOML key, type, default, CLI override.
 - [`ERROR-CATALOG.md`](ERROR-CATALOG.md) — Every exit code, error variant, DDC error code, decoder code.
 - [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) — Column-by-column alignment with vendor CSV and divergence-reporting protocol.
-- [`FIELDS.md`](FIELDS.md) — Per-column reference (binary source and CSV format).
+- [`MIE-FORMAT.md`](MIE-FORMAT.md) — Per-column reference (binary source and CSV format).

@@ -43,7 +43,8 @@ mie-decoder/
 │   ├── TRACE-MATRIX.md     auto-generated from L1/L2/L3 + test markers
 │   ├── ARCHITECTURE.md     module diagram, error pipeline, configuration hierarchy
 │   ├── ERROR-CATALOG.md    operator reference for every error / exit code
-│   ├── FIELDS.md           binary field + CSV column reference
+│   ├── MIE-FORMAT.md       comprehensive binary format + CSV column reference
+│   ├── FIELDS.md           redirect stub for legacy links
 │   ├── ROADMAP.md          versioned roadmap with status annotations
 │   ├── MAINTAINER-GUIDE.md (this file)
 │   └── diagrams/*.puml     PlantUML sources

@@ -163,7 +163,7 @@ Two structural invariants emit `WARN` log lines but do **not** raise or skip the
 | Invariant | When it fires | Log line |
 |-----------|---------------|----------|
 | **L2-SYN-024** (`STATUS_RT_MISMATCH`) | A Status Word's RT field doesn't match the Command Word's RT. Can happen on a multi-drop bus when a different RT responds to a broadcast. | `L2-SYN anomaly at 0x<offset>: Status RT = <N> does not match Cmd RT = <M> (raw Status = 0x<raw>); possible bus interference` |
-| **L2-SYN-025** (`TYPE_WORD_RESERVED_BIT`) | Type Word bit 15 (reserved per `docs/FIELDS.md`) is set. May indicate undocumented vendor extension or wire corruption. | `L2-SYN anomaly at 0x<offset>: Type Word bit 15 (reserved) is set in raw 0x<raw>; possible undocumented vendor extension` |
+| **L2-SYN-025** (`TYPE_WORD_RESERVED_BIT`) | Type Word bit 15 (reserved per `docs/MIE-FORMAT.md`) is set. May indicate undocumented vendor extension or wire corruption. | `L2-SYN anomaly at 0x<offset>: Type Word bit 15 (reserved) is set in raw 0x<raw>; possible undocumented vendor extension` |
 
 If you see a high rate of either WARN in a recording, the recording itself is the thing to investigate — not the decoder.
 
