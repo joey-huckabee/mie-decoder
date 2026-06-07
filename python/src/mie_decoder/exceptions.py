@@ -240,6 +240,45 @@ class MieRecordTruncatedError(MieRecordError):
         )
 
 
+class MieHomogeneousPayloadError(MieFileError):
+    """Raised when the input file looks like a pathological single-byte
+    pad rather than an MIE recording.
+
+    Per L2-SYN-018 the reader applies an additional defense beyond the
+    Type Word / look-ahead validation: after a candidate record is
+    accepted, the first N=4 consecutive candidate records are compared
+    in their non-timestamp byte positions. If all N records are
+    byte-identical outside the timestamp triple, the file is rejected
+    with this error class.
+
+    The motivating case is a 0x20-padded file, where ``0x20 0x20``
+    parses as a valid SPURIOUS_DATA Type Word and the two-record
+    look-ahead heuristic alone admits the stream — extracting it
+    would emit millions of synthetic SPURIOUS_DATA records.
+
+    Both strict and lenient mode reject. This is a "wrong-file-shape"
+    error analogous to :class:`MieNoValidRecordsError`, not a
+    per-record failure that lenient mode might skip.
+
+    Attributes:
+        path: The file path that was rejected.
+        offset: Byte offset of the homogeneous run start.
+        sample_records: Number of consecutive identical records sampled.
+    """
+
+    def __init__(self, path: str, offset: int, sample_records: int) -> None:
+        self.path = path
+        self.offset = offset
+        self.sample_records = sample_records
+        super().__init__(
+            f"Pathological homogeneous-payload input rejected ({path}): "
+            f"the first {sample_records} candidate records starting at "
+            f"offset 0x{offset:X} are byte-identical in non-timestamp "
+            f"positions. The file is most likely a single-byte pad "
+            f"(e.g. 0x20-fill), not an MIE recording."
+        )
+
+
 class MieFirstRecordTruncatedError(MieRecordError):
     """Raised when the FIRST record after header detection is truncated.
 

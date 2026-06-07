@@ -69,6 +69,20 @@ pub enum MieError {
     /// as input).
     NoValidRecords { path: PathBuf, scan_bytes: u64 },
 
+    /// L2-SYN-018: the input file appears to be a pathological single-
+    /// byte pad rather than an MIE recording. After header detection
+    /// finds a candidate record, the reader compares the first N
+    /// consecutive candidate-sized chunks; if they are byte-identical
+    /// in every position except the timestamp triple, the file is
+    /// rejected. Defends against 0x20-fill (where `0x20 0x20` parses
+    /// as a valid SPURIOUS_DATA Type Word and look-ahead alone admits
+    /// the stream) and similar single-byte pads.
+    HomogeneousPayload {
+        path: PathBuf,
+        offset: u64,
+        sample_records: u32,
+    },
+
     /// Output writer failed (CSV row, flush, etc).
     WriterError {
         destination: String,
@@ -106,6 +120,7 @@ pub enum MieErrorKind {
     PayloadError,
     UnknownErrorCode,
     NoValidRecords,
+    HomogeneousPayload,
     WriterError,
     InputOutputCollision,
     ClobberRefused,
@@ -125,6 +140,7 @@ impl MieError {
             Self::PayloadError { .. } => MieErrorKind::PayloadError,
             Self::UnknownErrorCode { .. } => MieErrorKind::UnknownErrorCode,
             Self::NoValidRecords { .. } => MieErrorKind::NoValidRecords,
+            Self::HomogeneousPayload { .. } => MieErrorKind::HomogeneousPayload,
             Self::WriterError { .. } => MieErrorKind::WriterError,
             Self::InputOutputCollision { .. } => MieErrorKind::InputOutputCollision,
             Self::ClobberRefused { .. } => MieErrorKind::ClobberRefused,
@@ -229,6 +245,19 @@ impl fmt::Display for MieError {
                 f,
                 "No valid MIE records found in {} (scanned first {scan_bytes} bytes). \
                  The file may not be an MIE recording, or the records may begin past the scan window.",
+                path.display()
+            ),
+            Self::HomogeneousPayload {
+                path,
+                offset,
+                sample_records,
+            } => write!(
+                f,
+                "Pathological homogeneous-payload input rejected ({}): \
+                 the first {sample_records} candidate records starting at \
+                 offset 0x{offset:X} are byte-identical in non-timestamp \
+                 positions. The file is most likely a single-byte pad \
+                 (e.g. 0x20-fill), not an MIE recording.",
                 path.display()
             ),
             Self::WriterError {

@@ -286,6 +286,65 @@ class TestSyncBoundsAndLogging:
             f"expected header-size byte count in INFO log; got {info_msgs}"
         )
 
+    @pytest.mark.requirement("L2-SYN-018")
+    def test_homogeneous_payload_input_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """L2-SYN-018: a file of pure 0x20-fill parses as a SPURIOUS_DATA
+        Type Word (msg_type=0x20, wc=32) and passes basic validation,
+        but every "record" is byte-identical to its successor. The reader
+        SHALL reject such pathological inputs with
+        MieHomogeneousPayloadError rather than emit a torrent of
+        synthetic SPURIOUS_DATA frames.
+        """
+        from mie_decoder.exceptions import MieHomogeneousPayloadError
+        from mie_decoder.reader import MieFileReader
+
+        # 0x20-fill, 1 KB — enough for 4 candidate records of 64 bytes each.
+        fpath = tmp_path / "all_spaces.mie"
+        fpath.write_bytes(b"\x20" * 1024)
+        with pytest.raises(MieHomogeneousPayloadError):
+            list(MieFileReader(fpath))
+
+    @pytest.mark.requirement("L2-SYN-018")
+    def test_non_homogeneous_valid_records_accepted(
+        self, tmp_path: Path, single_receive_record: bytes
+    ) -> None:
+        """L2-SYN-018: the defense SHALL NOT false-positive on legitimate
+        recordings whose payload bytes vary between records — i.e. real
+        MIE files don't trip the homogeneous-payload guard."""
+        from mie_decoder.reader import MieFileReader
+
+        # Two copies of RECORD_RT15_SA11_RCV (the canonical valid record).
+        # Only 2 records is below the N=4 sample, so the check is
+        # technically inapplicable. To exercise the negative case with
+        # N=4 we need 4 distinct candidate-sized chunks. Easiest: pad to
+        # 4 records by appending three more copies — payloads are
+        # identical except timestamps would naturally vary; here they
+        # don't (same fixture), so we expect the defense to fire.
+        # Instead, use a tmp_mie_file-style multi-record stream where
+        # records have different lengths (so candidate-sized chunks at
+        # the same offsets are NOT identical to record 1).
+        from tests.conftest import (
+            RECORD_RT15_SA11_RCV,
+            RECORD_RT15_SA22_RCV,
+            RECORD_RT15_SA22_XMT,
+        )
+        # Pack four real records with varying types and lengths. The
+        # candidate's record_bytes (72) doesn't divide evenly into the
+        # combined stream, so chunks at offset 72, 144, 216 differ in
+        # both Type Word and CMD/payload from the first record.
+        fpath = tmp_path / "varied.mie"
+        fpath.write_bytes(
+            RECORD_RT15_SA11_RCV
+            + RECORD_RT15_SA22_RCV
+            + RECORD_RT15_SA22_XMT
+            + RECORD_RT15_SA11_RCV
+        )
+        # Should decode normally — homogeneity defense must not fire.
+        messages = list(MieFileReader(fpath))
+        assert len(messages) == 4
+
     @pytest.mark.requirement("L2-SYN-013")
     def test_sync_loss_warns_and_recovery_logs_info(
         self,

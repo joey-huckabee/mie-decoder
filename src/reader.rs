@@ -156,7 +156,28 @@ impl MieFileReader {
                         hit.offset
                     );
                 }
-                None
+                // L2-SYN-018: reject pathological homogeneous-payload
+                // inputs (e.g. 0x20-padded files where every "record"
+                // parses as a synthetic SPURIOUS_DATA frame).
+                let candidate_type_raw = read_u16(data, hit.offset).unwrap_or(0);
+                let candidate_tw = decode_type_word(candidate_type_raw);
+                let candidate_record_bytes = usize::from(candidate_tw.word_count) * 2;
+                if crate::sync::is_homogeneous_payload(data, hit.offset, candidate_record_bytes) {
+                    log_error!(
+                        "pathological homogeneous-payload input at offset 0x{:X} \
+                         in {}: {} consecutive candidate records are byte-identical",
+                        hit.offset,
+                        self.path.display(),
+                        crate::sync::HOMOGENEITY_SAMPLE_RECORDS,
+                    );
+                    Some(MieError::HomogeneousPayload {
+                        path: self.path.clone(),
+                        offset: hit.offset as u64,
+                        sample_records: crate::sync::HOMOGENEITY_SAMPLE_RECORDS as u32,
+                    })
+                } else {
+                    None
+                }
             }
             None => {
                 // L2-RDR-004: distinguish "no MIE record at all" from
@@ -1114,5 +1135,77 @@ mod tests {
         let reader = MieFileReader::new(f.path()).unwrap();
         let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
         assert!(msgs.is_empty(), "lenient mode SHALL yield zero records");
+    }
+
+    /// L2-SYN-018: 0x20-fill parses as a SPURIOUS_DATA Type Word
+    /// (msg_type=0x20, wc=32) and passes basic validation, but every
+    /// "record" is byte-identical to its successor. The reader SHALL
+    /// reject the input with MieError::HomogeneousPayload rather than
+    /// emit a torrent of synthetic SPURIOUS_DATA frames.
+    /// Requirements: L2-SYN-018
+    #[test]
+    fn homogeneous_payload_input_rejected() {
+        // 1 KB of 0x20 — enough for 4 candidate records of 64 bytes each.
+        let bytes = vec![0x20u8; 1024];
+        let f = write_temp(&bytes);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        let mut it = reader.iter();
+        match it.next() {
+            Some(Err(e)) => {
+                assert_eq!(
+                    e.kind(),
+                    crate::error::MieErrorKind::HomogeneousPayload,
+                    "expected HomogeneousPayload, got {:?}",
+                    e.kind()
+                );
+            }
+            other => panic!("expected Some(Err(HomogeneousPayload)), got {other:?}"),
+        }
+        // Subsequent calls: None forever.
+        assert!(it.next().is_none());
+    }
+
+    /// L2-SYN-018: the defense SHALL NOT false-positive on legitimate
+    /// recordings whose payload bytes vary between records. The
+    /// canonical RT15-SA11 fixture replicated 4 times has identical
+    /// bytes everywhere (including timestamp triple, which is the same
+    /// fixture), so it would trip the defense — but real multi-record
+    /// streams use varied records. Test with the 3-record multi stream
+    /// used by other tests.
+    /// Requirements: L2-SYN-018
+    #[test]
+    fn non_homogeneous_valid_records_accepted() {
+        // Stitch together 3 of the canonical records, then a 4th of
+        // a different type to make sure consecutive candidate-sized
+        // chunks differ in non-timestamp bytes.
+        let r1 = rt15_sa11_rcv(); // 72 bytes, type 0x02
+        let mut data = Vec::new();
+        data.extend_from_slice(&r1);
+        // Second record: same shape but with non-zero data words so
+        // the byte content differs from r1.
+        let mut r2 = r1.clone();
+        // Patch Cmd word position to a different value to break payload
+        // identity outside the timestamp range.
+        if r2.len() > 9 {
+            r2[8] = 0xCB;
+            r2[9] = 0x7A;
+        }
+        data.extend_from_slice(&r2);
+        data.extend_from_slice(&r1);
+        data.extend_from_slice(&r2);
+        let f = write_temp(&data);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        // Should decode without HomogeneousPayload firing. The records
+        // may or may not all decode cleanly (the patched CmdWord may
+        // trigger an L2-SYN invariant rejection in lenient mode), but
+        // we should NOT see a HomogeneousPayload error.
+        let result: Result<Vec<_>, _> = reader.iter().collect();
+        if let Err(e) = result {
+            assert_ne!(
+                e.kind(),
+                crate::error::MieErrorKind::HomogeneousPayload,
+                "defense false-fired on legitimately varied records: {e}"
+            );
+        }
     }
 }

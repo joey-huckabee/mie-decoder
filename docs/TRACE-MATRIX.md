@@ -162,7 +162,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025 | Partially Implemented |
+| L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025 | Implemented |
 | L1-SYN-002 | L2-SYN-007, L2-SYN-010 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
@@ -182,7 +182,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-SYN-010 | _(none)_ | `src/sync.rs::recover_sync_capped_at_max_scan` | Implemented |
 | L2-SYN-011 | _(none)_ | `python/tests/test_e2e.py::test_lenient_unrecoverable_sync_loss_raises`<br>`python/tests/test_e2e.py::test_no_valid_records_raises`<br>`python/tests/test_sync.py::test_no_recovery_possible`<br>`src/reader.rs::no_valid_records_surfaces_as_iter_error`<br>`tests/integration.rs::lenient_mode_unrecoverable_sync_loss_yields_terminal_error`<br>`tests/integration.rs::non_mie_file_surfaces_error_not_silent_zero_messages` | Implemented |
 | L2-SYN-014 | _(none)_ | _(TBD)_ | Implemented (I) |
-| L2-SYN-018 | _(none)_ | _(TBD)_ | Draft |
+| L2-SYN-018 | _(none)_ | `python/tests/test_sync.py::test_homogeneous_payload_input_rejected`<br>`python/tests/test_sync.py::test_non_homogeneous_valid_records_accepted`<br>`src/reader.rs::homogeneous_payload_input_rejected`<br>`src/reader.rs::non_homogeneous_valid_records_accepted` | Implemented |
 | L2-SYN-019 | _(none)_ | `python/tests/test_sync.py::test_irig_accepts_day_zero_when_freerun`<br>`python/tests/test_sync.py::test_irig_rejects_microsecond_even_when_freerun`<br>`src/sync.rs::validate_accepts_irig_day_zero_when_freerun`<br>`src/sync.rs::validate_rejects_irig_microsecond_when_freerun_too` | Implemented |
 | L2-SYN-020 | _(none)_ | `python/tests/test_decode.py::test_bc_to_rt_with_transmit_cmd_rejected`<br>`python/tests/test_decode.py::test_canonical_bc_to_rt_passes`<br>`python/tests/test_decode.py::test_mode_code_directions_not_constrained`<br>`src/decode.rs::invariants_mode_code_not_constrained_by_direction`<br>`src/decode.rs::invariants_pass_for_canonical_bc_to_rt`<br>`src/decode.rs::invariants_reject_bc_to_rt_with_transmit_cmd` | Implemented |
 | L2-SYN-021 | _(none)_ | `python/tests/test_decode.py::test_canonical_rt_to_bc_passes`<br>`python/tests/test_decode.py::test_rt_to_bc_with_receive_cmd_rejected`<br>`src/decode.rs::invariants_pass_for_canonical_rt_to_bc`<br>`src/decode.rs::invariants_reject_rt_to_bc_with_receive_cmd` | Implemented |
@@ -303,7 +303,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | CLI | 2 | 9 | 0 | 9 | 0 | 9 | 0 |
 | LOG | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MODE | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| SYN | 2 | 25 | 0 | 23 | 0 | 24 | 0 |
+| SYN | 2 | 25 | 0 | 24 | 0 | 25 | 0 |
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 9 | 0 | 9 | 0 | 9 | 0 |
 | CONF | 1 | 5 | 0 | 2 | 0 | 4 | 0 |
@@ -315,11 +315,11 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
-| **Total** | **24** | **103** | **26** | **95** | **13** | **100** | **25** |
+| **Total** | **24** | **103** | **26** | **96** | **13** | **101** | **25** |
 
-**Tested by at least one test marker**: 108 of 129 (83.7%).
+**Tested by at least one test marker**: 109 of 129 (84.5%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 125 of 129 (96.9%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 126 of 129 (97.7%).
 
 ### Orphan check
 

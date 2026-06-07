@@ -65,6 +65,7 @@ from mie_decoder.exceptions import (
     MieFileEmptyError,
     MieFileNotFoundError,
     MieFirstRecordTruncatedError,
+    MieHomogeneousPayloadError,
     MieInvalidTypeWordError,
     MieNoValidRecordsError,
     MiePayloadError,
@@ -269,6 +270,34 @@ class MieFileReader:
                         "No valid records found in %s", self._path.name
                     )
                     raise MieNoValidRecordsError(str(self._path), scan_bytes)
+
+                # L2-SYN-018: reject pathological homogeneous-payload
+                # inputs (e.g. 0x20-padded files where every "record"
+                # parses as a synthetic SPURIOUS_DATA frame). The
+                # candidate's Type Word tells us the record size; we
+                # compare the next N candidate-sized chunks for byte
+                # identity in non-timestamp positions.
+                from mie_decoder.sync import (
+                    HOMOGENEITY_SAMPLE_RECORDS,
+                    is_homogeneous_payload,
+                )
+                candidate_tw = decode_type_word(read_u16(mm, start_offset))
+                candidate_record_bytes = candidate_tw.word_count * 2
+                if is_homogeneous_payload(
+                    mm, start_offset, candidate_record_bytes
+                ):
+                    logger.error(
+                        "Pathological homogeneous-payload input at "
+                        "offset 0x%X in %s: %d consecutive candidate "
+                        "records are byte-identical",
+                        start_offset, self._path.name,
+                        HOMOGENEITY_SAMPLE_RECORDS,
+                    )
+                    raise MieHomogeneousPayloadError(
+                        str(self._path),
+                        start_offset,
+                        HOMOGENEITY_SAMPLE_RECORDS,
+                    )
 
                 offset = start_offset
                 loop_min = MIN_RECORD_BYTES_STANDARD

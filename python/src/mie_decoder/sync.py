@@ -239,6 +239,49 @@ def find_first_record(
     return None
 
 
+#: Number of consecutive candidate records sampled by
+#: :func:`is_homogeneous_payload` for the L2-SYN-018 defense. Must be
+#: >= 4 per the spec.
+HOMOGENEITY_SAMPLE_RECORDS: Final[int] = 4
+
+
+def is_homogeneous_payload(
+    data: bytes | memoryview,
+    offset: int,
+    record_bytes: int,
+) -> bool:
+    """L2-SYN-018: detect pathological homogeneous-payload inputs.
+
+    Checks whether the first :data:`HOMOGENEITY_SAMPLE_RECORDS`
+    consecutive ``record_bytes``-sized chunks starting at ``offset``
+    are byte-identical in every position except the timestamp triple
+    (bytes 2..8 of each record). A homogeneous match means the file is
+    most likely a single-byte pad (e.g. 0x20-fill) where every "record"
+    parses as a synthetic SPURIOUS_DATA frame and look-ahead validation
+    alone admits the stream.
+
+    Returns True iff the run is homogeneous and the reader should
+    reject the input as pathological.
+    """
+    total = HOMOGENEITY_SAMPLE_RECORDS * record_bytes
+    if offset + total > len(data):
+        return False
+    first = bytes(data[offset:offset + record_bytes])
+    for i in range(1, HOMOGENEITY_SAMPLE_RECORDS):
+        rec_start = offset + i * record_bytes
+        other = bytes(data[rec_start:rec_start + record_bytes])
+        # Compare positions [0..2) (Type Word) and [8..record_bytes)
+        # (Cmd + payload). Skip bytes 2..8 (IRIG timestamp triple).
+        # For Standard-format records (4-byte timestamp), this skip
+        # is conservative — we ignore 2 extra bytes of the Cmd field,
+        # which only weakens the rejection slightly.
+        if first[:2] != other[:2]:
+            return False
+        if record_bytes > 8 and first[8:] != other[8:]:
+            return False
+    return True
+
+
 def diagnose_header_scan_failure(
     data: bytes | memoryview,
     file_len: int,
