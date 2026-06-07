@@ -1,11 +1,12 @@
 @startuml MIE-Decoder Data Flow
 !theme plain
-title MIE-Decoder v2.0 — Data Flow (Rust + Python)
+scale max 4000*4000
+title MIE-Decoder v2.0 - Data Flow (Rust + Python)
 
 ' ============================================================================
 '  This diagram describes the behavior shared by both implementations.
 '  Module/function names are Rust where they differ; the Python equivalents
-'  follow the correspondence in docs/ARCHITECTURE.md §1.
+'  follow the correspondence in docs/ARCHITECTURE.md section 1.
 ' ============================================================================
 
 |CLI|
@@ -33,7 +34,7 @@ endif
 :mmap input file (read-only, ACCESS_READ);
 :sync::find_first_record(data, ...);
 note right
-  Scan from offset 0, 2-byte steps, ≤64 KB
+  Scan from offset 0, 2-byte steps, <=64 KB
   for a record whose Type Word AND the
   next record's Type Word both validate
   (two-record look-ahead).
@@ -66,11 +67,11 @@ repeat
     |Sync|
     :sync::recover_sync()\nscan forward in 2-byte steps;
     if (Recovered?) then (no)
-      :Raise <b>MieUnrecoverableSyncLossError</b>\n(terminal Err — iterator ends);
+      :Raise <b>MieUnrecoverableSyncLossError</b>\n(terminal Err - iterator ends);
 
       if (--allow-partial?) then (yes)
         |Output Safety|
-        :commit_as_partial()\nrename tmp → <stem>.partial.csv;
+        :commit_as_partial()\nrename tmp to <stem>.partial.csv;
         :Log summary + EXIT-005;
         :Exit 0;
         stop
@@ -81,7 +82,7 @@ repeat
         stop
       endif
     endif
-    :Log WARN "sync recovered at offset 0x…";
+    :Log WARN "sync recovered at offset ...";
     :Resume at recovered offset;
     |Reader|
   endif
@@ -106,7 +107,7 @@ repeat
   else (normal)
     :Decode timestamp (IRIG or Standard);
     :Decode Command Word(s);
-    :classify_message_format()\n→ 1 of 10 normal formats;
+    :classify_message_format()\nreturns 1 of 10 normal formats;
 
     |Structural Invariants|
     :validate_structural_invariants()\nL2-SYN-020..025;
@@ -121,14 +122,14 @@ repeat
     :prev_was_error = false;
   endif
 
-  :Compute per-RT/MSG DELTA\n(non-monotonic timestamp → WARN);
+  :Compute per-RT/MSG DELTA\n(non-monotonic timestamp causes WARN);
 
   |Filter|
-  :filter::should_emit(msg)\ninclude ∩ ¬exclude\n(type/RT/bus/SA);
+  :filter::should_emit(msg)\ninclude AND NOT exclude\n(type/RT/bus/SA);
   if (Emit?) then (yes)
 
     |Writer|
-    :message_to_row()\n→ Row (DDC vendor column order);
+    :message_to_row()\nreturns Row (DDC vendor column order);
     if (msg.is_error or msg.is_spurious) then (yes)
       if (error_mode == SEPARATE\nand stdout is file?) then (yes)
         :Append to errors writer\n(<stem>.<pid>.errors.tmp);
@@ -138,7 +139,7 @@ repeat
     else (no)
       :Append to main writer;
     endif
-    :Streaming write — no buffering\n(constant memory);
+    :Streaming write - no buffering\n(constant memory);
 
     |Reader|
   endif
@@ -147,21 +148,21 @@ repeat while (more records?) is (yes)
 
 |Output Safety|
 :flush + fsync writers;
-:commit() — rename tmp → <stem>.csv\n(and <stem>_errors.csv in separate mode);
+:commit(): rename tmp to <stem>.csv\n(and <stem>_errors.csv in separate mode);
 
 |CLI|
 :Log INFO summary line\n(L1-EXIT-005 exit class);
 note right
   Format:
     "decoded N records (M errors,
-     K sync recoveries) → <output>
+     K sync recoveries) to <output>
      [exit_class=<class>]"
   Exit class drives process exit code:
-    0 — complete / partial-recovered /
+    0: complete / partial-recovered /
         broken-pipe
-    1 — record or usage error
-    2 — no records / homogeneous payload
-    3 — partial-unrecoverable
+    1: record or usage error
+    2: no records / homogeneous payload
+    3: partial-unrecoverable
 end note
 
 :Exit with class code;

@@ -1,6 +1,8 @@
 @startuml MIE-Decoder Class Diagram
 !theme plain
-title MIE-Decoder v2.0 — Class Diagram (Rust + Python)
+!pragma layout smetana
+scale max 4000*4000
+title MIE-Decoder v2.0 - Class Diagram (Rust + Python)
 
 ' ============================================================================
 '  Cross-implementation note
@@ -8,14 +10,21 @@ title MIE-Decoder v2.0 — Class Diagram (Rust + Python)
 ' The boxes below describe the SHARED semantic model. Every Python class shown
 ' here has a Rust struct or enum with the same name and the same fields. The
 ' two implementations are kept in sync by the conformance suite under
-' tests/conformance/. See docs/ARCHITECTURE.md §1 for the full Rust↔Python
+' tests/conformance/. See docs/ARCHITECTURE.md section 1 for the full Rust/Python
 ' module correspondence table.
 ' ============================================================================
 
 package "Domain Model (models)" {
 
-    enum Bus { A=0, B=1 }
-    enum Direction { RECEIVE=0, TRANSMIT=1 }
+    enum Bus {
+        A=0
+        B=1
+    }
+
+    enum Direction {
+        RECEIVE=0
+        TRANSMIT=1
+    }
 
     enum MessageType {
         MODE_COMMAND           = 0x01
@@ -41,8 +50,16 @@ package "Domain Model (models)" {
         SPURIOUS_DATA
     }
 
-    enum TimestampFormat { AUTO, IRIG, STANDARD }
-    enum ErrorMode      { SEPARATE, INLINE }
+    enum TimestampFormat {
+        AUTO
+        IRIG
+        STANDARD
+    }
+
+    enum ErrorMode {
+        SEPARATE
+        INLINE
+    }
 
     class IrigTimestamp <<frozen>> {
         +day, hour, minute, second: int
@@ -109,7 +126,7 @@ package "Domain Model (models)" {
 }
 
 ' ============================================================================
-'  Structural-invariants subsystem (new in v2.0 — see ARCHITECTURE.md §4)
+'  Structural-invariants subsystem (new in v2.0 - see ARCHITECTURE.md section 4)
 ' ============================================================================
 package "Structural Invariants (decode)" {
 
@@ -293,8 +310,8 @@ package "Writer (writer)" {
         -committed: bool
         --
         +write(bytes): IoResult
-        +commit(): PathBuf       /' rename(tmp → final) '/
-        +commit_as_partial(): PathBuf  /' rename(tmp → <stem>.partial.csv) '/
+        +commit(): PathBuf       /' rename tmp to final '/
+        +commit_as_partial(): PathBuf  /' rename tmp to <stem>.partial.csv '/
         +discard(): IoResult     /' unlink tmp on drop '/
     }
 

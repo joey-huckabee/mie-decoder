@@ -1,8 +1,10 @@
 @startuml MIE-Decoder Component Diagram
 !theme plain
+!pragma layout smetana
+scale max 4000*4000
 skinparam componentStyle rectangle
 skinparam packageStyle rectangle
-title MIE-Decoder v2.0 — Component Architecture (Rust + Python)
+title MIE-Decoder v2.0 - Component Architecture (Rust + Python)
 
 ' ============================================================================
 '  Two implementations, one architecture
@@ -10,11 +12,11 @@ title MIE-Decoder v2.0 — Component Architecture (Rust + Python)
 ' Every component named below exists in BOTH the Rust crate (src/*.rs) and
 ' the Python package (python/src/mie_decoder/*.py). The conformance suite
 ' under tests/conformance/ holds them to byte-exact equivalence on CSV
-' output. See docs/ARCHITECTURE.md §1 for the full module correspondence.
+' output. See docs/ARCHITECTURE.md section 1 for the full module correspondence.
 ' ============================================================================
 
 package "CLI Layer" {
-    [entrypoint\n(main.rs / __main__.py)] as main
+    [entrypoint\n(main.rs / ~__main__.py)] as main
     [cli\n(hand-rolled argparse)] as cli
     [log\n(stderr, atomic level)] as logmod
     [config\n(TOML loader,\nCLI overrides)] as config
@@ -46,7 +48,7 @@ package "External" {
     database "MIE Binary\nFile (.mie)"          as mie_file
     file     "CSV Output\n(<stem>.csv)"         as csv_file
     file     "Errors CSV\n(<stem>_errors.csv,\nseparate mode)" as err_file
-    file     "Partial CSV\n(<stem>.partial.csv,\n--allow-partial)" as partial_file
+    file     "Partial CSV\n(<stem>.partial.csv,\n~--allow-partial)" as partial_file
 }
 
 ' ============================================================================
@@ -54,12 +56,12 @@ package "External" {
 ' ============================================================================
 main      --> cli            : dispatch (decode/count/dump)
 cli       --> logmod         : set global level
-cli       --> config         : load_config → with_overrides
+cli       --> config         : load_config then with_overrides
 cli       --> reader         : open(path, time_format, strict)
 cli       --> filters        : wrap iterator
 cli       --> writer         : write_csv / write_csv_split
 cli       --> dump           : count/dump subcommands
-cli       --> outsafe        : checks --no-clobber / --allow-partial
+cli       --> outsafe        : checks ~--no-clobber / ~--allow-partial
 
 ' ============================================================================
 '  Decode pipeline wiring
@@ -71,12 +73,12 @@ reader    --> models         : yields MieMessage
 reader    --> errors         : raises (strict mode)
 
 sync      --> decode         : decode_type_word\nis_valid_message_type\nis_homogeneous_payload
-sync      --> errors         : diagnose_header_scan_failure\n→ NoValidRecords /\n  FirstRecordTruncated /\n  HomogeneousPayload
+sync      --> errors         : diagnose_header_scan_failure\nreturns NoValidRecords /\n  FirstRecordTruncated /\n  HomogeneousPayload
 
 decode    --> models         : produces TypeWord, CommandWord,\nIrigTimestamp, StandardTimestamp,\nInvariantViolation
 
 invariants --> models        : MieMessage, MessageFormat
-invariants --> errors        : Reject → MieRecordError;\nAnomalyWarn → log only
+invariants --> errors        : Reject: MieRecordError;\nAnomalyWarn: log only
 
 filters   --> models         : reads MieMessage fields
 
@@ -92,19 +94,19 @@ outsafe   --> errors         : MieInputOutputCollisionError\nMieClobberRefusedEr
 '  External file edges
 ' ============================================================================
 reader    ..> mie_file       : mmap read-only
-outsafe   ..> csv_file       : atomic temp → rename
+outsafe   ..> csv_file       : atomic temp then rename
 outsafe   ..> err_file       : (separate mode)
-outsafe   ..> partial_file   : (--allow-partial path)
+outsafe   ..> partial_file   : (~--allow-partial path)
 
 ' ============================================================================
 '  Notes
 ' ============================================================================
 note right of sync
-  <b>Four-phase sync</b> (docs/ARCHITECTURE.md §3):
-  1. find_first_record — header skip
-  2. validate_record   — six-check shape probe
-  3. look-ahead        — next record must also validate
-  4. recover_sync      — 2-byte step scan, ≤64 KB
+  <b>Four-phase sync</b> (docs/ARCHITECTURE.md section 3):
+  1. find_first_record: header skip
+  2. validate_record: six-check shape probe
+  3. look-ahead: next record must also validate
+  4. recover_sync: 2-byte step scan, <=64 KB
 
   <b>Homogeneity defense (v2.0):</b>
   Reject homogeneous payloads (e.g. all-zero,
@@ -117,8 +119,8 @@ note right of invariants
   Six rules (L2-SYN-020..025) check the decoded
   record against MIL-STD-1553 transaction shape.
 
-  Severity::Reject     → MieRecordError
-  Severity::AnomalyWarn → log + keep record
+  Severity::Reject: MieRecordError
+  Severity::AnomalyWarn: log + keep record
 
   Errored records skip invariant checks
   (payload is truncated by definition).
@@ -127,28 +129,28 @@ end note
 note right of outsafe
   <b>Output safety (v2.0, L1-OUT-002):</b>
   1. Reject input == output       (L2-WRT-016)
-  2. Reject existing output + --no-clobber  (L2-WRT-014)
+  2. Reject existing output + ~--no-clobber  (L2-WRT-014)
   3. Write to <stem>.<pid>.tmp
-  4. On clean exit → rename to <stem>.csv
-  5. On error + --allow-partial → rename to
+  4. On clean exit: rename to <stem>.csv
+  5. On error + ~--allow-partial: rename to
      <stem>.partial.csv               (L2-WRT-015)
-  6. On error otherwise → unlink tmp  (L2-WRT-017)
+  6. On error otherwise: unlink tmp  (L2-WRT-017)
 end note
 
 note right of config
   <b>Precedence (highest first):</b>
-  1. CLI flags  (--no-clobber, --allow-partial,
-                 --inline-errors, --include-rt, ...)
+  1. CLI flags  (~--no-clobber, ~--allow-partial,
+                 ~--inline-errors, ~--include-rt, ...)
   2. TOML config file
   3. Built-in defaults
 end note
 
 note left of main
   <b>Exit-class summary (L1-EXIT-005):</b>
-  0 — complete / partial-recovered / broken-pipe
-  1 — record or usage error
-  2 — no records / homogeneous payload
-  3 — partial-unrecoverable (no --allow-partial)
+  0: complete / partial-recovered / broken-pipe
+  1: record or usage error
+  2: no records / homogeneous payload
+  3: partial-unrecoverable (no ~--allow-partial)
 end note
 
 @enduml
