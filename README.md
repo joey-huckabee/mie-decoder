@@ -266,7 +266,7 @@ docs/
 ├── VENDOR-CSV-DIFFS.md Alignment statement vs DDC vendor CSV (column-by-column)
 ├── TRACE-MATRIX.md     Auto-generated trace matrix (L1 -> L2 -> L3 -> tests)
 ├── ROADMAP.md          Versioned roadmap
-└── diagrams/           PlantUML sources
+└── diagrams/           PlantUML sources and rendered SVGs
 
 tests/
 └── integration.rs   End-to-end tests with byte-exact fixtures

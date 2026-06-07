@@ -1121,11 +1121,10 @@ D2-D4 can be parallelized across people once D1 is complete.
   (existing convention in `docs/diagrams/`), **ASCII** for inline
   data flows (existing convention in `ARCHITECTURE.md`), **markdown
   tables** for bit-grid diagrams (renders cleanly in GitHub).
-- PUML rendering: keep raw `.puml` files in `docs/diagrams/`. Add
-  a build step (or `Makefile` target) to render to SVG if anyone
-  wants images. Initial deliverable is `.puml` source only —
-  reviewers can render with a VS Code extension or
-  plantuml.com/uml.
+- PUML rendering: keep raw `.puml` files and corresponding rendered
+  `.svg` files in `docs/diagrams/`. Regenerate and commit the matching
+  SVG whenever a PlantUML source changes so reviewers can view diagrams
+  without local PlantUML tooling.
 - Sample fixtures for worked examples: prefer existing conformance
   fixtures so the hex shown in docs is byte-identical to what CI
   validates. Add fixtures only if no existing one demonstrates the

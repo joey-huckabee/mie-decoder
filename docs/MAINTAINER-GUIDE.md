@@ -47,7 +47,7 @@ mie-decoder/
 │   ├── FIELDS.md           redirect stub for legacy links
 │   ├── ROADMAP.md          versioned roadmap with status annotations
 │   ├── MAINTAINER-GUIDE.md (this file)
-│   └── diagrams/*.puml     PlantUML sources
+│   └── diagrams/           PlantUML sources and rendered SVGs
 ├── config/default.toml     fully-commented reference TOML schema
 ├── .github/workflows/ci.yml
 └── Cargo.toml / Cargo.lock
@@ -120,10 +120,16 @@ python scripts/pytest-by-requirement.py L3-PY-          # whole L3-PY-* family
 python scripts/build-trace-matrix.py             # regenerate docs/TRACE-MATRIX.md
 python scripts/build-trace-matrix.py --check     # what CI does — exits 1 on drift
 
+# PlantUML diagrams
+plantuml -tsvg docs/diagrams/*.puml              # regenerate committed SVGs
+
 # CLI dry-runs against a real file
 cargo run --release -- decode path/to/recording.mie -o decoded.csv
 poetry -C python run mie-decoder decode path/to/recording.mie -o decoded.csv
 ```
+
+Commit each `docs/diagrams/*.puml` source with its matching rendered
+`docs/diagrams/*.svg`. Regenerate the SVG whenever the PlantUML source changes.
 
 ---
 
