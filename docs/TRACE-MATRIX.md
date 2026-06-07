@@ -25,7 +25,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 |-------|-------------|--------|
 | L1-DEC-001 | L2-DEC-001, L2-DEC-008, L2-DEC-010 | Implemented |
 | L1-DEC-002 | L2-DEC-002, L2-DEC-003, L2-DEC-007, L2-DEC-011, L2-DEC-012 | Partially Implemented |
-| L1-DEC-003 | L2-DEC-004, L2-DEC-009, L2-MSG-001, L2-MSG-003, L2-RDR-007, L2-RDR-008 | Partially Implemented |
+| L1-DEC-003 | L2-DEC-004, L2-DEC-009, L2-MSG-001, L2-MSG-003, L2-RDR-007, L2-RDR-008 | Implemented |
 | L1-DEC-004 | L2-MSG-002 | Implemented |
 | L1-DEC-005 | L2-RDR-002 | Implemented |
 
@@ -39,7 +39,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-DEC-004 | L3-RS-005 | `python/tests/test_decode.py::test_rt15_sa10_transmit_wc30`<br>`python/tests/test_decode.py::test_rt15_sa11_receive_wc30`<br>`python/tests/test_decode.py::test_rt15_sa22_receive_wc11`<br>`python/tests/test_decode.py::test_rt15_sa22_transmit_wc30`<br>`python/tests/test_decode.py::test_rt30_sa11_transmit_wc30`<br>`python/tests/test_decode.py::test_wc_zero_means_32`<br>`python/tests/test_models.py::test_is_broadcast`<br>`python/tests/test_models.py::test_is_mode_code_sa0`<br>`python/tests/test_models.py::test_is_mode_code_sa31`<br>`python/tests/test_models.py::test_not_broadcast`<br>`python/tests/test_models.py::test_not_mode_code`<br>`src/decode.rs::command_word_known_value`<br>`src/decode.rs::command_word_zero_means_thirty_two`<br>`src/models.rs::command_word_predicates`<br>`src/models.rs::data_words_inline_buffer`<br>`src/models.rs::data_words_max_capacity`<br>`src/models.rs::data_words_overflow_panics` | Implemented |
 | L2-DEC-007 | _(none)_ | `python/tests/test_decode.py::test_basic_decode`<br>`python/tests/test_decode.py::test_format`<br>`python/tests/test_decode.py::test_max_value`<br>`python/tests/test_decode.py::test_raw_ticks_returns_counter_value`<br>`python/tests/test_decode.py::test_zero`<br>`src/decode.rs::standard_timestamp_round_trip`<br>`src/models.rs::standard_format_hex`<br>`src/models.rs::timestamp_word_counts` | Implemented |
 | L2-DEC-008 | _(none)_ | `python/tests/test_decode.py::test_read_array`<br>`python/tests/test_decode.py::test_read_array_at_offset`<br>`python/tests/test_decode.py::test_read_at_offset`<br>`python/tests/test_decode.py::test_read_single`<br>`src/decode.rs::read_u16_array_into_slice`<br>`src/decode.rs::read_u16_le` | Implemented |
-| L2-DEC-009 | _(none)_ | _(TBD)_ | Draft |
+| L2-DEC-009 | _(none)_ | _(TBD)_ | Implemented (I) |
 | L2-DEC-010 | _(none)_ | `python/tests/test_e2e.py::test_file_offset_tracking`<br>`python/tests/test_models.py::test_frozen`<br>`python/tests/test_models.py::test_optional_fields_none` | Implemented |
 | L2-DEC-011 | _(none)_ | `python/tests/test_decode.py::test_detects_irig_from_known_data`<br>`python/tests/test_decode.py::test_detects_irig_from_transmit` | Implemented |
 | L2-DEC-012 | _(none)_ | _(TBD)_ | Draft |
@@ -181,7 +181,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-SYN-009 | _(none)_ | `python/tests/test_sync.py::test_recovery_after_garbage`<br>`src/sync.rs::recover_sync_walks_forward` | Implemented |
 | L2-SYN-010 | _(none)_ | `src/sync.rs::recover_sync_capped_at_max_scan` | Implemented |
 | L2-SYN-011 | _(none)_ | `python/tests/test_e2e.py::test_lenient_unrecoverable_sync_loss_raises`<br>`python/tests/test_e2e.py::test_no_valid_records_raises`<br>`python/tests/test_sync.py::test_no_recovery_possible`<br>`src/reader.rs::no_valid_records_surfaces_as_iter_error`<br>`tests/integration.rs::lenient_mode_unrecoverable_sync_loss_yields_terminal_error`<br>`tests/integration.rs::non_mie_file_surfaces_error_not_silent_zero_messages` | Implemented |
-| L2-SYN-014 | _(none)_ | _(TBD)_ | Draft |
+| L2-SYN-014 | _(none)_ | _(TBD)_ | Implemented (I) |
 | L2-SYN-018 | _(none)_ | _(TBD)_ | Draft |
 | L2-SYN-019 | _(none)_ | `python/tests/test_sync.py::test_irig_accepts_day_zero_when_freerun`<br>`python/tests/test_sync.py::test_irig_rejects_microsecond_even_when_freerun`<br>`src/sync.rs::validate_accepts_irig_day_zero_when_freerun`<br>`src/sync.rs::validate_rejects_irig_microsecond_when_freerun_too` | Implemented |
 | L2-SYN-020 | _(none)_ | `python/tests/test_decode.py::test_bc_to_rt_with_transmit_cmd_rejected`<br>`python/tests/test_decode.py::test_canonical_bc_to_rt_passes`<br>`python/tests/test_decode.py::test_mode_code_directions_not_constrained`<br>`src/decode.rs::invariants_mode_code_not_constrained_by_direction`<br>`src/decode.rs::invariants_pass_for_canonical_bc_to_rt`<br>`src/decode.rs::invariants_reject_bc_to_rt_with_transmit_cmd` | Implemented |
@@ -238,7 +238,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-CONF-001 | L2-CONF-001, L2-CONF-002, L2-CONF-003, L2-CONF-004, L2-CONF-005 | Partially Implemented |
+| L1-CONF-001 | L2-CONF-001, L2-CONF-002, L2-CONF-003, L2-CONF-004, L2-CONF-005 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -246,9 +246,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 |-------|-------------|----------------|--------|
 | L2-CONF-001 | _(none)_ | _(TBD)_ | Implemented (I) |
 | L2-CONF-002 | L3-PY-007 | _(TBD)_ | Implemented |
-| L2-CONF-003 | _(none)_ | _(TBD)_ | Draft |
+| L2-CONF-003 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_manifest_has_cases_with_oracles`<br>`python/tests/test_conformance_wiring.py::test_conformance_runner_exists` | Implemented |
 | L2-CONF-004 | _(none)_ | _(TBD)_ | Implemented (I) |
-| L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-007, L3-RS-011 | _(TBD)_ | Implemented |
+| L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-007, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci` | Implemented |
 
 ### L1-EXIT: Exit-code semantics and operational contract
 
@@ -297,16 +297,16 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | Category | L1 | L2 | L3 | L2 tested | L3 tested | L2 verified | L3 verified |
 |----------|----|----|-----|-----------|-----------|-------------|-------------|
-| DEC | 5 | 12 | 0 | 10 | 0 | 10 | 0 |
+| DEC | 5 | 12 | 0 | 10 | 0 | 11 | 0 |
 | OUT | 2 | 0 | 0 | 0 | 0 | 0 | 0 |
 | DLT | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | CLI | 2 | 9 | 0 | 9 | 0 | 9 | 0 |
 | LOG | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MODE | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| SYN | 2 | 25 | 0 | 23 | 0 | 23 | 0 |
+| SYN | 2 | 25 | 0 | 23 | 0 | 24 | 0 |
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 9 | 0 | 9 | 0 | 9 | 0 |
-| CONF | 1 | 5 | 0 | 0 | 0 | 3 | 0 |
+| CONF | 1 | 5 | 0 | 2 | 0 | 4 | 0 |
 | EXIT | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | RDR | 0 | 15 | 0 | 13 | 0 | 14 | 0 |
@@ -315,11 +315,11 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
-| **Total** | **24** | **103** | **26** | **92** | **13** | **96** | **25** |
+| **Total** | **24** | **103** | **26** | **94** | **13** | **99** | **25** |
 
-**Tested by at least one test marker**: 105 of 129 (81.4%).
+**Tested by at least one test marker**: 107 of 129 (82.9%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 121 of 129 (93.8%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 124 of 129 (96.1%).
 
 ### Orphan check
 

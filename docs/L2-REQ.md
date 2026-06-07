@@ -80,8 +80,8 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 
 **Parent**: L1-DEC-003
 **Statement**: Payload extraction SHALL remain bounded by the Type Word's declared record extent and SHALL NOT consume bytes from a following record.
-**Rationale**: A Command Word with `data_word_count = 32` declares a payload that may exceed the Type Word's declared extent on a malformed or truncated record. The decoder respects the Type Word extent as authoritative to avoid overrunning into the next record.
-**Verification Method**: Test (T)
+**Rationale**: A Command Word with `data_word_count = 32` declares a payload that may exceed the Type Word's declared extent on a malformed or truncated record. The decoder respects the Type Word extent as authoritative to avoid overrunning into the next record. This is structurally guaranteed by per-record slicing in the reader (Python: `record_data = self._data[:record_end]`; Rust: `let record_data = &self.data[..record_end]`) — payload extraction reads from the slice, not the full file. The L2-SYN-022 capacity invariant catches the upstream case (Cmd Word declares more payload than Type Word can hold) before extraction runs.
+**Verification Method**: Inspection (I)
 
 #### L2-DEC-010
 
@@ -217,8 +217,8 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 
 **Parent**: L1-SYN-001
 **Statement**: Header detection, continuous decoding, and sync recovery SHALL use the same full record-validation path.
-**Rationale**: Three validators with subtly different semantics would inevitably drift. One validator, called from three call sites, keeps the semantics consistent and the behavior testable.
-**Verification Method**: Inspection (I), Test (T)
+**Rationale**: Three validators with subtly different semantics would inevitably drift. One validator (`validate_record`) called from three call sites — header scan (`find_first_record`), per-record decode loop in the reader, and post-loss recovery (`recover_sync`) — keeps the semantics consistent. This is a structural property of the code that does not lend itself to a meaningful execution test: any working test of the three call sites exercises `validate_record` transitively. Verification is by code review (the three callers all live in `sync.rs` / `sync.py` and the reader, and all invoke `validate_record`).
+**Verification Method**: Inspection (I)
 
 #### L2-SYN-015
 
