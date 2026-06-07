@@ -715,6 +715,16 @@ fn classify_decode_exit(
             log_info!("decode exit class: no-records");
             ExitCode::from(2)
         }
+        Err(e @ MieError::HomogeneousPayload { .. }) => {
+            // L2-SYN-018 + L1-EXIT-002: semantically a "wrong file
+            // type" rejection (the input is a single-byte pad rather
+            // than an MIE recording), same exit-code class as
+            // NoValidRecords.
+            log_error!("{e}");
+            eprintln!("Error: {e}");
+            log_info!("decode exit class: no-records");
+            ExitCode::from(2)
+        }
         Err(e @ MieError::UnrecoverableSyncLoss { .. }) => {
             log_error!("{e}");
             eprintln!("Error: {e}");

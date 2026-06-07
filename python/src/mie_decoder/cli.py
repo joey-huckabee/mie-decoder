@@ -38,6 +38,7 @@ from mie_decoder.exceptions import (
     MieClobberRefusedError,
     MieDecoderError,
     MieFileError,
+    MieHomogeneousPayloadError,
     MieInputOutputCollisionError,
     MieNoValidRecordsError,
     MieUnrecoverableSyncLossError,
@@ -334,6 +335,14 @@ def _run_decode(args: argparse.Namespace) -> int:
         return 1
     except MieNoValidRecordsError as exc:
         # L1-EXIT-002 → exit 2.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: no-records")
+        return 2
+    except MieHomogeneousPayloadError as exc:
+        # L2-SYN-018 + L1-EXIT-002: semantically a "wrong file type"
+        # rejection (single-byte pad, not an MIE recording), same
+        # exit-code class as NoValidRecords.
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         logger.info("decode exit class: no-records")

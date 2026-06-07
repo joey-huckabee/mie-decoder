@@ -1,0 +1,9 @@
+# L2-RDR-004 fixture: first 20 bytes of a canonical 72-byte
+# RT15-SA11 Receive record. Type Word is structurally valid
+# (msg_type=0x02, bus A, wc=36) but declares a 72-byte extent
+# while only 20 bytes are present. Strict mode SHALL surface
+# MieError::FirstRecordTruncated / MieFirstRecordTruncatedError
+# (distinct from the generic RecordTruncated class) and exit 1.
+
+02240F1826DB21F67E79000400000000
+2F0022CA

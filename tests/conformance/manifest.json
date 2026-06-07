@@ -134,6 +134,17 @@
       "input": "inputs/invariant-rt-to-rt-cmd2-mismatch.hex",
       "expected_exit": 1,
       "config": "configs/strict.toml"
+    },
+    {
+      "name": "first-record-truncated",
+      "input": "inputs/first-record-truncated.hex",
+      "expected_exit": 1,
+      "config": "configs/strict.toml"
+    },
+    {
+      "name": "homogeneous-payload",
+      "input": "inputs/homogeneous-payload.hex",
+      "expected_exit": 2
     }
   ]
 }
