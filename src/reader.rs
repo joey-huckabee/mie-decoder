@@ -25,7 +25,7 @@ use crate::models::{
     MessageType, MieMessage, Timestamp, TimestampFormat, TypeWord, ddc_error_description,
     is_known_ddc_error_code, timestamp_word_count,
 };
-use crate::sync::{MAX_SCAN_BYTES, find_first_record, recover_sync};
+use crate::sync::{DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, find_first_record, recover_sync};
 use crate::{log_debug, log_error, log_info, log_warn};
 
 /// Reader handle. Construct with [`new`]; iterate by calling `.iter()` or
@@ -41,6 +41,11 @@ pub struct MieFileReader {
     /// `time_format` is anything other than `Auto`. Default
     /// `DEFAULT_DETECT_RECORDS` (8).
     detect_records: usize,
+    /// L2-SYN-026: total number of records `validate_record` checks
+    /// (1 candidate + N-1 look-ahead). Default
+    /// `DEFAULT_LOOKAHEAD_RECORDS` (2), preserving the historical
+    /// two-record look-ahead behavior.
+    lookahead_records: usize,
     /// Cumulative sync-recovery attempts during the most recent iter()
     /// call. Reset to 0 at the start of each iter(). Shared with the
     /// active RecordIter via a reference so the CLI can query it
@@ -59,6 +64,10 @@ pub struct ReaderOptions {
     /// walks before committing to a format. Clamped to [1, 32]
     /// upstream by config / CLI parsing.
     pub detect_records: usize,
+    /// L2-SYN-026 look-ahead depth. Total number of records
+    /// `validate_record` checks (1 candidate + N-1 look-ahead).
+    /// Clamped to [1, 32] upstream by config / CLI parsing.
+    pub lookahead_records: usize,
 }
 
 impl Default for ReaderOptions {
@@ -67,6 +76,7 @@ impl Default for ReaderOptions {
             strict: false,
             time_format: TimestampFormat::Auto,
             detect_records: DEFAULT_DETECT_RECORDS,
+            lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
         }
     }
 }
@@ -118,6 +128,7 @@ impl MieFileReader {
             strict: opts.strict,
             time_format: opts.time_format,
             detect_records: opts.detect_records.max(1),
+            lookahead_records: opts.lookahead_records.max(1),
             sync_losses: AtomicU64::new(0),
         })
     }
@@ -156,7 +167,13 @@ impl MieFileReader {
         let data: &[u8] = &self.mmap;
         let file_len = data.len();
 
-        let start_offset = find_first_record(data, file_len, format_hint, MAX_SCAN_BYTES);
+        let start_offset = find_first_record(
+            data,
+            file_len,
+            format_hint,
+            MAX_SCAN_BYTES,
+            self.lookahead_records,
+        );
 
         // Tracks whether the iterator should terminate immediately with
         // no records and no error (the L2-RDR-004 lenient-mode case).
@@ -341,6 +358,7 @@ impl MieFileReader {
             pending_unrecoverable: None,
             strict: self.strict,
             resolved_format,
+            lookahead_records: self.lookahead_records,
             prev_was_error: false,
             delta_tracker: HashMap::new(),
             warned_ooo_keys: HashSet::new(),
@@ -384,6 +402,10 @@ pub struct RecordIter<'a> {
     /// constructed, so by the time `next()` runs the format is final
     /// and stays fixed for the rest of the decode.
     resolved_format: TimestampFormat,
+    /// L2-SYN-026 look-ahead depth threaded from the reader. Used by
+    /// the per-record `validate_record` call inside `next()` and by
+    /// the `recover_sync` call on sync-loss recovery.
+    lookahead_records: usize,
     prev_was_error: bool,
     /// Per-RT/MSG last-seen timestamp in microseconds. Only populated when
     /// the source timestamp has a microsecond basis (IRIG today). Standard
@@ -469,8 +491,13 @@ impl<'a> Iterator for RecordIter<'a> {
             // look-ahead. A weaker inline check would let corrupt-but-
             // plausible records slip through and be emitted as garbage
             // rows.
-            let is_valid =
-                crate::sync::validate_record(self.data, self.offset, self.file_len, Some(resolved));
+            let is_valid = crate::sync::validate_record(
+                self.data,
+                self.offset,
+                self.file_len,
+                Some(resolved),
+                self.lookahead_records,
+            );
 
             if !is_valid {
                 self.sync_losses += 1;
@@ -524,6 +551,7 @@ impl<'a> Iterator for RecordIter<'a> {
                     self.file_len,
                     Some(self.resolved_format),
                     MAX_SCAN_BYTES,
+                    self.lookahead_records,
                 ) {
                     Some(hit) => {
                         log_info!(
@@ -1198,6 +1226,7 @@ mod tests {
                 strict: true,
                 time_format: TimestampFormat::Auto,
                 detect_records: DEFAULT_DETECT_RECORDS,
+                lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
             },
         )
         .unwrap();

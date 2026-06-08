@@ -13,6 +13,12 @@ pub const MAX_SCAN_BYTES: usize = 65_536;
 /// Word count field is 6 bits → max record = 63 × 2 = 126 bytes.
 pub const MAX_RECORD_BYTES: usize = 126;
 
+/// L2-SYN-026 default look-ahead depth. Two-record look-ahead preserves
+/// the historical default established by L2-SYN-005. Configurable via
+/// `decode.lookahead_records` (TOML) or `--lookahead-records` (CLI),
+/// range `[1, 32]`.
+pub const DEFAULT_LOOKAHEAD_RECORDS: usize = 2;
+
 /// Minimum word count for a record under `ts_format`. If `None`, uses
 /// the smaller (Standard) minimum so an unknown format is permissive.
 #[inline]
@@ -26,12 +32,20 @@ fn min_word_count(ts_format: Option<TimestampFormat>) -> u16 {
 }
 
 /// True if a valid MIE record starts at `offset` per all heuristics
-/// including a two-record look-ahead.
+/// including an N-record look-ahead (L2-SYN-005, L2-SYN-026).
+///
+/// `lookahead_records` is the total number of records checked, including
+/// the candidate itself: `1` means no look-ahead beyond the candidate,
+/// `2` means one additional record (the historical default), and so on.
+/// The look-ahead walk advances through each subsequent candidate by its
+/// declared `word_count`; EOF terminates the walk gracefully without
+/// rejecting the original candidate.
 pub fn validate_record(
     data: &[u8],
     offset: usize,
     file_len: usize,
     ts_format: Option<TimestampFormat>,
+    lookahead_records: usize,
 ) -> bool {
     // Check 1: Type Word readable.
     let Some(type_raw) = read_u16(data, offset) else {
@@ -96,19 +110,48 @@ pub fn validate_record(
         }
     }
 
-    // Check 6: Two-record look-ahead. If next record would be at EOF, the
-    // candidate is accepted on checks 1–5 alone.
-    let next_offset = offset + record_bytes;
-    if next_offset + 2 <= file_len {
-        if let Some(next_raw) = read_u16(data, next_offset) {
-            let next_tw = decode_type_word(next_raw);
-            if !message_type_is_valid(next_tw.message_type) {
-                return false;
-            }
-            if next_tw.word_count < min_wc || next_tw.word_count > 63 {
-                return false;
-            }
+    // Check 6: N-record look-ahead per L2-SYN-005 / L2-SYN-026. Walk up
+    // to `lookahead_records - 1` subsequent records, each validated on
+    // the same Type Word fields (message type + word count plausibility)
+    // as the candidate. Advance by each candidate's declared
+    // `word_count`; EOF terminates the walk gracefully without
+    // rejecting the original candidate (the in-bounds checks above are
+    // authoritative for records that do exist).
+    let n = lookahead_records.max(1);
+    let mut next_offset = offset + record_bytes;
+    for _ in 1..n {
+        // EOF: no more bytes to look ahead into. The remaining
+        // unchecked records (if any) simply don't exist in the file —
+        // not a rejection.
+        if next_offset + 2 > file_len {
+            break;
         }
+        let Some(next_raw) = read_u16(data, next_offset) else {
+            break;
+        };
+        let next_tw = decode_type_word(next_raw);
+        if !message_type_is_valid(next_tw.message_type) {
+            return false;
+        }
+        if next_tw.word_count < min_wc || next_tw.word_count > 63 {
+            return false;
+        }
+        // Advance by the look-ahead candidate's declared length so the
+        // next iteration validates the record AFTER it, not 2 bytes
+        // forward of this position.
+        let next_record_bytes = usize::from(next_tw.word_count) * 2;
+        if next_record_bytes == 0 {
+            // Defensive — Type Word with wc=0 would already have been
+            // rejected by Check 3 above, so this is unreachable on the
+            // candidate path. The look-ahead candidates have the same
+            // min_wc floor applied above, so reaching this branch
+            // would indicate a logic bug, not a malformed input.
+            break;
+        }
+        let Some(advance) = next_offset.checked_add(next_record_bytes) else {
+            break;
+        };
+        next_offset = advance;
     }
 
     true
@@ -133,11 +176,12 @@ pub fn find_first_record(
     file_len: usize,
     ts_format: Option<TimestampFormat>,
     max_scan: usize,
+    lookahead_records: usize,
 ) -> Option<ScanHit> {
     let scan_end = file_len.min(max_scan);
     let mut offset = 0;
     while offset < scan_end {
-        if validate_record(data, offset, file_len, ts_format) {
+        if validate_record(data, offset, file_len, ts_format, lookahead_records) {
             return Some(ScanHit {
                 offset,
                 skipped: offset,
@@ -248,12 +292,13 @@ pub fn recover_sync(
     file_len: usize,
     ts_format: Option<TimestampFormat>,
     max_scan: usize,
+    lookahead_records: usize,
 ) -> Option<ScanHit> {
     let scan_start = offset.saturating_add(2);
     let scan_end = file_len.min(offset.saturating_add(max_scan));
     let mut candidate = scan_start;
     while candidate < scan_end {
-        if validate_record(data, candidate, file_len, ts_format) {
+        if validate_record(data, candidate, file_len, ts_format, lookahead_records) {
             return Some(ScanHit {
                 offset: candidate,
                 skipped: candidate - offset,
@@ -286,7 +331,13 @@ mod tests {
     #[test]
     fn validate_accepts_clean_record() {
         let buf = make_valid_record_36w(2);
-        assert!(validate_record(&buf, 0, buf.len(), None));
+        assert!(validate_record(
+            &buf,
+            0,
+            buf.len(),
+            None,
+            DEFAULT_LOOKAHEAD_RECORDS
+        ));
     }
 
     /// Requirements: L2-SYN-001
@@ -294,7 +345,13 @@ mod tests {
     fn validate_rejects_invalid_type() {
         // Type word with bad message type 0x03
         let buf = vec![0x03, 0x24, 0x00, 0x00];
-        assert!(!validate_record(&buf, 0, buf.len(), None));
+        assert!(!validate_record(
+            &buf,
+            0,
+            buf.len(),
+            None,
+            DEFAULT_LOOKAHEAD_RECORDS
+        ));
     }
 
     /// Requirements: L2-SYN-003
@@ -302,14 +359,27 @@ mod tests {
     fn validate_rejects_truncated() {
         // Type word claims 36 words = 72 bytes, but only 4 bytes available
         let buf = vec![0x02, 0x24, 0x00, 0x00];
-        assert!(!validate_record(&buf, 0, buf.len(), None));
+        assert!(!validate_record(
+            &buf,
+            0,
+            buf.len(),
+            None,
+            DEFAULT_LOOKAHEAD_RECORDS
+        ));
     }
 
     /// Requirements: L2-SYN-006
     #[test]
     fn find_first_record_at_zero() {
         let buf = make_valid_record_36w(2);
-        let hit = find_first_record(&buf, buf.len(), None, MAX_SCAN_BYTES).unwrap();
+        let hit = find_first_record(
+            &buf,
+            buf.len(),
+            None,
+            MAX_SCAN_BYTES,
+            DEFAULT_LOOKAHEAD_RECORDS,
+        )
+        .unwrap();
         assert_eq!(hit.offset, 0);
         assert_eq!(hit.skipped, 0);
     }
@@ -320,7 +390,14 @@ mod tests {
         // 16-byte ASCII header + valid records
         let mut buf = b"DDC-HEADER-1234\n".to_vec(); // 16 bytes
         buf.extend(make_valid_record_36w(2));
-        let hit = find_first_record(&buf, buf.len(), None, MAX_SCAN_BYTES).unwrap();
+        let hit = find_first_record(
+            &buf,
+            buf.len(),
+            None,
+            MAX_SCAN_BYTES,
+            DEFAULT_LOOKAHEAD_RECORDS,
+        )
+        .unwrap();
         assert_eq!(hit.offset, 16);
         assert_eq!(hit.skipped, 16);
     }
@@ -329,7 +406,16 @@ mod tests {
     #[test]
     fn find_first_record_returns_none_when_no_valid() {
         let buf = vec![0xFFu8; 64];
-        assert!(find_first_record(&buf, buf.len(), None, MAX_SCAN_BYTES).is_none());
+        assert!(
+            find_first_record(
+                &buf,
+                buf.len(),
+                None,
+                MAX_SCAN_BYTES,
+                DEFAULT_LOOKAHEAD_RECORDS
+            )
+            .is_none()
+        );
     }
 
     /// Requirements: L2-SYN-009
@@ -337,7 +423,15 @@ mod tests {
     fn recover_sync_walks_forward() {
         let mut buf = vec![0xFFu8; 6]; // 6 bytes of garbage
         buf.extend(make_valid_record_36w(2));
-        let hit = recover_sync(&buf, 0, buf.len(), None, MAX_SCAN_BYTES).unwrap();
+        let hit = recover_sync(
+            &buf,
+            0,
+            buf.len(),
+            None,
+            MAX_SCAN_BYTES,
+            DEFAULT_LOOKAHEAD_RECORDS,
+        )
+        .unwrap();
         assert_eq!(hit.offset, 6);
         assert_eq!(hit.skipped, 6);
     }
@@ -349,9 +443,9 @@ mod tests {
         // Valid record only after 200 bytes of garbage
         buf.extend(make_valid_record_36w(2));
         // Cap scan at 100 → can't find it
-        assert!(recover_sync(&buf, 0, buf.len(), None, 100).is_none());
+        assert!(recover_sync(&buf, 0, buf.len(), None, 100, DEFAULT_LOOKAHEAD_RECORDS).is_none());
         // Cap at 400 → found
-        assert!(recover_sync(&buf, 0, buf.len(), None, 400).is_some());
+        assert!(recover_sync(&buf, 0, buf.len(), None, 400, DEFAULT_LOOKAHEAD_RECORDS).is_some());
     }
 
     // ── IRIG range validation (L2-SYN-004, L2-SYN-019) ──────────────
@@ -401,7 +495,8 @@ mod tests {
             &buf,
             0,
             buf.len(),
-            Some(TimestampFormat::Irig)
+            Some(TimestampFormat::Irig),
+            DEFAULT_LOOKAHEAD_RECORDS,
         ));
     }
 
@@ -416,7 +511,8 @@ mod tests {
             &buf,
             0,
             buf.len(),
-            Some(TimestampFormat::Irig)
+            Some(TimestampFormat::Irig),
+            DEFAULT_LOOKAHEAD_RECORDS,
         ));
     }
 
@@ -431,7 +527,8 @@ mod tests {
             &buf,
             0,
             buf.len(),
-            Some(TimestampFormat::Irig)
+            Some(TimestampFormat::Irig),
+            DEFAULT_LOOKAHEAD_RECORDS,
         ));
     }
 
@@ -446,7 +543,8 @@ mod tests {
             &buf,
             0,
             buf.len(),
-            Some(TimestampFormat::Irig)
+            Some(TimestampFormat::Irig),
+            DEFAULT_LOOKAHEAD_RECORDS,
         ));
     }
 
@@ -463,7 +561,8 @@ mod tests {
             &buf,
             0,
             buf.len(),
-            Some(TimestampFormat::Irig)
+            Some(TimestampFormat::Irig),
+            DEFAULT_LOOKAHEAD_RECORDS,
         ));
     }
 
@@ -479,7 +578,8 @@ mod tests {
             &buf,
             0,
             buf.len(),
-            Some(TimestampFormat::Irig)
+            Some(TimestampFormat::Irig),
+            DEFAULT_LOOKAHEAD_RECORDS,
         ));
     }
 
@@ -496,7 +596,8 @@ mod tests {
             &buf,
             0,
             buf.len(),
-            Some(TimestampFormat::Irig)
+            Some(TimestampFormat::Irig),
+            DEFAULT_LOOKAHEAD_RECORDS,
         ));
     }
 
@@ -506,5 +607,59 @@ mod tests {
         assert_eq!(min_word_count(Some(TimestampFormat::Irig)), 5);
         assert_eq!(min_word_count(Some(TimestampFormat::Standard)), 4);
         assert_eq!(min_word_count(None), MIN_RECORD_WORDS_STANDARD);
+    }
+
+    // ── L2-SYN-026 N-record look-ahead tests ─────────────────────────
+
+    /// Requirements: L2-SYN-026
+    #[test]
+    fn validate_lookahead_n1_skips_lookahead() {
+        // N=1 means no look-ahead. A single valid record with garbage
+        // bytes right after it should still validate.
+        let mut buf = make_valid_record_36w(1);
+        // Append 4 bytes of plausible but invalid Type-Word garbage —
+        // would fail the N=2 look-ahead but N=1 doesn't peek.
+        buf.extend_from_slice(&[0xFF, 0xFF, 0x00, 0x00]);
+        assert!(
+            validate_record(&buf, 0, buf.len(), None, 1),
+            "N=1 must not peek at the next record"
+        );
+        assert!(
+            !validate_record(&buf, 0, buf.len(), None, 2),
+            "N=2 must peek and reject the invalid follower"
+        );
+    }
+
+    /// Requirements: L2-SYN-026
+    #[test]
+    fn validate_lookahead_n4_catches_second_corruption() {
+        // Two valid records followed by garbage. N=2 (current default)
+        // looks at the candidate + the next, both valid, accepts. N=4
+        // also peeks at records 3 and 4 — those are garbage and
+        // rejected. Demonstrates the value of higher N.
+        let mut buf = make_valid_record_36w(2); // records 1 and 2: valid
+        buf.extend_from_slice(&[0xFF, 0xFF, 0x00, 0x00]); // record 3 start: invalid Type Word
+        assert!(
+            validate_record(&buf, 0, buf.len(), None, 2),
+            "N=2 only checks records 1 and 2 (both valid) — accepts"
+        );
+        assert!(
+            !validate_record(&buf, 0, buf.len(), None, 4),
+            "N=4 reaches record 3's invalid Type Word and rejects"
+        );
+    }
+
+    /// Requirements: L2-SYN-026
+    #[test]
+    fn validate_lookahead_eof_terminates_gracefully() {
+        // A single valid record with no follower at all. Any N >= 1
+        // must accept — EOF mid-walk doesn't reject.
+        let buf = make_valid_record_36w(1);
+        for n in [1usize, 2, 4, 8, 32] {
+            assert!(
+                validate_record(&buf, 0, buf.len(), None, n),
+                "N={n}: EOF must not reject when the candidate itself is valid"
+            );
+        }
     }
 }

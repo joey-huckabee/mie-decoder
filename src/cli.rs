@@ -623,6 +623,11 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String
             strict: cfg.strict,
             time_format: cfg.time_format,
             detect_records: cfg.detect_records,
+            // L2-SYN-026 wiring through DecoderConfig lands in the
+            // follow-up commit (task #108). For now use the default
+            // (DEFAULT_LOOKAHEAD_RECORDS = 2), which preserves the
+            // historical behavior.
+            ..ReaderOptions::default()
         },
     )
     .map_err(format_mie_error)
