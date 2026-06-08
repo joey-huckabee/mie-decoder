@@ -469,3 +469,66 @@ fn inline_errors_populates_error_code_column() {
         errors_csv.display()
     );
 }
+
+// ── Timestamp-format auto-detect (L2-DEC-015) ────────────────────────
+
+/// Requirements: L2-DEC-015
+///
+/// `--detect-records N` is accepted and the decode completes
+/// normally. The probe at N=2 sees the single-record fixture as a
+/// 1-record probe (the second record doesn't exist), scores it
+/// decisively IRIG, and decodes. No strict-mode assertion here —
+/// that path needs an ambiguous fixture, which is task #104's
+/// territory.
+#[test]
+fn detect_records_flag_accepts_valid_size() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--detect-records"),
+        std::ffi::OsStr::new("2"),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "decode with --detect-records 2 must exit 0 on a valid fixture"
+    );
+    assert!(output.exists(), "output CSV must be created");
+}
+
+/// Requirements: L2-DEC-015
+///
+/// Out-of-range `--detect-records` is rejected at parse time with a
+/// non-zero exit and the valid range in the error message.
+#[test]
+fn detect_records_flag_rejects_out_of_range() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let output = tmp.path().join("out.csv");
+
+    // Above the max of 32.
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--detect-records"),
+        std::ffi::OsStr::new("999"),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_ne!(
+        exit_code(&out),
+        0,
+        "--detect-records 999 must fail (above the max of 32)"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--detect-records") && stderr.contains("999"),
+        "stderr should name the offending flag and value (got: {stderr:?})"
+    );
+}

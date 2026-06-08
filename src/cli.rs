@@ -51,6 +51,9 @@ DECODE OPTIONS:
                                         file and exit 0 instead of 3
                                         (L1-EXIT-004)
   --time-format auto|irig|standard      Default auto
+  --detect-records N                    Records probed by timestamp-
+                                        format auto-detection (1..=32,
+                                        default 8). L2-DEC-015.
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
   --exclude-types VAL                   Comma-separated names or 0xNN
@@ -97,6 +100,7 @@ struct DecodeArgs {
     no_clobber: bool,
     allow_partial: bool,
     time_format: Option<TimestampFormat>,
+    detect_records: Option<usize>,
     strict: Option<bool>,
     output_format: Option<String>,
 
@@ -336,6 +340,13 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--time-format=") => {
                 args.time_format = Some(parse_time_format_arg(&s["--time-format=".len()..])?);
             }
+            "--detect-records" => {
+                let v = next_value("--detect-records", iter)?;
+                args.detect_records = Some(parse_detect_records(&v)?);
+            }
+            s if s.starts_with("--detect-records=") => {
+                args.detect_records = Some(parse_detect_records(&s["--detect-records=".len()..])?);
+            }
             "--format" => {
                 args.output_format = Some(next_value("--format", iter)?);
             }
@@ -540,6 +551,26 @@ fn parse_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
     }
 }
 
+/// L2-DEC-015: validate the `--detect-records` argument against the
+/// `[1, 32]` range pinned by `DETECT_RECORDS_MIN` / `DETECT_RECORDS_MAX`.
+/// The same range is checked at config-load time for the TOML form;
+/// duplicating the validation here surfaces malformed CLI input with a
+/// clear error before the config layer is even consulted.
+fn parse_detect_records(s: &str) -> Result<usize, String> {
+    let n: usize = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid --detect-records: {s:?}; must be an integer"))?;
+    if !(crate::config::DETECT_RECORDS_MIN..=crate::config::DETECT_RECORDS_MAX).contains(&n) {
+        return Err(format!(
+            "invalid --detect-records: {n}; valid range: [{}, {}]",
+            crate::config::DETECT_RECORDS_MIN,
+            crate::config::DETECT_RECORDS_MAX
+        ));
+    }
+    Ok(n)
+}
+
 // ── Subcommand runners ────────────────────────────────────────────────
 
 /// Apply a log-level string. Returns Err on an unrecognized name so the
@@ -591,11 +622,7 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String
         ReaderOptions {
             strict: cfg.strict,
             time_format: cfg.time_format,
-            // detect_records wired through cfg in a follow-up commit
-            // (L2-DEC-015 task #102). Default keeps current behavior
-            // wider than before — the multi-record probe runs at the
-            // default size of 8 records.
-            ..ReaderOptions::default()
+            detect_records: cfg.detect_records,
         },
     )
     .map_err(format_mie_error)
@@ -618,6 +645,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String>
         no_clobber: if args.no_clobber { Some(true) } else { None },
         // Same precedence pattern for --allow-partial.
         allow_partial: if args.allow_partial { Some(true) } else { None },
+        detect_records: args.detect_records,
         exclude_types: args.exclude_types,
         exclude_rts: args.exclude_rts,
         exclude_buses: args.exclude_buses,
@@ -728,6 +756,18 @@ fn classify_decode_exit(
             log_error!("{e}");
             eprintln!("Error: {e}");
             log_info!("decode exit class: no-records");
+            ExitCode::from(2)
+        }
+        Err(e @ MieError::TimestampFormatMismatch { .. }) => {
+            // L2-DEC-016 + L1-EXIT-002: ambiguous timestamp format is
+            // semantically another "wrong file type" rejection — the
+            // probe could not confidently distinguish IRIG from
+            // Standard, so we treat the file the same way we'd treat
+            // an unrecognized stream. Same exit class (2) as
+            // NoValidRecords / HomogeneousPayload.
+            log_error!("{e}");
+            eprintln!("Error: {e}");
+            log_info!("decode exit class: no-records (timestamp-format-mismatch)");
             ExitCode::from(2)
         }
         Err(e @ MieError::UnrecoverableSyncLoss { .. }) => {

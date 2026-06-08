@@ -16,8 +16,14 @@
 use std::fs;
 use std::path::Path;
 
+use crate::decode::DEFAULT_DETECT_RECORDS;
 use crate::filter::FilterConfig;
 use crate::models::{Bus, ErrorMode, MessageType, TimestampFormat};
+
+/// L2-DEC-015 valid range for `decode.detect_records`. Values outside
+/// this range are rejected at config-load time with a clear error.
+pub const DETECT_RECORDS_MIN: usize = 1;
+pub const DETECT_RECORDS_MAX: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct DecoderConfig {
@@ -37,6 +43,13 @@ pub struct DecoderConfig {
     /// than unlinking and exiting 3. Set via `decode.allow_partial =
     /// true` in TOML or `--allow-partial` on the CLI.
     pub allow_partial: bool,
+    /// L2-DEC-015: number of records the timestamp-format auto-detect
+    /// probe walks before committing to IRIG vs Standard. Default
+    /// `DEFAULT_DETECT_RECORDS` (`8`). Set via
+    /// `decode.detect_records = N` in TOML or `--detect-records N` on
+    /// the CLI. Validated against `[DETECT_RECORDS_MIN,
+    /// DETECT_RECORDS_MAX]` at load time.
+    pub detect_records: usize,
 }
 
 impl Default for DecoderConfig {
@@ -50,6 +63,7 @@ impl Default for DecoderConfig {
             output_format: "csv".to_string(),
             no_clobber: false,
             allow_partial: false,
+            detect_records: DEFAULT_DETECT_RECORDS,
         }
     }
 }
@@ -66,6 +80,7 @@ pub struct ConfigOverrides {
     pub output_format: Option<String>,
     pub no_clobber: Option<bool>,
     pub allow_partial: Option<bool>,
+    pub detect_records: Option<usize>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -100,6 +115,9 @@ impl DecoderConfig {
         }
         if let Some(v) = ov.allow_partial {
             self.allow_partial = v;
+        }
+        if let Some(v) = ov.detect_records {
+            self.detect_records = v;
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -199,6 +217,18 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     if let Some(b) = toml.get_bool("decode", "allow_partial")? {
         cfg.allow_partial = b;
     }
+    if let Some(n) = toml.get_int("decode", "detect_records")? {
+        // L2-DEC-015: validate range [1, 32] at load time per
+        // L2-CFG-010. A nonpositive or oversized value would otherwise
+        // silently degrade detection quality.
+        if n < DETECT_RECORDS_MIN as i64 || n > DETECT_RECORDS_MAX as i64 {
+            return Err(ConfigError(format!(
+                "Invalid decode.detect_records: {n}. \
+                 Valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]"
+            )));
+        }
+        cfg.detect_records = n as usize;
+    }
 
     if let Some(types) = toml.get_array("filter", "exclude_types")? {
         for v in types {
@@ -249,6 +279,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("decode", "strict")
             | ("decode", "error_mode")
             | ("decode", "allow_partial")
+            | ("decode", "detect_records")
             | ("output", "format")
             | ("output", "no_clobber")
             | ("filter", "exclude_types")
@@ -396,6 +427,13 @@ impl TomlDoc {
             None => Ok(None),
             Some(TomlValue::Array(a)) => Ok(Some(a)),
             Some(_) => Err(ConfigError(format!("[{section}] {key} must be an array"))),
+        }
+    }
+    pub fn get_int(&self, section: &str, key: &str) -> Result<Option<i64>, ConfigError> {
+        match self.get(section, key) {
+            None => Ok(None),
+            Some(TomlValue::Int(i)) => Ok(Some(*i)),
+            Some(_) => Err(ConfigError(format!("[{section}] {key} must be an integer"))),
         }
     }
 }
