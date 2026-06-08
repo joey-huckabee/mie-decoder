@@ -15,7 +15,29 @@ full release workflow.
 
 ## [Unreleased]
 
-(nothing yet)
+### Changed
+
+- Conformance manifest schema validation in `tests/conformance/run.py` now
+  checks field types in addition to field names. Rejects wrong scalar types
+  (e.g. `"config": 12345`), wrong container types (e.g. `"rust_args": "a
+  string"`), wrong list-element types (e.g. `"rust_args": [42]`), and invalid
+  enum values (e.g. `"mode": "banana"`) with actionable error messages that
+  name the offending field and the expected type.
+
+### Fixed
+
+- `tests/cli.rs::decode_emits_exit_class_summary_at_info_level` now surfaces
+  in `docs/TRACE-MATRIX.md`. The L1 section of the matrix displays only L2
+  children and rolled-up status, not direct L1 test markers, so the test's
+  `L1-EXIT-005` tag alone was invisible. Added `L2-CLI-006` (stderr-only
+  diagnostic obligation) to the `/// Requirements:` line — semantically
+  correct (the summary line IS a human-readable stderr diagnostic) and the
+  test now shows up under that L2's row.
+
+### Maintenance
+
+- `docs/MAINTAINER-GUIDE.md` §10 "220+ tests" updated to the actual count
+  (236 as of v1.0.0).
 
 ## [1.0.0] — 2026-06-07
 

@@ -496,7 +496,25 @@ Bump versions when:
 - **Rust (`Cargo.toml`)** — any change to the public crate API, the CLI surface, or the on-disk output.
 - **Python (`python/pyproject.toml` only)** — same axes for the Python package. `python/src/mie_decoder/__init__.py::__version__` reads from package metadata via `importlib.metadata.version("mie-decoder")`, so `pyproject.toml` is the single source of truth — no second file to keep in lockstep. `poetry check --strict --lock` catches `pyproject.toml`/`poetry.lock` drift in CI.
 
-Add a new top-of-file entry to `CHANGELOG.md` in the same commit that bumps the version. The CHANGELOG entry, the version bump, and any user-visible behavior changes all land together so a tag points at a coherent unit of release.
+### CHANGELOG discipline
+
+`CHANGELOG.md` follows the [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) format. The convention:
+
+- **Every commit that introduces a user- or maintainer-visible change adds an entry under `[Unreleased]` in the same commit.** This includes feature additions, behavior changes, bug fixes, error-message changes, exit-code changes, conformance-suite changes that affect the contract, and tooling changes that affect the developer workflow (e.g. new pre-commit hook steps, new CI jobs). Pure internal refactors with zero observable change can be skipped.
+- Use the standard categories: `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`, `### Security`. A custom `### Maintenance` subsection is acceptable for genuinely-maintenance entries (e.g. stale doc count updates) that don't fit the standard categories.
+- Write entries in the imperative voice describing the *outcome*, not the implementation steps. The git history captures the steps; the CHANGELOG captures the contract.
+- At release cut: rename `[Unreleased]` to `[<version>] — YYYY-MM-DD`, leave a fresh empty `[Unreleased]` above it, and update the compare-URL footer.
+
+### Version bump checklist
+
+The version bump itself rolls up the accumulated `[Unreleased]` entries into a dated release section. Bump in the same commit that:
+
+1. Renames `[Unreleased]` to `[<version>] — YYYY-MM-DD` in `CHANGELOG.md` and seeds a new empty `[Unreleased]` section.
+2. Updates the compare-URL footer (`[<version>]: .../compare/<previous>...<version>`).
+3. Updates `Cargo.toml` (Rust) or `python/pyproject.toml` (Python) — both for a joint cut.
+4. Updates any per-version doc references (e.g. "X-test suite (as of vN.M.0)" in MAINTAINER-GUIDE.md §10).
+
+The CHANGELOG entry, the version bump, and any user-visible behavior changes all land together so a tag points at a coherent unit of release.
 
 ---
 
