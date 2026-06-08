@@ -60,6 +60,7 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset({
     ("decode", "strict"),
     ("decode", "error_mode"),
     ("decode", "allow_partial"),
+    ("decode", "detect_records"),
     ("output", "format"),
     ("output", "no_clobber"),
     ("filter", "exclude_types"),
@@ -67,6 +68,11 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset({
     ("filter", "exclude_buses"),
     ("filter", "exclude_subaddresses"),
 })
+
+#: L2-DEC-015 valid range for ``decode.detect_records``. Values outside
+#: this range are rejected at config-load time with a clear error.
+DETECT_RECORDS_MIN: int = 1
+DETECT_RECORDS_MAX: int = 32
 
 
 def _require_bool(section: str, key: str, value: object) -> bool:
@@ -200,6 +206,10 @@ class DecoderConfig:
     output_format: str = "csv"
     no_clobber: bool = False
     allow_partial: bool = False
+    #: L2-DEC-015: number of records the timestamp-format auto-detect
+    #: probe walks before committing to IRIG vs Standard. Range
+    #: [DETECT_RECORDS_MIN, DETECT_RECORDS_MAX]. Default 8.
+    detect_records: int = 8
 
     def with_overrides(self, **kwargs: Any) -> DecoderConfig:
         """Return a new config with specified fields overridden.
@@ -229,6 +239,11 @@ class DecoderConfig:
             if kwargs.get("allow_partial") is not None
             else self.allow_partial
         )
+        new_dr = (
+            kwargs["detect_records"]
+            if kwargs.get("detect_records") is not None
+            else self.detect_records
+        )
 
         # Merge filter overrides — CLI adds to (not replaces) config file filters
         new_filters = FilterConfig(
@@ -247,6 +262,7 @@ class DecoderConfig:
             output_format=new_fmt,
             no_clobber=new_nc,
             allow_partial=new_ap,
+            detect_records=new_dr,
         )
 
 
@@ -412,6 +428,24 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         "decode", "allow_partial", decode_section.get("allow_partial", False)
     )
 
+    # L2-DEC-015: probe size for timestamp-format auto-detection.
+    # L2-CFG-010 — validate range at load time. An out-of-range value
+    # would silently degrade detection quality.
+    detect_records_raw = decode_section.get("detect_records", 8)
+    if not isinstance(detect_records_raw, int) or isinstance(detect_records_raw, bool):
+        raise ValueError(
+            f"Invalid decode.detect_records: {detect_records_raw!r}; must be an integer"
+        )
+    if (
+        detect_records_raw < DETECT_RECORDS_MIN
+        or detect_records_raw > DETECT_RECORDS_MAX
+    ):
+        raise ValueError(
+            f"Invalid decode.detect_records: {detect_records_raw}. "
+            f"Valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]"
+        )
+    detect_records = detect_records_raw
+
     # L2-CFG-009: WARN on unknown keys so typos surface to the operator
     # instead of being silently dropped. Non-fatal so forward-compatible
     # additions don't break older configs.
@@ -431,6 +465,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         output_format=output_format,
         no_clobber=no_clobber,
         allow_partial=allow_partial,
+        detect_records=detect_records,
     )
 
     logger.debug("Loaded config: %s", config)

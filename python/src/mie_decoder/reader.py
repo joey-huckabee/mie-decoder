@@ -47,15 +47,17 @@ from mie_decoder.decode import (
     MIN_RECORD_BYTES,
     MIN_RECORD_BYTES_STANDARD,
     MIN_RECORD_WORDS,
+    DEFAULT_DETECT_RECORDS,
     MIN_RECORD_WORDS_STANDARD,
+    DetectionConfidence,
     classify_message_format,
     decode_command_word,
     decode_irig_timestamp,
     decode_standard_timestamp,
     decode_type_word,
     detect_record_anomalies,
-    detect_timestamp_format,
     is_valid_message_type,
+    probe_timestamp_format,
     read_u16,
     read_u16_array,
     validate_post_extract_invariants,
@@ -70,6 +72,7 @@ from mie_decoder.exceptions import (
     MieNoValidRecordsError,
     MiePayloadError,
     MieRecordTruncatedError,
+    MieTimestampFormatMismatchError,
     MieUnknownErrorCodeError,
     MieUnknownTypeWordError,
     MieUnrecoverableSyncLossError,
@@ -147,10 +150,16 @@ class MieFileReader:
         *,
         strict: bool = False,
         time_format: TimestampFormat = TimestampFormat.AUTO,
+        detect_records: int = DEFAULT_DETECT_RECORDS,
     ) -> None:
         self._path = Path(path)
         self._strict = strict
         self._time_format = time_format
+        # L2-DEC-015: probe size for auto-detection. Clamped to >= 1
+        # (a no-probe call is nonsensical). The CLI / config layer
+        # validates the upper bound; we mirror the clamp here so a
+        # library caller can't break the invariant by passing 0.
+        self._detect_records = max(1, detect_records)
         # Cumulative sync-recovery count from the most recent __iter__
         # call. Reset to 0 on each iteration so the CLI can read it
         # after the loop completes (for L1-EXIT-003 / L1-EXIT-005 exit-class
@@ -162,8 +171,10 @@ class MieFileReader:
         if self._file_size == 0:
             raise MieFileEmptyError(str(self._path))
         logger.debug(
-            "Initialized reader for %s (%d bytes, strict=%s, time_format=%s)",
-            self._path, self._file_size, self._strict, self._time_format.name,
+            "Initialized reader for %s (%d bytes, strict=%s, "
+            "time_format=%s, detect_records=%d)",
+            self._path, self._file_size, self._strict,
+            self._time_format.name, self._detect_records,
         )
 
     @property
@@ -299,6 +310,72 @@ class MieFileReader:
                         HOMOGENEITY_SAMPLE_RECORDS,
                     )
 
+                # L2-DEC-015: multi-record probe to disambiguate IRIG
+                # vs Standard BEFORE iteration begins. The chosen
+                # format is final per L2-DEC-011 — no per-record
+                # re-detection. Skipped when time_format is explicit.
+                if resolved_format is None:
+                    outcome = probe_timestamp_format(
+                        mm, start_offset, self._detect_records,
+                    )
+                    resolved_format = outcome.format
+                    if outcome.confidence == DetectionConfidence.DECISIVE:
+                        logger.info(
+                            "Auto-detected timestamp format: %s "
+                            "(Decisive: IRIG=%d STD=%d over %d record(s))",
+                            outcome.format.name,
+                            outcome.irig_score,
+                            outcome.std_score,
+                            outcome.records_probed,
+                        )
+                    elif outcome.confidence == DetectionConfidence.MARGINAL:
+                        logger.info(
+                            "Auto-detected timestamp format: %s "
+                            "(Marginal: IRIG=%d STD=%d over %d "
+                            "record(s)) — pass --time-format to force "
+                            "the choice if this is wrong",
+                            outcome.format.name,
+                            outcome.irig_score,
+                            outcome.std_score,
+                            outcome.records_probed,
+                        )
+                    else:
+                        # L2-DEC-016 ambiguous case. Strict mode
+                        # rejects; lenient logs WARN and uses the
+                        # chosen format anyway (back-compat for
+                        # borderline files that decoded acceptably
+                        # under the old single-record detector).
+                        if self._strict:
+                            logger.error(
+                                "Timestamp-format auto-detection is "
+                                "ambiguous in %s starting at offset "
+                                "0x%X: IRIG=%d STD=%d over %d record(s) — "
+                                "strict mode rejects ambiguous files; "
+                                "pass --time-format to force the choice",
+                                self._path.name,
+                                start_offset,
+                                outcome.irig_score,
+                                outcome.std_score,
+                                outcome.records_probed,
+                            )
+                            raise MieTimestampFormatMismatchError(
+                                start_offset,
+                                outcome.irig_score,
+                                outcome.std_score,
+                                outcome.records_probed,
+                            )
+                        logger.warning(
+                            "Auto-detected timestamp format: %s "
+                            "(Ambiguous: IRIG=%d STD=%d over %d "
+                            "record(s)) — using best guess; pass "
+                            "--time-format to force the choice or "
+                            "--strict to reject ambiguous files",
+                            outcome.format.name,
+                            outcome.irig_score,
+                            outcome.std_score,
+                            outcome.records_probed,
+                        )
+
                 offset = start_offset
                 loop_min = MIN_RECORD_BYTES_STANDARD
 
@@ -306,16 +383,6 @@ class MieFileReader:
                     # ── Read and validate Type Word ────────────
                     type_raw = read_u16(mm, offset)
                     tw = decode_type_word(type_raw)
-
-                    # Auto-detect timestamp on first valid record
-                    if resolved_format is None:
-                        resolved_format = detect_timestamp_format(
-                            mm, offset, tw
-                        )
-                        logger.info(
-                            "Auto-detected timestamp format: %s",
-                            resolved_format.name,
-                        )
 
                     ts_words = TIMESTAMP_WORD_COUNTS[resolved_format]
                     min_wc = 1 + ts_words + 1

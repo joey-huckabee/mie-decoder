@@ -454,6 +454,48 @@ class TestAtomicWriteSafety:
         assert body.startswith("TIME_STAMP,RT,MSG,")
         assert "11R" in body
 
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_cli_detect_records_flag_accepts_valid_size(
+        self, tmp_mie_file: Path, tmp_path: Path
+    ) -> None:
+        """--detect-records N accepts a value in [1, 32] and decodes
+        normally on a valid fixture."""
+        from mie_decoder.cli import main
+
+        out = tmp_path / "out.csv"
+        rc = main([
+            "decode",
+            str(tmp_mie_file),
+            "-o",
+            str(out),
+            "--detect-records",
+            "2",
+        ])
+        assert rc == 0
+        assert out.exists()
+
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_cli_detect_records_flag_rejects_out_of_range(
+        self, tmp_mie_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--detect-records above the max (32) is rejected at parse
+        time with a non-zero exit and the offending value in
+        stderr."""
+        from mie_decoder.cli import main
+
+        out = tmp_path / "out.csv"
+        rc = main([
+            "decode",
+            str(tmp_mie_file),
+            "-o",
+            str(out),
+            "--detect-records",
+            "999",
+        ])
+        assert rc != 0
+        captured = capsys.readouterr()
+        assert "--detect-records" in captured.err and "999" in captured.err
+
     @pytest.mark.requirement("L2-CLI-011")
     @pytest.mark.requirement("L1-EXIT-002")
     def test_cli_no_valid_records_returns_exit_2(self, tmp_path: Path) -> None:

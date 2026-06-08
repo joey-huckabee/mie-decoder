@@ -279,6 +279,51 @@ class MieHomogeneousPayloadError(MieFileError):
         )
 
 
+class MieTimestampFormatMismatchError(MieFileError):
+    """Raised when L2-DEC-015 timestamp-format auto-detection completes
+    with a confidence below the L2-DEC-016 floor.
+
+    The L2-DEC-015 probe walks the first N records (default 8) and
+    aggregates per-record IRIG vs Standard scoring. When the winning
+    aggregate score is below the confidence floor, OR when the margin
+    between the two candidate scores is below the minimum-margin
+    threshold, the call is classified as ``AMBIGUOUS`` and — in
+    strict mode — raised as this exception. Lenient mode logs a WARN
+    instead and uses the chosen format anyway.
+
+    Maps to exit class 2 in the CLI per L1-EXIT-002 — the file is
+    semantically a "wrong file type" case, alongside
+    :class:`MieNoValidRecordsError` and
+    :class:`MieHomogeneousPayloadError`.
+
+    Attributes:
+        offset: Byte offset where the probe started.
+        irig_score: Aggregated IRIG score across the probe set.
+        std_score: Aggregated Standard score across the probe set.
+        records_probed: Number of records actually probed.
+    """
+
+    def __init__(
+        self,
+        offset: int,
+        irig_score: int,
+        std_score: int,
+        records_probed: int,
+    ) -> None:
+        self.offset = offset
+        self.irig_score = irig_score
+        self.std_score = std_score
+        self.records_probed = records_probed
+        super().__init__(
+            f"Timestamp-format auto-detection is ambiguous starting at "
+            f"offset 0x{offset:X} (IRIG score: {irig_score}, Standard "
+            f"score: {std_score} over {records_probed} record(s) "
+            f"probed). Pass --time-format irig or --time-format "
+            f"standard to force the choice, or verify the file is "
+            f"actually an MIE recording."
+        )
+
+
 class MieFirstRecordTruncatedError(MieRecordError):
     """Raised when the FIRST record after header detection is truncated.
 

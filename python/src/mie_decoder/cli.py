@@ -41,6 +41,7 @@ from mie_decoder.exceptions import (
     MieHomogeneousPayloadError,
     MieInputOutputCollisionError,
     MieNoValidRecordsError,
+    MieTimestampFormatMismatchError,
     MieUnrecoverableSyncLossError,
     MieWriterError,
 )
@@ -176,6 +177,18 @@ def build_parser() -> argparse.ArgumentParser:
             "decode.allow_partial config key."
         ),
     )
+    decode_parser.add_argument(
+        "--detect-records",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Number of records the timestamp-format auto-detect probe "
+            "walks before committing to IRIG vs Standard (range 1..=32, "
+            "default 8). L2-DEC-015. Mirrors the decode.detect_records "
+            "config key."
+        ),
+    )
 
     # ── dump subcommand ────────────────────────────────────────────
     dump_parser = subparsers.add_parser(
@@ -227,7 +240,14 @@ def _run_decode(args: argparse.Namespace) -> int:
     Returns:
         Exit code: 0 on success, 1 on error.
     """
-    from mie_decoder.config import DecoderConfig, load_config, _parse_type_names, _parse_bus_names
+    from mie_decoder.config import (
+        DETECT_RECORDS_MAX,
+        DETECT_RECORDS_MIN,
+        DecoderConfig,
+        load_config,
+        _parse_type_names,
+        _parse_bus_names,
+    )
     from mie_decoder.filters import apply_filters
     from mie_decoder.reader import MieFileReader
     from mie_decoder.writer import WriteOptions, write_csv, write_csv_split
@@ -269,6 +289,18 @@ def _run_decode(args: argparse.Namespace) -> int:
         overrides["no_clobber"] = True
     if args.allow_partial:
         overrides["allow_partial"] = True
+    if args.detect_records is not None:
+        # L2-DEC-015: validate range at parse time so an out-of-range
+        # value surfaces before the config layer is even consulted.
+        # The TOML form is range-checked in config.load_config.
+        if not (DETECT_RECORDS_MIN <= args.detect_records <= DETECT_RECORDS_MAX):
+            print(
+                f"Error: invalid --detect-records: {args.detect_records}; "
+                f"valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]",
+                file=sys.stderr,
+            )
+            return 1
+        overrides["detect_records"] = args.detect_records
 
     config = config.with_overrides(**overrides)
 
@@ -278,6 +310,7 @@ def _run_decode(args: argparse.Namespace) -> int:
             args.input,
             time_format=config.time_format,
             strict=config.strict,
+            detect_records=config.detect_records,
         )
     except MieFileError as exc:
         logger.error("Failed to open input file: %s", exc)
@@ -351,6 +384,18 @@ def _run_decode(args: argparse.Namespace) -> int:
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         logger.info("decode exit class: no-records")
+        return 2
+    except MieTimestampFormatMismatchError as exc:
+        # L2-DEC-016 + L1-EXIT-002: ambiguous timestamp format is
+        # semantically another "wrong file type" rejection — the
+        # probe could not confidently distinguish IRIG from Standard,
+        # so we treat the file the same way we'd treat an
+        # unrecognized stream. Same exit class (2) as NoValidRecords /
+        # HomogeneousPayload. Only fires in strict mode; lenient mode
+        # uses the chosen format and continues with a WARN.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: no-records (timestamp-format-mismatch)")
         return 2
     except MieUnrecoverableSyncLossError as exc:
         # L1-EXIT-004 → exit 3 (allow_partial would have caught this

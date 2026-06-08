@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Final
 
 from mie_decoder.models import (
@@ -148,71 +148,179 @@ def decode_standard_timestamp(upper: int, lower: int) -> StandardTimestamp:
     )
 
 
-def detect_timestamp_format(
+class DetectionConfidence(Enum):
+    """L2-DEC-016 classification of an auto-detection outcome's strength.
+
+    ``DECISIVE`` and ``MARGINAL`` both result in the chosen format
+    being used silently or with a single INFO log line. ``AMBIGUOUS``
+    is the L2-DEC-016 mismatch class: strict mode surfaces it as
+    :class:`mie_decoder.exceptions.MieTimestampFormatMismatchError`;
+    lenient mode logs WARN and uses the chosen format anyway.
+    """
+
+    DECISIVE = "decisive"
+    MARGINAL = "marginal"
+    AMBIGUOUS = "ambiguous"
+
+
+@dataclass(frozen=True)
+class DetectionOutcome:
+    """Result of an L2-DEC-015 multi-record probe."""
+
+    #: Chosen format. IRIG wins ties per L2-DEC-012.
+    format: TimestampFormat
+    #: Aggregated IRIG score across the probe set.
+    irig_score: int
+    #: Aggregated Standard score across the probe set.
+    std_score: int
+    #: Number of records actually probed (>= 1 on a successful probe;
+    #: may be less than ``max_records`` if EOF was reached or a
+    #: record's declared length was structurally impossible).
+    records_probed: int
+    #: L2-DEC-016 confidence classification.
+    confidence: DetectionConfidence
+
+
+#: L2-DEC-016 thresholds. Conservative — they fire only when the
+#: probe genuinely could not distinguish, not when the call is
+#: decisive but the absolute score is low because the probe set was
+#: small. The floor of 4 means even a single decisive record passes
+#: (one perfect IRIG record scores 5; one perfect Standard scores 4).
+_CONFIDENCE_FLOOR: Final[int] = 4
+_MIN_MARGIN: Final[int] = 3
+#: Decisive thresholds — comfortably above the floor AND a wide
+#: margin. Two records that both score perfectly for one format
+#: easily clear these.
+_DECISIVE_FLOOR: Final[int] = 8
+_DECISIVE_MARGIN: Final[int] = 6
+
+#: L2-DEC-015 default probe size. Configurable via the
+#: ``decode.detect_records`` TOML key or the ``--detect-records`` CLI
+#: flag.
+DEFAULT_DETECT_RECORDS: Final[int] = 8
+
+
+def probe_timestamp_format(
     data: bytes | memoryview,
-    offset: int,
-    type_word: TypeWord,
-) -> TimestampFormat:
-    """Auto-detect whether a record uses IRIG or Standard timestamps.
+    first_offset: int,
+    max_records: int,
+) -> DetectionOutcome:
+    """L2-DEC-015 multi-record probe.
 
-    Probes the first record by attempting to read the Command Word at
-    both possible offsets and checking which produces a valid 1553
-    Command Word. The detection uses multiple heuristics for robustness:
+    Walks up to ``max_records`` starting from ``first_offset``,
+    aggregating per-record IRIG vs Standard scoring, and returns the
+    chosen format with a confidence classification per L2-DEC-016.
 
-    1. **Command Word validity**: A valid Command Word has RT address
-       0–31, subaddress 0–31, and word count 0–31. Both offsets will
-       always satisfy these trivially (all fields are 5-bit), so
-       additional checks are needed.
+    ``max_records`` is clamped to at least 1 (a no-probe call is
+    nonsensical). The probe is bounded by file length: when EOF is
+    reached before ``max_records`` records have been scored, the
+    function returns with however many records it managed to score.
 
-    2. **Message type consistency**: For type 0x02 (BC→RT), the Command
-       Word's T/R bit should be 0 (Receive). For type 0x04 (RT→BC),
-       it should be 1 (Transmit). The offset that produces a Command
-       Word consistent with the Type Word's message type is preferred.
-
-    3. **Word count plausibility**: The Type Word's word count minus
-       the fixed overhead (type + timestamp + cmd + status) should
-       equal the Command Word's data word count. The offset that
-       produces a consistent word count relationship is preferred.
-
-    4. **IRIG field range checks**: If IRIG is a candidate, check that
-       decoded hour < 24, minute < 60, second < 60, microsecond < 1M.
-       Valid ranges increase IRIG confidence.
+    IRIG wins ties per L2-DEC-012.
 
     Args:
         data: Raw byte buffer (file contents or mmap).
-        offset: Byte offset of the record to probe.
-        type_word: The already-decoded Type Word.
+        first_offset: Byte offset of the first record to probe.
+        max_records: Maximum number of records to probe before
+            committing to a format.
 
     Returns:
-        ``TimestampFormat.IRIG`` or ``TimestampFormat.STANDARD``.
-        Never returns ``TimestampFormat.AUTO``.
+        A :class:`DetectionOutcome` describing the chosen format,
+        per-format aggregated scores, the number of records actually
+        probed, and the L2-DEC-016 confidence classification.
+    """
+    n = max(1, max_records)
+    file_len = len(data)
+    irig_score = 0
+    std_score = 0
+    records_probed = 0
+    offset = first_offset
+
+    for _ in range(n):
+        # Need at least the Type Word + minimum payload to score.
+        if offset + MIN_RECORD_BYTES_STANDARD > file_len:
+            break
+        if offset + 2 > file_len:
+            break
+        tw_raw = read_u16(data, offset)
+        tw = decode_type_word(tw_raw)
+        # Defensively skip structurally-impossible records — these
+        # would also fail the reader's normal validate_record path,
+        # and including them in the probe would skew the score.
+        if tw.word_count < MIN_RECORD_WORDS_STANDARD:
+            break
+
+        i_delta, s_delta = _score_single_record(data, offset, tw)
+        irig_score += i_delta
+        std_score += s_delta
+        records_probed += 1
+
+        # Advance by the record's declared length — same advance the
+        # reader will use during decode, so the probe walks the same
+        # records the reader will later interpret.
+        record_bytes = tw.word_count * 2
+        if record_bytes == 0:
+            break
+        next_offset = offset + record_bytes
+        if next_offset <= offset or next_offset > file_len:
+            break
+        offset = next_offset
+
+    fmt = (
+        TimestampFormat.IRIG
+        if irig_score >= std_score
+        else TimestampFormat.STANDARD
+    )
+    max_score = max(irig_score, std_score)
+    margin = abs(irig_score - std_score)
+    if max_score < _CONFIDENCE_FLOOR or margin < _MIN_MARGIN:
+        confidence = DetectionConfidence.AMBIGUOUS
+    elif max_score >= _DECISIVE_FLOOR and margin >= _DECISIVE_MARGIN:
+        confidence = DetectionConfidence.DECISIVE
+    else:
+        confidence = DetectionConfidence.MARGINAL
+
+    return DetectionOutcome(
+        format=fmt,
+        irig_score=irig_score,
+        std_score=std_score,
+        records_probed=records_probed,
+        confidence=confidence,
+    )
+
+
+def _score_single_record(
+    data: bytes | memoryview,
+    offset: int,
+    type_word: TypeWord,
+) -> tuple[int, int]:
+    """Per-record scoring extracted from the previous single-record
+    detector. Returns ``(irig_delta, std_delta)``.
+
+    IRIG can score up to ``+5`` per record (T/R: 2 + WC plausibility:
+    2 + range validity: 1). Standard can score up to ``+4`` per
+    record (T/R: 2 + WC plausibility: 2; no range bonus because the
+    Standard timestamp is a raw 32-bit counter with no semantic field
+    bounds to check against).
     """
     file_len = len(data)
-
-    # ── Gather candidates ──────────────────────────────────────────
     irig_score = 0
     std_score = 0
 
-    # IRIG: Command Word at offset+8 (after 1 TypeWord + 3 TS words)
+    # IRIG candidate: Cmd at offset+8 (Type + 3 TS words)
     irig_cmd_offset = offset + 8
     if irig_cmd_offset + 2 <= file_len:
         irig_cmd_raw = read_u16(data, irig_cmd_offset)
         irig_cmd = decode_command_word(irig_cmd_raw)
-
-        # Check T/R consistency with message type
         if type_word.message_type == MessageType.BC_TO_RT:
             if irig_cmd.direction == Direction.RECEIVE:
                 irig_score += 2
         elif type_word.message_type == MessageType.RT_TO_BC:
             if irig_cmd.direction == Direction.TRANSMIT:
                 irig_score += 2
-
-        # Check word count plausibility (IRIG overhead = 4 + 1 cmd + 1 stat = 6)
-        expected_data_wc_irig = type_word.word_count - 6
-        if expected_data_wc_irig == irig_cmd.data_word_count:
+        if type_word.word_count - 6 == irig_cmd.data_word_count:
             irig_score += 2
-
-        # Check IRIG timestamp field ranges
+        # IRIG field range check on candidate TS positions.
         ts_upper = read_u16(data, offset + 2)
         ts_middle = read_u16(data, offset + 4)
         hour = ts_upper & 0x1F
@@ -222,33 +330,21 @@ def detect_timestamp_format(
         if hour < 24 and minute < 60 and second < 60 and us_hi < 16:
             irig_score += 1
 
-    # Standard: Command Word at offset+6 (after 1 TypeWord + 2 TS words)
+    # Standard candidate: Cmd at offset+6 (Type + 2 TS words)
     std_cmd_offset = offset + 6
     if std_cmd_offset + 2 <= file_len:
         std_cmd_raw = read_u16(data, std_cmd_offset)
         std_cmd = decode_command_word(std_cmd_raw)
-
-        # Check T/R consistency
         if type_word.message_type == MessageType.BC_TO_RT:
             if std_cmd.direction == Direction.RECEIVE:
                 std_score += 2
         elif type_word.message_type == MessageType.RT_TO_BC:
             if std_cmd.direction == Direction.TRANSMIT:
                 std_score += 2
-
-        # Check word count plausibility (Standard overhead = 3 + 1 cmd + 1 stat = 5)
-        expected_data_wc_std = type_word.word_count - 5
-        if expected_data_wc_std == std_cmd.data_word_count:
+        if type_word.word_count - 5 == std_cmd.data_word_count:
             std_score += 2
 
-    # ── Decision ───────────────────────────────────────────────────
-    if irig_score > std_score:
-        return TimestampFormat.IRIG
-    elif std_score > irig_score:
-        return TimestampFormat.STANDARD
-    else:
-        # Tie-break: default to IRIG (more common in flight test)
-        return TimestampFormat.IRIG
+    return irig_score, std_score
 
 
 def decode_command_word(raw: int) -> CommandWord:

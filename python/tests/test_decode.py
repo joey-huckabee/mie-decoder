@@ -362,26 +362,26 @@ class TestDetectTimestampFormat:
     """Tests for auto-detection of timestamp format."""
 
     @pytest.mark.requirement("L2-DEC-011")
+    @pytest.mark.requirement("L2-DEC-015")
     def test_detects_irig_from_known_data(self) -> None:
         """Known IRIG record should detect as IRIG."""
         from tests.conftest import RECORD_RT15_SA11_RCV
-        from mie_decoder.decode import detect_timestamp_format, decode_type_word, read_u16
+        from mie_decoder.decode import probe_timestamp_format
         from mie_decoder.models import TimestampFormat
 
-        tw = decode_type_word(read_u16(RECORD_RT15_SA11_RCV, 0))
-        result = detect_timestamp_format(RECORD_RT15_SA11_RCV, 0, tw)
-        assert result == TimestampFormat.IRIG
+        outcome = probe_timestamp_format(RECORD_RT15_SA11_RCV, 0, 1)
+        assert outcome.format == TimestampFormat.IRIG
 
     @pytest.mark.requirement("L2-DEC-011")
+    @pytest.mark.requirement("L2-DEC-015")
     def test_detects_irig_from_transmit(self) -> None:
         """Known IRIG transmit record should detect as IRIG."""
         from tests.conftest import RECORD_RT15_SA22_XMT
-        from mie_decoder.decode import detect_timestamp_format, decode_type_word, read_u16
+        from mie_decoder.decode import probe_timestamp_format
         from mie_decoder.models import TimestampFormat
 
-        tw = decode_type_word(read_u16(RECORD_RT15_SA22_XMT, 0))
-        result = detect_timestamp_format(RECORD_RT15_SA22_XMT, 0, tw)
-        assert result == TimestampFormat.IRIG
+        outcome = probe_timestamp_format(RECORD_RT15_SA22_XMT, 0, 1)
+        assert outcome.format == TimestampFormat.IRIG
 
     @pytest.mark.requirement("L2-DEC-013")
     def test_forced_irig(self, tmp_mie_file: Path) -> None:
@@ -647,3 +647,68 @@ class TestRecordAnomalies:
         # Both status RT mismatch AND TW bit 15 set: 2 anomalies
         anomalies = detect_record_anomalies(self._tw(0xA402), self._cmd(15), 0x2800)
         assert len(anomalies) == 2
+
+
+class TestProbeTimestampFormat:
+    """Tests for the L2-DEC-015 multi-record probe and L2-DEC-016
+    confidence classification.
+
+    Mirrors src/decode.rs::tests::probe_*. Same fixture (the canonical
+    72-byte RT15 SA11 receive record); same threshold semantics.
+    """
+
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_single_irig_record_picks_irig(self) -> None:
+        from tests.conftest import RECORD_RT15_SA11_RCV
+        from mie_decoder.decode import probe_timestamp_format
+        from mie_decoder.models import TimestampFormat
+
+        outcome = probe_timestamp_format(RECORD_RT15_SA11_RCV, 0, 8)
+        assert outcome.format == TimestampFormat.IRIG
+        assert outcome.records_probed == 1
+        assert outcome.irig_score > outcome.std_score
+
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_eight_irig_records_aggregates_decisively(self) -> None:
+        from tests.conftest import RECORD_RT15_SA11_RCV
+        from mie_decoder.decode import (
+            DetectionConfidence,
+            probe_timestamp_format,
+        )
+        from mie_decoder.models import TimestampFormat
+
+        data = RECORD_RT15_SA11_RCV * 8
+        outcome = probe_timestamp_format(data, 0, 8)
+        assert outcome.format == TimestampFormat.IRIG
+        assert outcome.records_probed == 8
+        assert outcome.confidence == DetectionConfidence.DECISIVE
+        # Each IRIG record scores +5 (T/R + WC + range); 8 of them
+        # easily clears the decisive thresholds.
+        assert outcome.irig_score >= 40
+
+    @pytest.mark.requirement("L2-DEC-012")
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_zero_score_ties_to_irig(self) -> None:
+        from mie_decoder.decode import (
+            DetectionConfidence,
+            probe_timestamp_format,
+        )
+        from mie_decoder.models import TimestampFormat
+
+        # All-zero buffer — neither format scores anything. IRIG wins
+        # the tie per L2-DEC-012; AMBIGUOUS by definition of L2-DEC-016.
+        outcome = probe_timestamp_format(bytes(64), 0, 8)
+        assert outcome.format == TimestampFormat.IRIG
+        assert outcome.confidence == DetectionConfidence.AMBIGUOUS
+
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_max_records_zero_clamps_to_one(self) -> None:
+        from tests.conftest import RECORD_RT15_SA11_RCV
+        from mie_decoder.decode import probe_timestamp_format
+
+        out_zero = probe_timestamp_format(RECORD_RT15_SA11_RCV, 0, 0)
+        out_one = probe_timestamp_format(RECORD_RT15_SA11_RCV, 0, 1)
+        assert out_zero.records_probed == 1
+        assert out_one.records_probed == 1
+        assert out_zero.format == out_one.format
+        assert out_zero.irig_score == out_one.irig_score
