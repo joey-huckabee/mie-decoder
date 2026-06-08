@@ -15,6 +15,15 @@ full release workflow.
 
 ## [Unreleased]
 
+(nothing yet)
+
+## [1.1.0] — 2026-06-07
+
+Stronger timestamp-format auto-detection via a multi-record probe,
+plus a new ambiguous-detection error class. Both implementations
+ship together at v1.1.0 from a single repository tag (`v1.1.0`),
+continuing the joint-cut model established by v1.0.0.
+
 ### Added
 
 - **Multi-record timestamp-format auto-detection** (L2-DEC-015). The
@@ -216,5 +225,6 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/joey-huckabee/mie-decoder/releases/tag/v1.0.0
