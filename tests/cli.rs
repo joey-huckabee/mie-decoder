@@ -502,6 +502,60 @@ fn detect_records_flag_accepts_valid_size() {
     assert!(output.exists(), "output CSV must be created");
 }
 
+/// Requirements: L2-SYN-026
+///
+/// `--lookahead-records N` is accepted in range and the decode
+/// completes normally. Default N=2 (DEFAULT_LOOKAHEAD_RECORDS)
+/// preserves historical behavior; any value in [1, 32] is valid.
+#[test]
+fn lookahead_records_flag_accepts_valid_size() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--lookahead-records"),
+        std::ffi::OsStr::new("4"),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "decode with --lookahead-records 4 must exit 0 on a valid fixture"
+    );
+    assert!(output.exists(), "output CSV must be created");
+}
+
+/// Requirements: L2-SYN-026
+#[test]
+fn lookahead_records_flag_rejects_out_of_range() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--lookahead-records"),
+        std::ffi::OsStr::new("999"),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_ne!(
+        exit_code(&out),
+        0,
+        "--lookahead-records 999 must fail (above the max of 32)"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--lookahead-records") && stderr.contains("999"),
+        "stderr should name the offending flag and value (got: {stderr:?})"
+    );
+}
+
 /// Requirements: L2-DEC-015
 ///
 /// Out-of-range `--detect-records` is rejected at parse time with a

@@ -19,11 +19,18 @@ use std::path::Path;
 use crate::decode::DEFAULT_DETECT_RECORDS;
 use crate::filter::FilterConfig;
 use crate::models::{Bus, ErrorMode, MessageType, TimestampFormat};
+use crate::sync::DEFAULT_LOOKAHEAD_RECORDS;
 
 /// L2-DEC-015 valid range for `decode.detect_records`. Values outside
 /// this range are rejected at config-load time with a clear error.
 pub const DETECT_RECORDS_MIN: usize = 1;
 pub const DETECT_RECORDS_MAX: usize = 32;
+
+/// L2-SYN-026 valid range for `decode.lookahead_records`. Same shape as
+/// DETECT_RECORDS_MIN/_MAX — the two configurable record-count knobs
+/// share their valid range for consistency.
+pub const LOOKAHEAD_RECORDS_MIN: usize = 1;
+pub const LOOKAHEAD_RECORDS_MAX: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct DecoderConfig {
@@ -50,6 +57,14 @@ pub struct DecoderConfig {
     /// the CLI. Validated against `[DETECT_RECORDS_MIN,
     /// DETECT_RECORDS_MAX]` at load time.
     pub detect_records: usize,
+    /// L2-SYN-026: total number of records `sync::validate_record`
+    /// checks per call (1 candidate + N-1 look-ahead). Default
+    /// `DEFAULT_LOOKAHEAD_RECORDS` (`2`), preserving the historical
+    /// two-record look-ahead from L2-SYN-005. Set via
+    /// `decode.lookahead_records = N` in TOML or
+    /// `--lookahead-records N` on the CLI. Validated against
+    /// `[LOOKAHEAD_RECORDS_MIN, LOOKAHEAD_RECORDS_MAX]` at load time.
+    pub lookahead_records: usize,
 }
 
 impl Default for DecoderConfig {
@@ -64,6 +79,7 @@ impl Default for DecoderConfig {
             no_clobber: false,
             allow_partial: false,
             detect_records: DEFAULT_DETECT_RECORDS,
+            lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
         }
     }
 }
@@ -81,6 +97,7 @@ pub struct ConfigOverrides {
     pub no_clobber: Option<bool>,
     pub allow_partial: Option<bool>,
     pub detect_records: Option<usize>,
+    pub lookahead_records: Option<usize>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -118,6 +135,9 @@ impl DecoderConfig {
         }
         if let Some(v) = ov.detect_records {
             self.detect_records = v;
+        }
+        if let Some(v) = ov.lookahead_records {
+            self.lookahead_records = v;
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -229,6 +249,18 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
         }
         cfg.detect_records = n as usize;
     }
+    if let Some(n) = toml.get_int("decode", "lookahead_records")? {
+        // L2-SYN-026: validate range [1, 32] at load time per
+        // L2-CFG-010. Out-of-range values would silently degrade
+        // sync validation quality or hit performance cliffs.
+        if n < LOOKAHEAD_RECORDS_MIN as i64 || n > LOOKAHEAD_RECORDS_MAX as i64 {
+            return Err(ConfigError(format!(
+                "Invalid decode.lookahead_records: {n}. \
+                 Valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]"
+            )));
+        }
+        cfg.lookahead_records = n as usize;
+    }
 
     if let Some(types) = toml.get_array("filter", "exclude_types")? {
         for v in types {
@@ -280,6 +312,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("decode", "error_mode")
             | ("decode", "allow_partial")
             | ("decode", "detect_records")
+            | ("decode", "lookahead_records")
             | ("output", "format")
             | ("output", "no_clobber")
             | ("filter", "exclude_types")

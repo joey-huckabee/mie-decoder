@@ -54,6 +54,10 @@ DECODE OPTIONS:
   --detect-records N                    Records probed by timestamp-
                                         format auto-detection (1..=32,
                                         default 8). L2-DEC-015.
+  --lookahead-records N                 Total records checked by sync
+                                        validation per call (1 candidate
+                                        + N-1 look-ahead, range 1..=32,
+                                        default 2). L2-SYN-026.
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
   --exclude-types VAL                   Comma-separated names or 0xNN
@@ -101,6 +105,7 @@ struct DecodeArgs {
     allow_partial: bool,
     time_format: Option<TimestampFormat>,
     detect_records: Option<usize>,
+    lookahead_records: Option<usize>,
     strict: Option<bool>,
     output_format: Option<String>,
 
@@ -347,6 +352,14 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--detect-records=") => {
                 args.detect_records = Some(parse_detect_records(&s["--detect-records=".len()..])?);
             }
+            "--lookahead-records" => {
+                let v = next_value("--lookahead-records", iter)?;
+                args.lookahead_records = Some(parse_lookahead_records(&v)?);
+            }
+            s if s.starts_with("--lookahead-records=") => {
+                args.lookahead_records =
+                    Some(parse_lookahead_records(&s["--lookahead-records=".len()..])?);
+            }
             "--format" => {
                 args.output_format = Some(next_value("--format", iter)?);
             }
@@ -571,6 +584,23 @@ fn parse_detect_records(s: &str) -> Result<usize, String> {
     Ok(n)
 }
 
+/// L2-SYN-026: validate the `--lookahead-records` argument against
+/// `[1, 32]`. Same shape as `parse_detect_records`.
+fn parse_lookahead_records(s: &str) -> Result<usize, String> {
+    let n: usize = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid --lookahead-records: {s:?}; must be an integer"))?;
+    if !(crate::config::LOOKAHEAD_RECORDS_MIN..=crate::config::LOOKAHEAD_RECORDS_MAX).contains(&n) {
+        return Err(format!(
+            "invalid --lookahead-records: {n}; valid range: [{}, {}]",
+            crate::config::LOOKAHEAD_RECORDS_MIN,
+            crate::config::LOOKAHEAD_RECORDS_MAX
+        ));
+    }
+    Ok(n)
+}
+
 // ── Subcommand runners ────────────────────────────────────────────────
 
 /// Apply a log-level string. Returns Err on an unrecognized name so the
@@ -623,11 +653,7 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String
             strict: cfg.strict,
             time_format: cfg.time_format,
             detect_records: cfg.detect_records,
-            // L2-SYN-026 wiring through DecoderConfig lands in the
-            // follow-up commit (task #108). For now use the default
-            // (DEFAULT_LOOKAHEAD_RECORDS = 2), which preserves the
-            // historical behavior.
-            ..ReaderOptions::default()
+            lookahead_records: cfg.lookahead_records,
         },
     )
     .map_err(format_mie_error)
@@ -651,6 +677,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String>
         // Same precedence pattern for --allow-partial.
         allow_partial: if args.allow_partial { Some(true) } else { None },
         detect_records: args.detect_records,
+        lookahead_records: args.lookahead_records,
         exclude_types: args.exclude_types,
         exclude_rts: args.exclude_rts,
         exclude_buses: args.exclude_buses,
