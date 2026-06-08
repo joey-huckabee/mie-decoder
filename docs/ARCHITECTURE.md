@@ -116,9 +116,11 @@ When `find_first_record` returns None, the reader calls `diagnose_header_scan_fa
 
 At each record boundary, the reader validates before decoding **using the same `sync::validate_record` function as Phases 1 and 4**. There is one validation path; the per-record loop, the header-skip scan, and the recovery walk all share it (L2-SYN-014). A weaker per-record check would let corrupt-but-plausible records pass through and emit garbage rows.
 
-### Phase 3 — Two-record look-ahead
+### Phase 3 — N-record look-ahead
 
-`validate_record` uses a two-record look-ahead: a candidate is confirmed valid only if the NEXT record (at `offset + word_count × 2`) also starts with a valid Type Word. This dramatically reduces false positives from coincidental byte patterns. When fewer than 2 bytes remain after the candidate, look-ahead is skipped and checks 1–4 alone are authoritative (L2-SYN-005).
+`validate_record` uses an N-record look-ahead: a candidate is confirmed valid only if the next `N − 1` records each start with a valid Type Word (message type in the known set, word count plausible). The walk advances by each candidate's declared `word_count` so it checks the *next records*, not the next 2-byte positions. This dramatically reduces false positives from coincidental byte patterns. When fewer than 2 bytes remain at any look-ahead position, the walk terminates without rejecting the original candidate — checks 1–5 alone are authoritative for records that don't exist in the file (L2-SYN-005, L2-SYN-026).
+
+The look-ahead depth `N` is configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, range `[1, 32]`, default `2` (preserves the historical two-record look-ahead from earlier versions). Higher values catch wider classes of consecutive-same-shape corruption — for example, two adjacent fake-record headers that align on plausible Type Words can defeat `N = 2` but be caught at `N = 4`. The cost is small (one Type Word read per extra look-ahead record).
 
 ### Phase 4 — Sync recovery (walk forward)
 

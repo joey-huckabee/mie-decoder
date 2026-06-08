@@ -42,6 +42,8 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `decode.strict` | bool | `false` | (no CLI flag in current versions) | L2-CFG-001, L1-MODE-001 |
 | `decode.error_mode` | string | `"separate"` | Python: `--error-mode`; Rust: `--inline-errors` (sets `inline`) | L2-CFG-001, L1-ERR-001 |
 | `decode.allow_partial` | bool | `false` | `--allow-partial` | L2-CFG-001, L1-EXIT-004 |
+| `decode.detect_records` | int | `8` | `--detect-records` | L2-CFG-001, L2-DEC-015 |
+| `decode.lookahead_records` | int | `2` | `--lookahead-records` | L2-CFG-001, L2-SYN-026 |
 | `output.format` | string | `"csv"` | (no CLI flag) | L2-CFG-001 |
 | `output.no_clobber` | bool | `false` | `--no-clobber` | L2-CFG-001, L2-WRT-017 |
 | `filter.exclude_types` | array | `[]` | `--exclude-types` (additive) | L2-CFG-006, L2-CFG-007 |

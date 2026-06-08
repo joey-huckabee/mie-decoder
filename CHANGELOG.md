@@ -15,7 +15,32 @@ full release workflow.
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **Configurable N-record sync look-ahead** (L2-SYN-005, L2-SYN-026).
+  `sync::validate_record` (Rust) / `sync.validate_record` (Python) now
+  accept a look-ahead depth parameter `N`. The function checks `N − 1`
+  subsequent records' Type Words after the candidate, advancing by each
+  record's declared `word_count`. Default `N = 2` preserves the
+  historical two-record look-ahead behavior; higher values catch wider
+  classes of consecutive-same-shape corruption that previously defeated
+  the validator (e.g., two adjacent fake-record headers that align on
+  plausible Type Words). Configurable via `decode.lookahead_records` in
+  TOML or `--lookahead-records N` on the CLI, range `[1, 32]`. See
+  `docs/ARCHITECTURE.md` §3 Phase 3 for the design.
+- New TOML key `decode.lookahead_records` with load-time range
+  validation.
+- New CLI flag `--lookahead-records N` with parse-time range
+  validation, exposed in both the Rust and Python CLIs.
+
+### Changed
+
+- `docs/L2-REQ.md` L2-SYN-005 generalized in place: the original
+  "two-record look-ahead" wording is now described as a special case
+  of the configurable N-record rule with default `N = 2`. The
+  generalization is non-breaking (existing files and configs continue
+  to behave identically); the rationale for the in-place wording
+  update is recorded in the L2-SYN-005 Rationale field.
 
 ## [1.1.0] — 2026-06-07
 
