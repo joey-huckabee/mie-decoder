@@ -19,7 +19,7 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 | Code      | Title                                       | L2 Count |
 |-----------|---------------------------------------------|----------|
 | `DEC`     | Binary decoding                             | 14       |
-| `SYN`     | Synchronization, validation, invariants     | 25       |
+| `SYN`     | Synchronization, validation, invariants     | 26       |
 | `RDR`     | Reader behavior                             | 15       |
 | `MSG`     | Message semantics                           | 3        |
 | `ERR`     | Error record handling                       | 10       |
@@ -167,8 +167,8 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 #### L2-SYN-005
 
 **Parent**: L1-SYN-001
-**Statement**: Record validation SHALL confirm that the next record boundary contains a plausible Type Word when at least 2 bytes are available at `offset + (word_count × 2)`. When fewer than 2 bytes remain after the candidate record, look-ahead SHALL be skipped and validation checks 1 through 4 (type, word count, fits-in-file, IRIG range) SHALL be authoritative.
-**Rationale**: A single-record validation produces too many false positives during header detection and sync recovery. The two-record look-ahead is what makes the validator usable in practice; removing it reintroduces false-positive resyncs on plausible-looking junk bytes.
+**Statement**: Record validation SHALL confirm that the next `(N − 1)` record boundaries each contain a plausible Type Word, where `N` is the configured look-ahead depth per L2-SYN-026 (default `2`). The walk SHALL advance by each candidate's declared `word_count`; if fewer than 2 bytes remain at any candidate position, look-ahead SHALL terminate without rejecting the original candidate, and validation checks 1 through 5 (type, word count, fits-in-file, IRIG range, IRIG day-of-year) SHALL be authoritative for the records that were not reachable within the file. The minimum `N` is `1` (no look-ahead beyond the candidate itself); higher values catch wider classes of consecutive-same-shape corruption at small additional per-record-read cost.
+**Rationale**: A single-record validation produces too many false positives during header detection and sync recovery. The two-record look-ahead (the historical default) is what made the validator usable in practice; the parameterization adds defense against two-consecutive same-shape corruption patterns that defeat the historical default. Wording is generalized in place rather than retired and re-issued so the trace matrix and the codebase keep a single canonical identifier for the look-ahead policy.
 **Verification Method**: Test (T)
 
 #### L2-SYN-006
@@ -309,6 +309,13 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 **Parent**: L1-SYN-001
 **Statement**: Type Word bit 15 is reserved. When a record's Type Word has bit 15 set, the implementation SHALL log a WARN naming the offset and the raw Type Word, and SHALL continue emitting the record in both strict and lenient mode.
 **Rationale**: `docs/FIELDS.md` lists bit 15 as "Reserved for future use. Should be 0." Treating a set bit as corruption would prevent decoding any recording that uses an undocumented vendor extension; treating it as a silent no-op would hide a real signal from the operator. The WARN-and-emit compromise gives the operator visibility without breaking decode.
+**Verification Method**: Test (T)
+
+#### L2-SYN-026
+
+**Parent**: L1-SYN-001
+**Statement**: The look-ahead depth `N` referenced by L2-SYN-005 SHALL be configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, with valid range `[1, 32]` and default `2` (preserving the historical two-record look-ahead behavior). Values outside the range SHALL be rejected at config-load time or CLI parse time with a clear error naming the offending value and the valid range. The configured `N` SHALL apply uniformly to every sync-validation call site: header detection (`find_first_record`), mid-iteration per-record validation, and sync-recovery scan (`recover_sync`).
+**Rationale**: A small number of operators encounter recordings where two consecutive corrupt frames happen to align on plausible-looking Type Words and defeat the default two-record look-ahead. Letting them increase `N` to (say) `4` or `8` catches a wider failure class without changing behavior for the common case. The `[1, 32]` range matches the equivalent range used by L2-DEC-015's `decode.detect_records` for consistency; values above `32` add little benefit (the look-ahead walk is bounded by the file's actual record count anyway).
 **Verification Method**: Test (T)
 
 ### Invariant severity classes (applies to L2-SYN-020 through L2-SYN-025)

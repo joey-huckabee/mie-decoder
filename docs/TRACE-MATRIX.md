@@ -164,7 +164,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025 | Implemented |
+| L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025, L2-SYN-026 | Partially Implemented |
 | L1-SYN-002 | L2-SYN-007, L2-SYN-010 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
@@ -191,6 +191,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-SYN-022 | _(none)_ | `python/tests/test_decode.py::test_capacity_exact_accepted`<br>`python/tests/test_decode.py::test_capacity_short_rejected`<br>`python/tests/test_decode.py::test_spurious_skips_capacity_check`<br>`src/decode.rs::invariants_accept_capacity_exact`<br>`src/decode.rs::invariants_reject_capacity_short`<br>`src/decode.rs::invariants_skip_capacity_for_spurious`<br>`tests/integration.rs::payload_capacity_mismatch_skipped_in_lenient_mode` | Implemented |
 | L2-SYN-023 | _(none)_ | `python/tests/test_decode.py::test_non_rt_to_rt_is_noop`<br>`python/tests/test_decode.py::test_rt_to_rt_broadcast_also_checked`<br>`python/tests/test_decode.py::test_rt_to_rt_cmd2_receive_passes`<br>`python/tests/test_decode.py::test_rt_to_rt_cmd2_transmit_rejected`<br>`src/decode.rs::post_extract_invariant_non_rt_to_rt_is_noop`<br>`src/decode.rs::post_extract_invariant_rt_to_rt_broadcast_also_checked`<br>`src/decode.rs::post_extract_invariant_rt_to_rt_cmd2_receive_passes`<br>`src/decode.rs::post_extract_invariant_rt_to_rt_cmd2_transmit_rejected` | Implemented |
 | L2-SYN-025 | _(none)_ | `python/tests/test_decode.py::test_multiple_anomalies_can_fire_on_one_record`<br>`python/tests/test_decode.py::test_type_word_reserved_bit_anomaly`<br>`src/decode.rs::anomaly_multiple_can_fire_on_one_record`<br>`src/decode.rs::anomaly_type_word_reserved_bit_set_logged` | Implemented |
+| L2-SYN-026 | _(none)_ | _(TBD)_ | Draft |
 
 ### L1-ERR: DDC error records and SPURIOUS_DATA
 
@@ -305,7 +306,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | CLI | 2 | 9 | 0 | 9 | 0 | 9 | 0 |
 | LOG | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MODE | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| SYN | 2 | 25 | 0 | 24 | 0 | 25 | 0 |
+| SYN | 2 | 26 | 0 | 24 | 0 | 25 | 0 |
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 9 | 0 | 9 | 0 | 9 | 0 |
 | CONF | 1 | 5 | 0 | 2 | 0 | 4 | 0 |
@@ -317,11 +318,11 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
-| **Total** | **24** | **105** | **26** | **99** | **13** | **104** | **25** |
+| **Total** | **24** | **106** | **26** | **99** | **13** | **104** | **25** |
 
-**Tested by at least one test marker**: 112 of 131 (85.5%).
+**Tested by at least one test marker**: 112 of 132 (84.8%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 129 of 131 (98.5%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 129 of 132 (97.7%).
 
 ### Orphan check
 
