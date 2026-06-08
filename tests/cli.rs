@@ -361,12 +361,19 @@ fn exclude_rts_filter_drops_matching_records() {
 
 // ── Exit-class summary line (L1-EXIT-005) ────────────────────────────
 
-/// Requirements: L1-EXIT-005
+/// Requirements: L1-EXIT-005, L2-CLI-006
 ///
 /// The exit-class summary line is emitted via `log_info!` so it
 /// only surfaces at INFO level or below. Default is WARN, so the
 /// test explicitly raises the level. This exercises both the
 /// log-level CLI flag and the summary-line format.
+///
+/// L2-CLI-006 cited because the summary line satisfies the
+/// "human-readable diagnostics on stderr" obligation; tagging it
+/// here lets the trace matrix attribute the test (the matrix's L1
+/// section displays only L2 children + rolled-up status, not
+/// direct L1 test markers, so the L1-EXIT-005 tag alone is
+/// invisible in the rendered matrix).
 #[test]
 fn decode_emits_exit_class_summary_at_info_level() {
     let tmp = TempDir::new();

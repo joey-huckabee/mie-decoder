@@ -134,7 +134,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L2-CLI-004 | _(none)_ | `python/tests/test_e2e.py::test_cli_log_level_debug`<br>`python/tests/test_e2e.py::test_cli_log_level_info`<br>`python/tests/test_exceptions.py::test_case_insensitive`<br>`python/tests/test_exceptions.py::test_invalid_level_raises`<br>`python/tests/test_exceptions.py::test_no_duplicate_handlers`<br>`python/tests/test_exceptions.py::test_sets_info_level`<br>`python/tests/test_exceptions.py::test_sets_level`<br>`src/cli.rs::apply_log_level_accepts_known_names`<br>`src/cli.rs::apply_log_level_includes_source_in_error`<br>`src/cli.rs::apply_log_level_rejects_unknown_names`<br>`src/cli.rs::run_count_with_invalid_cli_log_level_fails_via_resolve_config`<br>`src/log.rs::level_parse` | Implemented |
-| L2-CLI-006 | _(none)_ | `python/tests/test_exceptions.py::test_outputs_to_stderr_by_default` | Implemented |
+| L2-CLI-006 | _(none)_ | `python/tests/test_exceptions.py::test_outputs_to_stderr_by_default`<br>`tests/cli.rs::decode_emits_exit_class_summary_at_info_level` | Implemented |
 | L2-SYN-012 | _(none)_ | `python/tests/test_sync.py::test_header_detection_logs_size_at_info` | Implemented |
 | L2-SYN-013 | _(none)_ | `python/tests/test_sync.py::test_sync_loss_warns_and_recovery_logs_info` | Implemented |
 

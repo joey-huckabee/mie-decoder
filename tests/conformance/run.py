@@ -21,31 +21,40 @@ MANIFEST = SUITE / "manifest.json"
 # Closed schema for case objects. ``tests/conformance/README.md``
 # specifies that unknown fields SHALL be rejected by the runner so a
 # typo (e.g. ``rust_arg`` instead of ``rust_args``) cannot silently
-# disable a per-case override. Keep this set in lockstep with the
-# schema table in the README.
-ALLOWED_CASE_FIELDS: frozenset[str] = frozenset({
-    "name",
-    "input",
-    "expected",
-    "expected_errors",
-    "config",
-    "mode",
-    "rust_args",
-    "python_args",
-    "expected_stderr_contains",
-    "expected_exit",
-})
+# disable a per-case override. ``FIELD_TYPES`` doubles as the
+# allowed-field set; keep it in lockstep with the schema table in the
+# README.
+FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
+    "name": str,
+    "input": str,
+    "expected": str,
+    "expected_errors": str,
+    "config": str,
+    "mode": str,
+    "rust_args": list,
+    "python_args": list,
+    "expected_stderr_contains": str,
+    "expected_exit": int,
+}
+ALLOWED_MODES: frozenset[str] = frozenset({"decode", "count"})
 
 
 def validate_case_schema(case: Any, index: int) -> None:
-    """Reject unknown manifest fields with a clear, actionable error.
+    """Reject malformed manifest cases with a clear, actionable error.
 
-    The README pins this as a runner contract — a misspelled field
-    name would otherwise be silently ignored (Python dict access via
-    ``.get(..., default)`` swallows the typo), so the case would run
-    with default behavior instead of the intended override. This
-    function fails fast on the first malformed case; rerun after
-    fixing to see any subsequent ones.
+    Two failure classes are caught here so neither becomes a silent
+    no-op at run time:
+
+    1. **Unknown field name** — a misspelled key (e.g. ``rust_arg``
+       for ``rust_args``) is otherwise ignored by ``case.get(...,
+       default)`` and the case runs with default behavior.
+    2. **Wrong field type** — e.g. ``"rust_args": "single string"``
+       (should be a list) would propagate downstream as a
+       ``subprocess`` argument-list shape error far from the
+       manifest entry that caused it.
+
+    Fails fast on the first malformed case; rerun after fixing to
+    see any subsequent ones.
     """
     if not isinstance(case, dict):
         raise RuntimeError(
@@ -58,12 +67,43 @@ def validate_case_schema(case: Any, index: int) -> None:
         raise RuntimeError(f"manifest case {label}: missing required 'name' field")
     if "input" not in case:
         raise RuntimeError(f"manifest case {label}: missing required 'input' field")
-    unknown = sorted(set(case) - ALLOWED_CASE_FIELDS)
+
+    unknown = sorted(set(case) - set(FIELD_TYPES))
     if unknown:
         raise RuntimeError(
             f"manifest case {label}: unknown field(s) {unknown}. "
-            f"Allowed fields are {sorted(ALLOWED_CASE_FIELDS)}. "
+            f"Allowed fields are {sorted(FIELD_TYPES)}. "
             "Check tests/conformance/README.md for the schema."
+        )
+
+    for field, expected_type in FIELD_TYPES.items():
+        if field not in case:
+            continue
+        if not isinstance(case[field], expected_type):
+            type_name = (
+                expected_type.__name__
+                if isinstance(expected_type, type)
+                else " or ".join(t.__name__ for t in expected_type)
+            )
+            raise RuntimeError(
+                f"manifest case {label}: field {field!r} must be {type_name}, "
+                f"got {type(case[field]).__name__}"
+            )
+        # list-typed fields must hold strings only — both ``rust_args``
+        # and ``python_args`` end up as CLI argument vectors, where a
+        # non-string element would raise far from the manifest entry.
+        if expected_type is list:
+            for i, item in enumerate(case[field]):
+                if not isinstance(item, str):
+                    raise RuntimeError(
+                        f"manifest case {label}: field {field!r}[{i}] must be str, "
+                        f"got {type(item).__name__}"
+                    )
+
+    if "mode" in case and case["mode"] not in ALLOWED_MODES:
+        raise RuntimeError(
+            f"manifest case {label}: mode {case['mode']!r} is not one of "
+            f"{sorted(ALLOWED_MODES)}"
         )
 
 

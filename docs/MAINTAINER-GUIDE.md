@@ -456,7 +456,7 @@ cargo cov            # interactive HTML report
 
 When coverage is consistently above the floor by >2pp, bump it. Edit `Cargo.toml` (or wherever the floor is defined) and re-run.
 
-Python doesn't currently have a coverage gate in CI. The 220+ tests provide effective coverage at the integration level; adding a coverage tool would be a separate decision.
+Python doesn't currently have a coverage gate in CI. The 236-test suite (as of v1.0.0) provides effective coverage at the integration level; adding a coverage tool would be a separate decision.
 
 ---
 
