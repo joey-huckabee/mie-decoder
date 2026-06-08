@@ -1,16 +1,32 @@
 # MIE-Decoder Roadmap
 
+## Release status
+
+**v1.0.0 — joint Rust + Python cut, 2026-06-07.** First release of both
+implementations from a single repository tag (`v1.0.0`). Combined scope
+covers the streaming Rust writer + static-musl build, the Python package
++ pandas writer, the cross-implementation conformance suite (20 cases),
+the L1/L2/L3 requirements + auto-generated trace matrix, the output-
+safety subsystem (atomic temp + rename, `--no-clobber`, `--allow-partial`,
+input/output collision rejection), the structural-invariants subsystem
+(`L2-SYN-020`..`L2-SYN-025`), the homogeneity-payload defense, and the
+documentation suite under `docs/`. See [`CHANGELOG.md`](../CHANGELOG.md)
+for the full v1.0.0 entry.
+
+## Planned
+
 | Version | Feature |
 |---------|---------|
-| **Python v1.1.0** | Sync recovery, error handling, config, and filtering. Maintained at `python/`. _(current Python release)_ |
-| **Rust v1.0.0** | Rust port. CLI redesign (`--inline-errors`, `--include-*` filters, `count` subcommand, `--format csv` forward-compat). Streaming CSV writer (constant memory). Static musl build for SLES 12. _(current Rust release)_ |
-| Python next | Continue feature and robustness work while preserving shared MIE format and CSV behavior. |
-| Rust v1.1 | Multi-file input, time-sorted merge to single CSV |
-| Rust v2.0 | Data word decoders, additional per-message-type CSVs |
-| Rust v3.0 | Apache Parquet output |
+| Rust v1.1 / Python next | Stronger timestamp-format auto-detection (probe multiple records, confidence scoring, mid-file format-mismatch diagnostic); N-record configurable look-ahead in sync validation. |
+| Rust v1.x | Multi-file input, time-sorted merge to single CSV. |
+| Rust v2.0 | Data word decoders, additional per-message-type CSVs. |
+| Rust v3.0 | Apache Parquet output. |
 
-The two implementations may release independently. Shared format semantics,
-fixtures, and vendor-compatible CSV behavior should remain aligned.
+Subsequent releases may diverge in version via impl-prefixed tags
+(`rust-vX.Y.Z`, `python-vX.Y.Z`); the cross-implementation conformance
+contract (CSV byte-for-byte equivalence on shared behavior) holds at any
+compatible version pair. See [`docs/MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md)
+section 11 for the release workflow.
 
 ## Shared Commitments
 
