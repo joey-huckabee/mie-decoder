@@ -15,8 +15,38 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-record timestamp-format auto-detection** (L2-DEC-015). The
+  IRIG-vs-Standard probe now walks up to *N* records (default `8`,
+  configurable via `decode.detect_records` in TOML or `--detect-records N`
+  on the CLI, range `1..=32`) and aggregates per-record scoring across the
+  probe set rather than committing on the first record alone. The chosen
+  format is still resolved before the first record is decoded and is final
+  for the rest of the decode per L2-DEC-011 (no per-record re-detection).
+  Strengthens detection on borderline files where the first record alone
+  scores ambiguously between the two formats. See
+  `docs/MIE-FORMAT.md` §5.3 for the per-record scoring signals and
+  confidence thresholds.
+- **`MieTimestampFormatMismatchError`** / `MieError::TimestampFormatMismatch`
+  (L2-DEC-016). New file-level error variant raised when the L2-DEC-015
+  probe completes with an aggregate score below the confidence floor
+  (`max_score < 4`) OR a margin below `MIN_MARGIN = 3`. Strict mode only:
+  lenient mode (the default) logs a single WARN with the score breakdown
+  and proceeds with the chosen format, preserving backwards compatibility
+  with borderline files that decoded acceptably under the previous
+  single-record detection. Maps to CLI exit class `2` (`no-records`),
+  same class as `NoValidRecords` and `HomogeneousPayload`.
+- New TOML key `decode.detect_records` with load-time range validation.
+- New CLI flag `--detect-records N` with parse-time range validation.
+
 ### Changed
 
+- Auto-detection logs now include the per-format aggregated score
+  breakdown plus the L2-DEC-016 confidence classification:
+  - `Decisive` and `Marginal` outcomes log at INFO with score numbers
+    plus a hint to `--time-format` on Marginal calls.
+  - `Ambiguous` outcomes log at WARN (lenient) or ERROR + raise (strict).
 - Conformance manifest schema validation in `tests/conformance/run.py` now
   checks field types in addition to field names. Rejects wrong scalar types
   (e.g. `"config": 12345`), wrong container types (e.g. `"rust_args": "a
@@ -38,6 +68,13 @@ full release workflow.
 
 - `docs/MAINTAINER-GUIDE.md` §10 "220+ tests" updated to the actual count
   (236 as of v1.0.0).
+- Spec additions: `L2-DEC-015` (multi-record probe) and `L2-DEC-016`
+  (ambiguous-mismatch error class), both children of `L1-DEC-002`. See
+  `docs/L2-REQ.md`.
+- New conformance case `timestamp-format-ambiguous-strict` pins the
+  cross-impl behavior on strict-mode ambiguous input: both Rust and
+  Python raise their respective mismatch errors and exit `2` byte-for-byte
+  equivalently. Conformance case count: 20 → 21.
 
 ## [1.0.0] — 2026-06-07
 

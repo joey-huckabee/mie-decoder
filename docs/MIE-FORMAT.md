@@ -156,11 +156,31 @@ A 32-bit free-running counter. Tick rate is card-dependent and **not** encoded i
 
 Standard timestamps render in CSV as `0x` + 8 uppercase hex characters (e.g., `0x000186A0`). DELTA is always empty for Standard records (L2-RDR-019) because there's no calibrated tick rate. A future tick-rate calibration config will re-enable DELTA when supplied.
 
-### 5.3 Auto-detection (L2-DEC-011, L2-DEC-012)
+### 5.3 Auto-detection (L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016)
 
-When `time_format = "auto"` (the default), the decoder probes the Command Word position at both candidate offsets (after a 2-word Standard timestamp vs after a 3-word IRIG timestamp) and scores which produces a plausible MIL-STD-1553 Command Word. The winning format is locked for the rest of the file.
+When `time_format = "auto"` (the default), the decoder probes the Command Word position at both candidate offsets (after a 2-word Standard timestamp vs after a 3-word IRIG timestamp) and scores which produces a plausible MIL-STD-1553 Command Word. The winning format is locked for the rest of the file (L2-DEC-011: no per-record re-detection).
+
+**Multi-record probe (L2-DEC-015).** The probe walks up to *N* records by default (configurable via `decode.detect_records` in TOML or `--detect-records N` on the CLI, range `1..=32`, default `8`) and aggregates per-record scoring across the set. Probing multiple records strengthens detection on borderline files where the first record alone scores ambiguously — for example, a `wc=7` record whose Command Word happens to look plausible at both candidate offsets — and a later record whose Cmd Word position only fits one format disambiguates the call.
+
+**Per-record scoring signals** (max `+5` IRIG / `+4` Standard per record):
+
+| Signal | IRIG | Standard | Notes |
+|--------|------|----------|-------|
+| T/R consistency: the candidate Cmd Word's direction matches the Type Word's expected message-type direction (`BC_TO_RT` → Receive; `RT_TO_BC` → Transmit) | +2 | +2 | Only fires for type codes `0x02` and `0x04`; other types skip this signal. |
+| Word-count plausibility: `tw.word_count − overhead == cmd.data_word_count` | +2 | +2 | IRIG overhead = 6, Standard overhead = 5. |
+| IRIG range validity: hour < 24, minute < 60, second < 60, microsecond-hi < 16 | +1 | — | IRIG-only; Standard's 32-bit counter has no semantic fields to range-check. |
+
+**Confidence classification (L2-DEC-016).** The aggregate score is classified into one of three buckets:
+
+| Bucket | Condition | Behavior |
+|--------|-----------|----------|
+| **Decisive** | `max_score ≥ 8` AND `margin ≥ 6` | INFO log with score breakdown; chosen format used silently. |
+| **Marginal** | passes the floor (`max_score ≥ 4` AND `margin ≥ 3`) but not Decisive | INFO log with score breakdown + hint to `--time-format` if the call is wrong. |
+| **Ambiguous** | `max_score < 4` OR `margin < 3` | **Strict mode**: `MieTimestampFormatMismatchError` / exit class 2 (the "wrong file type" class shared with `NoValidRecords` and `HomogeneousPayload`). **Lenient mode (default)**: single WARN with the score breakdown, then proceed with the chosen format (back-compat for borderline files that decoded acceptably under earlier single-record detection). |
 
 When both formats score equally, **IRIG wins** (L2-DEC-012). Flight-test recordings overwhelmingly use IRIG; this tie-break preserves the most common path.
+
+**Thresholds rationale.** The Decisive thresholds (`8` floor, `6` margin) are clear of any single-record perfect signal — a Decisive call requires either two strong records pointing the same way or one strong record plus consistent weaker signals from others. The Ambiguous thresholds (`4` floor, `3` margin) are conservative: they fire only when the probe genuinely could not distinguish, not when the call is decisive but the absolute score is low because the probe set was small (e.g., a one-record file scores at most `5` IRIG / `4` Standard — that's Marginal, not Ambiguous).
 
 ---
 

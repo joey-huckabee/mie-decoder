@@ -1,0 +1,31 @@
+# L2-DEC-016 ambiguous-detection fixture.
+#
+# Two records hand-crafted to score IRIG = Standard = 4 across the
+# L2-DEC-015 probe. Per the L2-DEC-016 classifier this lands in the
+# AMBIGUOUS bucket (margin = 0 is below MIN_MARGIN = 3), and in strict
+# mode the reader raises MieTimestampFormatMismatchError -> exit 2.
+#
+# Per-record scoring breakdown:
+#   * Type Word 0x0702: message_type = 0x02 (BC_TO_RT), wc = 7. Inside
+#     the T/R-sensitive set, so a Receive-direction Cmd Word at either
+#     candidate offset (offset+6 Standard, offset+8 IRIG) scores +2.
+#   * IRIG Cmd at offset+8: raw 0x0000. Direction = Receive
+#     (matches BC_TO_RT) -> +2 IRIG. data_word_count = 0,
+#     wc - 6 = 1, no match -> no WC bonus.
+#   * Standard Cmd at offset+6: raw 0x0000. Direction = Receive ->
+#     +2 Standard. data_word_count = 0, wc - 5 = 2, no match -> no
+#     WC bonus.
+#   * IRIG TS fields deliberately out of range:
+#       ts_upper = 0x001F  (hour = 31, > 23)
+#       ts_middle = 0xFFFF (minute = 63, > 59)
+#     -> no IRIG range bonus.
+#
+# Total per record: IRIG +2 / Standard +2. Over 2 records the
+# aggregate is IRIG 4 / Standard 4. max_score = 4 doesn't reach
+# DECISIVE_FLOOR = 8 AND margin = 0 < MIN_MARGIN = 3 -> AMBIGUOUS.
+#
+# Byte 10 differs between the two records so the L2-SYN-018
+# homogeneous-payload defense doesn't fire (consecutive records are
+# not byte-identical in non-timestamp positions).
+0207 1F00 FFFF 0000 0000 0000 0100 0000
+0207 1F00 FFFF 0000 0000 0000 0200 0000

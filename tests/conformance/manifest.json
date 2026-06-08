@@ -152,6 +152,12 @@
       "input": "inputs/count-one.hex",
       "expected": "expected/count-one.txt",
       "expected_stderr_contains": "counted 1 messages in"
+    },
+    {
+      "name": "timestamp-format-ambiguous-strict",
+      "input": "inputs/timestamp-format-ambiguous.hex",
+      "config": "configs/strict.toml",
+      "expected_exit": 2
     }
   ]
 }

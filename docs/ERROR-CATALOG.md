@@ -22,7 +22,7 @@ The four exit-code classes are pinned by L1-EXIT-001 through L1-EXIT-004 and L2-
 | **0** | `complete` (`--allow-partial`) | `UnrecoverableSyncLoss` on the unrecoverable-but-tolerated path | An unrecoverable sync loss occurred but `--allow-partial` preserved the rows decoded so far as `<dest>.partial`. | Inspect the `.partial` output, then triage the recording. |
 | **0** | `complete (broken-pipe on stdout)` | `BrokenPipeError` on stdout output | A downstream consumer closed early (e.g. `mie-decoder decode … \| head`). Not an error. | None. |
 | **1** | (record / usage error) | `RecordTruncated`, `FirstRecordTruncated`, `PayloadError`, `InvalidTypeWord`, `UnknownTypeWord`, `UnknownErrorCode`, `WriterError` (non-broken-pipe), CLI usage errors, file I/O errors | Per-record validation failed in strict mode, the CLI was misused, or the output sink failed. | Read the stderr message; if it's a record error, lenient mode (`decode.strict = false`) usually skips and continues. |
-| **2** | `no-records` | `NoValidRecords`, `HomogeneousPayload` | The input file isn't an MIE recording at all (wrong file type, single-byte-pad, etc.). No output file is created. | Verify the input path. If it's actually a recording, check that records begin within the first 64 KB. |
+| **2** | `no-records` | `NoValidRecords`, `HomogeneousPayload`, `TimestampFormatMismatch` (strict mode only) | The input file isn't an MIE recording at all (wrong file type, single-byte-pad, ambiguous timestamp format, etc.). No output file is created. | Verify the input path. If it's actually a recording, check that records begin within the first 64 KB and that the timestamp format is recognizable; pass `--time-format irig\|standard` to override auto-detection. |
 | **3** | `partial-unrecoverable` | `UnrecoverableSyncLoss` without `--allow-partial` | A mid-file sync loss could not be recovered within the 64 KB scan window. | Re-run with `--allow-partial` to keep the rows decoded before the loss as `<dest>.partial`, then triage the recording. |
 
 The `count` and `dump` subcommands inherit `0`, `1`, and `2` only — they don't write a streaming output that could be partial, so exit `3` cannot occur (L2-CLI-011).
@@ -43,6 +43,7 @@ Exception
     │   ├── MieFileEmptyError
     │   ├── MieNoValidRecordsError
     │   ├── MieHomogeneousPayloadError
+    │   ├── MieTimestampFormatMismatchError
     │   ├── MieInputOutputCollisionError
     │   └── MieClobberRefusedError
     ├── MieRecordError               (per-record problem; carries an offset)
@@ -58,24 +59,25 @@ Exception
 
 ### Rust (`mie_decoder::MieError`)
 
-A single `enum MieError { … }` with the same 14 variants. `MieError::kind()` returns a `MieErrorKind` discriminant; `is_file_error()` / `is_record_error()` predicates mirror the Python class split.
+A single `enum MieError { … }` with the same 15 variants. `MieError::kind()` returns a `MieErrorKind` discriminant; `is_file_error()` / `is_record_error()` predicates mirror the Python class split.
 
 ```
-MieError ├── FileNotFound          ── MieErrorKind::FileNotFound          (is_file_error)
-         ├── FileEmpty             ── MieErrorKind::FileEmpty             (is_file_error)
-         ├── FileIo                ── MieErrorKind::FileIo                (is_file_error)
-         ├── NoValidRecords        ── MieErrorKind::NoValidRecords
-         ├── HomogeneousPayload    ── MieErrorKind::HomogeneousPayload
-         ├── InputOutputCollision  ── MieErrorKind::InputOutputCollision
-         ├── ClobberRefused        ── MieErrorKind::ClobberRefused
-         ├── InvalidTypeWord       ── MieErrorKind::InvalidTypeWord       (is_record_error)
-         ├── UnknownTypeWord       ── MieErrorKind::UnknownTypeWord       (is_record_error)
-         ├── RecordTruncated       ── MieErrorKind::RecordTruncated       (is_record_error)
-         ├── FirstRecordTruncated  ── MieErrorKind::FirstRecordTruncated  (is_record_error)
-         ├── PayloadError          ── MieErrorKind::PayloadError          (is_record_error)
-         ├── UnknownErrorCode      ── MieErrorKind::UnknownErrorCode      (is_record_error)
-         ├── UnrecoverableSyncLoss ── MieErrorKind::UnrecoverableSyncLoss
-         └── WriterError           ── MieErrorKind::WriterError
+MieError ├── FileNotFound             ── MieErrorKind::FileNotFound             (is_file_error)
+         ├── FileEmpty                ── MieErrorKind::FileEmpty                (is_file_error)
+         ├── FileIo                   ── MieErrorKind::FileIo                   (is_file_error)
+         ├── NoValidRecords           ── MieErrorKind::NoValidRecords
+         ├── HomogeneousPayload       ── MieErrorKind::HomogeneousPayload
+         ├── TimestampFormatMismatch  ── MieErrorKind::TimestampFormatMismatch
+         ├── InputOutputCollision     ── MieErrorKind::InputOutputCollision
+         ├── ClobberRefused           ── MieErrorKind::ClobberRefused
+         ├── InvalidTypeWord          ── MieErrorKind::InvalidTypeWord          (is_record_error)
+         ├── UnknownTypeWord          ── MieErrorKind::UnknownTypeWord          (is_record_error)
+         ├── RecordTruncated          ── MieErrorKind::RecordTruncated          (is_record_error)
+         ├── FirstRecordTruncated     ── MieErrorKind::FirstRecordTruncated     (is_record_error)
+         ├── PayloadError             ── MieErrorKind::PayloadError             (is_record_error)
+         ├── UnknownErrorCode         ── MieErrorKind::UnknownErrorCode         (is_record_error)
+         ├── UnrecoverableSyncLoss    ── MieErrorKind::UnrecoverableSyncLoss
+         └── WriterError              ── MieErrorKind::WriterError
 ```
 
 Python `mie_decoder.MieFileError` is the analogue of Rust's `MieError::is_file_error()` predicate; `MieRecordError` is the analogue of `is_record_error()`. The non-classified variants (`NoValidRecords`, `HomogeneousPayload`, `InputOutputCollision`, `ClobberRefused`, `UnrecoverableSyncLoss`, `WriterError`) inherit from `MieFileError` or `MieRecordError` in Python by the same rule the Rust predicate applies.
@@ -93,6 +95,7 @@ These fire before any record is decoded, or before the writer touches the destin
 | (Python `OSError` / Rust `MieError::FileIo`) | Read or mmap fails (permission denied, disk error, etc.). | 1 | Inspect the underlying OS error; usually a filesystem permission or hardware issue. |
 | `MieNoValidRecordsError` / `NoValidRecords` | The first 64 KB contain no valid MIE record at all (L1-EXIT-002). Typical cause: input isn't an MIE recording. | **2** | Verify the input is actually MIE; if it is, records may begin past the 64 KB scan window. |
 | `MieHomogeneousPayloadError` / `HomogeneousPayload` | The first 4 candidate records are byte-identical in non-timestamp positions (L2-SYN-018). Typical cause: 0x20-padded or otherwise pathological single-byte file. | **2** | Verify the input file; almost always a wrong-file-type or corruption indicator. |
+| `MieTimestampFormatMismatchError` / `TimestampFormatMismatch` | L2-DEC-015 multi-record probe completed with an L2-DEC-016 Ambiguous classification (max aggregate score < 4 OR margin < 3). **Strict mode only**: lenient mode logs a single WARN with the score breakdown and proceeds with the chosen format. Typical cause: the file genuinely isn't an MIE recording, OR the first N records score weakly enough that the probe can't pick a side. | **2** | First confirm the file is actually an MIE recording. If it is, pass `--time-format irig` or `--time-format standard` to force the choice. If a one-time decode is acceptable with the auto-picked format (IRIG on ties per L2-DEC-012), drop `--strict` to take the lenient path. |
 | `MieInputOutputCollisionError` / `InputOutputCollision` | The output path resolves to the same file as the input (L2-WRT-014). | 1 | Choose a different output path; decoding in-place is unsafe under mmap. |
 | `MieClobberRefusedError` / `ClobberRefused` | The output exists and `--no-clobber` / `output.no_clobber = true` is set (L2-WRT-017). | 1 | Remove the existing file or unset the flag. |
 
