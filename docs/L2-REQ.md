@@ -18,7 +18,7 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 
 | Code      | Title                                       | L2 Count |
 |-----------|---------------------------------------------|----------|
-| `DEC`     | Binary decoding                             | 12       |
+| `DEC`     | Binary decoding                             | 14       |
 | `SYN`     | Synchronization, validation, invariants     | 25       |
 | `RDR`     | Reader behavior                             | 15       |
 | `MSG`     | Message semantics                           | 3        |
@@ -116,6 +116,20 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 **Parent**: L1-OUT-001
 **Statement**: IRIG timestamp text SHALL emit exactly six microsecond digits regardless of the decoded value. A microsecond value greater than or equal to 1,000,000 SHALL be considered unreachable given L2-SYN-004 validation, but if encountered on the defensive path the implementation SHALL truncate to six digits and SHALL log a WARN naming the offending record offset. The formatter SHALL NOT emit more than six microsecond digits under any circumstance.
 **Rationale**: A seven-digit microsecond field would silently shift every downstream column in the vendor-compatible CSV by one character. The defensive truncate-plus-warn is a belt-and-braces guard against any path that bypasses L2-SYN-004 validation.
+**Verification Method**: Test (T)
+
+#### L2-DEC-015
+
+**Parent**: L1-DEC-002
+**Statement**: Auto-detection of timestamp format SHALL probe up to the first `N` records of the file, not only the first record, where `N` defaults to `8` and is configurable via the `decode.detect_records` configuration key (range `1..=32`) or the `--detect-records` CLI flag. The existing per-record scoring signals (T/R direction consistency with the Type Word, word-count plausibility under each candidate overhead, IRIG field range validity) SHALL be aggregated across the probe set; the format with the higher aggregate score is chosen. The chosen format SHALL be resolved before the first record is decoded and SHALL not change for the rest of the decode invocation, preserving the file-level resolution rule of L2-DEC-011. If fewer than `N` valid records are available before the file ends, the probe SHALL use what exists.
+**Rationale**: Single-record scoring is defeated by a borderline first record (one that scores plausibly under both candidate overheads). A wrong choice corrupts timestamp values for the entire file without surfacing any diagnostic — the reader simply emits records with garbage timestamp fields and operators have to notice. Probing multiple records gives the scorer enough signal to disambiguate on files where the first record alone would not. Capping at `N` keeps the probe bounded, and a configurable default lets operators tune the trade-off for unusual recordings.
+**Verification Method**: Test (T)
+
+#### L2-DEC-016
+
+**Parent**: L1-DEC-002
+**Statement**: When the L2-DEC-015 probe completes with an indecisive result — specifically, when the winning aggregate score is below a low-confidence threshold (`max_score < 4` over the probe set) OR the margin between the two candidate scores is below a minimum-margin threshold (`|irig_score - std_score| < 3`) — a `MieTimestampFormatMismatch` error class SHALL be defined. In strict mode (`--strict` or `decode.strict = true`), this condition SHALL halt decoding with exit class `2` (the "wrong file type" class shared with `MieNoValidRecordsError` and `MieHomogeneousPayloadError` per `L1-EXIT-002`). In lenient mode (the default), the chosen format from L2-DEC-015 SHALL still be used (preserving backwards compatibility on borderline files that decoded acceptably before this requirement landed), but a single WARN SHALL be logged describing the indecisive outcome and naming both candidate scores so the operator can see how marginal the call was.
+**Rationale**: The probe in L2-DEC-015 strengthens the common case (clear winner) without addressing the genuinely-ambiguous case (no clear winner). The strict-mode error gives operators who care about correctness a loud failure to act on (e.g., `--time-format` override or "this isn't an MIE recording"). The lenient-mode WARN preserves the current decode-and-hope behavior while making the ambiguity visible. The thresholds are intentionally conservative: they fire only when the probe genuinely could not distinguish, not when the call is decisive but the absolute score is low because of a small probe set.
 **Verification Method**: Test (T)
 
 ---
