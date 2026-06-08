@@ -24,7 +24,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
 | L1-DEC-001 | L2-DEC-001, L2-DEC-008, L2-DEC-010 | Implemented |
-| L1-DEC-002 | L2-DEC-002, L2-DEC-003, L2-DEC-007, L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016 | Partially Implemented |
+| L1-DEC-002 | L2-DEC-002, L2-DEC-003, L2-DEC-007, L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016 | Implemented |
 | L1-DEC-003 | L2-DEC-004, L2-DEC-009, L2-MSG-001, L2-MSG-003, L2-RDR-007, L2-RDR-008 | Implemented |
 | L1-DEC-004 | L2-MSG-002 | Implemented |
 | L1-DEC-005 | L2-RDR-002 | Implemented |
@@ -42,9 +42,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-DEC-009 | _(none)_ | _(TBD)_ | Implemented (I) |
 | L2-DEC-010 | _(none)_ | `python/tests/test_e2e.py::test_file_offset_tracking`<br>`python/tests/test_models.py::test_frozen`<br>`python/tests/test_models.py::test_optional_fields_none` | Implemented |
 | L2-DEC-011 | _(none)_ | `python/tests/test_decode.py::test_detects_irig_from_known_data`<br>`python/tests/test_decode.py::test_detects_irig_from_transmit` | Implemented |
-| L2-DEC-012 | _(none)_ | _(TBD)_ | Draft |
-| L2-DEC-015 | _(none)_ | _(TBD)_ | Draft |
-| L2-DEC-016 | _(none)_ | _(TBD)_ | Draft |
+| L2-DEC-012 | _(none)_ | `src/decode.rs::probe_zero_score_ties_to_irig` | Implemented |
+| L2-DEC-015 | _(none)_ | `src/decode.rs::probe_eight_irig_records_aggregates_decisively`<br>`src/decode.rs::probe_max_records_one_still_works`<br>`src/decode.rs::probe_single_irig_record_picks_irig`<br>`src/decode.rs::probe_stops_at_eof_records_probed_reflects_truncation`<br>`src/decode.rs::probe_zero_score_ties_to_irig` | Implemented |
+| L2-DEC-016 | _(none)_ | `src/decode.rs::probe_ambiguous_below_floor_classifies_ambiguous` | Implemented |
 | L2-MSG-001 | _(none)_ | `python/tests/test_decode.py::test_all_known_types`<br>`python/tests/test_decode.py::test_bc_to_rt`<br>`python/tests/test_decode.py::test_broadcast_bc_to_rt`<br>`python/tests/test_decode.py::test_broadcast_rt_to_rt`<br>`python/tests/test_decode.py::test_mode_code_bcast_data`<br>`python/tests/test_decode.py::test_mode_code_bcast_no_data`<br>`python/tests/test_decode.py::test_mode_code_no_data`<br>`python/tests/test_decode.py::test_mode_code_rx_data`<br>`python/tests/test_decode.py::test_mode_code_tx_data`<br>`python/tests/test_decode.py::test_rt_to_bc`<br>`python/tests/test_decode.py::test_rt_to_rt`<br>`python/tests/test_decode.py::test_spurious_data`<br>`python/tests/test_models.py::test_known_values`<br>`python/tests/test_models.py::test_message_format_field`<br>`python/tests/test_models.py::test_valid_message_types_set`<br>`src/decode.rs::classify_mode_code_broadcast_no_data`<br>`src/decode.rs::classify_mode_code_rx_vs_no_data`<br>`src/decode.rs::classify_mode_code_tx_data`<br>`src/decode.rs::classify_simple_types`<br>`src/models.rs::message_type_round_trip` | Implemented |
 | L2-MSG-002 | _(none)_ | `python/tests/test_e2e.py::test_bus_b_record`<br>`python/tests/test_models.py::test_bus_shortcut` | Implemented |
 | L2-MSG-003 | _(none)_ | `python/tests/test_models.py::test_msg_label_receive`<br>`python/tests/test_models.py::test_msg_label_transmit`<br>`python/tests/test_models.py::test_rt_shortcut`<br>`src/models.rs::msg_label_and_delta_key` | Implemented |
@@ -299,7 +299,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | Category | L1 | L2 | L3 | L2 tested | L3 tested | L2 verified | L3 verified |
 |----------|----|----|-----|-----------|-----------|-------------|-------------|
-| DEC | 5 | 14 | 0 | 10 | 0 | 11 | 0 |
+| DEC | 5 | 14 | 0 | 13 | 0 | 14 | 0 |
 | OUT | 2 | 0 | 0 | 0 | 0 | 0 | 0 |
 | DLT | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | CLI | 2 | 9 | 0 | 9 | 0 | 9 | 0 |
@@ -317,11 +317,11 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
-| **Total** | **24** | **105** | **26** | **96** | **13** | **101** | **25** |
+| **Total** | **24** | **105** | **26** | **99** | **13** | **104** | **25** |
 
-**Tested by at least one test marker**: 109 of 131 (83.2%).
+**Tested by at least one test marker**: 112 of 131 (85.5%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 126 of 131 (96.2%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 129 of 131 (98.5%).
 
 ### Orphan check
 

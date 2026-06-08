@@ -105,6 +105,22 @@ pub enum MieError {
     /// when `--allow-partial` is set. `sync_losses` is the cumulative
     /// recovery-attempt count for the decode invocation.
     UnrecoverableSyncLoss { offset: u64, sync_losses: u64 },
+
+    /// L2-DEC-016: the L2-DEC-015 multi-record probe completed with a
+    /// confidence below the configured floor — either the winning
+    /// aggregate score is too low or the margin between the two
+    /// candidate format scores is too narrow to make a confident call.
+    /// Raised only in strict mode; lenient mode logs a WARN and uses
+    /// the chosen format anyway (back-compat for borderline files
+    /// that decoded acceptably before L2-DEC-015 / L2-DEC-016 landed).
+    /// Maps to exit class `2` (the "wrong file type" class shared with
+    /// `NoValidRecords` and `HomogeneousPayload`).
+    TimestampFormatMismatch {
+        offset: u64,
+        irig_score: i32,
+        std_score: i32,
+        records_probed: u32,
+    },
 }
 
 /// Discriminant identifying which variant of [`MieError`] occurred.
@@ -125,6 +141,7 @@ pub enum MieErrorKind {
     InputOutputCollision,
     ClobberRefused,
     UnrecoverableSyncLoss,
+    TimestampFormatMismatch,
 }
 
 impl MieError {
@@ -145,6 +162,7 @@ impl MieError {
             Self::InputOutputCollision { .. } => MieErrorKind::InputOutputCollision,
             Self::ClobberRefused { .. } => MieErrorKind::ClobberRefused,
             Self::UnrecoverableSyncLoss { .. } => MieErrorKind::UnrecoverableSyncLoss,
+            Self::TimestampFormatMismatch { .. } => MieErrorKind::TimestampFormatMismatch,
         }
     }
 
@@ -287,6 +305,18 @@ impl fmt::Display for MieError {
                  after {sync_losses} recovery attempt(s); the decoder could \
                  not reacquire sync within the scan window. \
                  Pass --allow-partial to keep what was decoded as a .partial file."
+            ),
+            Self::TimestampFormatMismatch {
+                offset,
+                irig_score,
+                std_score,
+                records_probed,
+            } => write!(
+                f,
+                "Timestamp-format auto-detection is ambiguous starting at offset 0x{offset:X} \
+                 (IRIG score: {irig_score}, Standard score: {std_score} over {records_probed} \
+                 record(s) probed). Pass --time-format irig or --time-format standard to \
+                 force the choice, or verify the file is actually an MIE recording."
             ),
         }
     }

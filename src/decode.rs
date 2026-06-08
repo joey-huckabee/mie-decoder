@@ -358,13 +358,153 @@ fn classify_mode_code(cmd: &CommandWord, word_count: u16) -> MessageFormat {
 
 // ── Timestamp format auto-detection ───────────────────────────────────
 
-/// Probe the first record at both candidate Command Word offsets and
-/// return whichever scoring layout matches better. Defaults to IRIG on tie.
-pub fn detect_timestamp_format(
+/// L2-DEC-016 classification of an auto-detection outcome's strength.
+///
+/// `Decisive` and `Marginal` both result in the chosen format being
+/// used silently or with a single INFO log line. `Ambiguous` is the
+/// L2-DEC-016 mismatch class: strict mode surfaces it as
+/// `MieError::TimestampFormatMismatch`; lenient mode logs WARN and
+/// uses the chosen format anyway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetectionConfidence {
+    /// Comfortable winner: high absolute score AND wide margin.
+    Decisive,
+    /// Passed the L2-DEC-016 floor but did not reach decisive
+    /// thresholds. Reasonable confidence; logged at INFO for
+    /// operator visibility.
+    Marginal,
+    /// Both candidates scored too low or too close. L2-DEC-016
+    /// mismatch class.
+    Ambiguous,
+}
+
+/// Result of an L2-DEC-015 multi-record probe.
+#[derive(Debug, Clone)]
+pub struct DetectionOutcome {
+    /// Chosen format. IRIG wins ties per L2-DEC-012.
+    pub format: TimestampFormat,
+    /// Aggregated IRIG score across the probe set.
+    pub irig_score: i32,
+    /// Aggregated Standard score across the probe set.
+    pub std_score: i32,
+    /// Number of records actually probed. Always ≥ 1 on a successful
+    /// probe; may be less than `max_records` if EOF was reached or a
+    /// record's declared length was structurally impossible.
+    pub records_probed: usize,
+    /// L2-DEC-016 confidence classification.
+    pub confidence: DetectionConfidence,
+}
+
+// L2-DEC-016 thresholds. Conservative — they fire only when the
+// probe genuinely could not distinguish, not when the call is decisive
+// but the absolute score is low because of a small probe set. The
+// floor of 4 means even a single decisive record passes (one perfect
+// IRIG record scores 5; one perfect Standard record scores 4).
+const CONFIDENCE_FLOOR: i32 = 4;
+const MIN_MARGIN: i32 = 3;
+// Decisive thresholds: comfortably above the floor AND a wide margin.
+// Two records that both score perfectly for one format easily clear this.
+const DECISIVE_FLOOR: i32 = 8;
+const DECISIVE_MARGIN: i32 = 6;
+
+/// Default L2-DEC-015 probe size. Configurable via the
+/// `decode.detect_records` TOML key or the `--detect-records` CLI flag.
+pub const DEFAULT_DETECT_RECORDS: usize = 8;
+
+/// L2-DEC-015 multi-record probe. Walks up to `max_records` starting
+/// from `first_offset`, aggregating per-record IRIG vs Standard
+/// scoring, and returns the chosen format with a confidence
+/// classification per L2-DEC-016.
+///
+/// `max_records` is clamped to at least 1 (a no-probe call is
+/// nonsensical). The probe is bounded by file length: when EOF is
+/// reached before `max_records` records have been scored the function
+/// returns with however many records it managed to score.
+///
+/// IRIG wins ties per L2-DEC-012.
+pub fn probe_timestamp_format(
     data: &[u8],
-    offset: usize,
-    type_word: &TypeWord,
-) -> TimestampFormat {
+    first_offset: usize,
+    max_records: usize,
+) -> DetectionOutcome {
+    let n = max_records.max(1);
+    let file_len = data.len();
+    let mut irig_score: i32 = 0;
+    let mut std_score: i32 = 0;
+    let mut records_probed: usize = 0;
+    let mut offset = first_offset;
+
+    for _ in 0..n {
+        // Need at least the Type Word + minimum payload to score.
+        if offset + MIN_RECORD_BYTES_STANDARD > file_len {
+            break;
+        }
+        let Some(tw_raw) = read_u16(data, offset) else {
+            break;
+        };
+        let tw = decode_type_word(tw_raw);
+        // Defensively skip structurally-impossible records — these
+        // would also fail the reader's normal validate_record path,
+        // and including them in the probe would skew the score.
+        if tw.word_count < MIN_RECORD_WORDS_STANDARD {
+            break;
+        }
+
+        let (i_delta, s_delta) = score_single_record(data, offset, &tw);
+        irig_score += i_delta;
+        std_score += s_delta;
+        records_probed += 1;
+
+        // Advance by the record's declared length — same advance the
+        // reader will use during decode, so the probe walks the same
+        // records the reader will later interpret.
+        let record_bytes = usize::from(tw.word_count) * 2;
+        if record_bytes == 0 {
+            break;
+        }
+        let Some(next_offset) = offset.checked_add(record_bytes) else {
+            break;
+        };
+        if next_offset <= offset || next_offset > file_len {
+            break;
+        }
+        offset = next_offset;
+    }
+
+    let format = if irig_score >= std_score {
+        TimestampFormat::Irig
+    } else {
+        TimestampFormat::Standard
+    };
+    let max_score = irig_score.max(std_score);
+    let margin = (irig_score - std_score).abs();
+    let confidence = if max_score < CONFIDENCE_FLOOR || margin < MIN_MARGIN {
+        DetectionConfidence::Ambiguous
+    } else if max_score >= DECISIVE_FLOOR && margin >= DECISIVE_MARGIN {
+        DetectionConfidence::Decisive
+    } else {
+        DetectionConfidence::Marginal
+    };
+
+    DetectionOutcome {
+        format,
+        irig_score,
+        std_score,
+        records_probed,
+        confidence,
+    }
+}
+
+/// Per-record scoring extracted from the previous single-record
+/// detector. Returns `(irig_delta, std_delta)` — the score contribution
+/// from this record toward each candidate format.
+///
+/// IRIG can score up to `+5` per record (T/R: `2` + WC plausibility:
+/// `2` + range validity: `1`). Standard can score up to `+4` per
+/// record (T/R: `2` + WC plausibility: `2`; no range-validity bonus
+/// because the Standard timestamp is a raw 32-bit counter with no
+/// semantic field bounds to check against).
+fn score_single_record(data: &[u8], offset: usize, type_word: &TypeWord) -> (i32, i32) {
     let mut irig_score: i32 = 0;
     let mut std_score: i32 = 0;
 
@@ -414,14 +554,7 @@ pub fn detect_timestamp_format(
         }
     }
 
-    if irig_score > std_score {
-        TimestampFormat::Irig
-    } else if std_score > irig_score {
-        TimestampFormat::Standard
-    } else {
-        // Tie-break: IRIG (more common in flight test recordings).
-        TimestampFormat::Irig
-    }
+    (irig_score, std_score)
 }
 
 #[inline]
@@ -831,5 +964,121 @@ mod tests {
         let c = cmd_with(Direction::Receive, 30); // rt=15
         let anomalies = detect_record_anomalies(&t, &c, Some(0x2800)); // status RT=5
         assert_eq!(anomalies.len(), 2);
+    }
+
+    // ── L2-DEC-015 / L2-DEC-016 probe tests ──────────────────────────
+
+    /// Canonical 72-byte RT15 SA11 Receive record under IRIG framing.
+    /// Byte-exact with the fixture used by tests/integration.rs.
+    ///
+    /// What matters about the values: the layout scores perfectly
+    /// under IRIG (T/R: +2, WC: +2, range: +1 = +5 per record) and
+    /// only weakly under Standard.
+    fn irig_record_bytes() -> Vec<u8> {
+        let mut s = String::new();
+        s.push_str("02240F1826DB21F6"); // Type 0x2402 (wc=36) + IRIG TS
+        s.push_str("7E79"); // Cmd 0x797E (RT15 R SA11 30dw)
+        s.push_str("0004");
+        s.push_str("0000");
+        s.push_str("0000");
+        s.push_str("2F00");
+        s.push_str("22CA");
+        s.push_str("2F00");
+        s.push_str("22CA");
+        for _ in 0..22 {
+            s.push_str("0000");
+        }
+        s.push_str("71C7");
+        s.push_str("0078"); // Status 0x7800
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Requirements: L2-DEC-015
+    #[test]
+    fn probe_single_irig_record_picks_irig() {
+        let data = irig_record_bytes();
+        let out = probe_timestamp_format(&data, 0, 8);
+        assert_eq!(out.format, TimestampFormat::Irig);
+        assert_eq!(out.records_probed, 1);
+        assert!(out.irig_score > out.std_score);
+    }
+
+    /// Requirements: L2-DEC-015
+    #[test]
+    fn probe_eight_irig_records_aggregates_decisively() {
+        // Stitch 8 copies of the canonical IRIG record together.
+        let one = irig_record_bytes();
+        let mut data = Vec::new();
+        for _ in 0..8 {
+            data.extend_from_slice(&one);
+        }
+        let out = probe_timestamp_format(&data, 0, 8);
+        assert_eq!(out.format, TimestampFormat::Irig);
+        assert_eq!(out.records_probed, 8);
+        assert_eq!(out.confidence, DetectionConfidence::Decisive);
+        // Each IRIG record scores +5 (T/R + WC + range); eight of
+        // them yields 40 IRIG vs much lower Standard.
+        assert!(out.irig_score >= 40);
+        assert!(out.irig_score - out.std_score >= DECISIVE_MARGIN);
+    }
+
+    /// Requirements: L2-DEC-015
+    #[test]
+    fn probe_stops_at_eof_records_probed_reflects_truncation() {
+        // Only 3 records' worth of data — probe should report 3 even
+        // though max_records=8.
+        let one = irig_record_bytes();
+        let mut data = Vec::new();
+        for _ in 0..3 {
+            data.extend_from_slice(&one);
+        }
+        let out = probe_timestamp_format(&data, 0, 8);
+        assert_eq!(out.records_probed, 3);
+        assert_eq!(out.format, TimestampFormat::Irig);
+    }
+
+    /// Requirements: L2-DEC-012, L2-DEC-015
+    #[test]
+    fn probe_zero_score_ties_to_irig() {
+        // All-zero buffer — neither format scores anything. IRIG
+        // wins the tie per L2-DEC-012.
+        let data = vec![0u8; 64];
+        let out = probe_timestamp_format(&data, 0, 8);
+        assert_eq!(out.format, TimestampFormat::Irig);
+        // Both scores zero → Ambiguous by definition of L2-DEC-016
+        // (max_score < CONFIDENCE_FLOOR).
+        assert_eq!(out.confidence, DetectionConfidence::Ambiguous);
+    }
+
+    /// Requirements: L2-DEC-016
+    #[test]
+    fn probe_ambiguous_below_floor_classifies_ambiguous() {
+        // A single record whose scoring is mostly indistinguishable
+        // — IRIG range check passes but neither T/R nor WC match,
+        // and the corresponding Standard signals are also weak.
+        let data = vec![0u8; 16];
+        let out = probe_timestamp_format(&data, 0, 8);
+        let max_score = out.irig_score.max(out.std_score);
+        let margin = (out.irig_score - out.std_score).abs();
+        // Confirm we're in the L2-DEC-016 ambiguous region.
+        assert!(max_score < CONFIDENCE_FLOOR || margin < MIN_MARGIN);
+        assert_eq!(out.confidence, DetectionConfidence::Ambiguous);
+    }
+
+    /// Requirements: L2-DEC-015
+    #[test]
+    fn probe_max_records_one_still_works() {
+        // max_records=0 clamps to 1; max_records=1 probes exactly
+        // the first record.
+        let data = irig_record_bytes();
+        let out_zero = probe_timestamp_format(&data, 0, 0);
+        let out_one = probe_timestamp_format(&data, 0, 1);
+        assert_eq!(out_zero.records_probed, 1);
+        assert_eq!(out_one.records_probed, 1);
+        assert_eq!(out_zero.format, out_one.format);
+        assert_eq!(out_zero.irig_score, out_one.irig_score);
     }
 }

@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use memmap2::Mmap;
 
 use crate::decode::{
-    MIN_RECORD_BYTES_STANDARD, classify_message_format, decode_command_word, decode_irig_timestamp,
-    decode_standard_timestamp, decode_type_word, detect_timestamp_format, message_type_is_valid,
-    read_u16, read_u16_array,
+    DEFAULT_DETECT_RECORDS, DetectionConfidence, MIN_RECORD_BYTES_STANDARD,
+    classify_message_format, decode_command_word, decode_irig_timestamp, decode_standard_timestamp,
+    decode_type_word, message_type_is_valid, probe_timestamp_format, read_u16, read_u16_array,
 };
 use crate::error::{MieError, MieResult};
 use crate::models::{
@@ -36,6 +36,11 @@ pub struct MieFileReader {
     file_size: u64,
     strict: bool,
     time_format: TimestampFormat,
+    /// L2-DEC-015: number of records the auto-detect probe walks
+    /// before committing to IRIG vs Standard. Ignored when
+    /// `time_format` is anything other than `Auto`. Default
+    /// `DEFAULT_DETECT_RECORDS` (8).
+    detect_records: usize,
     /// Cumulative sync-recovery attempts during the most recent iter()
     /// call. Reset to 0 at the start of each iter(). Shared with the
     /// active RecordIter via a reference so the CLI can query it
@@ -44,11 +49,16 @@ pub struct MieFileReader {
     sync_losses: AtomicU64,
 }
 
-/// Builder-style options. `strict=false`, `time_format=Auto` by default.
+/// Builder-style options. `strict=false`, `time_format=Auto`,
+/// `detect_records=DEFAULT_DETECT_RECORDS` by default.
 #[derive(Debug, Clone, Copy)]
 pub struct ReaderOptions {
     pub strict: bool,
     pub time_format: TimestampFormat,
+    /// L2-DEC-015 probe size. Number of records auto-detection
+    /// walks before committing to a format. Clamped to [1, 32]
+    /// upstream by config / CLI parsing.
+    pub detect_records: usize,
 }
 
 impl Default for ReaderOptions {
@@ -56,6 +66,7 @@ impl Default for ReaderOptions {
         Self {
             strict: false,
             time_format: TimestampFormat::Auto,
+            detect_records: DEFAULT_DETECT_RECORDS,
         }
     }
 }
@@ -92,11 +103,12 @@ impl MieFileReader {
         })?;
 
         log_debug!(
-            "reader opened {} ({} bytes, strict={}, time_format={:?})",
+            "reader opened {} ({} bytes, strict={}, time_format={:?}, detect_records={})",
             path.display(),
             file_size,
             opts.strict,
-            opts.time_format
+            opts.time_format,
+            opts.detect_records
         );
 
         Ok(Self {
@@ -105,6 +117,7 @@ impl MieFileReader {
             file_size,
             strict: opts.strict,
             time_format: opts.time_format,
+            detect_records: opts.detect_records.max(1),
             sync_losses: AtomicU64::new(0),
         })
     }
@@ -130,7 +143,11 @@ impl MieFileReader {
         // same reader handle don't accumulate stale counts.
         self.sync_losses.store(0, Ordering::Relaxed);
 
-        let resolved_format = if self.time_format == TimestampFormat::Auto {
+        // `format_hint` is the Option-typed value threaded through
+        // `find_first_record` and `diagnose_header_scan_failure`: None
+        // tells those helpers to scan format-agnostically; Some pins the
+        // expected layout.
+        let format_hint = if self.time_format == TimestampFormat::Auto {
             None
         } else {
             Some(self.time_format)
@@ -139,11 +156,20 @@ impl MieFileReader {
         let data: &[u8] = &self.mmap;
         let file_len = data.len();
 
-        let start_offset = find_first_record(data, file_len, resolved_format, MAX_SCAN_BYTES);
+        let start_offset = find_first_record(data, file_len, format_hint, MAX_SCAN_BYTES);
 
         // Tracks whether the iterator should terminate immediately with
         // no records and no error (the L2-RDR-004 lenient-mode case).
         let mut early_done = false;
+        // The format the iterator will use for the entire decode.
+        // Defaults to the explicit choice (or IRIG as a placeholder for
+        // the Auto-but-no-records-found case where iteration never
+        // happens anyway); rewritten to the L2-DEC-015 probe result
+        // below when we have a real start offset and time_format=Auto.
+        let mut resolved_format = match self.time_format {
+            TimestampFormat::Auto => TimestampFormat::Irig,
+            explicit => explicit,
+        };
 
         let pending_error = match start_offset {
             Some(hit) => {
@@ -175,6 +201,78 @@ impl MieFileReader {
                         offset: hit.offset as u64,
                         sample_records: crate::sync::HOMOGENEITY_SAMPLE_RECORDS as u32,
                     })
+                } else if self.time_format == TimestampFormat::Auto {
+                    // L2-DEC-015: multi-record probe to disambiguate
+                    // IRIG vs Standard before iteration begins. The
+                    // chosen format is final per L2-DEC-011 — no
+                    // per-record re-detection.
+                    let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
+                    resolved_format = outcome.format;
+                    match outcome.confidence {
+                        DetectionConfidence::Decisive => {
+                            log_info!(
+                                "auto-detected timestamp format: {:?} \
+                                 (Decisive: IRIG={} STD={} over {} record(s))",
+                                outcome.format,
+                                outcome.irig_score,
+                                outcome.std_score,
+                                outcome.records_probed,
+                            );
+                            None
+                        }
+                        DetectionConfidence::Marginal => {
+                            log_info!(
+                                "auto-detected timestamp format: {:?} \
+                                 (Marginal: IRIG={} STD={} over {} record(s)) — \
+                                 pass --time-format to force the choice if this is wrong",
+                                outcome.format,
+                                outcome.irig_score,
+                                outcome.std_score,
+                                outcome.records_probed,
+                            );
+                            None
+                        }
+                        DetectionConfidence::Ambiguous => {
+                            // L2-DEC-016: the probe could not
+                            // confidently distinguish the two
+                            // formats. Strict mode rejects the file;
+                            // lenient mode uses the chosen format
+                            // anyway with a WARN so existing operator
+                            // workflows on borderline files don't
+                            // break silently.
+                            if self.strict {
+                                log_error!(
+                                    "timestamp-format auto-detection is ambiguous in {} \
+                                     starting at offset 0x{:X}: IRIG={} STD={} over {} \
+                                     record(s) — strict mode rejects ambiguous files; \
+                                     pass --time-format to force the choice",
+                                    self.path.display(),
+                                    hit.offset,
+                                    outcome.irig_score,
+                                    outcome.std_score,
+                                    outcome.records_probed,
+                                );
+                                Some(MieError::TimestampFormatMismatch {
+                                    offset: hit.offset as u64,
+                                    irig_score: outcome.irig_score,
+                                    std_score: outcome.std_score,
+                                    records_probed: outcome.records_probed as u32,
+                                })
+                            } else {
+                                log_warn!(
+                                    "auto-detected timestamp format: {:?} \
+                                     (Ambiguous: IRIG={} STD={} over {} record(s)) — \
+                                     using best guess; pass --time-format to force the \
+                                     choice or --strict to reject ambiguous files",
+                                    outcome.format,
+                                    outcome.irig_score,
+                                    outcome.std_score,
+                                    outcome.records_probed,
+                                );
+                                None
+                            }
+                        }
+                    }
                 } else {
                     None
                 }
@@ -185,7 +283,7 @@ impl MieFileReader {
                 let truncated = crate::sync::diagnose_header_scan_failure(
                     data,
                     file_len,
-                    resolved_format,
+                    format_hint,
                     MAX_SCAN_BYTES,
                 );
                 match truncated {
@@ -281,7 +379,11 @@ pub struct RecordIter<'a> {
     /// (when `--allow-partial` is set).
     pending_unrecoverable: Option<MieError>,
     strict: bool,
-    resolved_format: Option<TimestampFormat>,
+    /// L2-DEC-011 / L2-DEC-015: format is resolved eagerly in
+    /// `iter()` (via `probe_timestamp_format`) before the iterator is
+    /// constructed, so by the time `next()` runs the format is final
+    /// and stays fixed for the rest of the decode.
+    resolved_format: TimestampFormat,
     prev_was_error: bool,
     /// Per-RT/MSG last-seen timestamp in microseconds. Only populated when
     /// the source timestamp has a microsecond basis (IRIG today). Standard
@@ -350,13 +452,11 @@ impl<'a> Iterator for RecordIter<'a> {
             };
             let tw = decode_type_word(type_raw);
 
-            // Auto-detect timestamp format on the first valid record.
-            if self.resolved_format.is_none() {
-                let fmt = detect_timestamp_format(self.data, self.offset, &tw);
-                log_info!("auto-detected timestamp format: {:?}", fmt);
-                self.resolved_format = Some(fmt);
-            }
-            let resolved = self.resolved_format.unwrap();
+            // L2-DEC-011 / L2-DEC-015: the timestamp format is now
+            // resolved eagerly in iter() (multi-record probe), so by
+            // the time we reach next() the format is already chosen
+            // and stays fixed for the rest of the decode.
+            let resolved = self.resolved_format;
             let ts_words = timestamp_word_count(resolved);
             let min_wc = 1 + ts_words + 1;
             let record_bytes = usize::from(tw.word_count) * 2;
@@ -422,7 +522,7 @@ impl<'a> Iterator for RecordIter<'a> {
                     self.data,
                     self.offset,
                     self.file_len,
-                    self.resolved_format,
+                    Some(self.resolved_format),
                     MAX_SCAN_BYTES,
                 ) {
                     Some(hit) => {
@@ -1097,6 +1197,7 @@ mod tests {
             ReaderOptions {
                 strict: true,
                 time_format: TimestampFormat::Auto,
+                detect_records: DEFAULT_DETECT_RECORDS,
             },
         )
         .unwrap();

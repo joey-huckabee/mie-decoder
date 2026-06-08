@@ -591,6 +591,11 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String
         ReaderOptions {
             strict: cfg.strict,
             time_format: cfg.time_format,
+            // detect_records wired through cfg in a follow-up commit
+            // (L2-DEC-015 task #102). Default keeps current behavior
+            // wider than before — the multi-record probe runs at the
+            // default size of 8 records.
+            ..ReaderOptions::default()
         },
     )
     .map_err(format_mie_error)
