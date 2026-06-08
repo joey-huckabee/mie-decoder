@@ -380,3 +380,51 @@ class TestSyncBoundsAndLogging:
         assert any("recover" in m.lower() for m in info_msgs), (
             f"expected INFO about recovery; got infos={info_msgs}"
         )
+
+
+class TestNRecordLookahead:
+    """L2-SYN-026 N-record configurable look-ahead.
+
+    Mirrors src/sync.rs::tests::validate_lookahead_*.
+    """
+
+    @staticmethod
+    def _make_valid_record_36w(count: int) -> bytes:
+        """count copies of a 72-byte record (Type 0x2402, wc=36)."""
+        out = bytearray()
+        for _ in range(count):
+            out += bytes([0x02, 0x24]) + bytes(70)
+        return bytes(out)
+
+    @pytest.mark.requirement("L2-SYN-026")
+    def test_n1_skips_lookahead(self) -> None:
+        from mie_decoder.sync import validate_record
+
+        # Valid record + 4 bytes of plausible-looking but invalid
+        # Type-Word garbage. N=1 must not peek; N=2 must reject.
+        buf = self._make_valid_record_36w(1) + b"\xff\xff\x00\x00"
+        assert validate_record(buf, 0, len(buf), None, lookahead_records=1)
+        assert not validate_record(buf, 0, len(buf), None, lookahead_records=2)
+
+    @pytest.mark.requirement("L2-SYN-026")
+    def test_n4_catches_second_corruption(self) -> None:
+        from mie_decoder.sync import validate_record
+
+        # Two valid records + invalid Type Word at the third record's
+        # position. N=2 (default) only checks records 1 and 2 (both
+        # valid) and accepts. N=4 reaches record 3 and rejects.
+        buf = self._make_valid_record_36w(2) + b"\xff\xff\x00\x00"
+        assert validate_record(buf, 0, len(buf), None, lookahead_records=2)
+        assert not validate_record(buf, 0, len(buf), None, lookahead_records=4)
+
+    @pytest.mark.requirement("L2-SYN-026")
+    def test_eof_terminates_gracefully(self) -> None:
+        from mie_decoder.sync import validate_record
+
+        # Single valid record with no follower. Any N >= 1 must accept —
+        # EOF mid-walk is not a rejection.
+        buf = self._make_valid_record_36w(1)
+        for n in (1, 2, 4, 8, 32):
+            assert validate_record(buf, 0, len(buf), None, lookahead_records=n), (
+                f"N={n}: EOF must not reject when the candidate itself is valid"
+            )

@@ -93,6 +93,7 @@ from mie_decoder.models import (
     TIMESTAMP_WORD_COUNTS,
 )
 from mie_decoder.sync import (
+    DEFAULT_LOOKAHEAD_RECORDS,
     find_first_record,
     recover_sync,
     validate_record,
@@ -151,6 +152,7 @@ class MieFileReader:
         strict: bool = False,
         time_format: TimestampFormat = TimestampFormat.AUTO,
         detect_records: int = DEFAULT_DETECT_RECORDS,
+        lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
     ) -> None:
         self._path = Path(path)
         self._strict = strict
@@ -160,6 +162,10 @@ class MieFileReader:
         # validates the upper bound; we mirror the clamp here so a
         # library caller can't break the invariant by passing 0.
         self._detect_records = max(1, detect_records)
+        # L2-SYN-026: validate_record look-ahead depth. Clamped to
+        # >= 1 with the same library-caller-friendly invariant as
+        # detect_records.
+        self._lookahead_records = max(1, lookahead_records)
         # Cumulative sync-recovery count from the most recent __iter__
         # call. Reset to 0 on each iteration so the CLI can read it
         # after the loop completes (for L1-EXIT-003 / L1-EXIT-005 exit-class
@@ -238,6 +244,7 @@ class MieFileReader:
                 start_offset = find_first_record(
                     mm, file_len,
                     ts_format=resolved_format,
+                    lookahead_records=self._lookahead_records,
                 )
                 if start_offset is None:
                     # L2-RDR-004: distinguish "no Type Word at all" from
@@ -394,6 +401,7 @@ class MieFileReader:
                         offset,
                         file_len,
                         ts_format=resolved_format,
+                        lookahead_records=self._lookahead_records,
                     )
 
                     if not is_valid:
@@ -424,6 +432,7 @@ class MieFileReader:
                         recovered = recover_sync(
                             mm, offset, file_len,
                             ts_format=resolved_format,
+                            lookahead_records=self._lookahead_records,
                         )
                         if recovered is None:
                             # Distinguish truncation (file ended before

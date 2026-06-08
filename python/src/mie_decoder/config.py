@@ -61,6 +61,7 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset({
     ("decode", "error_mode"),
     ("decode", "allow_partial"),
     ("decode", "detect_records"),
+    ("decode", "lookahead_records"),
     ("output", "format"),
     ("output", "no_clobber"),
     ("filter", "exclude_types"),
@@ -73,6 +74,12 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset({
 #: this range are rejected at config-load time with a clear error.
 DETECT_RECORDS_MIN: int = 1
 DETECT_RECORDS_MAX: int = 32
+
+#: L2-SYN-026 valid range for ``decode.lookahead_records``. Same shape
+#: as DETECT_RECORDS_MIN/_MAX — both configurable record-count knobs
+#: share their valid range for consistency.
+LOOKAHEAD_RECORDS_MIN: int = 1
+LOOKAHEAD_RECORDS_MAX: int = 32
 
 
 def _require_bool(section: str, key: str, value: object) -> bool:
@@ -210,6 +217,11 @@ class DecoderConfig:
     #: probe walks before committing to IRIG vs Standard. Range
     #: [DETECT_RECORDS_MIN, DETECT_RECORDS_MAX]. Default 8.
     detect_records: int = 8
+    #: L2-SYN-026: total number of records sync.validate_record checks
+    #: (1 candidate + N-1 look-ahead). Range
+    #: [LOOKAHEAD_RECORDS_MIN, LOOKAHEAD_RECORDS_MAX]. Default 2,
+    #: preserving the historical two-record look-ahead.
+    lookahead_records: int = 2
 
     def with_overrides(self, **kwargs: Any) -> DecoderConfig:
         """Return a new config with specified fields overridden.
@@ -244,6 +256,11 @@ class DecoderConfig:
             if kwargs.get("detect_records") is not None
             else self.detect_records
         )
+        new_lr = (
+            kwargs["lookahead_records"]
+            if kwargs.get("lookahead_records") is not None
+            else self.lookahead_records
+        )
 
         # Merge filter overrides — CLI adds to (not replaces) config file filters
         new_filters = FilterConfig(
@@ -263,6 +280,7 @@ class DecoderConfig:
             no_clobber=new_nc,
             allow_partial=new_ap,
             detect_records=new_dr,
+            lookahead_records=new_lr,
         )
 
 
@@ -446,6 +464,23 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         )
     detect_records = detect_records_raw
 
+    # L2-SYN-026: look-ahead depth for sync validation. Same load-time
+    # validation pattern as detect_records.
+    lookahead_records_raw = decode_section.get("lookahead_records", 2)
+    if not isinstance(lookahead_records_raw, int) or isinstance(lookahead_records_raw, bool):
+        raise ValueError(
+            f"Invalid decode.lookahead_records: {lookahead_records_raw!r}; must be an integer"
+        )
+    if (
+        lookahead_records_raw < LOOKAHEAD_RECORDS_MIN
+        or lookahead_records_raw > LOOKAHEAD_RECORDS_MAX
+    ):
+        raise ValueError(
+            f"Invalid decode.lookahead_records: {lookahead_records_raw}. "
+            f"Valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]"
+        )
+    lookahead_records = lookahead_records_raw
+
     # L2-CFG-009: WARN on unknown keys so typos surface to the operator
     # instead of being silently dropped. Non-fatal so forward-compatible
     # additions don't break older configs.
@@ -466,6 +501,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         no_clobber=no_clobber,
         allow_partial=allow_partial,
         detect_records=detect_records,
+        lookahead_records=lookahead_records,
     )
 
     logger.debug("Loaded config: %s", config)

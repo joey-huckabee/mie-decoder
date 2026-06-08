@@ -189,6 +189,18 @@ def build_parser() -> argparse.ArgumentParser:
             "config key."
         ),
     )
+    decode_parser.add_argument(
+        "--lookahead-records",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Total records checked by sync validation per call "
+            "(1 candidate + N-1 look-ahead, range 1..=32, default 2). "
+            "L2-SYN-026. Mirrors the decode.lookahead_records config "
+            "key."
+        ),
+    )
 
     # ── dump subcommand ────────────────────────────────────────────
     dump_parser = subparsers.add_parser(
@@ -243,6 +255,8 @@ def _run_decode(args: argparse.Namespace) -> int:
     from mie_decoder.config import (
         DETECT_RECORDS_MAX,
         DETECT_RECORDS_MIN,
+        LOOKAHEAD_RECORDS_MAX,
+        LOOKAHEAD_RECORDS_MIN,
         DecoderConfig,
         load_config,
         _parse_type_names,
@@ -301,6 +315,17 @@ def _run_decode(args: argparse.Namespace) -> int:
             )
             return 1
         overrides["detect_records"] = args.detect_records
+    if args.lookahead_records is not None:
+        # L2-SYN-026: parse-time range check mirrors the TOML
+        # load-time check in config.load_config.
+        if not (LOOKAHEAD_RECORDS_MIN <= args.lookahead_records <= LOOKAHEAD_RECORDS_MAX):
+            print(
+                f"Error: invalid --lookahead-records: {args.lookahead_records}; "
+                f"valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]",
+                file=sys.stderr,
+            )
+            return 1
+        overrides["lookahead_records"] = args.lookahead_records
 
     config = config.with_overrides(**overrides)
 
@@ -311,6 +336,7 @@ def _run_decode(args: argparse.Namespace) -> int:
             time_format=config.time_format,
             strict=config.strict,
             detect_records=config.detect_records,
+            lookahead_records=config.lookahead_records,
         )
     except MieFileError as exc:
         logger.error("Failed to open input file: %s", exc)

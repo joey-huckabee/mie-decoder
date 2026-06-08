@@ -99,12 +99,19 @@ MAX_SCAN_BYTES: Final[int] = 65_536
 #: (max 63), so the absolute maximum record is 63 × 2 = 126 bytes.
 MAX_RECORD_BYTES: Final[int] = 126
 
+#: L2-SYN-026 default look-ahead depth. Two-record look-ahead preserves
+#: the historical default established by L2-SYN-005. Configurable via
+#: ``decode.lookahead_records`` (TOML) or ``--lookahead-records`` (CLI),
+#: range ``[1, 32]``.
+DEFAULT_LOOKAHEAD_RECORDS: Final[int] = 2
+
 
 def validate_record(
     data: bytes | memoryview,
     offset: int,
     file_len: int,
     ts_format: TimestampFormat | None = None,
+    lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
 ) -> bool:
     """Check whether a valid MIE record starts at the given offset.
 
@@ -176,17 +183,26 @@ def validate_record(
         if not freerun and not (1 <= day <= 366):
             return False
 
-    # ── Check 6: Look-ahead — next record also valid ───────────────
+    # ── Check 6: N-record look-ahead (L2-SYN-005, L2-SYN-026) ──────
+    # Walk up to lookahead_records - 1 subsequent records, validating
+    # each Type Word's message type + word count plausibility. Advance
+    # by each candidate's declared word_count. EOF terminates the walk
+    # gracefully without rejecting the original candidate.
+    n = max(1, lookahead_records)
     next_offset = offset + record_bytes
-    if next_offset + 2 <= file_len:
+    for _ in range(1, n):
+        if next_offset + 2 > file_len:
+            break
         next_raw = read_u16(data, next_offset)
         next_tw = decode_type_word(next_raw)
         if not is_valid_message_type(next_tw.message_type):
             return False
         if next_tw.word_count < min_wc or next_tw.word_count > 63:
             return False
-    # If next record would be at EOF, we can't look ahead — accept
-    # the candidate on the strength of checks 1–5 alone.
+        next_record_bytes = next_tw.word_count * 2
+        if next_record_bytes == 0:
+            break
+        next_offset += next_record_bytes
 
     return True
 
@@ -196,6 +212,7 @@ def find_first_record(
     file_len: int,
     ts_format: TimestampFormat | None = None,
     max_scan: int = MAX_SCAN_BYTES,
+    lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
 ) -> int | None:
     """Find the byte offset of the first valid record in the file.
 
@@ -222,7 +239,7 @@ def find_first_record(
     scan_end = min(file_len, max_scan)
 
     for offset in range(0, scan_end, 2):
-        if validate_record(data, offset, file_len, ts_format):
+        if validate_record(data, offset, file_len, ts_format, lookahead_records):
             if offset > 0:
                 logger.info(
                     "File header detected: %d bytes before first record "
@@ -338,6 +355,7 @@ def recover_sync(
     file_len: int,
     ts_format: TimestampFormat | None = None,
     max_scan: int = MAX_SCAN_BYTES,
+    lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
 ) -> int | None:
     """Recover sync by scanning forward for the next valid record.
 
@@ -365,7 +383,7 @@ def recover_sync(
     )
 
     for candidate in range(scan_start, scan_end, 2):
-        if validate_record(data, candidate, file_len, ts_format):
+        if validate_record(data, candidate, file_len, ts_format, lookahead_records):
             skipped = candidate - offset
             logger.info(
                 "Sync recovered at offset 0x%X (skipped %d bytes from 0x%X)",
