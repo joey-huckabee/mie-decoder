@@ -23,14 +23,18 @@ for the full v1.0.0 entry.
 
 ### Queued for the next release (`[Unreleased]`)
 
-The L2-SYN-026 configurable N-record look-ahead (default `N = 2`
-preserves historical behavior; `decode.lookahead_records` TOML key +
-`--lookahead-records N` CLI flag, range `[1, 32]`) is committed and
-sitting in CHANGELOG's `[Unreleased]` section, ready to roll into a
-future **v1.2.0** cut. Implementation spans commits `fc515d7..84938f2`;
-spec is in `docs/L2-REQ.md` (L2-SYN-005 generalized in place, L2-SYN-026
-added). No outstanding work to ship this release — when you're ready,
-follow the version-bump checklist in `docs/MAINTAINER-GUIDE.md` §11.
+The `[Unreleased]` section of [`CHANGELOG.md`](../CHANGELOG.md)
+accumulates work ready to roll into a future **v1.2.0** cut. Current
+contents span the L2-SYN-026 configurable N-record look-ahead (TOML +
+CLI), a Python TOML `[logging] level` precedence fix (L2-CFG-003), the
+new Python coverage gate (85% combined line+branch, mirrors the Rust
+70/70 floor), the FIELDS.md retirement, three new cross-impl
+conformance fixtures (L2-DEC-015 borderline detection, L2-DEC-016
+lenient-mode WARN, L2-SYN-026 N>2 catches what N=2 misses), the
+L2-DEC-016 strict-fixture bug fix, and a dataflow-diagram refresh. See
+the CHANGELOG entry for the full list and rationale per item. When
+you're ready to cut, follow the version-bump checklist in
+`docs/MAINTAINER-GUIDE.md` §11.
 
 ## Planned
 
@@ -45,42 +49,6 @@ Subsequent releases may diverge in version via impl-prefixed tags
 contract (CSV byte-for-byte equivalence on shared behavior) holds at any
 compatible version pair. See [`docs/MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md)
 section 11 for the release workflow.
-
-## Deferred follow-ups (small, bounded)
-
-Items noted as "skipped in favor of unit tests" or "follow-up commit"
-during recent initiatives. Each is independently shippable; the unit
-tests in the relevant impls already exercise the underlying behavior,
-so these are nice-to-have cross-impl conformance fixtures rather than
-gating work.
-
-- **Conformance fixture: L2-DEC-015 borderline detection.** A file where
-  single-record probe (`--detect-records 1`) picks the wrong timestamp
-  format but the default 8-record probe picks correctly. Demonstrates
-  the multi-record probe's value cross-impl. Skipped in the v1.1.0
-  initiative (commit `822de95`) — see commit message for the fixture-
-  engineering trade-offs.
-- **Conformance fixture: L2-DEC-016 lenient-mode WARN.** Same input as
-  the existing `timestamp-format-ambiguous-strict` fixture but without
-  strict mode; asserts the WARN appears on stderr and decode proceeds
-  with the best-guess format. Lenient-mode CSV output is harder to
-  oracle because it depends on internal sync-recovery behavior on
-  synthetic records — that's why this was deferred.
-- **Conformance fixture: L2-SYN-026 N > 2 catches what N = 2 misses.**
-  A file where `--lookahead-records 2` (the default) admits an invalid
-  candidate but `--lookahead-records 4` rejects it. Requires
-  constructing two consecutive plausible-but-fake Type Words without
-  also tripping the L2-SYN-018 homogeneous-payload defense — see
-  commit `84938f2` for the trade-off note. Unit tests already pin the
-  behavior in both impls.
-- **`docs/diagrams/dataflow.puml` note refresh.** The data-flow
-  diagram's `find_first_record` note says "two-record look-ahead";
-  after L2-SYN-026 the look-ahead is configurable (default 2). The
-  note text needs a small update, and the rendered SVG must be
-  regenerated locally to satisfy the `diagrams` CI drift gate. One
-  PlantUML invocation: `plantuml -tsvg docs/diagrams/*.puml`. The
-  same convention from `docs/MAINTAINER-GUIDE.md` §3 applies — commit
-  the `.puml` source and the regenerated `.svg` together.
 
 ## Shared Commitments
 

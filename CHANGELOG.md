@@ -184,15 +184,19 @@ Conformance case count: 21 → 22.
   to 2, configurable via decode.lookahead_records)". The rendered
   `docs/diagrams/dataflow.svg` was regenerated to match (PlantUML
   1.2026.5, matching the pin in the `diagrams` CI job).
-- `docs/ROADMAP.md` refreshed for the post-v1.1.0 / pre-v1.2.0 state:
-  v1.1.0 release-status entry added; "Queued for the next release"
-  section describes the `[Unreleased]` L2-SYN-026 work; the two
+- `docs/ROADMAP.md` refreshed for the post-v1.1.0 / pre-v1.2.0
+  state: v1.1.0 release-status entry added; "Queued for the next
+  release" rewritten to summarize the full `[Unreleased]` contents
+  (L2-SYN-026 configurable look-ahead, FIELDS.md retirement, Python
+  coverage gate, Python TOML log-level fix, three new cross-impl
+  conformance fixtures, dataflow-diagram refresh); the two
   Robustness-backlog items resolved in v1.1.0 / `[Unreleased]` are
-  struck through with their resolution commits; "Shared Commitments"
-  text updated from "two-record look-ahead" to the N-record wording;
-  new "Deferred follow-ups" section enumerates small bounded items
-  (three conformance fixtures + the Python coverage gate) so they
-  don't get lost between sessions.
+  struck through with their resolution commits; "Shared
+  Commitments" text updated from "two-record look-ahead" to the
+  N-record wording. The intermediate "Deferred follow-ups" section
+  introduced mid-cycle has been removed — every item it tracked
+  shipped in this `[Unreleased]` cycle, so the section's job is
+  done.
 
 ## [1.1.0] — 2026-06-07
 
