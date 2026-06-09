@@ -44,6 +44,11 @@ full release workflow.
 
 ### Maintenance
 
+- `docs/diagrams/dataflow.puml` `find_first_record` note updated:
+  "(two-record look-ahead)" → "(L2-SYN-005 / L2-SYN-026; N defaults
+  to 2, configurable via decode.lookahead_records)". The rendered
+  `docs/diagrams/dataflow.svg` was regenerated to match (PlantUML
+  1.2026.5, matching the pin in the `diagrams` CI job).
 - `docs/ROADMAP.md` refreshed for the post-v1.1.0 / pre-v1.2.0 state:
   v1.1.0 release-status entry added; "Queued for the next release"
   section describes the `[Unreleased]` L2-SYN-026 work; the two

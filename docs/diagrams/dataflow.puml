@@ -36,8 +36,9 @@ endif
 note right
   Scan from offset 0, 2-byte steps, <=64 KB
   for a record whose Type Word AND the
-  next record's Type Word both validate
-  (two-record look-ahead).
+  next N-1 records' Type Words all validate
+  (L2-SYN-005 / L2-SYN-026; N defaults to 2,
+  configurable via decode.lookahead_records).
 end note
 
 if (Valid header found?) then (yes)
