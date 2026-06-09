@@ -20,17 +20,19 @@ full release workflow.
 - **`docs/FIELDS.md`** — the 3-line redirect stub kept for legacy
   external-link compatibility since the L2-DEC-015 / Documentation
   Initiative absorbed its content into `docs/MIE-FORMAT.md`. The
-  stub has done its job; deleted. Active references in
+  stub has done its job; deleted. All active references repointed
+  at `docs/MIE-FORMAT.md` directly or removed:
   `docs/L1-REQ.md` (L1-OUT-001), `docs/L2-REQ.md` (L2-DEC-002,
-  L2-SYN-025 rationale, error-code family rationale),
+  L2-SYN-025 rationale, error-code family rationale) — repointed;
   `docs/MAINTAINER-GUIDE.md` (repo-tree listing), `CLAUDE.md`
-  (Reference docs section), `docs/MIE-FORMAT.md` (the
-  "absorbs FIELDS.md" note now reflects deletion), and
-  `README.md` (repo-tree listing) updated to either point at
-  `docs/MIE-FORMAT.md` directly or to drop the stub reference.
-  ROADMAP historical mentions of FIELDS.md (Documentation
-  Initiative recap, deferred-audit notes, etc.) preserved as-is
-  since they describe past state accurately.
+  (Reference docs section), `README.md` (repo-tree listing) —
+  stub row dropped; `docs/MIE-FORMAT.md` — the "absorbs
+  FIELDS.md" note removed entirely and replaced with a direct
+  "single source of truth" statement (no historical breadcrumb
+  to the deleted predecessor). ROADMAP historical mentions of
+  FIELDS.md (Documentation Initiative recap, deferred-audit
+  notes, etc.) preserved as-is since they describe past state
+  accurately.
 
 ### Added
 

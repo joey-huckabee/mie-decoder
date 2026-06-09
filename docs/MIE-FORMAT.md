@@ -9,7 +9,7 @@ Comprehensive reference for the DDC MIE binary recording format and the CSV outp
 
 This doc is the deep-reference companion to [`USER-GUIDE.md`](USER-GUIDE.md) (operator workflows) and [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) (alignment with DDC vendor CSV). For per-CLI-flag and per-TOML-key references, see [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md). For every error class and exit code, see [`ERROR-CATALOG.md`](ERROR-CATALOG.md).
 
-**Note**: this doc absorbs the contents of the older `FIELDS.md` (deleted; this is now the single source of truth for the on-disk record layout).
+This doc is the single source of truth for the on-disk MIE binary record layout, CSV column definitions, and error-code tables.
 
 ---
 
