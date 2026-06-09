@@ -251,7 +251,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CONF-002 | L3-PY-007 | _(TBD)_ | Implemented |
 | L2-CONF-003 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_manifest_has_cases_with_oracles`<br>`python/tests/test_conformance_wiring.py::test_conformance_runner_exists` | Implemented |
 | L2-CONF-004 | _(none)_ | _(TBD)_ | Implemented (I) |
-| L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-007, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci` | Implemented |
+| L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci` | Implemented |
 
 ### L1-EXIT: Exit-code semantics and operational contract
 
@@ -317,12 +317,12 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | WRT | 0 | 13 | 2 | 13 | 2 | 13 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
-| RS | 0 | 0 | 12 | 0 | 5 | 0 | 11 |
-| **Total** | **24** | **106** | **26** | **100** | **13** | **105** | **25** |
+| RS | 0 | 0 | 11 | 0 | 5 | 0 | 10 |
+| **Total** | **24** | **106** | **25** | **100** | **13** | **105** | **24** |
 
-**Tested by at least one test marker**: 113 of 132 (85.6%).
+**Tested by at least one test marker**: 113 of 131 (86.3%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 130 of 132 (98.5%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 129 of 131 (98.5%).
 
 ### Orphan check
 

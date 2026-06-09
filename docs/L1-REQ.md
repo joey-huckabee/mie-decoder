@@ -145,7 +145,7 @@ Out-of-scope items are listed separately under **Non-Requirements** (1 item).
 
 **Statement**: Each implementation SHALL provide CLI capabilities for decoding, message counting, configuration, filtering, timestamp-format selection, logging-level control, and diagnostic dump output. CLI syntax MAY differ between implementations.
 
-**Rationale**: Operators use both implementations interchangeably depending on platform (Rust for static-musl SLES 12 deployments, Python for cross-platform development and analysis). The capabilities they need must be available in both — the exact subcommand or flag spelling is allowed to vary so each CLI can follow idiomatic conventions for its language ecosystem.
+**Rationale**: Operators use both implementations interchangeably depending on platform (Rust for native compiled-binary deployments, Python for cross-platform development and analysis). The capabilities they need must be available in both — the exact subcommand or flag spelling is allowed to vary so each CLI can follow idiomatic conventions for its language ecosystem.
 
 **Verification Method**: Test (T), Inspection (I)
 

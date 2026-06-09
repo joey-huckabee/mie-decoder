@@ -29,7 +29,7 @@ The decoder is shipped as two interoperable implementations — a Rust crate + C
 
 | Implementation | Use when |
 |----------------|----------|
-| **Rust** | You want a single static binary on Linux (especially SLES 12 / RHEL 7 / older glibc targets), constant-memory streaming decode of multi-GB recordings, or the fastest decode throughput. |
+| **Rust** | You want a native compiled binary, constant-memory streaming decode of multi-GB recordings, or the fastest decode throughput. |
 | **Python** | You want to drop into an existing Python analysis pipeline, you're on Windows / macOS for ad-hoc work, or you'd rather `pip install` than build from source. Memory usage is O(record_count) so very large files (10M+ records) may not fit in RAM; otherwise the Python implementation is functionally identical. |
 
 CSV output is byte-identical between the two — your choice doesn't change the result.
@@ -47,14 +47,6 @@ git clone <repo-url>
 cd mie-decoder
 cargo build --release
 ./target/release/mie-decoder --help
-```
-
-For SLES 12 / glibc 2.22 deployment, build with the musl target so the binary is statically linked:
-
-```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-# Binary is at target/x86_64-unknown-linux-musl/release/mie-decoder
 ```
 
 ### Python package

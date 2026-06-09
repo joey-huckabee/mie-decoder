@@ -64,10 +64,10 @@ jobs:
         run: cargo test --locked --all-targets
 
       - name: Install cargo-llvm-cov
-        # Coverage gate runs only on Linux. The production deployment
-        # target is x86_64-unknown-linux-musl, so Linux is the
-        # authoritative coverage surface; Windows builds are
-        # functional smoke only.
+        # Coverage gate runs only on Linux — coverage isn't platform-
+        # dependent so the Windows cell would just duplicate work.
+        # Windows builds remain functional smoke for path / line-ending
+        # portability bugs.
         if: runner.os == 'Linux'
         uses: taiki-e/install-action@v2
         with:

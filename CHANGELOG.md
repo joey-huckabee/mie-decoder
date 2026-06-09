@@ -53,6 +53,21 @@ full release workflow.
 
 ### Removed
 
+- **Static-musl SLES 12 deployment target.** The Rust crate is no
+  longer published with documentation or tooling for the
+  `x86_64-unknown-linux-musl` cross-compile path. Native release
+  builds (`cargo build --release`) are now the only documented
+  artifact; deployers targeting older glibc hosts should produce
+  the static binary themselves out-of-tree if needed. Concrete
+  changes: `docs/L3-REQ.md` L3-RS-007 marked *Withdrawn in v1.2.0*
+  (the ID is reserved, not reused, so the trace matrix and
+  historical references stay coherent); `README.md`, `CLAUDE.md`,
+  `CONTRIBUTING.md`, `docs/MAINTAINER-GUIDE.md`,
+  `docs/USER-GUIDE.md`, `docs/L1-REQ.md` rationale, and
+  `.github/workflows/ci.yml` comments updated to remove musl /
+  SLES references; historical CHANGELOG and ROADMAP entries
+  describing the v1.0.0 musl scope preserved as-is. Trace matrix
+  regenerated (active L3 count: 26 → 25; L3-RS subtotal: 12 → 11).
 - **`docs/FIELDS.md`** — the 3-line redirect stub kept for legacy
   external-link compatibility since the L2-DEC-015 / Documentation
   Initiative absorbed its content into `docs/MIE-FORMAT.md`. The

@@ -2,8 +2,7 @@
 
 Thanks for working on MIE-Decoder. This repository contains maintained Rust
 and Python implementations. This document covers local setup, the pre-commit
-workflow, commit conventions, and how to produce the SLES 12 Rust production
-build.
+workflow, and commit conventions.
 
 > Note: the canonical filename for this document is `CONTRIBUTING.md`
 > (Git/GitHub convention). If you arrive here looking for `CONTRIBUTION.md`,
@@ -125,8 +124,7 @@ emergencies; CI runs the same checks and will fail the merge anyway.
   catches issues clippy doesn't already catch. Worth running manually
   before publishing a release.
 - `cargo build --release` is **not** in the hook because debug builds
-  exercise the same code path. The musl static build is a release-time
-  concern (see "Production build" below).
+  exercise the same code path. Release builds are a release-time concern.
 - `cargo audit` (CVE check) is **not** wired up because we have a
   single dependency. Revisit if the dep tree grows.
 
@@ -251,22 +249,6 @@ present, so `unreachable!()` arms and other defensive branches show as
 uncovered on stable. Either accept the percentage hit or refactor the
 defensive arm out — don't try to game the threshold.
 
-## Production build (SLES 12 / static musl)
-
-The deployment target is SLES 12 (glibc 2.22). Native release builds on
-Windows/macOS/modern Linux **will not run there** because they link
-against the host's newer glibc. Use the static-musl target instead:
-
-```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-# binary: target/x86_64-unknown-linux-musl/release/mie-decoder
-```
-
-The musl binary is statically linked, has no glibc dependency, and runs
-on any x86_64 Linux. Intentionally separate from `cargo build --release`
-so contributors don't pay the static-link cost on every build.
-
 ## Commit conventions
 
 We use [Conventional Commits](https://www.conventionalcommits.org/)
@@ -303,8 +285,6 @@ These are codified in `CLAUDE.md`; the highlights:
 - **Single external dependency.** Only `memmap2`. Adding crates
   requires justification — argument parsing, CSV, TOML, logging,
   error types are all hand-rolled by design.
-- **Static musl is the production target.** Don't add anything that
-  breaks `--target x86_64-unknown-linux-musl`.
 - **Streaming CSV.** Don't introduce `Vec<MieMessage>` or row-level
   buffering in `writer.rs` — constant memory is the design point.
 - **`DataWords` is fixed-capacity.** MIL-STD-1553B caps a transaction

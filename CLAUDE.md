@@ -29,10 +29,6 @@ Edition 2024, MSRV 1.85. The crate has exactly one external dependency: `memmap2
 cargo build               # Dev build
 cargo build --release     # Optimized
 
-# Static musl build for SLES 12 deployment (the production target)
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-
 # Test
 cargo test                                                     # All tests
 cargo test --lib                                               # Unit tests only
@@ -103,7 +99,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - `docs/MIE-FORMAT.md` — comprehensive MIE binary format reference: file-level framing, the three-section record shape, Type Word / IRIG and Standard timestamp / Command Word / Status Word bit layouts, per-format payload shapes for all 11 transaction types, error-record lifecycle (Type Word bit 14 → truncated payload → Error Word → optional SPURIOUS continuation), the DDC `0x01xx` and decoder-assigned `0x20xx` error code tables, full CSV output reference, three worked hex-to-CSV decodes. The deep reference for reverse-engineering or adding format support.
 - `docs/L1-REQ.md` — Level 1 SHALL statements (24 system requirements in 12 categories + NR-001 out-of-scope).
 - `docs/L2-REQ.md` — Level 2 architectural derivations (102 requirements, each with a single L1 parent).
-- `docs/L3-REQ.md` — Level 3 implementation obligations (26 requirements: 2 cross-impl L3-WRT-*, 12 L3-PY-*, 12 L3-RS-*).
+- `docs/L3-REQ.md` — Level 3 implementation obligations (25 active requirements: 2 cross-impl L3-WRT-*, 12 L3-PY-*, 11 L3-RS-* — L3-RS-007 withdrawn in v1.2.0 when static-musl support was retired).
 - `docs/TRACE-MATRIX.md` — auto-generated trace matrix produced by `scripts/build-trace-matrix.py`. Forward trace from L1 through L2 and L3 to test artifacts (`@pytest.mark.requirement` markers in `python/tests/` and `/// Requirements:` doc-comments above Rust `#[test]` items). Treat as the single source of truth for live status; the source docs hold spec content only.
 - `docs/ROADMAP.md` — versioned roadmap with explicit "do not drop" commitments (TOML config, CSV byte-compat, sync semantics).
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
@@ -114,7 +110,6 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 ## Conventions worth preserving
 
 - **Single external dependency.** Only `memmap2`. Adding crates requires justification — argument parsing, CSV, TOML, logging, error types are all hand-rolled by design and the user values keeping it that way.
-- **Production target is `x86_64-unknown-linux-musl`** (statically linked, runs on SLES 12 / glibc 2.22). Native dev builds on Windows/macOS are fine. Don't add anything that breaks the musl target.
 - **Streaming CSV.** Rows must flow through a `Write` impl as they are produced. Do not introduce `Vec<MieMessage>` or `Vec<Row>` buffering in the writer — constant memory is the design point.
 - **Two-record look-ahead in `sync.rs`.** Don't remove it. Removing the look-ahead reintroduces false-positive resyncs.
 - **`DataWords` is fixed-capacity by design.** MIL-STD-1553B caps a single transaction at 32 data words. Don't switch to `Vec<u16>` "for flexibility."

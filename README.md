@@ -6,8 +6,8 @@ MIE-Decoder reads proprietary binary files produced by Data Device Corporation (
 
 MIE-Decoder is maintained in two implementations:
 
-- **Rust v1.0.0** — streaming CSV writer (constant memory), redesigned CLI,
-  and a single static-musl binary for SLES 12 deployment.
+- **Rust v1.0.0** — streaming CSV writer (constant memory), hand-rolled
+  CLI, single native release binary.
 - **Python v1.0.0** — the Python package and CLI, maintained in
   [`python/`](python/).
 
@@ -21,13 +21,8 @@ a 20-case byte-exact cross-implementation conformance suite. See
 ## Rust Build
 
 ```bash
-# Native dev build
 cargo build --release
-
-# Static musl build for SLES 12 / any Linux x86_64 (single binary, no glibc dep)
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-# binary lands at target/x86_64-unknown-linux-musl/release/mie-decoder
+# binary lands at target/release/mie-decoder
 ```
 
 The crate has exactly one external dependency (`memmap2`); everything else — argument parsing, CSV writing, TOML config, logging, error types — is hand-rolled.

@@ -66,13 +66,6 @@ cargo build
 cargo test
 ```
 
-For the production static-musl build (SLES 12 target):
-
-```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
-```
-
 ### Python
 
 ```bash
@@ -184,7 +177,7 @@ Single letters from DO-178: **T** = Test, **I** = Inspection, **A** = Analysis, 
 - **Test (T)** — there's an automated test asserting the behavior. The trace matrix expects a `@pytest.mark.requirement` marker or a `/// Requirements:` doc-comment.
 - **Inspection (I)** — verified by reading the source. The trace matrix marks these `Implemented (I)` even without a test marker. Use for structural properties (a single function called from three places, an enum being exhaustively matched, build config declarations).
 - **Analysis (A)** — verified by logical/mathematical argument. Use for bounded-loop proofs, memory complexity claims.
-- **Demonstration (D)** — verified by operator running the system. Use for things like "static-musl build works on SLES 12".
+- **Demonstration (D)** — verified by operator running the system. Use for things like "release binary runs on the target deployment host".
 
 Don't mark `Test (T)` if no test exists or will exist. The matrix will surface it as **Draft** and the gap will be obvious.
 
@@ -434,7 +427,7 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
 | `diagrams` | Re-render every `docs/diagrams/*.puml` with the pinned PlantUML version and `git diff --exit-code` against the committed `*.svg` — fails if a `.puml` source was changed without regenerating the matching `.svg` | `ubuntu-latest` | Block merge |
 
-The Rust and Python deployment targets are Linux (`x86_64-unknown-linux-musl` for Rust; current SLES 12 / RHEL flavors for Python). Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.
+The Rust and Python deployment targets are Linux. Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.
 
 The `diagrams` job pins PlantUML to the version that produced the committed SVGs (read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg` to find it). Bumping that pin generally reflows every diagram and requires a matching local re-render + commit of all `*.svg` files in the same PR.
 
@@ -481,14 +474,11 @@ When coverage is consistently above the floor by >2pp, bump it. For Rust, edit t
 
 ### Rust crate
 
-The production target is `x86_64-unknown-linux-musl` (static linking, runs on SLES 12 / glibc 2.22):
-
 ```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
+cargo build --release
 ```
 
-The resulting binary in `target/x86_64-unknown-linux-musl/release/mie-decoder` is self-contained and ships as the deliverable artifact.
+The resulting binary at `target/release/mie-decoder` is the deliverable artifact.
 
 ### Python package
 
@@ -541,7 +531,7 @@ These are the operating rules that keep the two crates from drifting:
 
 1. **Spec first.** New behavior lands as an L2 / L3 requirement before code. Both implementations then satisfy it.
 2. **Conformance fixtures for cross-impl behavior.** Anything that affects CSV output or exit codes belongs in `tests/conformance/`.
-3. **Per-impl detail goes in L3.** Python-specific constraints (pandas, tomllib, Poetry) live as `L3-PY-*`. Rust-specific constraints (memmap2, BufWriter, musl) live as `L3-RS-*`. The shared L2 stays implementation-agnostic.
+3. **Per-impl detail goes in L3.** Python-specific constraints (pandas, tomllib, Poetry) live as `L3-PY-*`. Rust-specific constraints (memmap2, BufWriter) live as `L3-RS-*`. The shared L2 stays implementation-agnostic.
 4. **Error variants ship together.** When you add a new variant in one language, add it in the other in the same PR.
 5. **Log message wording can drift.** Operators read CSV output and exit codes; log message text isn't part of the contract. Don't over-coordinate it.
 6. **CLI syntax can drift** (per L1-CLI-001) — capability parity matters, exact spelling doesn't. Rust uses `count` subcommand and `--inline-errors`; Python uses `decode --count` and `--error-mode inline`. Both reach the same outcomes.
