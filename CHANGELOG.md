@@ -15,120 +15,21 @@ full release workflow.
 
 ## [Unreleased]
 
-### Fixed
+## [1.2.0] — 2026-06-08
 
-- **Python: `[logging] level` in TOML config now honored**
-  (regression of L2-CFG-003 precedence: CLI > TOML > default).
-  `python/src/mie_decoder/config.py` was parsing `[logging] level`
-  into `DecoderConfig.log_level` and validating it at load time,
-  but `python/src/mie_decoder/cli.py` only called
-  `configure_logging()` once at the top of `main()` with the CLI
-  value (or `"WARNING"` default) — `_run_decode` then loaded the
-  TOML but never re-applied the log level. Net effect: a TOML
-  `[logging] level = "INFO"` was silently ignored unless the user
-  also passed `--log-level` on the CLI. Rust applied the TOML
-  value correctly via `resolve_config` in `src/cli.rs`. Fix
-  introduces a small `_apply_config_log_level(args, config_log_level)`
-  helper called immediately after `load_config(...)` in both
-  `_run_decode` and `_run_dump`; it re-configures the logger from
-  the TOML value when `--log-level` was not passed. The CLI value
-  (when present) still wins because `main()` configured with it
-  before the subcommand runner was entered. Also adds `--config`
-  to the `dump` subparser so `mie-decoder dump file.mie --config
-  foo.toml` can honor the TOML log level too (mirrors Rust, where
-  `--config` is a global flag accepted by every subcommand). New
-  Python e2e regressions in `python/tests/test_e2e.py`:
-  `test_cli_toml_logging_level_is_honored_when_no_cli_override`
-  (catches the original bug — fails without the fix),
-  `test_cli_log_level_overrides_toml_logging_level` (pins the
-  CLI-wins precedence), and `test_cli_dump_honors_toml_logging_level`
-  (covers the dump-path fix). New cross-impl conformance fixture
-  `log-level-from-toml-config` reuses the `basic-multi-record`
-  input + oracle plus `configs/log-level-info.toml` and asserts
-  the substring `"decode exit class"` appears on stderr — an
-  INFO-level message both impls emit identically (lowercase, same
-  prefix). Conformance case count: 26 → 27. Test count: 245 → 248.
-  `docs/ROADMAP.md`'s remaining deferred follow-up removed (the
-  Deferred follow-ups section is now empty / dropped).
-
-### Removed
-
-- **Static-musl SLES 12 deployment target.** The Rust crate is no
-  longer published with documentation or tooling for the
-  `x86_64-unknown-linux-musl` cross-compile path. Native release
-  builds (`cargo build --release`) are now the only documented
-  artifact; deployers targeting older glibc hosts should produce
-  the static binary themselves out-of-tree if needed. Concrete
-  changes: `docs/L3-REQ.md` L3-RS-007 marked *Withdrawn in v1.2.0*
-  (the ID is reserved, not reused, so the trace matrix and
-  historical references stay coherent); `README.md`, `CLAUDE.md`,
-  `CONTRIBUTING.md`, `docs/MAINTAINER-GUIDE.md`,
-  `docs/USER-GUIDE.md`, `docs/L1-REQ.md` rationale, and
-  `.github/workflows/ci.yml` comments updated to remove musl /
-  SLES references; historical CHANGELOG and ROADMAP entries
-  describing the v1.0.0 musl scope preserved as-is. Trace matrix
-  regenerated (active L3 count: 26 → 25; L3-RS subtotal: 12 → 11).
-- **`docs/FIELDS.md`** — the 3-line redirect stub kept for legacy
-  external-link compatibility since the L2-DEC-015 / Documentation
-  Initiative absorbed its content into `docs/MIE-FORMAT.md`. The
-  stub has done its job; deleted. All active references repointed
-  at `docs/MIE-FORMAT.md` directly or removed:
-  `docs/L1-REQ.md` (L1-OUT-001), `docs/L2-REQ.md` (L2-DEC-002,
-  L2-SYN-025 rationale, error-code family rationale) — repointed;
-  `docs/MAINTAINER-GUIDE.md` (repo-tree listing), `CLAUDE.md`
-  (Reference docs section), `README.md` (repo-tree listing) —
-  stub row dropped; `docs/MIE-FORMAT.md` — the "absorbs
-  FIELDS.md" note removed entirely and replaced with a direct
-  "single source of truth" statement (no historical breadcrumb
-  to the deleted predecessor). ROADMAP historical mentions of
-  FIELDS.md (Documentation Initiative recap, deferred-audit
-  notes, etc.) preserved as-is since they describe past state
-  accurately.
+Configurable sync look-ahead with TOML + CLI controls, a Python
+TOML `[logging] level` precedence fix, the new Python coverage
+gate in CI (85% combined line+branch floor mirroring the Rust
+70/70 model), retirement of the static-musl SLES 12 deployment
+target, retirement of the `docs/FIELDS.md` redirect stub, and
+three new cross-impl conformance fixtures (L2-DEC-015 borderline,
+L2-DEC-016 lenient-mode WARN, L2-SYN-026 N>2 catches what N=2
+misses). Both implementations ship together at v1.2.0 from a
+single repository tag (`v1.2.0`), continuing the joint-cut model
+established by v1.0.0.
 
 ### Added
 
-- **Python coverage gate in CI** (`python-coverage` job). Mirrors
-  the Rust `cargo cov-ci` model: runs once on Linux/Python 3.12,
-  not across the full matrix (coverage isn't platform- or
-  interpreter-dependent). `pytest-cov ^7.0` added as a dev
-  dependency; `[tool.coverage.run]` and `[tool.coverage.report]`
-  sections added to `python/pyproject.toml` (branch coverage on,
-  `__main__.py` excluded as the entry shim — parallel to Rust's
-  `bin/mie-decoder.rs` exclusion). Floor is **85% combined
-  line+branch**, set as `--cov-fail-under=85` in the CI job.
-  Baseline at integration was 88.92% across the 245-case pytest
-  suite, giving ~4 percentage points of headroom before drift
-  starts failing the build (same ratchet model as the Rust 70/70
-  floor's ~5pp headroom against its 74.81% baseline).
-  `docs/MAINTAINER-GUIDE.md` §10 rewritten to cover both Rust and
-  Python coverage workflows; cheat sheet (§3) gains the
-  `poetry -C python run pytest --cov --cov-fail-under=85` invocation
-  alongside `cargo cov-ci`; CI architecture table (§9) updated from
-  five jobs to six. `docs/ROADMAP.md` deferred-follow-up #4 removed
-  (closed).
-- **Conformance fixture: L2-SYN-026 N-record look-ahead value
-  demonstration** (two cases). `lookahead-corruption-chain-n2` and
-  `lookahead-corruption-chain-n4` share a hand-crafted 5-record
-  input (2 valid records, 32 bytes of 0xFF garbage, 1 valid record
-  at the end). At `--lookahead-records 2` both impls accept the
-  file start, decode record 1, then sync-recover through the
-  garbage and decode record 5 — 2 rows. At
-  `--lookahead-records 4` both impls reject the file start
-  (look-ahead chain reaches the garbage), scan forward, and
-  accept only record 5 — 1 row. The contrast (2 rows vs 1 row)
-  demonstrates the L2-SYN-026 value proposition: deeper
-  look-ahead catches "valid prefix followed by corruption"
-  patterns that defeat the default N=2 window. Both oracles
-  byte-identical cross-impl. Conformance case count: 24 → 26.
-- **Conformance fixture: L2-DEC-015 borderline detection** (two
-  cases). `timestamp-format-borderline-default` and
-  `timestamp-format-borderline-n1` share a hand-crafted 5-record
-  input where the multi-record probe genuinely changes the
-  format choice cross-impl: at `--detect-records 1` both impls
-  pick Standard and decode 1 row; at default `--detect-records 8`
-  both impls pick IRIG (Decisive) and decode 4 rows. The two
-  oracles are byte-identical across Rust and Python, pinning the
-  cross-impl behavior at each N. Conformance case count: 22 → 24.
 - **Configurable N-record sync look-ahead** (L2-SYN-005, L2-SYN-026).
   `sync::validate_record` (Rust) / `sync.validate_record` (Python) now
   accept a look-ahead depth parameter `N`. The function checks `N − 1`
@@ -144,74 +45,184 @@ full release workflow.
   validation.
 - New CLI flag `--lookahead-records N` with parse-time range
   validation, exposed in both the Rust and Python CLIs.
-
-### Changed
-
-- `docs/L2-REQ.md` L2-SYN-005 generalized in place: the original
-  "two-record look-ahead" wording is now described as a special case
-  of the configurable N-record rule with default `N = 2`. The
-  generalization is non-breaking (existing files and configs continue
-  to behave identically); the rationale for the in-place wording
-  update is recorded in the L2-SYN-005 Rationale field.
-
-### Fixed
-
-- **Conformance fixture `timestamp-format-ambiguous-strict` was
-  exercising the wrong code path.** Discovered while adding the
-  lenient-mode companion fixture. The fixture's input bytes had a
-  Type Word declaring `word_count = 7` (14 bytes) but the actual hex
-  block contained 16 bytes per record. The mismatch caused
-  `find_first_record`'s look-ahead to land on filler bytes mid-record
-  and reject the candidate, producing `MieNoValidRecords` (exit 2)
-  instead of the intended `MieTimestampFormatMismatch` (also exit
-  2). The strict fixture's `expected_exit: 2` couldn't distinguish
-  the two error paths, so the test passed for the wrong reason.
-
-  Fix: change the Type Word's `word_count` field from 7 to 8 so the
-  declared length matches the actual 16-byte record. The probe now
-  reaches AMBIGUOUS classification correctly, and the strict fixture
-  exercises the L2-DEC-016 path it was always meant to.
-
-### Added
-
+- **Python coverage gate in CI** (`python-coverage` job). Mirrors
+  the Rust `cargo cov-ci` model: runs once on Linux/Python 3.12,
+  not across the full matrix (coverage isn't platform- or
+  interpreter-dependent). `pytest-cov ^7.0` added as a dev
+  dependency; `[tool.coverage.run]` and `[tool.coverage.report]`
+  sections added to `python/pyproject.toml` (branch coverage on,
+  `__main__.py` excluded as the entry shim — parallel to Rust's
+  `bin/mie-decoder.rs` exclusion). Floor is **85% combined
+  line+branch**, set as `--cov-fail-under=85` in the CI job.
+  Baseline at integration was 88.92% across the 245-case pytest
+  suite, giving ~4 percentage points of headroom before drift
+  starts failing the build (same ratchet model as the Rust 70/70
+  floor's ~5pp headroom against its 74.81% baseline).
+  `docs/MAINTAINER-GUIDE.md` §10 rewritten to cover both Rust and
+  Python coverage workflows; cheat sheet (§3) gains the
+  `poetry -C python run pytest --cov --cov-fail-under=85`
+  invocation alongside `cargo cov-ci`; CI architecture table (§9)
+  updated from five jobs to six.
+- **Conformance fixture: L2-DEC-015 borderline detection** (two
+  cases). `timestamp-format-borderline-default` and
+  `timestamp-format-borderline-n1` share a hand-crafted 5-record
+  input where the multi-record probe genuinely changes the format
+  choice cross-impl: at `--detect-records 1` both impls pick
+  Standard and decode 1 row; at default `--detect-records 8` both
+  impls pick IRIG (Decisive) and decode 4 rows. The two oracles
+  are byte-identical across Rust and Python, pinning the cross-
+  impl behavior at each N.
 - **Conformance fixture: L2-DEC-016 lenient-mode WARN**
   (`timestamp-format-ambiguous-lenient`). Reuses the (now-fixed)
-  ambiguous input bytes with default (lenient) mode. Asserts exit 0
-  with a header-only CSV oracle, plus a stderr substring assertion
-  that pins the lenient-mode WARN's score breakdown
-  (`"Ambiguous: IRIG=4 STD=4"`). Companion to the strict fixture;
-  together they pin both branches of L2-DEC-016 cross-impl.
+  ambiguous input bytes with default (lenient) mode. Asserts
+  exit 0 with a header-only CSV oracle, plus a stderr substring
+  assertion that pins the lenient-mode WARN's score breakdown
+  (`"Ambiguous: IRIG=4 STD=4"`). Companion to the strict
+  fixture; together they pin both branches of L2-DEC-016
+  cross-impl.
 - **Stderr substring assertions on both L2-DEC-016 conformance
   fixtures.** Strict fixture now asserts
   `expected_stderr_contains: "auto-detection is ambiguous"`
   (substring unique to the `MieTimestampFormatMismatch` error
   message); lenient asserts the WARN substring as above. These
   defend against future regressions that exit with the right code
-  via the wrong code path — the same class of bug-in-test the strict
-  fixture had until this commit.
+  via the wrong code path — the same class of bug-in-test the
+  strict fixture had until v1.2.0's strict-fixture fix.
+- **Conformance fixture: L2-SYN-026 N-record look-ahead value
+  demonstration** (two cases). `lookahead-corruption-chain-n2`
+  and `lookahead-corruption-chain-n4` share a hand-crafted
+  5-record input (2 valid records, 32 bytes of 0xFF garbage, 1
+  valid record at the end). At `--lookahead-records 2` both
+  impls accept the file start, decode record 1, then sync-
+  recover through the garbage and decode record 5 — 2 rows. At
+  `--lookahead-records 4` both impls reject the file start
+  (look-ahead chain reaches the garbage), scan forward, and
+  accept only record 5 — 1 row. The contrast (2 rows vs 1 row)
+  demonstrates the L2-SYN-026 value proposition: deeper look-
+  ahead catches "valid prefix followed by corruption" patterns
+  that defeat the default N=2 window. Both oracles byte-
+  identical cross-impl.
 
-Conformance case count: 21 → 22.
+Total conformance case count: 21 → 27 across this release.
+Python test count: 242 → 248.
+
+### Changed
+
+- `docs/L2-REQ.md` L2-SYN-005 generalized in place: the original
+  "two-record look-ahead" wording is now described as a special
+  case of the configurable N-record rule with default `N = 2`.
+  The generalization is non-breaking (existing files and configs
+  continue to behave identically); the rationale for the
+  in-place wording update is recorded in the L2-SYN-005
+  Rationale field.
+
+### Removed
+
+- **Static-musl SLES 12 deployment target.** The Rust crate is
+  no longer published with documentation or tooling for the
+  `x86_64-unknown-linux-musl` cross-compile path. Native release
+  builds (`cargo build --release`) are now the only documented
+  artifact; deployers targeting older glibc hosts produce the
+  static binary themselves out-of-tree if needed. Concrete
+  changes: `docs/L3-REQ.md` L3-RS-007 marked *Withdrawn in
+  v1.2.0* (the ID is reserved, not reused, so the trace matrix
+  and historical references stay coherent); `README.md`,
+  `CLAUDE.md`, `CONTRIBUTING.md`, `docs/MAINTAINER-GUIDE.md`,
+  `docs/USER-GUIDE.md`, `docs/L1-REQ.md` rationale, and
+  `.github/workflows/ci.yml` comments updated to remove musl /
+  SLES references; historical CHANGELOG and ROADMAP entries
+  describing the v1.0.0 musl scope preserved as-is. Trace matrix
+  regenerated (active L3 count: 26 → 25; L3-RS subtotal:
+  12 → 11).
+- **`docs/FIELDS.md`** — the 3-line redirect stub kept for
+  legacy external-link compatibility since the L2-DEC-015 /
+  Documentation Initiative absorbed its content into
+  `docs/MIE-FORMAT.md`. The stub has done its job; deleted. All
+  active references repointed at `docs/MIE-FORMAT.md` directly
+  or removed: `docs/L1-REQ.md` (L1-OUT-001), `docs/L2-REQ.md`
+  (L2-DEC-002, L2-SYN-025 rationale, error-code family
+  rationale) — repointed; `docs/MAINTAINER-GUIDE.md` (repo-tree
+  listing), `CLAUDE.md` (Reference docs section), `README.md`
+  (repo-tree listing) — stub row dropped; `docs/MIE-FORMAT.md` —
+  the "absorbs FIELDS.md" note removed entirely and replaced
+  with a direct "single source of truth" statement (no
+  historical breadcrumb to the deleted predecessor). ROADMAP
+  historical mentions of FIELDS.md (Documentation Initiative
+  recap, deferred-audit notes, etc.) preserved as-is since they
+  describe past state accurately.
+
+### Fixed
+
+- **Python: `[logging] level` in TOML config now honored**
+  (regression of L2-CFG-003 precedence: CLI > TOML > default).
+  `python/src/mie_decoder/config.py` was parsing
+  `[logging] level` into `DecoderConfig.log_level` and
+  validating it at load time, but `python/src/mie_decoder/cli.py`
+  only called `configure_logging()` once at the top of `main()`
+  with the CLI value (or `"WARNING"` default) — `_run_decode`
+  then loaded the TOML but never re-applied the log level. Net
+  effect: a TOML `[logging] level = "INFO"` was silently ignored
+  unless the user also passed `--log-level` on the CLI. Rust
+  applied the TOML value correctly via `resolve_config` in
+  `src/cli.rs`. Fix introduces a small
+  `_apply_config_log_level(args, config_log_level)` helper called
+  immediately after `load_config(...)` in both `_run_decode` and
+  `_run_dump`; it re-configures the logger from the TOML value
+  when `--log-level` was not passed. The CLI value (when present)
+  still wins because `main()` configured with it before the
+  subcommand runner was entered. Also adds `--config` to the
+  `dump` subparser so `mie-decoder dump file.mie --config
+  foo.toml` can honor the TOML log level too (mirrors Rust, where
+  `--config` is a global flag accepted by every subcommand). New
+  Python e2e regressions in `python/tests/test_e2e.py`:
+  `test_cli_toml_logging_level_is_honored_when_no_cli_override`
+  (catches the original bug — fails without the fix),
+  `test_cli_log_level_overrides_toml_logging_level` (pins the
+  CLI-wins precedence), and
+  `test_cli_dump_honors_toml_logging_level` (covers the
+  dump-path fix). New cross-impl conformance fixture
+  `log-level-from-toml-config` reuses the `basic-multi-record`
+  input + oracle plus `configs/log-level-info.toml` and asserts
+  the substring `"decode exit class"` appears on stderr — an
+  INFO-level message both impls emit identically.
+- **Conformance fixture `timestamp-format-ambiguous-strict` was
+  exercising the wrong code path.** Discovered while adding the
+  lenient-mode companion fixture. The fixture's input bytes had
+  a Type Word declaring `word_count = 7` (14 bytes) but the
+  actual hex block contained 16 bytes per record. The mismatch
+  caused `find_first_record`'s look-ahead to land on filler
+  bytes mid-record and reject the candidate, producing
+  `MieNoValidRecords` (exit 2) instead of the intended
+  `MieTimestampFormatMismatch` (also exit 2). The strict
+  fixture's `expected_exit: 2` couldn't distinguish the two
+  error paths, so the test passed for the wrong reason. Fix:
+  change the Type Word's `word_count` field from 7 to 8 so the
+  declared length matches the actual 16-byte record. The probe
+  now reaches AMBIGUOUS classification correctly, and the
+  strict fixture exercises the L2-DEC-016 path it was always
+  meant to.
 
 ### Maintenance
 
-- `docs/diagrams/dataflow.puml` `find_first_record` note updated:
-  "(two-record look-ahead)" → "(L2-SYN-005 / L2-SYN-026; N defaults
-  to 2, configurable via decode.lookahead_records)". The rendered
-  `docs/diagrams/dataflow.svg` was regenerated to match (PlantUML
-  1.2026.5, matching the pin in the `diagrams` CI job).
-- `docs/ROADMAP.md` refreshed for the post-v1.1.0 / pre-v1.2.0
-  state: v1.1.0 release-status entry added; "Queued for the next
-  release" rewritten to summarize the full `[Unreleased]` contents
-  (L2-SYN-026 configurable look-ahead, FIELDS.md retirement, Python
-  coverage gate, Python TOML log-level fix, three new cross-impl
+- `docs/diagrams/dataflow.puml` `find_first_record` note
+  updated: "(two-record look-ahead)" → "(L2-SYN-005 /
+  L2-SYN-026; N defaults to 2, configurable via
+  decode.lookahead_records)". The rendered
+  `docs/diagrams/dataflow.svg` was regenerated to match
+  (PlantUML 1.2026.5, matching the pin in the `diagrams` CI
+  job).
+- `docs/ROADMAP.md` refreshed for v1.2.0: v1.1.0 release-status
+  entry added; "Queued for the next release" rewritten to
+  summarize the full `[Unreleased]` contents (L2-SYN-026
+  configurable look-ahead, FIELDS.md retirement, Python coverage
+  gate, Python TOML log-level fix, three new cross-impl
   conformance fixtures, dataflow-diagram refresh); the two
-  Robustness-backlog items resolved in v1.1.0 / `[Unreleased]` are
+  Robustness-backlog items resolved in v1.1.0 / v1.2.0 are
   struck through with their resolution commits; "Shared
   Commitments" text updated from "two-record look-ahead" to the
-  N-record wording. The intermediate "Deferred follow-ups" section
-  introduced mid-cycle has been removed — every item it tracked
-  shipped in this `[Unreleased]` cycle, so the section's job is
-  done.
+  N-record wording. A mid-cycle "Deferred follow-ups" section
+  introduced during v1.2.0 development was removed before the
+  release cut — every item it tracked shipped within v1.2.0.
 
 ## [1.1.0] — 2026-06-07
 
@@ -421,6 +432,7 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/joey-huckabee/mie-decoder/releases/tag/v1.0.0

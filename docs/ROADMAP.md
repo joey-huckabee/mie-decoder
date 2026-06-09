@@ -2,6 +2,20 @@
 
 ## Release status
 
+**v1.2.0 — joint Rust + Python cut, 2026-06-08.** Third joint
+release. Added the L2-SYN-026 configurable N-record sync look-ahead
+(`decode.lookahead_records` TOML key, `--lookahead-records N` CLI
+flag), the Python coverage gate in CI (85% combined line+branch
+floor), and three new cross-impl conformance fixtures (L2-DEC-015
+borderline, L2-DEC-016 lenient-mode WARN, L2-SYN-026 N>2 catches
+what N=2 misses). Fixed a Python L2-CFG-003 precedence bug where
+TOML `[logging] level` was silently ignored when no `--log-level`
+was passed on the CLI. Retired the static-musl SLES 12 deployment
+target (L3-RS-007 withdrawn; ID reserved) and the `docs/FIELDS.md`
+redirect stub. Test count: 242 → 248; conformance case count:
+21 → 27. See [`CHANGELOG.md`](../CHANGELOG.md) section `[1.2.0]`
+for the full entry.
+
 **v1.1.0 — joint Rust + Python cut, 2026-06-07.** Second joint release.
 Added the L2-DEC-015 multi-record timestamp-format auto-detection probe,
 the L2-DEC-016 `MieTimestampFormatMismatchError` for ambiguous-detection
@@ -23,18 +37,9 @@ for the full v1.0.0 entry.
 
 ### Queued for the next release (`[Unreleased]`)
 
-The `[Unreleased]` section of [`CHANGELOG.md`](../CHANGELOG.md)
-accumulates work ready to roll into a future **v1.2.0** cut. Current
-contents span the L2-SYN-026 configurable N-record look-ahead (TOML +
-CLI), a Python TOML `[logging] level` precedence fix (L2-CFG-003), the
-new Python coverage gate (85% combined line+branch, mirrors the Rust
-70/70 floor), the FIELDS.md retirement, three new cross-impl
-conformance fixtures (L2-DEC-015 borderline detection, L2-DEC-016
-lenient-mode WARN, L2-SYN-026 N>2 catches what N=2 misses), the
-L2-DEC-016 strict-fixture bug fix, and a dataflow-diagram refresh. See
-the CHANGELOG entry for the full list and rationale per item. When
-you're ready to cut, follow the version-bump checklist in
-`docs/MAINTAINER-GUIDE.md` §11.
+`[Unreleased]` is empty as of the v1.2.0 cut. Future work
+accumulates here; when ready to cut a release, follow the
+version-bump checklist in `docs/MAINTAINER-GUIDE.md` §11.
 
 ## Planned
 
