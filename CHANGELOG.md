@@ -42,6 +42,18 @@ full release workflow.
   to behave identically); the rationale for the in-place wording
   update is recorded in the L2-SYN-005 Rationale field.
 
+### Maintenance
+
+- `docs/ROADMAP.md` refreshed for the post-v1.1.0 / pre-v1.2.0 state:
+  v1.1.0 release-status entry added; "Queued for the next release"
+  section describes the `[Unreleased]` L2-SYN-026 work; the two
+  Robustness-backlog items resolved in v1.1.0 / `[Unreleased]` are
+  struck through with their resolution commits; "Shared Commitments"
+  text updated from "two-record look-ahead" to the N-record wording;
+  new "Deferred follow-ups" section enumerates small bounded items
+  (three conformance fixtures + the Python coverage gate) so they
+  don't get lost between sessions.
+
 ## [1.1.0] — 2026-06-07
 
 Stronger timestamp-format auto-detection via a multi-record probe,

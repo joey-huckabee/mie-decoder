@@ -2,6 +2,14 @@
 
 ## Release status
 
+**v1.1.0 — joint Rust + Python cut, 2026-06-07.** Second joint release.
+Added the L2-DEC-015 multi-record timestamp-format auto-detection probe,
+the L2-DEC-016 `MieTimestampFormatMismatchError` for ambiguous-detection
+cases, the `decode.detect_records` TOML key and `--detect-records N` CLI
+flag (range `[1, 32]`, default `8`), plus several smaller cleanups
+(conformance-manifest type validation, trace-matrix L2-CLI-006 fix). See
+[`CHANGELOG.md`](../CHANGELOG.md) section `[1.1.0]` for the full entry.
+
 **v1.0.0 — joint Rust + Python cut, 2026-06-07.** First release of both
 implementations from a single repository tag (`v1.0.0`). Combined scope
 covers the streaming Rust writer + static-musl build, the Python package
@@ -13,11 +21,21 @@ input/output collision rejection), the structural-invariants subsystem
 documentation suite under `docs/`. See [`CHANGELOG.md`](../CHANGELOG.md)
 for the full v1.0.0 entry.
 
+### Queued for the next release (`[Unreleased]`)
+
+The L2-SYN-026 configurable N-record look-ahead (default `N = 2`
+preserves historical behavior; `decode.lookahead_records` TOML key +
+`--lookahead-records N` CLI flag, range `[1, 32]`) is committed and
+sitting in CHANGELOG's `[Unreleased]` section, ready to roll into a
+future **v1.2.0** cut. Implementation spans commits `fc515d7..84938f2`;
+spec is in `docs/L2-REQ.md` (L2-SYN-005 generalized in place, L2-SYN-026
+added). No outstanding work to ship this release — when you're ready,
+follow the version-bump checklist in `docs/MAINTAINER-GUIDE.md` §11.
+
 ## Planned
 
 | Version | Feature |
 |---------|---------|
-| Rust v1.1 / Python next | Stronger timestamp-format auto-detection (probe multiple records, confidence scoring, mid-file format-mismatch diagnostic); N-record configurable look-ahead in sync validation. |
 | Rust v1.x | Multi-file input, time-sorted merge to single CSV. |
 | Rust v2.0 | Data word decoders, additional per-message-type CSVs. |
 | Rust v3.0 | Apache Parquet output. |
@@ -28,11 +46,51 @@ contract (CSV byte-for-byte equivalence on shared behavior) holds at any
 compatible version pair. See [`docs/MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md)
 section 11 for the release workflow.
 
+## Deferred follow-ups (small, bounded)
+
+Items noted as "skipped in favor of unit tests" or "follow-up commit"
+during recent initiatives. Each is independently shippable; the unit
+tests in the relevant impls already exercise the underlying behavior,
+so these are nice-to-have cross-impl conformance fixtures rather than
+gating work.
+
+- **Conformance fixture: L2-DEC-015 borderline detection.** A file where
+  single-record probe (`--detect-records 1`) picks the wrong timestamp
+  format but the default 8-record probe picks correctly. Demonstrates
+  the multi-record probe's value cross-impl. Skipped in the v1.1.0
+  initiative (commit `822de95`) — see commit message for the fixture-
+  engineering trade-offs.
+- **Conformance fixture: L2-DEC-016 lenient-mode WARN.** Same input as
+  the existing `timestamp-format-ambiguous-strict` fixture but without
+  strict mode; asserts the WARN appears on stderr and decode proceeds
+  with the best-guess format. Lenient-mode CSV output is harder to
+  oracle because it depends on internal sync-recovery behavior on
+  synthetic records — that's why this was deferred.
+- **Conformance fixture: L2-SYN-026 N > 2 catches what N = 2 misses.**
+  A file where `--lookahead-records 2` (the default) admits an invalid
+  candidate but `--lookahead-records 4` rejects it. Requires
+  constructing two consecutive plausible-but-fake Type Words without
+  also tripping the L2-SYN-018 homogeneous-payload defense — see
+  commit `84938f2` for the trade-off note. Unit tests already pin the
+  behavior in both impls.
+- **Python coverage gate in CI.** `docs/MAINTAINER-GUIDE.md` §10 notes
+  Python doesn't currently have a coverage gate; adding one is a
+  separate decision (introduces a `pytest-cov` dev dep and a coverage-
+  floor policy mirroring the Rust 70/70 floor).
+- **`docs/diagrams/dataflow.puml` note refresh.** The data-flow
+  diagram's `find_first_record` note says "two-record look-ahead";
+  after L2-SYN-026 the look-ahead is configurable (default 2). The
+  note text needs a small update, and the rendered SVG must be
+  regenerated locally to satisfy the `diagrams` CI drift gate. One
+  PlantUML invocation: `plantuml -tsvg docs/diagrams/*.puml`. The
+  same convention from `docs/MAINTAINER-GUIDE.md` §3 applies — commit
+  the `.puml` source and the regenerated `.svg` together.
+
 ## Shared Commitments
 
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.
 - **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including currently-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`).
-- **Sync recovery semantics preserved.** Two-record look-ahead, 64 KB scan cap, error records and SPURIOUS_DATA continuations remain valid records that pass validation.
+- **Sync recovery semantics preserved.** N-record look-ahead (default `N = 2` per L2-SYN-005, configurable via L2-SYN-026), 64 KB scan cap, error records and SPURIOUS_DATA continuations remain valid records that pass validation.
 - **One validation path.** Header skip, normal forward decode, and post-loss recovery all share `sync::validate_record`. There is no weaker fast path.
 - **Cross-implementation conformance.** Text-based fixtures under
   `tests/conformance/` exercise shared decoding, recovery, filtering, config,
@@ -1259,16 +1317,16 @@ here so they don't get dropped.
 
 ### Validation strength
 
-- **Stronger timestamp-format auto-detection.** Today's scoring uses T/R
-  consistency, word-count plausibility, and IRIG range checks against
-  only the first record. On ambiguous recordings a wrong choice produces
-  garbage timestamps for the whole file. Possible improvements: probe
-  more than the first record, expose a per-format confidence score, or
-  add a hard-fail "format mismatch detected mid-file" diagnostic.
-- **Multi-record look-ahead.** Today's two-record look-ahead can be
-  defeated by two consecutive same-shape corruptions. An N-record
-  (configurable) look-ahead would catch a wider class of failures at the
-  cost of small additional per-record reads.
+- **~~Stronger timestamp-format auto-detection.~~** *Resolved in v1.1.0.*
+  L2-DEC-015 multi-record probe (default `N = 8`, configurable) +
+  L2-DEC-016 confidence classification + `MieTimestampFormatMismatchError`
+  for the ambiguous case. See `CHANGELOG.md` `[1.1.0]` for the full
+  entry.
+- **~~Multi-record look-ahead.~~** *Resolved in `[Unreleased]`,
+  shipping in v1.2.0.* L2-SYN-026 makes the look-ahead depth
+  configurable via `decode.lookahead_records` (default `N = 2`
+  preserves historical behavior). Implementation in commits
+  `fc515d7..84938f2`.
 - **~~T/R consistency check during decode.~~** *Resolved.* Landed as
   L2-SYN-020 (BC→RT requires Cmd direction = Receive) and L2-SYN-021
   (RT→BC requires Cmd direction = Transmit) in `docs/L2-REQ.md`,
