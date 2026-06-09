@@ -260,7 +260,6 @@ docs/
 ├── CONFIG-REFERENCE.md Normative TOML key reference (type / default / CLI override)
 ├── ERROR-CATALOG.md    Operator reference: exit codes, error classes, DDC codes
 ├── EXAMPLES.md         Runnable cookbook of common operator tasks
-├── FIELDS.md           Redirect to MIE-FORMAT.md
 ├── L1-REQ.md           Level 1 SHALL statements (system requirements)
 ├── L2-REQ.md           Level 2 architectural derivations
 ├── L3-REQ.md           Level 3 implementation obligations (incl. PY/RS)

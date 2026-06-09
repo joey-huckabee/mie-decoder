@@ -23,12 +23,14 @@ full release workflow.
   stub has done its job; deleted. Active references in
   `docs/L1-REQ.md` (L1-OUT-001), `docs/L2-REQ.md` (L2-DEC-002,
   L2-SYN-025 rationale, error-code family rationale),
-  `docs/MAINTAINER-GUIDE.md` (repo-tree listing), and
-  `CLAUDE.md` (Reference docs section) updated to point at
-  `docs/MIE-FORMAT.md` directly. ROADMAP historical mentions of
-  FIELDS.md (Documentation Initiative recap, deferred-audit
-  notes, etc.) preserved as-is since they describe past state
-  accurately.
+  `docs/MAINTAINER-GUIDE.md` (repo-tree listing), `CLAUDE.md`
+  (Reference docs section), `docs/MIE-FORMAT.md` (the
+  "absorbs FIELDS.md" note now reflects deletion), and
+  `README.md` (repo-tree listing) updated to either point at
+  `docs/MIE-FORMAT.md` directly or to drop the stub reference.
+  ROADMAP historical mentions of FIELDS.md (Documentation
+  Initiative recap, deferred-audit notes, etc.) preserved as-is
+  since they describe past state accurately.
 
 ### Added
 
