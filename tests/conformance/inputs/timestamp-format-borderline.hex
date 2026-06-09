@@ -1,0 +1,47 @@
+# L2-DEC-015 borderline-detection fixture.
+#
+# Five records (80 bytes) hand-crafted to demonstrate the value of the
+# multi-record probe: single-record probe (--detect-records 1) picks
+# the wrong timestamp format (Standard); the default 8-record probe
+# picks the right format (IRIG) decisively.
+#
+# Record 1 is shaped to favor Standard:
+#   * Type Word 0x0802 (BC_TO_RT, wc=8) — same TypeWord across all 5
+#     records (homogeneity defense doesn't fire because record 1's
+#     bytes [8..16) differ from records 2-5's, satisfying L2-SYN-018).
+#   * Standard Cmd at offset+6 (raw 0x7963): RT=15, T/R=Receive
+#     (matches BC_TO_RT, +2 STD T/R), data_word_count=3 (matches
+#     wc-5=3, +2 STD WC). Standard score: +4.
+#   * IRIG Cmd at offset+8 (raw 0x0400): T/R bit set so direction=
+#     Transmit (does NOT match BC_TO_RT, no +2), dwc=0 (doesn't
+#     match wc-6=2, no +2). IRIG range: ts_upper=0x001F gives
+#     hour=31 (>23), fails (no +1). IRIG score: 0.
+#   * Net per-record: IRIG=0, STD=4. Standard wins by 4.
+#
+# Records 2-5 are valid IRIG-format records:
+#   * Same Type Word 0x0802.
+#   * IRIG TS: day=192, hour=15, min=54, sec=50 (all valid).
+#   * IRIG Cmd at offset+8 (raw 0x7962): RT=15, T/R=Receive
+#     (matches BC_TO_RT, +2 IRIG T/R), dwc=2 (matches wc-6=2,
+#     +2 IRIG WC). IRIG range valid (+1). IRIG score: 5.
+#   * Standard Cmd at offset+6 (the IRIG ts_lower, raw 0x0000):
+#     direction=Receive (matches BC_TO_RT, +2 STD T/R), dwc=0
+#     (doesn't match wc-5=3, no +2). Standard score: 2.
+#   * Data[0] (bytes 10-11) varies per record (0x0001, 0x0002,
+#     0x0003, 0x0004) so records 2-4 aren't byte-identical for
+#     L2-SYN-018 — though that defense already returns false on the
+#     record-1-vs-record-2 comparison.
+#
+# Aggregate at N=1: IRIG=0, STD=4. Standard Marginal.
+# Aggregate at N=5+: IRIG=0+5*4=20, STD=4+2*4=12. IRIG Decisive
+# (max_score >= DECISIVE_FLOOR=8 AND margin >= DECISIVE_MARGIN=6).
+#
+# Default --detect-records 8 walks all 5 available records (probe
+# stops at EOF), yielding IRIG Decisive. The two conformance cases
+# (default + --detect-records 1) demonstrate the cross-impl
+# behavioral difference.
+0208 1F00 FFFF 6379 0004 0000 0000 0000
+0208 0F18 20DB 0000 6279 0100 0000 0000
+0208 0F18 20DB 0000 6279 0200 0000 0000
+0208 0F18 20DB 0000 6279 0300 0000 0000
+0208 0F18 20DB 0000 6279 0400 0000 0000

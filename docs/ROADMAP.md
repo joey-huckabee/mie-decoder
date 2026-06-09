@@ -85,6 +85,16 @@ gating work.
   PlantUML invocation: `plantuml -tsvg docs/diagrams/*.puml`. The
   same convention from `docs/MAINTAINER-GUIDE.md` §3 applies — commit
   the `.puml` source and the regenerated `.svg` together.
+- **Python: TOML `[logging] level` key is parsed but never applied.**
+  `python/src/mie_decoder/config.py` accepts `[logging] level = "..."`
+  and the value flows into `DecoderConfig.log_level`, but
+  `python/src/mie_decoder/cli.py` never re-calls
+  `configure_logging(config.log_level)` after loading the TOML. The
+  TODO comment is already in cli.py around line 518. Result: the
+  TOML log-level setting is silently ignored; only the `--log-level`
+  CLI flag has effect. Rust applies the TOML value correctly. Fix is
+  a few lines in `_run_decode` plus a Python conformance / e2e test
+  that asserts the TOML value is honored.
 
 ## Shared Commitments
 

@@ -17,6 +17,15 @@ full release workflow.
 
 ### Added
 
+- **Conformance fixture: L2-DEC-015 borderline detection** (two
+  cases). `timestamp-format-borderline-default` and
+  `timestamp-format-borderline-n1` share a hand-crafted 5-record
+  input where the multi-record probe genuinely changes the
+  format choice cross-impl: at `--detect-records 1` both impls
+  pick Standard and decode 1 row; at default `--detect-records 8`
+  both impls pick IRIG (Decisive) and decode 4 rows. The two
+  oracles are byte-identical across Rust and Python, pinning the
+  cross-impl behavior at each N. Conformance case count: 22 → 24.
 - **Configurable N-record sync look-ahead** (L2-SYN-005, L2-SYN-026).
   `sync::validate_record` (Rust) / `sync.validate_record` (Python) now
   accept a look-ahead depth parameter `N`. The function checks `N − 1`

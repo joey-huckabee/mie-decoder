@@ -165,6 +165,20 @@
       "input": "inputs/timestamp-format-ambiguous.hex",
       "expected": "expected/timestamp-format-ambiguous-lenient.csv",
       "expected_stderr_contains": "Ambiguous: IRIG=4 STD=4"
+    },
+    {
+      "name": "timestamp-format-borderline-default",
+      "input": "inputs/timestamp-format-borderline.hex",
+      "expected": "expected/timestamp-format-borderline-default.csv",
+      "expected_stderr_contains": "Status RT = 0 does not match Cmd RT = 15"
+    },
+    {
+      "name": "timestamp-format-borderline-n1",
+      "input": "inputs/timestamp-format-borderline.hex",
+      "expected": "expected/timestamp-format-borderline-n1.csv",
+      "rust_args": ["--detect-records", "1"],
+      "python_args": ["--detect-records", "1"],
+      "expected_stderr_contains": "TW.word_count = 8 is too small for declared payload"
     }
   ]
 }
