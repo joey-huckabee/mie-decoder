@@ -109,6 +109,7 @@ cargo cov-ci                                     # coverage gate (alias in .carg
 # Python (from repo root)
 poetry -C python run pytest                      # all tests
 poetry -C python run pytest tests/test_e2e.py -k delta -v
+poetry -C python run pytest --cov --cov-fail-under=85   # coverage gate (config in pyproject.toml)
 poetry -C python run python ../tests/conformance/run.py
 
 # Filter pytest by requirement marker
@@ -422,17 +423,18 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 
 ## 9. CI architecture
 
-`.github/workflows/ci.yml` has five jobs:
+`.github/workflows/ci.yml` has six jobs:
 
 | Job | What it gates | Platforms | Failure cost |
 |-----|---------------|-----------|--------------|
 | `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `tests/integration.rs` + `tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (70% line + region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
 | `python` | `poetry sync` + `poetry run pytest`; `poetry check --strict --lock` + `poetry build` Linux/3.12-only | 5 versions × Linux (3.10–3.14), 2 versions × Windows (3.12, 3.14) | Block merge |
+| `python-coverage` | `poetry run pytest --cov --cov-fail-under=85` — 85% combined line+branch floor (config in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
 | `diagrams` | Re-render every `docs/diagrams/*.puml` with the pinned PlantUML version and `git diff --exit-code` against the committed `*.svg` — fails if a `.puml` source was changed without regenerating the matching `.svg` | `ubuntu-latest` | Block merge |
 
-The Rust and Python deployment targets are Linux (`x86_64-unknown-linux-musl` for Rust; current SLES 12 / RHEL flavors for Python). Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gate, lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke.
+The Rust and Python deployment targets are Linux (`x86_64-unknown-linux-musl` for Rust; current SLES 12 / RHEL flavors for Python). Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.
 
 The `diagrams` job pins PlantUML to the version that produced the committed SVGs (read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg` to find it). Bumping that pin generally reflows every diagram and requires a matching local re-render + commit of all `*.svg` files in the same PR.
 
@@ -442,20 +444,36 @@ Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which poin
 
 ## 10. Coverage workflow
 
-Rust uses `cargo-llvm-cov`. The CI gate is `cargo cov-ci` (alias defined in `.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 70/70).
+Both implementations are gated. Rust uses `cargo-llvm-cov`; Python uses `pytest-cov` (which wraps `coverage.py`). Each gate runs once on Linux only — coverage isn't platform-dependent, so fanning the gate across the full matrix would waste CI minutes.
 
-### Local coverage check
+### Rust
+
+The CI gate is `cargo cov-ci` (alias defined in `.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 70/70).
 
 ```bash
 cargo cov-ci         # what CI runs
 cargo cov            # interactive HTML report
+cargo cov-lcov       # lcov.info for IDE coverage overlays
+```
+
+### Python
+
+The CI gate runs `poetry -C python run pytest --cov --cov-report=term-missing --cov-fail-under=85`. Configuration lives in `python/pyproject.toml` under `[tool.coverage.run]` (source set, branch tracking, exclusions) and `[tool.coverage.report]`. The floor is 85% combined line+branch. `__main__.py` is excluded because it's the `python -m mie_decoder` entry shim (parallel to Rust's `bin/mie-decoder.rs` exclusion).
+
+```bash
+# What CI runs (use this before pushing)
+poetry -C python run pytest --cov --cov-fail-under=85
+
+# Local exploration — see uncovered lines and partial branches
+poetry -C python run pytest --cov --cov-report=term-missing
+
+# HTML report (opens in browser; written to htmlcov/)
+poetry -C python run pytest --cov --cov-report=html
 ```
 
 ### Ratcheting the floor
 
-When coverage is consistently above the floor by >2pp, bump it. Edit `Cargo.toml` (or wherever the floor is defined) and re-run.
-
-Python doesn't currently have a coverage gate in CI. The 242-test suite (as of v1.1.0) provides effective coverage at the integration level; adding a coverage tool would be a separate decision.
+When coverage is consistently above the floor by >2pp, bump it. For Rust, edit the `cov-ci` alias in `.cargo/config.toml`. For Python, edit both the `--cov-fail-under=N` argument in `.github/workflows/ci.yml`'s `python-coverage` job *and* the baseline comment in `python/pyproject.toml`'s `[tool.coverage.run]` block.
 
 ---
 

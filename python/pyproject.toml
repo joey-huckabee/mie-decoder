@@ -21,6 +21,7 @@ packages = [{include = "mie_decoder", from = "src"}]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
+pytest-cov = "^7.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -38,3 +39,22 @@ python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+# Coverage gate parallels the Rust crate's cargo-llvm-cov gate (70%
+# line + 70% region in .cargo/config.toml's `cov-ci` alias). Baseline
+# at integration time was ~89% combined line+branch across the 245
+# pytest cases, so the 85% combined floor gives ~4 percentage points
+# of headroom before CI starts failing. Bump up after a few weeks of
+# stable readings if we want stricter.
+#
+# __main__.py is the entry shim (python -m mie_decoder) — three-line
+# wrapper around cli.main(), uncoverable without spawning a child
+# process. Mirrors the Rust exclusion of bin/mie-decoder.rs.
+[tool.coverage.run]
+source = ["mie_decoder"]
+branch = true
+omit = ["*/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

@@ -38,3 +38,9 @@ __pycache__/
 
 # Coverage artifacts (HTML reports go under target/, ignored by /target)
 lcov.info
+
+# Python coverage artifacts (pytest-cov / coverage.py)
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

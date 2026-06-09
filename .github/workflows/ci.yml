@@ -144,6 +144,37 @@ jobs:
         working-directory: python
         run: poetry build
 
+  python-coverage:
+    name: Python coverage gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: pipx install poetry==2.3.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: poetry
+          cache-dependency-path: python/poetry.lock
+
+      - name: Synchronize locked dependencies
+        run: poetry -C python sync --no-interaction --no-ansi
+
+      - name: Enforce Python coverage gate
+        # Coverage gate runs once on Linux/3.12 — coverage isn't
+        # platform- or interpreter-dependent, so running it across the
+        # full python-job matrix would waste CI minutes. Mirrors how
+        # cargo cov-ci is invoked only on the Linux cell of the Rust
+        # job. Floor (85% combined line+branch) is set in
+        # python/pyproject.toml's [tool.coverage.run] / [tool.coverage.report]
+        # config — see the comment block there for headroom rationale.
+        run: poetry -C python run pytest --cov --cov-report=term-missing --cov-fail-under=85
+
   conformance:
     name: Rust/Python conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -36,6 +36,25 @@ full release workflow.
 
 ### Added
 
+- **Python coverage gate in CI** (`python-coverage` job). Mirrors
+  the Rust `cargo cov-ci` model: runs once on Linux/Python 3.12,
+  not across the full matrix (coverage isn't platform- or
+  interpreter-dependent). `pytest-cov ^7.0` added as a dev
+  dependency; `[tool.coverage.run]` and `[tool.coverage.report]`
+  sections added to `python/pyproject.toml` (branch coverage on,
+  `__main__.py` excluded as the entry shim — parallel to Rust's
+  `bin/mie-decoder.rs` exclusion). Floor is **85% combined
+  line+branch**, set as `--cov-fail-under=85` in the CI job.
+  Baseline at integration was 88.92% across the 245-case pytest
+  suite, giving ~4 percentage points of headroom before drift
+  starts failing the build (same ratchet model as the Rust 70/70
+  floor's ~5pp headroom against its 74.81% baseline).
+  `docs/MAINTAINER-GUIDE.md` §10 rewritten to cover both Rust and
+  Python coverage workflows; cheat sheet (§3) gains the
+  `poetry -C python run pytest --cov --cov-fail-under=85` invocation
+  alongside `cargo cov-ci`; CI architecture table (§9) updated from
+  five jobs to six. `docs/ROADMAP.md` deferred-follow-up #4 removed
+  (closed).
 - **Conformance fixture: L2-SYN-026 N-record look-ahead value
   demonstration** (two cases). `lookahead-corruption-chain-n2` and
   `lookahead-corruption-chain-n4` share a hand-crafted 5-record

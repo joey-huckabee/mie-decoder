@@ -73,10 +73,6 @@ gating work.
   also tripping the L2-SYN-018 homogeneous-payload defense — see
   commit `84938f2` for the trade-off note. Unit tests already pin the
   behavior in both impls.
-- **Python coverage gate in CI.** `docs/MAINTAINER-GUIDE.md` §10 notes
-  Python doesn't currently have a coverage gate; adding one is a
-  separate decision (introduces a `pytest-cov` dev dep and a coverage-
-  floor policy mirroring the Rust 70/70 floor).
 - **`docs/diagrams/dataflow.puml` note refresh.** The data-flow
   diagram's `find_first_record` note says "two-record look-ahead";
   after L2-SYN-026 the look-ahead is configurable (default 2). The
