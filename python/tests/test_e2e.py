@@ -685,6 +685,118 @@ class TestCliEndToEnd:
         rc = main(["--log-level", "DEBUG", "decode", str(tmp_mie_file), "-o", str(out)])
         assert rc == 0
 
+    @pytest.mark.requirement("L2-CFG-003")
+    def test_cli_toml_logging_level_is_honored_when_no_cli_override(
+        self,
+        tmp_mie_file: Path,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """L2-CFG-003 precedence: TOML [logging] level takes effect when
+        no --log-level CLI flag is passed. Regression coverage for the
+        bug where the TOML value was parsed into config.log_level but
+        the CLI never re-configured the logger after loading."""
+        from mie_decoder.cli import main
+        import logging
+
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[logging]\nlevel = "INFO"\n', encoding="utf-8")
+        out = tmp_path / "decoded.csv"
+
+        with caplog.at_level(logging.INFO, logger="mie_decoder"):
+            rc = main([
+                "decode",
+                str(tmp_mie_file),
+                "-o", str(out),
+                "--config", str(config_path),
+            ])
+
+        assert rc == 0
+        # `decode exit class:` is INFO-level; it appears only if the
+        # mie_decoder logger is effectively at INFO or finer.
+        summary_lines = [
+            r.getMessage() for r in caplog.records
+            if "decode exit class:" in r.getMessage()
+        ]
+        assert summary_lines, (
+            "expected `decode exit class:` (INFO) line after TOML set "
+            "level=INFO; got: "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+
+    @pytest.mark.requirement("L2-CFG-003")
+    def test_cli_log_level_overrides_toml_logging_level(
+        self,
+        tmp_mie_file: Path,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """L2-CFG-003 precedence: --log-level CLI flag overrides the
+        TOML [logging] level (CLI > TOML > default)."""
+        from mie_decoder.cli import main
+        import logging
+
+        # TOML asks for DEBUG (most verbose); CLI asks for ERROR
+        # (suppresses INFO). CLI must win — no `decode exit class:`
+        # INFO line should appear.
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[logging]\nlevel = "DEBUG"\n', encoding="utf-8")
+        out = tmp_path / "decoded.csv"
+
+        with caplog.at_level(logging.DEBUG, logger="mie_decoder"):
+            rc = main([
+                "--log-level", "ERROR",
+                "decode",
+                str(tmp_mie_file),
+                "-o", str(out),
+                "--config", str(config_path),
+            ])
+
+        assert rc == 0
+        info_lines = [
+            r.getMessage() for r in caplog.records
+            if r.levelno < logging.ERROR
+        ]
+        assert not info_lines, (
+            f"CLI --log-level ERROR should suppress all sub-ERROR records "
+            f"even when TOML set level=DEBUG; got: {info_lines}"
+        )
+
+    @pytest.mark.requirement("L2-CFG-003")
+    def test_cli_dump_honors_toml_logging_level(
+        self,
+        tmp_mie_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        """L2-CFG-003 precedence: TOML [logging] level applies to the
+        dump subcommand too (mirrors Rust where --config is global).
+        dump.py emits no INFO messages of its own, so the assertion is
+        on the effective log level after the run rather than captured
+        records."""
+        from mie_decoder.cli import main
+        import logging
+        import sys
+        import io
+
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[logging]\nlevel = "DEBUG"\n', encoding="utf-8")
+
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
+        try:
+            rc = main([
+                "dump",
+                str(tmp_mie_file),
+                "--records", "1",
+                "--config", str(config_path),
+            ])
+        finally:
+            sys.stdout = old_stdout
+
+        assert rc == 0
+        assert logging.getLogger("mie_decoder").getEffectiveLevel() == logging.DEBUG
+
     @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_records(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """CLI dump should print record-aware hex dump to stdout."""

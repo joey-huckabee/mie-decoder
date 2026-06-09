@@ -194,6 +194,13 @@
       "expected": "expected/lookahead-corruption-chain-n4.csv",
       "rust_args": ["--lookahead-records", "4"],
       "python_args": ["--lookahead-records", "4"]
+    },
+    {
+      "name": "log-level-from-toml-config",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/basic-multi-record.csv",
+      "config": "configs/log-level-info.toml",
+      "expected_stderr_contains": "decode exit class"
     }
   ]
 }

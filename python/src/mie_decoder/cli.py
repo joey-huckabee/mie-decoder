@@ -236,8 +236,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Max number of records to dump (record mode). Default: all.",
     )
+    # dump only consumes [logging] level from the TOML — the other
+    # decode-time keys (time_format, filters, strict, etc.) don't
+    # apply to a hex dump. Mirrors Rust where --config is a global
+    # flag accepted by every subcommand.
+    dump_parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to TOML configuration file (only [logging] level applies to dump).",
+    )
 
     return parser
+
+
+def _apply_config_log_level(args: argparse.Namespace, config_log_level: str) -> None:
+    """Apply log-level precedence: CLI > TOML > default.
+
+    ``main()`` already configured logging with the CLI value (or the
+    ``"WARNING"`` default) before the TOML config was loaded. If the
+    user did not pass ``--log-level``, re-configure with the TOML
+    value now. ``config_log_level`` falls back to ``"WARNING"`` when
+    the file has no ``[logging]`` section, so this is a no-op in the
+    common case. Mirrors ``resolve_config`` in ``src/cli.rs``.
+    """
+    if args.log_level is None:
+        configure_logging(config_log_level)
 
 
 def _run_decode(args: argparse.Namespace) -> int:
@@ -273,6 +297,8 @@ def _run_decode(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 1
+
+    _apply_config_log_level(args, config.log_level)
 
     # Build CLI overrides dict (only non-None values)
     overrides: dict = {}
@@ -471,7 +497,19 @@ def _run_dump(args: argparse.Namespace) -> int:
     Returns:
         Exit code: 0 on success, 1 on error.
     """
+    from mie_decoder.config import load_config
     from mie_decoder.dump import hex_dump_raw, hex_dump_records
+
+    # dump only consumes log_level from config (time_format, strict,
+    # filters, etc. don't apply to a raw / record hex dump). Load so
+    # the TOML [logging] level is honored — same precedence as decode.
+    # Mirrors the Rust dump path's resolve_config call.
+    try:
+        config = load_config(args.config)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 1
+    _apply_config_log_level(args, config.log_level)
 
     try:
         if args.raw:
@@ -505,9 +543,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    # Determine log level: CLI > config file > default
-    # At this point we configure with CLI value or default;
-    # config file level is applied in _run_decode after loading.
+    # Determine log level: CLI > TOML > default. main() configures
+    # with the CLI value (or the "WARNING" default) so any logging
+    # in main() / parsing has a level; the subcommand runners
+    # re-configure from TOML via _apply_config_log_level after the
+    # config file is loaded.
     log_level = args.log_level or "WARNING"
     configure_logging(log_level)
 
@@ -515,8 +555,6 @@ def main(argv: list[str] | None = None) -> int:
     logger.debug("Arguments: %s", args)
 
     if args.command == "decode":
-        # Re-configure logging if config file specifies a level
-        # and CLI didn't override it
         return _run_decode(args)
     elif args.command == "dump":
         return _run_dump(args)

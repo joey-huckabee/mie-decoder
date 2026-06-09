@@ -1,0 +1,14 @@
+# Conformance fixture: exercise [logging] level precedence cross-impl.
+# Used by manifest case `log-level-from-toml-config`.
+#
+# Bug fixed in commit that introduced this fixture: the Python CLI
+# parsed [logging] level into DecoderConfig.log_level but never
+# re-configured the logger after loading the TOML, silently ignoring
+# the value. Rust applied the value correctly via resolve_config.
+# This config makes the runner assert that both impls now emit a
+# `decode exit class:` INFO line — an INFO substring that both impls
+# render lowercase / identically (Python cli.py:_run_decode summary,
+# Rust src/cli.rs:run_decode summary).
+
+[logging]
+level = "INFO"

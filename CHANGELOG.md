@@ -15,6 +15,42 @@ full release workflow.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Python: `[logging] level` in TOML config now honored**
+  (regression of L2-CFG-003 precedence: CLI > TOML > default).
+  `python/src/mie_decoder/config.py` was parsing `[logging] level`
+  into `DecoderConfig.log_level` and validating it at load time,
+  but `python/src/mie_decoder/cli.py` only called
+  `configure_logging()` once at the top of `main()` with the CLI
+  value (or `"WARNING"` default) — `_run_decode` then loaded the
+  TOML but never re-applied the log level. Net effect: a TOML
+  `[logging] level = "INFO"` was silently ignored unless the user
+  also passed `--log-level` on the CLI. Rust applied the TOML
+  value correctly via `resolve_config` in `src/cli.rs`. Fix
+  introduces a small `_apply_config_log_level(args, config_log_level)`
+  helper called immediately after `load_config(...)` in both
+  `_run_decode` and `_run_dump`; it re-configures the logger from
+  the TOML value when `--log-level` was not passed. The CLI value
+  (when present) still wins because `main()` configured with it
+  before the subcommand runner was entered. Also adds `--config`
+  to the `dump` subparser so `mie-decoder dump file.mie --config
+  foo.toml` can honor the TOML log level too (mirrors Rust, where
+  `--config` is a global flag accepted by every subcommand). New
+  Python e2e regressions in `python/tests/test_e2e.py`:
+  `test_cli_toml_logging_level_is_honored_when_no_cli_override`
+  (catches the original bug — fails without the fix),
+  `test_cli_log_level_overrides_toml_logging_level` (pins the
+  CLI-wins precedence), and `test_cli_dump_honors_toml_logging_level`
+  (covers the dump-path fix). New cross-impl conformance fixture
+  `log-level-from-toml-config` reuses the `basic-multi-record`
+  input + oracle plus `configs/log-level-info.toml` and asserts
+  the substring `"decode exit class"` appears on stderr — an
+  INFO-level message both impls emit identically (lowercase, same
+  prefix). Conformance case count: 26 → 27. Test count: 245 → 248.
+  `docs/ROADMAP.md`'s remaining deferred follow-up removed (the
+  Deferred follow-ups section is now empty / dropped).
+
 ### Removed
 
 - **`docs/FIELDS.md`** — the 3-line redirect stub kept for legacy
