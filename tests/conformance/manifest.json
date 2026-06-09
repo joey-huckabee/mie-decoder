@@ -179,6 +179,21 @@
       "rust_args": ["--detect-records", "1"],
       "python_args": ["--detect-records", "1"],
       "expected_stderr_contains": "TW.word_count = 8 is too small for declared payload"
+    },
+    {
+      "name": "lookahead-corruption-chain-n2",
+      "input": "inputs/lookahead-corruption-chain.hex",
+      "expected": "expected/lookahead-corruption-chain-n2.csv",
+      "rust_args": ["--lookahead-records", "2"],
+      "python_args": ["--lookahead-records", "2"],
+      "expected_stderr_contains": "scanning forward"
+    },
+    {
+      "name": "lookahead-corruption-chain-n4",
+      "input": "inputs/lookahead-corruption-chain.hex",
+      "expected": "expected/lookahead-corruption-chain-n4.csv",
+      "rust_args": ["--lookahead-records", "4"],
+      "python_args": ["--lookahead-records", "4"]
     }
   ]
 }

@@ -36,6 +36,20 @@ full release workflow.
 
 ### Added
 
+- **Conformance fixture: L2-SYN-026 N-record look-ahead value
+  demonstration** (two cases). `lookahead-corruption-chain-n2` and
+  `lookahead-corruption-chain-n4` share a hand-crafted 5-record
+  input (2 valid records, 32 bytes of 0xFF garbage, 1 valid record
+  at the end). At `--lookahead-records 2` both impls accept the
+  file start, decode record 1, then sync-recover through the
+  garbage and decode record 5 — 2 rows. At
+  `--lookahead-records 4` both impls reject the file start
+  (look-ahead chain reaches the garbage), scan forward, and
+  accept only record 5 — 1 row. The contrast (2 rows vs 1 row)
+  demonstrates the L2-SYN-026 value proposition: deeper
+  look-ahead catches "valid prefix followed by corruption"
+  patterns that defeat the default N=2 window. Both oracles
+  byte-identical cross-impl. Conformance case count: 24 → 26.
 - **Conformance fixture: L2-DEC-015 borderline detection** (two
   cases). `timestamp-format-borderline-default` and
   `timestamp-format-borderline-n1` share a hand-crafted 5-record

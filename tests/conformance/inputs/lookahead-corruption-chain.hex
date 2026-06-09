@@ -1,0 +1,50 @@
+# L2-SYN-026 N-record look-ahead demonstration fixture.
+#
+# Five records (80 bytes) hand-crafted to demonstrate the value of
+# raising the look-ahead depth above the default N=2. The structure
+# is "decoy chain" — two valid records, then a corruption block, then
+# one more valid record:
+#
+#   bytes  0-15  : record 1 — valid BC_TO_RT IRIG record
+#   bytes 16-31  : record 2 — valid BC_TO_RT IRIG record
+#   bytes 32-63  : 32 bytes of all-0xFF — invalid Type Words at every
+#                  2-byte position (msg_type=0x7F, not in known set)
+#   bytes 64-79  : record 5 — valid BC_TO_RT IRIG record
+#
+# At N=2 (default): find_first_record accepts offset 0 because the
+# 2-record look-ahead chain reaches only record 2, which is valid.
+# Iteration decodes record 1, then validate_record at offset 16 fails
+# (look-ahead at offset 32 is garbage). Sync recovery scans forward
+# through the garbage and finds record 5. Total CSV: header + 2 rows
+# (record 1 + record 5).
+#
+# At N=4: find_first_record at offset 0 walks the look-ahead chain to
+# records 2, 3 (garbage), 4 (garbage). The 3rd / 4th look-ahead lands
+# on the 0xFF region — invalid Type Word — so the entire chain
+# starting at offset 0 is rejected. find_first_record scans forward;
+# no 2-byte-aligned offset within records 1-2 produces a valid Type
+# Word with an in-range IRIG timestamp; eventually accepts offset 64
+# (record 5). Total CSV: header + 1 row (record 5 only).
+#
+# The N=2 vs N=4 contrast (2 rows vs 1 row) is exactly the L2-SYN-026
+# value proposition: deeper look-ahead lets the decoder detect that
+# the "valid-looking" prefix is followed by a corruption pattern that
+# defeats the default 2-record window, and refuses to commit until it
+# finds a record region that survives a deeper sanity check.
+#
+# Record-1 / record-2 / record-5 byte layout (same template):
+#   bytes 0-1 : Type Word 0x0802 (BC_TO_RT, wc=8)
+#   bytes 2-3 : ts_upper 0x180F (day=192, hour=15)
+#   bytes 4-5 : ts_middle 0xDB20 (min=54, sec=50, us_hi=0)
+#   bytes 6-7 : ts_lower 0x0000
+#   bytes 8-9 : IRIG Cmd 0x7962 (RT=15, Receive, SA=11, dwc=2)
+#   bytes 10-11: Data[0] — varies per record (0x0001 / 0x0002 / 0x0005)
+#                to break L2-SYN-018 homogeneity defense and to make
+#                the CSV rows distinguishable
+#   bytes 12-13: Data[1] 0x0000
+#   bytes 14-15: Status 0x0000
+0208 0F18 20DB 0000 6279 0100 0000 0000
+0208 0F18 20DB 0000 6279 0200 0000 0000
+FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF
+FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF
+0208 0F18 20DB 0000 6279 0500 0000 0000
