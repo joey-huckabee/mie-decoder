@@ -42,6 +42,44 @@ full release workflow.
   to behave identically); the rationale for the in-place wording
   update is recorded in the L2-SYN-005 Rationale field.
 
+### Fixed
+
+- **Conformance fixture `timestamp-format-ambiguous-strict` was
+  exercising the wrong code path.** Discovered while adding the
+  lenient-mode companion fixture. The fixture's input bytes had a
+  Type Word declaring `word_count = 7` (14 bytes) but the actual hex
+  block contained 16 bytes per record. The mismatch caused
+  `find_first_record`'s look-ahead to land on filler bytes mid-record
+  and reject the candidate, producing `MieNoValidRecords` (exit 2)
+  instead of the intended `MieTimestampFormatMismatch` (also exit
+  2). The strict fixture's `expected_exit: 2` couldn't distinguish
+  the two error paths, so the test passed for the wrong reason.
+
+  Fix: change the Type Word's `word_count` field from 7 to 8 so the
+  declared length matches the actual 16-byte record. The probe now
+  reaches AMBIGUOUS classification correctly, and the strict fixture
+  exercises the L2-DEC-016 path it was always meant to.
+
+### Added
+
+- **Conformance fixture: L2-DEC-016 lenient-mode WARN**
+  (`timestamp-format-ambiguous-lenient`). Reuses the (now-fixed)
+  ambiguous input bytes with default (lenient) mode. Asserts exit 0
+  with a header-only CSV oracle, plus a stderr substring assertion
+  that pins the lenient-mode WARN's score breakdown
+  (`"Ambiguous: IRIG=4 STD=4"`). Companion to the strict fixture;
+  together they pin both branches of L2-DEC-016 cross-impl.
+- **Stderr substring assertions on both L2-DEC-016 conformance
+  fixtures.** Strict fixture now asserts
+  `expected_stderr_contains: "auto-detection is ambiguous"`
+  (substring unique to the `MieTimestampFormatMismatch` error
+  message); lenient asserts the WARN substring as above. These
+  defend against future regressions that exit with the right code
+  via the wrong code path — the same class of bug-in-test the strict
+  fixture had until this commit.
+
+Conformance case count: 21 → 22.
+
 ### Maintenance
 
 - `docs/diagrams/dataflow.puml` `find_first_record` note updated:

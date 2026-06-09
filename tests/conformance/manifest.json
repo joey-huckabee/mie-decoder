@@ -157,7 +157,14 @@
       "name": "timestamp-format-ambiguous-strict",
       "input": "inputs/timestamp-format-ambiguous.hex",
       "config": "configs/strict.toml",
-      "expected_exit": 2
+      "expected_exit": 2,
+      "expected_stderr_contains": "auto-detection is ambiguous"
+    },
+    {
+      "name": "timestamp-format-ambiguous-lenient",
+      "input": "inputs/timestamp-format-ambiguous.hex",
+      "expected": "expected/timestamp-format-ambiguous-lenient.csv",
+      "expected_stderr_contains": "Ambiguous: IRIG=4 STD=4"
     }
   ]
 }
