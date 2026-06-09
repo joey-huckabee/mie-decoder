@@ -44,7 +44,6 @@ mie-decoder/
 │   ├── ARCHITECTURE.md     module diagram, error pipeline, configuration hierarchy
 │   ├── ERROR-CATALOG.md    operator reference for every error / exit code
 │   ├── MIE-FORMAT.md       comprehensive binary format + CSV column reference
-│   ├── FIELDS.md           redirect stub for legacy links
 │   ├── ROADMAP.md          versioned roadmap with status annotations
 │   ├── MAINTAINER-GUIDE.md (this file)
 │   └── diagrams/           PlantUML sources and rendered SVGs

@@ -111,7 +111,7 @@ Out-of-scope items are listed separately under **Non-Requirements** (1 item).
 
 ### L1-OUT-001
 
-**Statement**: Each implementation SHALL produce CSV output that is column-name and column-order compatible with DDC's vendor recording software, per the layout defined in `docs/FIELDS.md`.
+**Statement**: Each implementation SHALL produce CSV output that is column-name and column-order compatible with DDC's vendor recording software, per the layout defined in `docs/MIE-FORMAT.md`.
 
 **Rationale**: Byte-exact compatibility with the DDC vendor CSV enables `diff`-based validation against vendor output and allows the decoder to drop into downstream analysis pipelines that already consume the DDC layout. Vendor-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`) are preserved as a matter of layout fidelity even when their cells are empty.
 

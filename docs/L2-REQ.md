@@ -44,7 +44,7 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 #### L2-DEC-002
 
 **Parent**: L1-DEC-002
-**Statement**: A 3-word IRIG timestamp SHALL decode day-of-year, hour, minute, second, microsecond, and the freerun flag according to `docs/FIELDS.md`.
+**Statement**: A 3-word IRIG timestamp SHALL decode day-of-year, hour, minute, second, microsecond, and the freerun flag according to `docs/MIE-FORMAT.md`.
 **Rationale**: The IRIG packing is the DDC-specific timestamp convention. Both implementations must extract the same six fields from the same three input words.
 **Verification Method**: Test (T)
 
@@ -308,7 +308,7 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 
 **Parent**: L1-SYN-001
 **Statement**: Type Word bit 15 is reserved. When a record's Type Word has bit 15 set, the implementation SHALL log a WARN naming the offset and the raw Type Word, and SHALL continue emitting the record in both strict and lenient mode.
-**Rationale**: `docs/FIELDS.md` lists bit 15 as "Reserved for future use. Should be 0." Treating a set bit as corruption would prevent decoding any recording that uses an undocumented vendor extension; treating it as a silent no-op would hide a real signal from the operator. The WARN-and-emit compromise gives the operator visibility without breaking decode.
+**Rationale**: `docs/MIE-FORMAT.md` lists bit 15 as "Reserved for future use. Should be 0." Treating a set bit as corruption would prevent decoding any recording that uses an undocumented vendor extension; treating it as a silent no-op would hide a real signal from the operator. The WARN-and-emit compromise gives the operator visibility without breaking decode.
 **Verification Method**: Test (T)
 
 #### L2-SYN-026
@@ -479,7 +479,7 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 
 **Parent**: L1-ERR-001
 **Statement**: Known DDC Error Word values SHALL be recognized.
-**Rationale**: The known set is the `0x01xx` family documented in `docs/FIELDS.md`. Unknown values are surfaced as `UNKNOWN` in the CSV in lenient mode; strict mode rejects them (L2-ERR-004).
+**Rationale**: The known set is the `0x01xx` family documented in `docs/MIE-FORMAT.md`. Unknown values are surfaced as `UNKNOWN` in the CSV in lenient mode; strict mode rejects them (L2-ERR-004).
 **Verification Method**: Test (T)
 
 #### L2-ERR-004

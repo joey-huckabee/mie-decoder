@@ -15,6 +15,21 @@ full release workflow.
 
 ## [Unreleased]
 
+### Removed
+
+- **`docs/FIELDS.md`** — the 3-line redirect stub kept for legacy
+  external-link compatibility since the L2-DEC-015 / Documentation
+  Initiative absorbed its content into `docs/MIE-FORMAT.md`. The
+  stub has done its job; deleted. Active references in
+  `docs/L1-REQ.md` (L1-OUT-001), `docs/L2-REQ.md` (L2-DEC-002,
+  L2-SYN-025 rationale, error-code family rationale),
+  `docs/MAINTAINER-GUIDE.md` (repo-tree listing), and
+  `CLAUDE.md` (Reference docs section) updated to point at
+  `docs/MIE-FORMAT.md` directly. ROADMAP historical mentions of
+  FIELDS.md (Documentation Initiative recap, deferred-audit
+  notes, etc.) preserved as-is since they describe past state
+  accurately.
+
 ### Added
 
 - **Conformance fixture: L2-DEC-015 borderline detection** (two
