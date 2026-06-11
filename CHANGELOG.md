@@ -15,6 +15,47 @@ full release workflow.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-06-11
+
+Joint Rust + Python hardening release. Adds precise sync-validation
+failure APIs and strict-mode diagnostics, bounded DEBUG context logging,
+production Rust unwrap/expect linting, Rust LCOV artifact publishing,
+and complete verification coverage for all 131 active requirements.
+Both implementations ship together from the `v1.3.0` repository tag.
+
+### Added
+
+- Additive detailed sync-validation APIs in both implementations:
+  Rust `sync::validate_record_detailed(...) -> Result<(), ValidationFailure>`
+  and Python `sync.validate_record_detailed(...) -> ValidationFailure | None`.
+  Existing boolean `validate_record(...)` APIs remain unchanged.
+- DEBUG-level validation context diagnostics capped at 32 bytes in both
+  readers.
+- Rust CI now uploads `lcov.info` as the `rust-lcov` workflow artifact.
+
+### Changed
+
+- Strict-mode IRIG-range and look-ahead failures now name the precise
+  validation reason instead of the combined "IRIG-range or look-ahead"
+  fallback detail.
+- Rust production crates enable Clippy's `unwrap_used` and `expect_used`
+  lints outside test builds; former production unwrap/expect sites now
+  return defensive errors.
+- Rust CLI acceptance coverage now pins both `--inline-errors` and the
+  stdout-forces-inline behavior required by L3-RS-009.
+
+### Removed
+
+- Python's unconditional multi-line unknown-Type-Word stderr dump. The
+  bounded DEBUG context diagnostic replaces it and respects log-level
+  configuration.
+
+### Maintenance
+
+- Close the remaining partial traceability row with an L2-CONF-002
+  conformance-runner wiring inspection test. All 131 active requirements
+  are now verified.
+
 ## [1.2.0] — 2026-06-08
 
 Configurable sync look-ahead with TOML + CLI controls, a Python
@@ -432,7 +473,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/joey-huckabee/mie-decoder/releases/tag/v1.0.0

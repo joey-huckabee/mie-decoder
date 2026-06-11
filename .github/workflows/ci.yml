@@ -78,6 +78,18 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo cov-ci --locked
 
+      - name: Generate Rust LCOV report
+        if: runner.os == 'Linux'
+        run: cargo cov-lcov --locked
+
+      - name: Upload Rust LCOV report
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v6
+        with:
+          name: rust-lcov
+          path: lcov.info
+          if-no-files-found: error
+
   python:
     name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -114,7 +114,13 @@ When `find_first_record` returns None, the reader calls `diagnose_header_scan_fa
 
 ### Phase 2 — Continuous validation
 
-At each record boundary, the reader validates before decoding **using the same `sync::validate_record` function as Phases 1 and 4**. There is one validation path; the per-record loop, the header-skip scan, and the recovery walk all share it (L2-SYN-014). A weaker per-record check would let corrupt-but-plausible records pass through and emit garbage rows.
+At each record boundary, the reader validates before decoding **using the same sync validation rules as Phases 1 and 4**. There is one validation path; the per-record loop, the header-skip scan, and the recovery walk all share it (L2-SYN-014). A weaker per-record check would let corrupt-but-plausible records pass through and emit garbage rows.
+
+The public boolean `validate_record` API remains the compatibility surface for
+scanners. The additive `validate_record_detailed` API returns a
+`ValidationFailure` reason so readers can report a precise strict-mode failure
+without duplicating validation logic. At DEBUG level, a validation failure also
+emits one context line capped at 32 bytes.
 
 ### Phase 3 — N-record look-ahead
 

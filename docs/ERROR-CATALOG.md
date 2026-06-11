@@ -117,6 +117,11 @@ In **lenient mode** (default), most record errors result in the record being ski
 | `MieUnknownErrorCodeError` / `UnknownErrorCode` | An errored record (Type Word bit 14 set) carries an Error Word value outside the known DDC + decoder set (L2-ERR-004). | log WARN, emit row with the unknown code | raise |
 | `MieUnrecoverableSyncLossError` / `UnrecoverableSyncLoss` | After a sync loss, `recover_sync` scanned the full 64 KB window without finding a valid record (L2-SYN-011 / L1-EXIT-004). | terminal `Err` on the iterator; CLI exits **3** by default, or 0 + `.partial` with `--allow-partial` | same |
 
+For sync-validation failures, `sync.validate_record_detailed` /
+`sync::validate_record_detailed` exposes the shared `ValidationFailure` reason
+without changing the existing record-error classes. DEBUG logging adds a single
+context line capped at 32 bytes; normal WARNING output remains compact.
+
 ---
 
 ## 5. Writer errors

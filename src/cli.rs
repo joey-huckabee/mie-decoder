@@ -160,7 +160,9 @@ pub fn run(argv: Vec<String>) -> ExitCode {
                 }
             }
             Some(s) if s.starts_with("--log-level=") => {
-                let v = iter.next().unwrap();
+                let Some(v) = iter.next() else {
+                    return die("--log-level requires a value");
+                };
                 globals.log_level = Some(v["--log-level=".len()..].to_string());
             }
             Some("--config") => {
@@ -171,7 +173,9 @@ pub fn run(argv: Vec<String>) -> ExitCode {
                 }
             }
             Some(s) if s.starts_with("--config=") => {
-                let v = iter.next().unwrap();
+                let Some(v) = iter.next() else {
+                    return die("--config requires a path");
+                };
                 globals.config = Some(PathBuf::from(&v["--config=".len()..]));
             }
             Some(_) => break iter.next(),

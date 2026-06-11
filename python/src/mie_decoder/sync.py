@@ -77,6 +77,7 @@ Error Records and Sync:
 from __future__ import annotations
 
 import logging
+from enum import Enum
 from typing import Final
 
 from mie_decoder.decode import (
@@ -106,6 +107,25 @@ MAX_RECORD_BYTES: Final[int] = 126
 DEFAULT_LOOKAHEAD_RECORDS: Final[int] = 2
 
 
+class ValidationFailure(Enum):
+    """Precise reason a candidate record failed sync validation."""
+
+    TYPE_WORD_UNREADABLE = "Type Word is not readable"
+    UNKNOWN_MESSAGE_TYPE = "message type is unknown"
+    INVALID_WORD_COUNT = "word count is outside the valid range"
+    RECORD_TRUNCATED = "record extends beyond end of file"
+    IRIG_HOUR_OUT_OF_RANGE = "IRIG hour is out of range"
+    IRIG_MINUTE_OUT_OF_RANGE = "IRIG minute is out of range"
+    IRIG_SECOND_OUT_OF_RANGE = "IRIG second is out of range"
+    IRIG_MICROSECOND_OUT_OF_RANGE = "IRIG microsecond is out of range"
+    IRIG_DAY_OUT_OF_RANGE = "IRIG day-of-year is out of range"
+    LOOKAHEAD_UNKNOWN_MESSAGE_TYPE = "look-ahead message type is unknown"
+    LOOKAHEAD_INVALID_WORD_COUNT = "look-ahead word count is outside the valid range"
+
+    def __str__(self) -> str:
+        return self.value
+
+
 def validate_record(
     data: bytes | memoryview,
     offset: int,
@@ -113,7 +133,24 @@ def validate_record(
     ts_format: TimestampFormat | None = None,
     lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
 ) -> bool:
-    """Check whether a valid MIE record starts at the given offset.
+    """Return whether a valid MIE record starts at the given offset."""
+    return validate_record_detailed(
+        data,
+        offset,
+        file_len,
+        ts_format,
+        lookahead_records,
+    ) is None
+
+
+def validate_record_detailed(
+    data: bytes | memoryview,
+    offset: int,
+    file_len: int,
+    ts_format: TimestampFormat | None = None,
+    lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
+) -> ValidationFailure | None:
+    """Return the precise reason a candidate record fails validation.
 
     Applies fast heuristic checks in order of increasing cost. Does
     NOT decode the full record — only reads the Type Word (2 bytes)
@@ -127,18 +164,18 @@ def validate_record(
             field-range checks.
 
     Returns:
-        True if the position looks like a valid record start.
+        ``None`` for a valid record, otherwise the failure reason.
     """
     # ── Check 1: Enough bytes for a minimal Type Word read ─────────
     if offset + 2 > file_len:
-        return False
+        return ValidationFailure.TYPE_WORD_UNREADABLE
 
     type_raw = read_u16(data, offset)
     tw = decode_type_word(type_raw)
 
     # ── Check 2: Valid message type ────────────────────────────────
     if not is_valid_message_type(tw.message_type):
-        return False
+        return ValidationFailure.UNKNOWN_MESSAGE_TYPE
 
     # ── Check 3: Plausible word count ──────────────────────────────
     if ts_format is not None:
@@ -147,12 +184,12 @@ def validate_record(
         # Use the smaller minimum if format unknown
         min_wc = MIN_RECORD_WORDS_STANDARD
     if tw.word_count < min_wc or tw.word_count > 63:
-        return False
+        return ValidationFailure.INVALID_WORD_COUNT
 
     # ── Check 4: Record fits within file ───────────────────────────
     record_bytes = tw.word_count * 2
     if offset + record_bytes > file_len:
-        return False
+        return ValidationFailure.RECORD_TRUNCATED
 
     # ── Check 5: IRIG timestamp field ranges (L2-SYN-004, L2-SYN-019)
     # All three timestamp words are needed to evaluate microsecond
@@ -171,17 +208,21 @@ def validate_record(
         microsecond_lo16 = ts_lower
         microsecond = (microsecond_hi4 << 16) | microsecond_lo16
 
-        if hour >= 24 or minute >= 60 or second >= 60:
-            return False
+        if hour >= 24:
+            return ValidationFailure.IRIG_HOUR_OUT_OF_RANGE
+        if minute >= 60:
+            return ValidationFailure.IRIG_MINUTE_OUT_OF_RANGE
+        if second >= 60:
+            return ValidationFailure.IRIG_SECOND_OUT_OF_RANGE
         if microsecond > 999_999:
-            return False
+            return ValidationFailure.IRIG_MICROSECOND_OUT_OF_RANGE
         # L2-SYN-019: skip the day-of-year range check when freerun
         # is set, because the card's free-running oscillator is not
         # calendar-locked. Hour/minute/second/microsecond constraints
         # still apply because those are a function of the counter
         # modulus, not the external IRIG-B feed.
         if not freerun and not (1 <= day <= 366):
-            return False
+            return ValidationFailure.IRIG_DAY_OUT_OF_RANGE
 
     # ── Check 6: N-record look-ahead (L2-SYN-005, L2-SYN-026) ──────
     # Walk up to lookahead_records - 1 subsequent records, validating
@@ -196,15 +237,15 @@ def validate_record(
         next_raw = read_u16(data, next_offset)
         next_tw = decode_type_word(next_raw)
         if not is_valid_message_type(next_tw.message_type):
-            return False
+            return ValidationFailure.LOOKAHEAD_UNKNOWN_MESSAGE_TYPE
         if next_tw.word_count < min_wc or next_tw.word_count > 63:
-            return False
+            return ValidationFailure.LOOKAHEAD_INVALID_WORD_COUNT
         next_record_bytes = next_tw.word_count * 2
         if next_record_bytes == 0:
             break
         next_offset += next_record_bytes
 
-    return True
+    return None
 
 
 def find_first_record(

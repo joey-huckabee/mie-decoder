@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import logging
 import mmap
-import sys
 from pathlib import Path
 from typing import Iterator
 
@@ -56,7 +55,6 @@ from mie_decoder.decode import (
     decode_standard_timestamp,
     decode_type_word,
     detect_record_anomalies,
-    is_valid_message_type,
     probe_timestamp_format,
     read_u16,
     read_u16_array,
@@ -94,9 +92,10 @@ from mie_decoder.models import (
 )
 from mie_decoder.sync import (
     DEFAULT_LOOKAHEAD_RECORDS,
+    ValidationFailure,
     find_first_record,
     recover_sync,
-    validate_record,
+    validate_record_detailed,
 )
 
 logger = logging.getLogger(__name__)
@@ -392,11 +391,10 @@ class MieFileReader:
                     tw = decode_type_word(type_raw)
 
                     ts_words = TIMESTAMP_WORD_COUNTS[resolved_format]
-                    min_wc = 1 + ts_words + 1
                     record_bytes = tw.word_count * 2
 
                     # ── Validate current record ────────────────
-                    is_valid = validate_record(
+                    validation_failure = validate_record_detailed(
                         mm,
                         offset,
                         file_len,
@@ -404,29 +402,28 @@ class MieFileReader:
                         lookahead_records=self._lookahead_records,
                     )
 
-                    if not is_valid:
+                    if validation_failure is not None:
                         # ── Sync loss — attempt recovery ───────
                         sync_losses += 1
                         self._sync_losses = sync_losses
+                        _log_validation_context(mm, offset)
 
                         if self._strict:
-                            if tw.word_count < min_wc:
+                            if validation_failure == ValidationFailure.INVALID_WORD_COUNT:
                                 raise MieInvalidTypeWordError(
                                     offset, type_raw, tw.word_count
                                 )
-                            if offset + record_bytes > file_len:
+                            if validation_failure == ValidationFailure.RECORD_TRUNCATED:
                                 raise MieRecordTruncatedError(
                                     offset, record_bytes, file_len - offset
                                 )
-                            if not is_valid_message_type(tw.message_type):
-                                _print_unknown_type_diagnostic(mm, offset, tw)
+                            if validation_failure == ValidationFailure.UNKNOWN_MESSAGE_TYPE:
                                 raise MieUnknownTypeWordError(
                                     offset, type_raw, tw.message_type
                                 )
                             raise MiePayloadError(
                                 offset,
-                                "record fails IRIG-range or look-ahead validation "
-                                f"(raw_type=0x{type_raw:04X})",
+                                f"{validation_failure} (raw_type=0x{type_raw:04X})",
                             )
 
                         recovered = recover_sync(
@@ -843,45 +840,17 @@ def _extract_payload(
     raise ValueError(f"Unhandled message format: {fmt}")
 
 
-def _print_unknown_type_diagnostic(
-    mm: mmap.mmap,
-    offset: int,
-    tw: "TypeWord",
-) -> None:
-    """Print diagnostic information for an unknown Type Word to stderr."""
-    file_len = len(mm)
+def _log_validation_context(mm: mmap.mmap, offset: int) -> None:
+    """Emit at most 32 bytes around a validation failure at DEBUG."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
     ctx_start = max(0, offset - 16)
-    ctx_end = min(file_len, offset + tw.word_count * 2 + 16)
-    ctx_bytes = bytes(mm[ctx_start:ctx_end])
-
-    print(
-        f"\n{'='*72}\n"
-        f"UNKNOWN MESSAGE TYPE ENCOUNTERED\n"
-        f"{'='*72}\n"
-        f"  File offset:    0x{offset:08X} ({offset} bytes)\n"
-        f"  Raw Type Word:  0x{tw.raw:04X}\n"
-        f"  Message type:   0x{tw.message_type:02X} (bits 0-6)\n"
-        f"  Bus:            {'B' if tw.bus else 'A'}\n"
-        f"  Word count:     {tw.word_count} ({tw.word_count * 2} bytes)\n"
-        f"  Error flag:     {tw.error}\n"
-        f"\n"
-        f"  Known types: 0x01=Mode, 0x02=BC→RT, 0x04=RT→BC, 0x08=RT→RT,\n"
-        f"               0x10=Bcast BC→RT, 0x18=Bcast RT→RT, 0x20=Spurious\n"
-        f"\n"
-        f"  Context hex dump (offset 0x{ctx_start:08X}–0x{ctx_end:08X}):",
-        file=sys.stderr,
+    ctx_end = min(len(mm), ctx_start + 32)
+    hex_part = " ".join(f"{byte:02X}" for byte in mm[ctx_start:ctx_end])
+    logger.debug(
+        "validation context at 0x%X (bytes 0x%X..0x%X, max 32): %s",
+        offset,
+        ctx_start,
+        ctx_end,
+        hex_part,
     )
-
-    for i in range(0, len(ctx_bytes), 16):
-        addr = ctx_start + i
-        hex_part = " ".join(f"{b:02X}" for b in ctx_bytes[i:i + 16])
-        ascii_part = "".join(
-            chr(b) if 32 <= b < 127 else "." for b in ctx_bytes[i:i + 16]
-        )
-        marker = "  >>>" if addr <= offset < addr + 16 else "     "
-        print(
-            f"{marker} {addr:08X}  {hex_part:<48s}  |{ascii_part}|",
-            file=sys.stderr,
-        )
-
-    print(f"{'='*72}\n", file=sys.stderr)

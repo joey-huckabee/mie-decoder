@@ -11,7 +11,13 @@ from pathlib import Path
 import pytest
 
 from mie_decoder.models import TimestampFormat
-from mie_decoder.sync import find_first_record, recover_sync, validate_record
+from mie_decoder.sync import (
+    ValidationFailure,
+    find_first_record,
+    recover_sync,
+    validate_record,
+    validate_record_detailed,
+)
 
 
 class TestValidateRecord:
@@ -135,6 +141,74 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
+    @pytest.mark.requirement("L2-SYN-004")
+    def test_detailed_validation_reports_each_failure_reason(self) -> None:
+        valid = self._irig_record(
+            self._irig_upper(False, 192, 15),
+            self._irig_middle(54, 50, 0),
+            0,
+        )
+        first = valid[:10]
+        cases = [
+            (b"\x02", ValidationFailure.TYPE_WORD_UNREADABLE),
+            (b"\x03\x05" + bytes(8), ValidationFailure.UNKNOWN_MESSAGE_TYPE),
+            (b"\x02\x02" + bytes(8), ValidationFailure.INVALID_WORD_COUNT),
+            (b"\x02\x24" + bytes(8), ValidationFailure.RECORD_TRUNCATED),
+            (
+                self._irig_record(
+                    self._irig_upper(False, 192, 24),
+                    self._irig_middle(54, 50, 0),
+                    0,
+                ),
+                ValidationFailure.IRIG_HOUR_OUT_OF_RANGE,
+            ),
+            (
+                self._irig_record(
+                    self._irig_upper(False, 192, 15),
+                    self._irig_middle(60, 50, 0),
+                    0,
+                ),
+                ValidationFailure.IRIG_MINUTE_OUT_OF_RANGE,
+            ),
+            (
+                self._irig_record(
+                    self._irig_upper(False, 192, 15),
+                    self._irig_middle(54, 60, 0),
+                    0,
+                ),
+                ValidationFailure.IRIG_SECOND_OUT_OF_RANGE,
+            ),
+            (
+                self._irig_record(
+                    self._irig_upper(False, 192, 15),
+                    self._irig_middle(54, 50, 0xF),
+                    0x4240,
+                ),
+                ValidationFailure.IRIG_MICROSECOND_OUT_OF_RANGE,
+            ),
+            (
+                self._irig_record(
+                    self._irig_upper(False, 0, 15),
+                    self._irig_middle(54, 50, 0),
+                    0,
+                ),
+                ValidationFailure.IRIG_DAY_OUT_OF_RANGE,
+            ),
+            (
+                first + b"\x03\x05",
+                ValidationFailure.LOOKAHEAD_UNKNOWN_MESSAGE_TYPE,
+            ),
+            (
+                first + b"\x02\x02",
+                ValidationFailure.LOOKAHEAD_INVALID_WORD_COUNT,
+            ),
+        ]
+        for data, expected in cases:
+            assert (
+                validate_record_detailed(data, 0, len(data), TimestampFormat.IRIG)
+                == expected
+            )
+
 
 class TestFindFirstRecord:
     """Tests for find_first_record (header detection)."""
@@ -237,7 +311,52 @@ class TestRecoverSync:
         data = good + corruption
         fpath = tmp_path / "strict_corrupt.mie"
         fpath.write_bytes(data)
-        with pytest.raises(MiePayloadError, match="look-ahead validation"):
+        with pytest.raises(MiePayloadError, match="look-ahead message type is unknown"):
+            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+
+    @pytest.mark.requirement("L2-SYN-013")
+    def test_debug_validation_context_is_bounded(
+        self,
+        tmp_path: Path,
+        single_receive_record: bytes,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """DEBUG diagnostics include one bounded context line."""
+        import logging
+
+        from mie_decoder.exceptions import MiePayloadError
+        from mie_decoder.reader import MieFileReader
+
+        fpath = tmp_path / "strict_corrupt.mie"
+        fpath.write_bytes(single_receive_record * 2 + b"\x03\x00" * 5)
+        with caplog.at_level(logging.DEBUG, logger="mie_decoder.reader"):
+            with pytest.raises(MiePayloadError):
+                list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+
+        context = [
+            record.getMessage()
+            for record in caplog.records
+            if "validation context" in record.getMessage()
+        ]
+        assert len(context) == 1
+        assert "max 32" in context[0]
+
+    @pytest.mark.requirement("L2-SYN-004")
+    @pytest.mark.requirement("L2-SYN-016")
+    def test_strict_irig_failure_names_precise_validation_reason(
+        self,
+        tmp_path: Path,
+        single_receive_record: bytes,
+    ) -> None:
+        from mie_decoder.exceptions import MiePayloadError
+        from mie_decoder.reader import MieFileReader
+
+        invalid_day = bytearray(single_receive_record)
+        invalid_day[2:4] = (0x000F).to_bytes(2, "little")
+        fpath = tmp_path / "bad_irig.mie"
+        fpath.write_bytes(single_receive_record + invalid_day)
+
+        with pytest.raises(MiePayloadError, match="IRIG day-of-year is out of range"):
             list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
 
 

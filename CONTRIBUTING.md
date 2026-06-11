@@ -107,11 +107,10 @@ are two reasons:
    `#[allow(clippy::unwrap_used)]` annotation, which doubles as
    documentation of *why* the unwrap is safe.
 
-Production code in this crate currently uses `unwrap()` only in
-sites that are structurally proven safe (e.g., immediately after a
-`peek()` that returned `Some`, or after assigning `Some(x)` two lines
-above). Adopting the clippy-warn approach is tracked in
-`docs/ROADMAP.md`.
+Production crates enable both lints outside `cfg(test)`. Test code may
+continue to use `unwrap()` / `expect()` because panic-on-failure is the
+intended assertion behavior. New production uses must be rewritten to
+return a defensive error or carry a narrow documented lint allowance.
 
 ### Bypassing the hook
 

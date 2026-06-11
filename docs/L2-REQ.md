@@ -223,15 +223,15 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 #### L2-SYN-013
 
 **Parent**: L1-LOG-001
-**Statement**: Sync recovery SHALL log sync loss at WARNING and successful recovery at INFO.
+**Statement**: Sync recovery SHALL log sync loss at WARNING and successful recovery at INFO. At DEBUG level, a validation failure SHALL additionally log one context hex line capped at 32 bytes.
 **Rationale**: A sync loss is operationally noteworthy (the operator should be told the file is not pristine); a successful recovery is informative but does not warrant a warning of its own.
 **Verification Method**: Test (T)
 
 #### L2-SYN-014
 
 **Parent**: L1-SYN-001
-**Statement**: Header detection, continuous decoding, and sync recovery SHALL use the same full record-validation path.
-**Rationale**: Three validators with subtly different semantics would inevitably drift. One validator (`validate_record`) called from three call sites — header scan (`find_first_record`), per-record decode loop in the reader, and post-loss recovery (`recover_sync`) — keeps the semantics consistent. This is a structural property of the code that does not lend itself to a meaningful execution test: any working test of the three call sites exercises `validate_record` transitively. Verification is by code review (the three callers all live in `sync.rs` / `sync.py` and the reader, and all invoke `validate_record`).
+**Statement**: Header detection, continuous decoding, and sync recovery SHALL use the same full record-validation rules. The implementation SHALL expose both a compatibility boolean result and a detailed result identifying which validation check failed.
+**Rationale**: Validators with subtly different semantics would inevitably drift. The boolean compatibility wrapper and additive detailed API share one implementation; header scan, per-record decode, and recovery therefore cannot disagree on validity. The detailed reason lets strict mode report the exact check without reimplementing classification in the reader.
 **Verification Method**: Inspection (I)
 
 #### L2-SYN-015

@@ -138,7 +138,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CLI-004 | _(none)_ | `python/tests/test_e2e.py::test_cli_log_level_debug`<br>`python/tests/test_e2e.py::test_cli_log_level_info`<br>`python/tests/test_exceptions.py::test_case_insensitive`<br>`python/tests/test_exceptions.py::test_invalid_level_raises`<br>`python/tests/test_exceptions.py::test_no_duplicate_handlers`<br>`python/tests/test_exceptions.py::test_sets_info_level`<br>`python/tests/test_exceptions.py::test_sets_level`<br>`src/cli.rs::apply_log_level_accepts_known_names`<br>`src/cli.rs::apply_log_level_includes_source_in_error`<br>`src/cli.rs::apply_log_level_rejects_unknown_names`<br>`src/cli.rs::run_count_with_invalid_cli_log_level_fails_via_resolve_config`<br>`src/log.rs::level_parse` | Implemented |
 | L2-CLI-006 | _(none)_ | `python/tests/test_exceptions.py::test_outputs_to_stderr_by_default`<br>`tests/cli.rs::decode_emits_exit_class_summary_at_info_level` | Implemented |
 | L2-SYN-012 | _(none)_ | `python/tests/test_sync.py::test_header_detection_logs_size_at_info` | Implemented |
-| L2-SYN-013 | _(none)_ | `python/tests/test_sync.py::test_sync_loss_warns_and_recovery_logs_info` | Implemented |
+| L2-SYN-013 | _(none)_ | `python/tests/test_sync.py::test_debug_validation_context_is_bounded`<br>`python/tests/test_sync.py::test_sync_loss_warns_and_recovery_logs_info`<br>`tests/cli.rs::debug_sync_failure_includes_bounded_validation_context` | Implemented |
 
 ### L1-MODE: Strict and lenient handling
 
@@ -156,7 +156,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-RDR-003 | _(none)_ | `python/tests/test_e2e.py::test_truncated_record_strict`<br>`python/tests/test_exceptions.py::test_record_truncated_fields` | Implemented |
 | L2-RDR-004 | _(none)_ | `python/tests/test_e2e.py::test_first_record_truncation_lenient_terminates_clean`<br>`python/tests/test_e2e.py::test_first_record_truncation_strict_raises_distinct_error`<br>`src/reader.rs::first_record_truncated_lenient_terminates_clean`<br>`src/reader.rs::first_record_truncated_strict_raises_distinct_error` | Implemented |
 | L2-SYN-015 | _(none)_ | `python/tests/test_sync.py::test_reader_recovers_from_corruption`<br>`tests/integration.rs::corrupt_irig_record_skipped_by_per_record_validation` | Implemented |
-| L2-SYN-016 | _(none)_ | `python/tests/test_e2e.py::test_invalid_record_strict`<br>`python/tests/test_sync.py::test_reader_strict_raises_on_corruption` | Implemented |
+| L2-SYN-016 | _(none)_ | `python/tests/test_e2e.py::test_invalid_record_strict`<br>`python/tests/test_sync.py::test_reader_strict_raises_on_corruption`<br>`python/tests/test_sync.py::test_strict_irig_failure_names_precise_validation_reason`<br>`tests/cli.rs::strict_irig_failure_names_precise_validation_reason` | Implemented |
 
 ### L1-SYN: Synchronization, validation, invariants
 
@@ -175,8 +175,8 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-SYN-001 | _(none)_ | `python/tests/test_decode.py::test_unknown_types`<br>`python/tests/test_exceptions.py::test_invalid_type_word_fields`<br>`python/tests/test_exceptions.py::test_unknown_type_word_fields`<br>`python/tests/test_sync.py::test_invalid_type_at_offset`<br>`src/decode.rs::classify_unknown_type`<br>`src/sync.rs::validate_rejects_invalid_type` | Implemented |
 | L2-SYN-002 | _(none)_ | `python/tests/test_sync.py::test_zero_word_count`<br>`src/sync.rs::min_word_count_helper` | Implemented |
 | L2-SYN-003 | _(none)_ | `python/tests/test_sync.py::test_too_short`<br>`src/sync.rs::validate_rejects_truncated` | Implemented |
-| L2-SYN-004 | _(none)_ | `python/tests/test_sync.py::test_irig_accepts_microsecond_at_max_valid`<br>`python/tests/test_sync.py::test_irig_accepts_valid_ranges`<br>`python/tests/test_sync.py::test_irig_rejects_day_above_366`<br>`python/tests/test_sync.py::test_irig_rejects_day_zero`<br>`python/tests/test_sync.py::test_irig_rejects_microsecond_at_one_million`<br>`src/sync.rs::validate_accepts_irig_microsecond_at_max_valid`<br>`src/sync.rs::validate_accepts_irig_with_valid_ranges`<br>`src/sync.rs::validate_rejects_irig_day_above_366`<br>`src/sync.rs::validate_rejects_irig_day_zero`<br>`src/sync.rs::validate_rejects_irig_microsecond_at_one_million` | Implemented |
-| L2-SYN-005 | _(none)_ | `python/tests/test_sync.py::test_valid_irig_record`<br>`src/sync.rs::validate_accepts_clean_record` | Implemented |
+| L2-SYN-004 | _(none)_ | `python/tests/test_sync.py::test_detailed_validation_reports_each_failure_reason`<br>`python/tests/test_sync.py::test_irig_accepts_microsecond_at_max_valid`<br>`python/tests/test_sync.py::test_irig_accepts_valid_ranges`<br>`python/tests/test_sync.py::test_irig_rejects_day_above_366`<br>`python/tests/test_sync.py::test_irig_rejects_day_zero`<br>`python/tests/test_sync.py::test_irig_rejects_microsecond_at_one_million`<br>`python/tests/test_sync.py::test_strict_irig_failure_names_precise_validation_reason`<br>`src/sync.rs::detailed_validation_reports_each_failure_reason`<br>`src/sync.rs::validate_accepts_irig_microsecond_at_max_valid`<br>`src/sync.rs::validate_accepts_irig_with_valid_ranges`<br>`src/sync.rs::validate_rejects_irig_day_above_366`<br>`src/sync.rs::validate_rejects_irig_day_zero`<br>`src/sync.rs::validate_rejects_irig_microsecond_at_one_million`<br>`tests/cli.rs::strict_irig_failure_names_precise_validation_reason` | Implemented |
+| L2-SYN-005 | _(none)_ | `python/tests/test_sync.py::test_valid_irig_record`<br>`src/sync.rs::detailed_validation_reports_each_failure_reason`<br>`src/sync.rs::validate_accepts_clean_record` | Implemented |
 | L2-SYN-006 | _(none)_ | `python/tests/test_sync.py::test_no_header`<br>`python/tests/test_sync.py::test_reader_real_header`<br>`python/tests/test_sync.py::test_reader_skips_header`<br>`python/tests/test_sync.py::test_with_header`<br>`src/reader.rs::skips_proprietary_header`<br>`src/sync.rs::find_first_record_at_zero`<br>`src/sync.rs::find_first_record_skips_header`<br>`tests/integration.rs::header_skip_via_proprietary_prefix` | Implemented |
 | L2-SYN-007 | _(none)_ | `python/tests/test_sync.py::test_find_first_record_capped_at_max_scan` | Implemented |
 | L2-SYN-008 | _(none)_ | `python/tests/test_sync.py::test_all_garbage`<br>`src/sync.rs::find_first_record_returns_none_when_no_valid` | Implemented |
@@ -199,7 +199,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-ERR-001 | L2-ERR-001, L2-ERR-002, L2-ERR-003, L2-ERR-005, L2-ERR-006, L2-ERR-008, L2-ERR-011, L2-SYN-017, L2-SYN-024 | Partially Implemented |
+| L1-ERR-001 | L2-ERR-001, L2-ERR-002, L2-ERR-003, L2-ERR-005, L2-ERR-006, L2-ERR-008, L2-ERR-011, L2-SYN-017, L2-SYN-024 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -211,7 +211,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-ERR-005 | _(none)_ | `python/tests/test_e2e.py::test_spurious_data_empty_delta_and_continuation_code` | Implemented |
 | L2-ERR-006 | _(none)_ | `python/tests/test_models.py::test_spurious_message_label` | Implemented |
 | L2-ERR-008 | _(none)_ | `python/tests/test_config.py::test_cli_error_mode_separate`<br>`src/writer.rs::error_path_naming` | Implemented |
-| L2-ERR-011 | L3-PY-011, L3-RS-009 | `python/tests/test_config.py::test_cli_error_mode_inline`<br>`python/tests/test_config.py::test_load_from_toml`<br>`tests/cli.rs::inline_errors_populates_error_code_column` | Partially Implemented |
+| L2-ERR-011 | L3-PY-011, L3-RS-009 | `python/tests/test_config.py::test_cli_error_mode_inline`<br>`python/tests/test_config.py::test_load_from_toml`<br>`tests/cli.rs::inline_errors_populates_error_code_column`<br>`tests/cli.rs::stdout_output_forces_inline_error_mode` | Implemented |
 | L2-SYN-017 | _(none)_ | `python/tests/test_e2e.py::test_error_and_spurious_records_pass_validation` | Implemented |
 | L2-SYN-024 | _(none)_ | `python/tests/test_decode.py::test_no_status_no_violation`<br>`python/tests/test_decode.py::test_status_rt_match_no_violation`<br>`python/tests/test_decode.py::test_status_rt_mismatch_anomaly`<br>`src/decode.rs::anomaly_no_status_no_violation`<br>`src/decode.rs::anomaly_status_rt_match_no_violation`<br>`src/decode.rs::anomaly_status_rt_mismatch_logged` | Implemented |
 
@@ -248,7 +248,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L2-CONF-001 | _(none)_ | _(TBD)_ | Implemented (I) |
-| L2-CONF-002 | L3-PY-007 | _(TBD)_ | Implemented |
+| L2-CONF-002 | L3-PY-007 | `python/tests/test_conformance_wiring.py::test_conformance_runner_invokes_both_clis_and_compares_outputs` | Implemented |
 | L2-CONF-003 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_manifest_has_cases_with_oracles`<br>`python/tests/test_conformance_wiring.py::test_conformance_runner_exists` | Implemented |
 | L2-CONF-004 | _(none)_ | _(TBD)_ | Implemented (I) |
 | L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci` | Implemented |
@@ -309,7 +309,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | SYN | 2 | 26 | 0 | 25 | 0 | 26 | 0 |
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 9 | 0 | 9 | 0 | 9 | 0 |
-| CONF | 1 | 5 | 0 | 2 | 0 | 4 | 0 |
+| CONF | 1 | 5 | 0 | 3 | 0 | 5 | 0 |
 | EXIT | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
@@ -317,12 +317,12 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | WRT | 0 | 13 | 2 | 13 | 2 | 13 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
-| RS | 0 | 0 | 11 | 0 | 5 | 0 | 10 |
-| **Total** | **24** | **106** | **25** | **100** | **13** | **105** | **24** |
+| RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
+| **Total** | **24** | **106** | **25** | **101** | **14** | **106** | **25** |
 
-**Tested by at least one test marker**: 113 of 131 (86.3%).
+**Tested by at least one test marker**: 115 of 131 (87.8%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 129 of 131 (98.5%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 131 of 131 (100.0%).
 
 ### Orphan check
 

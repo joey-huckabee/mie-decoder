@@ -30,6 +30,18 @@ def test_conformance_runner_exists() -> None:
     assert runner.is_file(), f"conformance runner missing at {runner}"
 
 
+@pytest.mark.requirement("L2-CONF-002")
+def test_conformance_runner_invokes_both_clis_and_compares_outputs() -> None:
+    """The runner SHALL execute both implementations and compare them."""
+    body = (_CONFORMANCE_DIR / "run.py").read_text(encoding="utf-8")
+    for required in [
+        "rust_command(args, case, source, rust_output)",
+        "python_command(args, case, source, python_output)",
+        "require_equal(rust, python",
+    ]:
+        assert required in body, f"conformance runner missing {required!r}"
+
+
 @pytest.mark.requirement("L2-CONF-003")
 def test_conformance_manifest_has_cases_with_oracles() -> None:
     """The manifest SHALL list at least one case, each with both a

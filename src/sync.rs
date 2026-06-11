@@ -5,6 +5,7 @@
 
 use crate::decode::{MIN_RECORD_WORDS_STANDARD, decode_type_word, message_type_is_valid, read_u16};
 use crate::models::{TimestampFormat, timestamp_word_count};
+use std::fmt;
 
 /// 64 KB scan cap. Covers any reasonable header or corruption gap without
 /// risking a runaway scan over multi-gigabyte files.
@@ -18,6 +19,46 @@ pub const MAX_RECORD_BYTES: usize = 126;
 /// `decode.lookahead_records` (TOML) or `--lookahead-records` (CLI),
 /// range `[1, 32]`.
 pub const DEFAULT_LOOKAHEAD_RECORDS: usize = 2;
+
+/// Precise reason a candidate record failed sync validation.
+///
+/// The existing [`validate_record`] boolean API remains the compatibility
+/// wrapper for callers that only need a yes/no answer. Readers and diagnostic
+/// tooling can use [`validate_record_detailed`] to distinguish failures without
+/// reimplementing the validation rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationFailure {
+    TypeWordUnreadable,
+    UnknownMessageType,
+    InvalidWordCount,
+    RecordTruncated,
+    IrigHourOutOfRange,
+    IrigMinuteOutOfRange,
+    IrigSecondOutOfRange,
+    IrigMicrosecondOutOfRange,
+    IrigDayOutOfRange,
+    LookaheadUnknownMessageType,
+    LookaheadInvalidWordCount,
+}
+
+impl fmt::Display for ValidationFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let detail = match self {
+            Self::TypeWordUnreadable => "Type Word is not readable",
+            Self::UnknownMessageType => "message type is unknown",
+            Self::InvalidWordCount => "word count is outside the valid range",
+            Self::RecordTruncated => "record extends beyond end of file",
+            Self::IrigHourOutOfRange => "IRIG hour is out of range",
+            Self::IrigMinuteOutOfRange => "IRIG minute is out of range",
+            Self::IrigSecondOutOfRange => "IRIG second is out of range",
+            Self::IrigMicrosecondOutOfRange => "IRIG microsecond is out of range",
+            Self::IrigDayOutOfRange => "IRIG day-of-year is out of range",
+            Self::LookaheadUnknownMessageType => "look-ahead message type is unknown",
+            Self::LookaheadInvalidWordCount => "look-ahead word count is outside the valid range",
+        };
+        f.write_str(detail)
+    }
+}
 
 /// Minimum word count for a record under `ts_format`. If `None`, uses
 /// the smaller (Standard) minimum so an unknown format is permissive.
@@ -47,37 +88,53 @@ pub fn validate_record(
     ts_format: Option<TimestampFormat>,
     lookahead_records: usize,
 ) -> bool {
+    validate_record_detailed(data, offset, file_len, ts_format, lookahead_records).is_ok()
+}
+
+/// Validate a candidate record and return the precise failure reason.
+pub fn validate_record_detailed(
+    data: &[u8],
+    offset: usize,
+    file_len: usize,
+    ts_format: Option<TimestampFormat>,
+    lookahead_records: usize,
+) -> Result<(), ValidationFailure> {
     // Check 1: Type Word readable.
     let Some(type_raw) = read_u16(data, offset) else {
-        return false;
+        return Err(ValidationFailure::TypeWordUnreadable);
     };
-    if offset + 2 > file_len {
-        return false;
+    if offset.checked_add(2).is_none_or(|end| end > file_len) {
+        return Err(ValidationFailure::TypeWordUnreadable);
     }
     let tw = decode_type_word(type_raw);
 
     // Check 2: Valid message type.
     if !message_type_is_valid(tw.message_type) {
-        return false;
+        return Err(ValidationFailure::UnknownMessageType);
     }
 
     // Check 3: Plausible word count.
     let min_wc = min_word_count(ts_format);
     if tw.word_count < min_wc || tw.word_count > 63 {
-        return false;
+        return Err(ValidationFailure::InvalidWordCount);
     }
 
     // Check 4: Record fits in file.
     let record_bytes = usize::from(tw.word_count) * 2;
-    if offset + record_bytes > file_len {
-        return false;
+    if offset
+        .checked_add(record_bytes)
+        .is_none_or(|end| end > file_len)
+    {
+        return Err(ValidationFailure::RecordTruncated);
     }
 
     // Check 5: IRIG timestamp field range checks per L2-SYN-004
     // and L2-SYN-019. We need all three timestamp words to evaluate
     // microsecond and day; offset + 8 <= file_len covers reading
     // upper (offset+2), middle (offset+4), and lower (offset+6) words.
-    if ts_format == Some(TimestampFormat::Irig) && offset + 8 <= file_len {
+    if ts_format == Some(TimestampFormat::Irig)
+        && offset.checked_add(8).is_some_and(|end| end <= file_len)
+    {
         if let (Some(ts_upper), Some(ts_middle), Some(ts_lower)) = (
             read_u16(data, offset + 2),
             read_u16(data, offset + 4),
@@ -92,11 +149,17 @@ pub fn validate_record(
             let microsecond_lo16 = u32::from(ts_lower);
             let microsecond = (microsecond_hi4 << 16) | microsecond_lo16;
 
-            if hour >= 24 || minute >= 60 || second >= 60 {
-                return false;
+            if hour >= 24 {
+                return Err(ValidationFailure::IrigHourOutOfRange);
+            }
+            if minute >= 60 {
+                return Err(ValidationFailure::IrigMinuteOutOfRange);
+            }
+            if second >= 60 {
+                return Err(ValidationFailure::IrigSecondOutOfRange);
             }
             if microsecond > 999_999 {
-                return false;
+                return Err(ValidationFailure::IrigMicrosecondOutOfRange);
             }
             // L2-SYN-019: skip the day-of-year range check when
             // freerun is set, because the card's free-running
@@ -105,7 +168,7 @@ pub fn validate_record(
             // a function of the counter modulus, not the external
             // IRIG-B feed.
             if !freerun && !(1..=366).contains(&day) {
-                return false;
+                return Err(ValidationFailure::IrigDayOutOfRange);
             }
         }
     }
@@ -118,7 +181,9 @@ pub fn validate_record(
     // rejecting the original candidate (the in-bounds checks above are
     // authoritative for records that do exist).
     let n = lookahead_records.max(1);
-    let mut next_offset = offset + record_bytes;
+    let Some(mut next_offset) = offset.checked_add(record_bytes) else {
+        return Err(ValidationFailure::RecordTruncated);
+    };
     for _ in 1..n {
         // EOF: no more bytes to look ahead into. The remaining
         // unchecked records (if any) simply don't exist in the file —
@@ -131,10 +196,10 @@ pub fn validate_record(
         };
         let next_tw = decode_type_word(next_raw);
         if !message_type_is_valid(next_tw.message_type) {
-            return false;
+            return Err(ValidationFailure::LookaheadUnknownMessageType);
         }
         if next_tw.word_count < min_wc || next_tw.word_count > 63 {
-            return false;
+            return Err(ValidationFailure::LookaheadInvalidWordCount);
         }
         // Advance by the look-ahead candidate's declared length so the
         // next iteration validates the record AFTER it, not 2 bytes
@@ -154,7 +219,7 @@ pub fn validate_record(
         next_offset = advance;
     }
 
-    true
+    Ok(())
 }
 
 /// Outcome of a scan: where the next valid record is, and how many bytes
@@ -480,6 +545,74 @@ mod tests {
         ((u16::from(minute) & 0x3F) << 10)
             | ((u16::from(second) & 0x3F) << 4)
             | (u16::from(us_hi4) & 0xF)
+    }
+
+    /// Requirements: L2-SYN-004, L2-SYN-005
+    #[test]
+    fn detailed_validation_reports_each_failure_reason() {
+        let valid = make_irig_record_with_ts(irig_upper(false, 192, 15), irig_middle(54, 50, 0), 0);
+        let first = &valid[..10];
+
+        let cases = [
+            (vec![0x02], ValidationFailure::TypeWordUnreadable),
+            (
+                [0x0503u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+                ValidationFailure::UnknownMessageType,
+            ),
+            (
+                [0x0202u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+                ValidationFailure::InvalidWordCount,
+            ),
+            (
+                [0x2402u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+                ValidationFailure::RecordTruncated,
+            ),
+            (
+                make_irig_record_with_ts(irig_upper(false, 192, 24), irig_middle(54, 50, 0), 0),
+                ValidationFailure::IrigHourOutOfRange,
+            ),
+            (
+                make_irig_record_with_ts(irig_upper(false, 192, 15), irig_middle(60, 50, 0), 0),
+                ValidationFailure::IrigMinuteOutOfRange,
+            ),
+            (
+                make_irig_record_with_ts(irig_upper(false, 192, 15), irig_middle(54, 60, 0), 0),
+                ValidationFailure::IrigSecondOutOfRange,
+            ),
+            (
+                make_irig_record_with_ts(
+                    irig_upper(false, 192, 15),
+                    irig_middle(54, 50, 0xF),
+                    0x4240,
+                ),
+                ValidationFailure::IrigMicrosecondOutOfRange,
+            ),
+            (
+                make_irig_record_with_ts(irig_upper(false, 0, 15), irig_middle(54, 50, 0), 0),
+                ValidationFailure::IrigDayOutOfRange,
+            ),
+            (
+                [first, 0x0503u16.to_le_bytes().as_slice()].concat(),
+                ValidationFailure::LookaheadUnknownMessageType,
+            ),
+            (
+                [first, 0x0202u16.to_le_bytes().as_slice()].concat(),
+                ValidationFailure::LookaheadInvalidWordCount,
+            ),
+        ];
+
+        for (data, expected) in cases {
+            assert_eq!(
+                validate_record_detailed(
+                    &data,
+                    0,
+                    data.len(),
+                    Some(TimestampFormat::Irig),
+                    DEFAULT_LOOKAHEAD_RECORDS,
+                ),
+                Err(expected)
+            );
+        }
     }
 
     /// Requirements: L2-SYN-004

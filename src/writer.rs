@@ -97,10 +97,12 @@ impl AtomicCsvFile {
     /// final destination. After a successful commit the temp file no
     /// longer exists so Drop's cleanup becomes a no-op.
     pub fn commit(mut self) -> MieResult<()> {
-        let writer = self
-            .writer
-            .take()
-            .expect("AtomicCsvFile::commit called without an active writer");
+        let Some(writer) = self.writer.take() else {
+            return Err(MieError::WriterError {
+                destination: self.final_path.display().to_string(),
+                source: io::Error::other("AtomicCsvFile::commit called without an active writer"),
+            });
+        };
         let temp_for_err = self.temp_path.display().to_string();
         let file = writer.into_inner().map_err(|e| MieError::WriterError {
             destination: temp_for_err,
@@ -127,10 +129,14 @@ impl AtomicCsvFile {
     /// gets the decoded-so-far rows in the .partial file. Returns the
     /// path written so callers can log it.
     pub fn commit_partial(mut self) -> MieResult<PathBuf> {
-        let writer = self
-            .writer
-            .take()
-            .expect("AtomicCsvFile::commit_partial called without an active writer");
+        let Some(writer) = self.writer.take() else {
+            return Err(MieError::WriterError {
+                destination: self.final_path.display().to_string(),
+                source: io::Error::other(
+                    "AtomicCsvFile::commit_partial called without an active writer",
+                ),
+            });
+        };
         let temp_for_err = self.temp_path.display().to_string();
         let file = writer.into_inner().map_err(|e| MieError::WriterError {
             destination: temp_for_err,
@@ -167,16 +173,16 @@ impl AtomicCsvFile {
 
 impl Write for AtomicCsvFile {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.writer
-            .as_mut()
-            .expect("AtomicCsvFile::write after commit")
-            .write(buf)
+        match self.writer.as_mut() {
+            Some(writer) => writer.write(buf),
+            None => Err(io::Error::other("AtomicCsvFile::write after commit")),
+        }
     }
     fn flush(&mut self) -> io::Result<()> {
-        self.writer
-            .as_mut()
-            .expect("AtomicCsvFile::flush after commit")
-            .flush()
+        match self.writer.as_mut() {
+            Some(writer) => writer.flush(),
+            None => Err(io::Error::other("AtomicCsvFile::flush after commit")),
+        }
     }
 }
 
@@ -542,10 +548,21 @@ where
             if !msg.error_label().is_empty() {
                 if error_writer.is_none() {
                     errors_atomic = Some(AtomicCsvFile::create(error_path.clone())?);
-                    let inner = errors_atomic.as_mut().unwrap();
+                    let Some(inner) = errors_atomic.as_mut() else {
+                        return Err(MieError::WriterError {
+                            destination: error_path.display().to_string(),
+                            source: io::Error::other("error output writer was not initialized"),
+                        });
+                    };
                     error_writer = Some(CsvWriter::new(inner, error_path.display().to_string())?);
                 }
-                error_writer.as_mut().unwrap().write_message(&msg)?;
+                let Some(writer) = error_writer.as_mut() else {
+                    return Err(MieError::WriterError {
+                        destination: error_path.display().to_string(),
+                        source: io::Error::other("error CSV writer was not initialized"),
+                    });
+                };
+                writer.write_message(&msg)?;
             } else {
                 main.write_message(&msg)?;
             }

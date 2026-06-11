@@ -3,6 +3,8 @@
 //! See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the module
 //! diagram and synchronization strategy.
 
+#![cfg_attr(not(test), warn(clippy::expect_used, clippy::unwrap_used))]
+
 pub mod cli;
 pub mod config;
 pub mod decode;
@@ -16,6 +18,7 @@ pub mod sync;
 pub mod writer;
 
 pub use reader::{MieFileReader, ReaderOptions};
+pub use sync::ValidationFailure;
 
 pub use error::{MieError, MieErrorKind, MieResult};
 pub use models::{

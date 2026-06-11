@@ -441,7 +441,7 @@ Both implementations are gated. Rust uses `cargo-llvm-cov`; Python uses `pytest-
 
 ### Rust
 
-The CI gate is `cargo cov-ci` (alias defined in `.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 70/70).
+The CI gate is `cargo cov-ci` (alias defined in `.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 70/70). After the gate passes, CI runs `cargo cov-lcov` and uploads `lcov.info` as the `rust-lcov` artifact.
 
 ```bash
 cargo cov-ci         # what CI runs

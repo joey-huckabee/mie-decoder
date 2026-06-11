@@ -2,6 +2,15 @@
 
 ## Release status
 
+**v1.3.0 — joint Rust + Python cut, 2026-06-11.** Hardening release.
+Added public detailed sync-validation failure APIs, precise strict-mode
+diagnostics, and bounded DEBUG context logging in both implementations.
+Enabled production Rust unwrap/expect linting, published Rust LCOV as a
+CI artifact, and closed the remaining partial traceability row. Active
+requirements are now 131 of 131 verified. Test counts: 183 Rust and
+252 Python; conformance case count remains 27. See
+[`CHANGELOG.md`](../CHANGELOG.md) section `[1.3.0]` for the full entry.
+
 **v1.2.0 — joint Rust + Python cut, 2026-06-08.** Third joint
 release. Added the L2-SYN-026 configurable N-record sync look-ahead
 (`decode.lookahead_records` TOML key, `--lookahead-records N` CLI
@@ -37,9 +46,9 @@ for the full v1.0.0 entry.
 
 ### Queued for the next release (`[Unreleased]`)
 
-`[Unreleased]` is empty as of the v1.2.0 cut. Future work
-accumulates here; when ready to cut a release, follow the
-version-bump checklist in `docs/MAINTAINER-GUIDE.md` §11.
+`[Unreleased]` is empty as of the v1.3.0 cut. Future work accumulates
+here; when ready to cut a release, follow the version-bump checklist in
+`docs/MAINTAINER-GUIDE.md` section 11.
 
 ## Planned
 
@@ -48,6 +57,12 @@ version-bump checklist in `docs/MAINTAINER-GUIDE.md` §11.
 | Rust v1.x | Multi-file input, time-sorted merge to single CSV. |
 | Rust v2.0 | Data word decoders, additional per-message-type CSVs. |
 | Rust v3.0 | Apache Parquet output. |
+
+Multi-file input is Rust-only in the current roadmap because the Rust writer
+already streams in constant memory. Python currently materializes the full
+record stream into a pandas DataFrame; shared multi-file support should follow
+the separate Python streaming-writer work rather than multiply that memory
+cost across several recordings.
 
 Subsequent releases may diverge in version via impl-prefixed tags
 (`rust-vX.Y.Z`, `python-vX.Y.Z`); the cross-implementation conformance
@@ -60,7 +75,7 @@ section 11 for the release workflow.
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.
 - **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including currently-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`).
 - **Sync recovery semantics preserved.** N-record look-ahead (default `N = 2` per L2-SYN-005, configurable via L2-SYN-026), 64 KB scan cap, error records and SPURIOUS_DATA continuations remain valid records that pass validation.
-- **One validation path.** Header skip, normal forward decode, and post-loss recovery all share `sync::validate_record`. There is no weaker fast path.
+- **One validation implementation.** Header skip, normal forward decode, and post-loss recovery share the same validation rules through the boolean compatibility wrapper or the detailed failure API. There is no weaker fast path.
 - **Cross-implementation conformance.** Text-based fixtures under
   `tests/conformance/` exercise shared decoding, recovery, filtering, config,
   error, and CSV behavior against byte-exact output oracles in CI.
@@ -88,10 +103,9 @@ non-monotonic-timestamp WARN, and the cross-impl `delta-tracking-irig`
 conformance fixture. See `L2-RDR-016` through `L2-RDR-019` in
 `docs/L2-REQ.md` and the FIELDS.md DELTA section.
 
-**Items 2-8 below are open.** Effort estimates are person-day bands for
-a single engineer with full context. The Phase Sequencing block at the
-end records the recommended landing order — Phase 1 (spec only) is the
-gating decision; after that, phases are mostly independent.
+**Items 2-8 below are retained as historical review records.** Their proposed
+contracts have shipped across v1.0.0-v1.2.0; the former "open" banner was
+stale. Current work is tracked in the queued-release and robustness sections.
 
 ---
 
@@ -1291,8 +1305,8 @@ here so they don't get dropped.
   L2-DEC-016 confidence classification + `MieTimestampFormatMismatchError`
   for the ambiguous case. See `CHANGELOG.md` `[1.1.0]` for the full
   entry.
-- **~~Multi-record look-ahead.~~** *Resolved in `[Unreleased]`,
-  shipping in v1.2.0.* L2-SYN-026 makes the look-ahead depth
+- **~~Multi-record look-ahead.~~** *Resolved in v1.2.0.*
+  L2-SYN-026 makes the look-ahead depth
   configurable via `decode.lookahead_records` (default `N = 2`
   preserves historical behavior). Implementation in commits
   `fc515d7..84938f2`.
@@ -1310,10 +1324,9 @@ here so they don't get dropped.
   enum is exposed via `WhichInvariant` (Rust) /
   `WhichInvariant` (Python) so callers can branch on the specific
   failure rather than parsing a string detail.
-- **Header-detection look-ahead depth.** `find_first_record` shares the
-  same two-record look-ahead as continuous validation. For files with
-  deeply embedded headers that contain valid-looking byte patterns, an
-  N-record confirmation could reduce false-positive header endpoints.
+- **~~Header-detection look-ahead depth.~~** *Resolved in v1.2.0.*
+  L2-SYN-026 applies configurable N-record confirmation uniformly to
+  header detection, continuous validation, and sync recovery.
 
 ### Decode correctness
 
@@ -1337,17 +1350,11 @@ here so they don't get dropped.
 
 ### Lint policy
 
-- **Adopt `clippy::unwrap_used = "warn"` and
-  `clippy::expect_used = "warn"`.** Surface every `.unwrap()` and
-  `.expect()` so each site is forced to either be rewritten with `?`
-  or annotated with `#[allow(clippy::unwrap_used)]` plus a one-line
-  rationale. The current crate has only structurally-safe unwraps
-  (e.g., `iter.next().unwrap()` immediately after `iter.peek()`
-  returning `Some`), but enforcing the lint converts that property
-  from "true today" to "true and verified on every commit." Tracked
-  here because flipping the lint requires touching ~6 sites with
-  `#[allow]` + comment, which is paperwork that doesn't fit a
-  feature commit.
+- **~~Adopt `clippy::unwrap_used = "warn"` and
+  `clippy::expect_used = "warn"`.~~** *Resolved in v1.3.0.*
+  Production crates enable both lints outside `cfg(test)`. The previously
+  structurally-safe production unwrap/expect sites now return defensive
+  parse or writer-state errors instead of panicking.
 
 ### Output cosmetics
 
@@ -1381,27 +1388,24 @@ here so they don't get dropped.
   (L2-RDR-017 in `docs/L2-REQ.md`) now emits an empty `DELTA`
   on non-monotonic timestamps and a WARN gated to one line per RT/MSG
   key per recording.
-- **Strict-mode error classification for IRIG-range and look-ahead
-  failures.** When per-record validation fails for an IRIG-range or
-  look-ahead reason, strict mode currently surfaces a `PayloadError`
-  with a string detail. A dedicated `MieValidationError` variant with a
-  structured "which check failed" enum field would be more consumable.
-- **Verbose sync-loss diagnostic.** Today a sync-loss WARN line prints
-  the failing offset, type, and word count. A complementary mode could
-  hex-dump 32 bytes of context around the failure, similar to the
-  Python `_print_unknown_type_diagnostic` helper that didn't make the
-  port.
+- **~~Strict-mode error classification for IRIG-range and look-ahead
+  failures.~~** *Resolved in v1.3.0.* Both implementations expose
+  a public `ValidationFailure` reason enum and additive detailed-validation
+  API. Existing boolean validation and error classes remain compatible.
+- **~~Verbose sync-loss diagnostic.~~** *Resolved in v1.3.0.*
+  DEBUG logging emits a single context line capped at 32 bytes for validation
+  failures in both implementations. Python's former unconditional stderr
+  dump was removed.
 
 ## Tooling
 
-- **Publish Rust coverage reports from CI.** The GitHub Actions workflow now
-  runs `cargo cov-ci` as a hard 70% line + region gate. A future improvement
-  is running `cargo cov-lcov` and uploading `lcov.info` as a build artifact
-  or to codecov.io so coverage trends are visible across PRs.
+- **~~Publish Rust coverage reports from CI.~~** *Resolved in v1.3.0.*
+  The Linux Rust CI cell runs `cargo cov-lcov` after the 70/70 gate and
+  uploads `lcov.info` as the `rust-lcov` workflow artifact.
 - **Ratchet thresholds upward as baseline stabilizes.** Initial
   floors (70/70) sit ~5pp below the baseline (74.81% / 71.55%) to
   absorb refactor drift. After a few weeks of stable readings,
   consider tightening to baseline-2pp.
-- **Adopt `clippy::unwrap_used = "warn"` and
-  `clippy::expect_used = "warn"`** (already noted under "Lint
-  policy" above; relisted here as a tooling-track item).
+- **~~Adopt `clippy::unwrap_used = "warn"` and
+  `clippy::expect_used = "warn"`.~~** *Resolved in v1.3.0; see
+  Lint policy above.*

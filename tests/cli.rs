@@ -425,7 +425,7 @@ fn dump_records_outputs_hex_to_stdout() {
 
 // ── Inline error output (L2-ERR-010, L2-ERR-011) ─────────────────────
 
-/// Requirements: L2-ERR-010, L2-ERR-011
+/// Requirements: L2-ERR-010, L2-ERR-011, L3-RS-009
 ///
 /// `--inline-errors` keeps errored records in the main CSV with the
 /// ERROR and ERROR_CODE columns populated, instead of routing them
@@ -467,6 +467,83 @@ fn inline_errors_populates_error_code_column() {
         !errors_csv.exists(),
         "inline-errors must not produce a separate _errors.csv (found: {})",
         errors_csv.display()
+    );
+}
+
+/// Requirements: L2-ERR-011, L3-RS-009
+#[test]
+fn stdout_output_forces_inline_error_mode() {
+    let tmp = TempDir::new();
+    let mut bytes = one_valid_record();
+    bytes.extend(errored_record());
+    let input = tmp.write("rec.mie", &bytes);
+
+    let out = run([std::ffi::OsStr::new("decode"), input.as_os_str()]);
+    assert_eq!(exit_code(&out), 0);
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("011E"),
+        "stdout output must inline errored records\n--- stdout ---\n{stdout}"
+    );
+}
+
+/// Requirements: L2-SYN-013
+#[test]
+fn debug_sync_failure_includes_bounded_validation_context() {
+    let tmp = TempDir::new();
+    let mut bytes = one_valid_record();
+    bytes.extend(one_valid_record());
+    bytes.extend([0x03, 0x00].repeat(5));
+    let input = tmp.write("corrupt.mie", &bytes);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("--log-level"),
+        std::ffi::OsStr::new("debug"),
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--strict"),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_ne!(exit_code(&out), 0);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("look-ahead message type is unknown"),
+        "strict failure should name the precise validation reason\n--- stderr ---\n{stderr}"
+    );
+    assert!(
+        stderr.contains("validation context") && stderr.contains("max 32"),
+        "DEBUG failure should include a bounded context dump\n--- stderr ---\n{stderr}"
+    );
+}
+
+/// Requirements: L2-SYN-004, L2-SYN-016
+#[test]
+fn strict_irig_failure_names_precise_validation_reason() {
+    let tmp = TempDir::new();
+    let mut bytes = one_valid_record();
+    let mut invalid_day = one_valid_record();
+    invalid_day[2..4].copy_from_slice(&0x000Fu16.to_le_bytes());
+    bytes.extend(invalid_day);
+    let input = tmp.write("bad-irig.mie", &bytes);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("--strict"),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_ne!(exit_code(&out), 0);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("IRIG day-of-year is out of range"),
+        "strict failure should name the precise IRIG field\n--- stderr ---\n{stderr}"
     );
 }
 

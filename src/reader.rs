@@ -17,7 +17,7 @@ use memmap2::Mmap;
 use crate::decode::{
     DEFAULT_DETECT_RECORDS, DetectionConfidence, MIN_RECORD_BYTES_STANDARD,
     classify_message_format, decode_command_word, decode_irig_timestamp, decode_standard_timestamp,
-    decode_type_word, message_type_is_valid, probe_timestamp_format, read_u16, read_u16_array,
+    decode_type_word, probe_timestamp_format, read_u16, read_u16_array,
 };
 use crate::error::{MieError, MieResult};
 use crate::models::{
@@ -25,7 +25,10 @@ use crate::models::{
     MessageType, MieMessage, Timestamp, TimestampFormat, TypeWord, ddc_error_description,
     is_known_ddc_error_code, timestamp_word_count,
 };
-use crate::sync::{DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, find_first_record, recover_sync};
+use crate::sync::{
+    DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, ValidationFailure, find_first_record, recover_sync,
+    validate_record_detailed,
+};
 use crate::{log_debug, log_error, log_info, log_warn};
 
 /// Reader handle. Construct with [`new`]; iterate by calling `.iter()` or
@@ -427,6 +430,26 @@ pub struct RecordIter<'a> {
     path_for_log: &'a Path,
 }
 
+fn log_validation_context(data: &[u8], offset: usize) {
+    if !crate::log::enabled(crate::log::Level::Debug) {
+        return;
+    }
+    let start = offset.saturating_sub(16);
+    let end = data.len().min(start.saturating_add(32));
+    let hex = data[start..end]
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    log_debug!(
+        "validation context at 0x{:X} (bytes 0x{:X}..0x{:X}, max 32): {}",
+        offset,
+        start,
+        end,
+        hex
+    );
+}
+
 /// Encode `(rt, sa, dir)` into a single u32 key for the delta tracker.
 /// Avoids per-record String allocation and HashMap key construction.
 #[inline]
@@ -480,7 +503,6 @@ impl<'a> Iterator for RecordIter<'a> {
             // and stays fixed for the rest of the decode.
             let resolved = self.resolved_format;
             let ts_words = timestamp_word_count(resolved);
-            let min_wc = 1 + ts_words + 1;
             let record_bytes = usize::from(tw.word_count) * 2;
 
             // ── Validate this record ────────────────────────────────
@@ -491,7 +513,7 @@ impl<'a> Iterator for RecordIter<'a> {
             // look-ahead. A weaker inline check would let corrupt-but-
             // plausible records slip through and be emitted as garbage
             // rows.
-            let is_valid = crate::sync::validate_record(
+            let validation = validate_record_detailed(
                 self.data,
                 self.offset,
                 self.file_len,
@@ -499,41 +521,31 @@ impl<'a> Iterator for RecordIter<'a> {
                 self.lookahead_records,
             );
 
-            if !is_valid {
+            if let Err(failure) = validation {
                 self.sync_losses += 1;
                 self.sync_losses_atomic.fetch_add(1, Ordering::Relaxed);
+                log_validation_context(self.data, self.offset);
                 if self.strict {
-                    // Classify in priority order. The first three arms
-                    // mirror the three coarse checks; if validation fails
-                    // for an IRIG-range or look-ahead reason, fall through
-                    // to PayloadError with descriptive detail.
-                    let err = if !message_type_is_valid(tw.message_type) {
-                        MieError::UnknownTypeWord {
+                    let err = match failure {
+                        ValidationFailure::UnknownMessageType => MieError::UnknownTypeWord {
                             offset: self.offset as u64,
                             raw_type_word: type_raw,
                             message_type: tw.message_type,
-                        }
-                    } else if tw.word_count < min_wc {
-                        MieError::InvalidTypeWord {
+                        },
+                        ValidationFailure::InvalidWordCount => MieError::InvalidTypeWord {
                             offset: self.offset as u64,
                             raw_type_word: type_raw,
                             word_count: tw.word_count,
-                        }
-                    } else if self.offset + record_bytes > self.file_len {
-                        MieError::RecordTruncated {
+                        },
+                        ValidationFailure::RecordTruncated => MieError::RecordTruncated {
                             offset: self.offset as u64,
                             record_bytes: record_bytes as u64,
-                            available_bytes: (self.file_len - self.offset) as u64,
-                        }
-                    } else {
-                        MieError::PayloadError {
+                            available_bytes: self.file_len.saturating_sub(self.offset) as u64,
+                        },
+                        other => MieError::PayloadError {
                             offset: self.offset as u64,
-                            detail: format!(
-                                "record fails IRIG-range or look-ahead validation \
-                                 (raw_type=0x{:04X})",
-                                type_raw
-                            ),
-                        }
+                            detail: format!("{other} (raw_type=0x{type_raw:04X})"),
+                        },
                     };
                     self.done = true;
                     return Some(Err(err));

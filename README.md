@@ -6,17 +6,17 @@ MIE-Decoder reads proprietary binary files produced by Data Device Corporation (
 
 MIE-Decoder is maintained in two implementations:
 
-- **Rust v1.2.0** — streaming CSV writer (constant memory), hand-rolled
+- **Rust v1.3.0** — streaming CSV writer (constant memory), hand-rolled
   CLI, single native release binary.
-- **Python v1.2.0** — the Python package and CLI, maintained in
+- **Python v1.3.0** — the Python package and CLI, maintained in
   [`python/`](python/).
 
-Both implementations ship together as the joint **v1.2.0** release from a
-single repository tag (`v1.2.0`). Future releases may diverge in version
+Both implementations ship together as the joint **v1.3.0** release from a
+single repository tag (`v1.3.0`). Future releases may diverge in version
 via impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`). The implementations
 share the MIE format documentation, the vendor-compatible CSV behavior, and
 a 27-case byte-exact cross-implementation conformance suite. See
-[`CHANGELOG.md`](CHANGELOG.md) for the full v1.2.0 deliverables.
+[`CHANGELOG.md`](CHANGELOG.md) for the full v1.3.0 deliverables.
 
 ## Rust Build
 
@@ -182,8 +182,9 @@ MIE-Decoder automatically handles:
 
 - **File headers**: Scans from offset 0 to find the first valid record, skipping proprietary headers.
 - **Mid-file corruption**: If a record fails validation, scans forward in 2-byte steps to find the next valid record.
-- **Unified validation**: The same five-check `validate_record` path is used for header skip, normal forward decode, and post-loss recovery. Every record passes through the same heuristics — there is no weaker fast path that could let corrupt-but-plausible records through.
-- **Validation checks** (in order): valid message type → plausible word count → record fits in file → IRIG timestamp fields in range (hour < 24, minute < 60, second < 60) → two-record look-ahead (next record's Type Word also looks valid).
+- **Unified validation**: The same validation rules are used for header skip, normal forward decode, and post-loss recovery. The additive detailed API reports a `ValidationFailure` reason while the existing boolean API remains compatible.
+- **Validation checks** (in order): valid message type → plausible word count → record fits in file → IRIG timestamp fields in range → configurable N-record look-ahead.
+- **DEBUG diagnostics**: Validation failures include one context hex line capped at 32 bytes.
 - **Error records maintain sync**: Error records (bit 14) and SPURIOUS_DATA continuations are valid records with valid Type Words.
 
 ## Configuration
@@ -304,7 +305,7 @@ python tests/conformance/run.py
 ## Known Limitations
 
 - The Day field in IRIG timestamps may not decode correctly on all DDC card models.
-- `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but empty in v1.2.0.
+- `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but empty in v1.3.0.
 - Standard timestamp tick-to-microsecond conversion requires external calibration.
 - SPURIOUS_DATA payload structure is raw words with no further interpretation.
 
