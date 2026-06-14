@@ -229,19 +229,20 @@ for reference only (`PRA-N`).
   CI check (or a generated snippet) for the conformance-case and
   requirement counts to prevent recurrence.
 
-**PRA-7 — Version-anchored source comments.**
+**PRA-7 — Version-anchored source comments.** *Partially addressed.*
 *Severity: Low (cosmetic).*
 - **Concern.** A few module/doc comments frame current behavior with
   dated qualifiers.
-- **Evidence.** `src/cli.rs` and `src/filter.rs` describe the CLI surface
-  as a "v2 redesign" (it is the current stable surface);
-  `python/src/mie_decoder/writer.py` and `config.py` annotate the
+- **Evidence.** ~~`src/cli.rs` and `src/filter.rs` described the CLI
+  surface as a "v2 redesign" (it is the current stable surface).~~ Done —
+  the "v2 redesign" anchors were removed from both module docs. Still
+  open: `python/src/mie_decoder/writer.py` and `config.py` annotate the
   intentionally-empty vendor columns and the CSV-only output format as
   "empty in v1.0" / "csv for v1.0" (accurate behavior, dated framing).
-- **Proposed adjustment.** Reword to describe current behavior without a
-  version anchor (e.g., "currently empty by spec — see Shared
-  Commitments"), so the comments don't read as obsolete at later point
-  releases.
+- **Proposed adjustment.** Reword the remaining Python anchors to describe
+  current behavior without a version anchor (e.g., "currently empty by
+  spec — see Shared Commitments"), so the comments don't read as obsolete
+  at later point releases.
 
 ### Lower priority
 

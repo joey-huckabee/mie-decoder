@@ -1,6 +1,6 @@
 //! Hand-rolled argument parser and CLI dispatch.
 //!
-//! Surface (v2 redesign):
+//! Surface:
 //!
 //! ```text
 //! mie-decoder [--log-level L] [--config PATH] <command> [opts...]

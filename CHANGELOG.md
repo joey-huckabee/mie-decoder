@@ -26,6 +26,9 @@ full release workflow.
   test, normative-doc/source-comment staleness, and lower-priority
   test/diagnostic items. Items are unscheduled — no target version is
   assigned until each is planned for closure.
+- Removed the stale "v2 redesign" version anchor from the `src/cli.rs` and
+  `src/filter.rs` module docs — the described CLI surface is the current
+  stable one, not a future redesign (ROADMAP PRA-7, partial).
 
 ## [1.4.1] — 2026-06-14
 

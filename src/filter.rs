@@ -1,5 +1,5 @@
-//! Message filtering. Per the v2 CLI redesign, both `exclude_*` (negative)
-//! and `include_*` (positive) filters are supported. A message passes if:
+//! Message filtering. Both `exclude_*` (negative) and `include_*`
+//! (positive) filters are supported. A message passes if:
 //!   - it matches no `exclude_*` set, AND
 //!   - every active `include_*` set contains its value.
 //!
