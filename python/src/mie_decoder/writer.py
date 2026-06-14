@@ -43,11 +43,13 @@ Output Column Definitions:
     MUX
         Multiplexer label or subchannel identifier. Derived from
         external configuration (TMATS or recording software setup).
-        Not decoded from the binary record. Empty in v1.0.
+        Not decoded from the binary record; emitted as an empty column
+        to preserve the vendor CSV layout (L2-WRT-013).
 
     TERM_NAME
         Terminal or equipment name associated with the RT/SA combination.
-        Derived from external configuration. Empty in v1.0.
+        Derived from external configuration; not decoded, so emitted as
+        an empty column to preserve the vendor CSV layout (L2-WRT-013).
 
     BUS
         Redundant bus identifier: ``A`` or ``B``. MIL-STD-1553 defines
@@ -79,16 +81,16 @@ Output Column Definitions:
         changes, or intermittent RT response failures.
 
     IM_GAP
-        Inter-message gap. Not decoded from the binary record in v1.0.
-        Empty string.
+        Inter-message gap. Not decoded from the binary record; emitted as
+        an empty column to preserve the vendor CSV layout (L2-WRT-013).
 
     RCV_GAP
-        Receive gap. Not decoded from the binary record in v1.0.
-        Empty string.
+        Receive gap. Not decoded from the binary record; emitted as an
+        empty column to preserve the vendor CSV layout (L2-WRT-013).
 
     XMT_GAP
-        Transmit gap. Not decoded from the binary record in v1.0.
-        Empty string.
+        Transmit gap. Not decoded from the binary record; emitted as an
+        empty column to preserve the vendor CSV layout (L2-WRT-013).
 """
 
 from __future__ import annotations
@@ -272,15 +274,15 @@ CSV_COLUMNS: list[tuple[str, str]] = [
     *[(f"WD{i:02d}", f"Data word {i} (hex)") for i in range(1, MAX_DATA_WORDS + 1)],
     ("STAT", "MIL-STD-1553 Status Word (hex)"),
     ("CMD", "MIL-STD-1553 Command Word (hex)"),
-    ("MUX", "Multiplexer label (external config, empty in v1.0)"),
-    ("TERM_NAME", "Terminal name (external config, empty in v1.0)"),
+    ("MUX", "Multiplexer label (external config, empty by spec L2-WRT-013)"),
+    ("TERM_NAME", "Terminal name (external config, empty by spec L2-WRT-013)"),
     ("BUS", "Bus identifier: A or B"),
     ("DELTA", "Seconds since prior message with same RT+MSG"),
     ("ERROR", "Error label: empty=normal, ERROR=bit14, SPURIOUS=type 0x20"),
     ("ERROR_CODE", "DDC error code (0x01xx) or decoder code (0x20xx)"),
-    ("IM_GAP", "Inter-message gap (empty in v1.0)"),
-    ("RCV_GAP", "Receive gap (empty in v1.0)"),
-    ("XMT_GAP", "Transmit gap (empty in v1.0)"),
+    ("IM_GAP", "Inter-message gap (empty by spec L2-WRT-013)"),
+    ("RCV_GAP", "Receive gap (empty by spec L2-WRT-013)"),
+    ("XMT_GAP", "Transmit gap (empty by spec L2-WRT-013)"),
 ]
 
 #: Ordered list of column names for CSV header row.

@@ -209,7 +209,7 @@ class DecoderConfig:
         strict: If True, raise on invalid records instead of skipping.
         error_mode: How errored messages appear in output.
         filters: Message filtering configuration.
-        output_format: Output format name (csv for v1.0).
+        output_format: Output format name (currently only ``csv``).
         no_clobber: L2-WRT-017. Refuse to overwrite an existing
             destination. Defaults to False (overwrite permitted).
     """
@@ -450,7 +450,8 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         exclude_subaddresses=exclude_subaddresses,
     )
 
-    # Output format (L2-CFG-010: validate at load time, only "csv" in v1).
+    # Output format (L2-CFG-010: validate at load time; "csv" is currently
+    # the only supported value).
     output_format = output_section.get("format", "csv")
     if output_format != "csv":
         raise ValueError(

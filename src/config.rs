@@ -236,8 +236,8 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     }
     if let Some(fmt) = toml.get_string("output", "format")? {
         // L2-CFG-010: validate enum membership at load time. `csv` is
-        // the only output format in v1; forward-compat for future
-        // formats (Parquet, etc.) will widen this list.
+        // currently the only supported output format; forward-compat for
+        // future formats (Parquet, etc.) will widen this list.
         if fmt != "csv" {
             return Err(ConfigError(format!(
                 "Invalid output.format: {fmt:?}. Valid: csv"

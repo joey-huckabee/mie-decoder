@@ -26,9 +26,12 @@ full release workflow.
   test, normative-doc/source-comment staleness, and lower-priority
   test/diagnostic items. Items are unscheduled — no target version is
   assigned until each is planned for closure.
-- Removed the stale "v2 redesign" version anchor from the `src/cli.rs` and
-  `src/filter.rs` module docs — the described CLI surface is the current
-  stable one, not a future redesign (ROADMAP PRA-7, partial).
+- Cleared version-anchored source comments (ROADMAP PRA-7): removed the
+  "v2 redesign" framing from the `src/cli.rs` / `src/filter.rs` module
+  docs, and reworded the "empty in v1.0" / "csv for v1.0" anchors in
+  `python/.../writer.py`, `python/.../config.py`, and `src/config.rs` to
+  describe current behavior — the empty vendor columns now cite
+  `L2-WRT-013` and the output-format notes read "currently only csv".
 
 ## [1.4.1] — 2026-06-14
 
