@@ -15,6 +15,37 @@ full release workflow.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-06-14
+
+Joint Rust + Python feature release. Adds opt-in **Standard-timestamp
+tick calibration**: when an operator supplies the card's free-running
+counter frequency, Standard-format records are converted to microseconds
+and participate in `DELTA` tracking like IRIG records. Without a rate,
+behavior is unchanged (empty `DELTA`), so all existing CSV output stays
+byte-identical. Both implementations ship together from the `v1.4.0`
+repository tag.
+
+### Added
+
+- New `decode.standard_tick_rate_hz` TOML key and `--standard-tick-rate-hz`
+  CLI flag (both implementations). When set to a finite value `> 0`,
+  Standard timestamps convert to microseconds as
+  `round(raw_ticks × 1_000_000 / rate)` (half-away-from-zero, identical
+  across implementations) and join per-RT/MSG `DELTA` tracking
+  (L2-DEC-017, L2-CFG-011, L2-CLI-012).
+- Float value support in the Rust hand-rolled TOML parser (`TomlValue::Float`,
+  `TomlDoc::get_float`), required by the new key. No new crate dependency.
+- Two cross-implementation conformance cases — `standard-tick-calibrated-cli`
+  and `standard-tick-calibrated-toml` — sharing one oracle to prove the CLI
+  and TOML paths produce byte-identical calibrated output.
+
+### Changed
+
+- L2-RDR-019 generalized: Standard-format records have an empty `DELTA`
+  only when no tick rate is configured; with a valid rate they participate
+  in `DELTA` on the same terms as IRIG. `Timestamp::to_microseconds` /
+  `Timestamp.to_microseconds` now take an optional Standard tick rate.
+
 ## [1.3.0] — 2026-06-11
 
 Joint Rust + Python hardening release. Adds precise sync-validation

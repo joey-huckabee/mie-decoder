@@ -2,6 +2,16 @@
 
 ## Release status
 
+**v1.4.0 — joint Rust + Python cut, 2026-06-14.** Feature release.
+Added opt-in Standard-timestamp tick calibration: the new
+`decode.standard_tick_rate_hz` TOML key and `--standard-tick-rate-hz`
+CLI flag convert free-running counter ticks to microseconds and enable
+`DELTA` for Standard-format records (L2-DEC-017, L2-CFG-011, L2-CLI-012;
+L2-RDR-019 generalized). Without a rate, output is byte-identical to
+prior versions. Added float support to the Rust hand-rolled TOML parser
+(no new dependency) and two cross-impl conformance cases. See
+[`CHANGELOG.md`](../CHANGELOG.md) section `[1.4.0]` for the full entry.
+
 **v1.3.0 — joint Rust + Python cut, 2026-06-11.** Hardening release.
 Added public detailed sync-validation failure APIs, precise strict-mode
 diagnostics, and bounded DEBUG context logging in both implementations.
@@ -1334,19 +1344,18 @@ here so they don't get dropped.
   v1.0.0 (carried from Python). The bit layout for the day-of-year field
   appears to vary between firmware versions; needs reverse-engineering
   across a sample set with cross-references against vendor CSV.
-- **Standard-timestamp tick calibration.** The Standard format is a
-  free-running counter; the tick rate is card-dependent and not encoded
-  in the file. The current shared contract (see L2-RDR-019 in
-  `docs/L2-REQ.md`) emits an empty `DELTA` for every
-  Standard-timestamp record because raw ticks cannot be truthfully
-  represented as seconds. The follow-up feature here is a
-  configuration value (TMATS field or CLI flag, e.g.
-  `standard_tick_rate_hz`) that — when supplied — converts ticks to
-  microseconds and re-enables DELTA participation for Standard
-  records. Until that lands, the `Timestamp::to_microseconds`
-  (Rust) / `Timestamp.to_microseconds` (Python) APIs return `None`
-  for Standard so callers cannot accidentally treat ticks as
-  microseconds.
+- **~~Standard-timestamp tick calibration.~~** *Resolved in v1.4.0.*
+  The Standard format is a free-running counter whose tick rate is
+  card-dependent and not encoded in the file. The shared contract
+  (L2-RDR-019) now emits an empty `DELTA` for Standard records *only when
+  no rate is configured*; supplying the new `decode.standard_tick_rate_hz`
+  TOML key or `--standard-tick-rate-hz` CLI flag (L2-DEC-017, L2-CFG-011,
+  L2-CLI-012) converts ticks to microseconds —
+  `round(raw_ticks × 1_000_000 / rate)` — and re-enables DELTA
+  participation on the same terms as IRIG. `Timestamp::to_microseconds`
+  (Rust) / `Timestamp.to_microseconds` (Python) take an optional rate and
+  still return `None` for Standard when none is supplied, so callers
+  cannot accidentally treat raw ticks as microseconds.
 
 ### Lint policy
 
