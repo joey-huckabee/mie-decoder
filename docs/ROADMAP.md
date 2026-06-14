@@ -267,20 +267,27 @@ large-recording deployments).*
 
 ### Lower priority
 
-**PRA-8 — Add tests for Inspection-only memory-safety boundaries.**
-*Severity: Low.* `L2-DEC-009` (payload extraction bounded by Type Word
-extent — no read into the next record) is verified by Inspection only. A
-targeted test that proves a record never reads past its declared extent
-would cheaply lock in a memory-safety boundary; similarly `L2-SYN-014`
-(single shared validation path).
+**~~PRA-8 — Add tests for Inspection-only memory-safety boundaries.~~**
+*Resolved (L2-DEC-009).* *Severity: Low.* `L2-DEC-009` (payload extraction
+bounded by Type Word extent — no read into the next record) was verified by
+Inspection only. Added a targeted test in both implementations
+(`payload_extraction_does_not_overrun_into_next_record`): an over-declaring
+record (Command Word `data_word_count = 30` inside a 10-word Type Word
+extent) followed by a valid record — strict mode rejects it (capacity
+invariant), lenient mode skips it and decodes the following record intact
+at its true offset, proving no overrun. `L2-DEC-009`'s verification method
+is now Test + Inspection. (`L2-SYN-014`, the single-validation-path
+guarantee, remains a structural Inspection item — not pursued here.)
 
-**PRA-9 — Operator WARN on the known IRIG day-of-year discrepancy.**
-*Severity: Low.* The IRIG day-of-year firmware discrepancy is documented
-and bounded (`docs/VENDOR-CSV-DIFFS.md` §5), but produces a *silent*
-wrong value on affected firmware. Consider a one-time WARN when the
-day-of-year field is consumed on a calendar-locked (non-freerun) record,
-nudging operators to the documented limitation. Pairs with the existing
-"IRIG day-field decoding across DDC card models" investigation item.
+**~~PRA-9 — Operator WARN on the known IRIG day-of-year discrepancy.~~**
+*Resolved.* *Severity: Low.* Both readers now emit a one-time WARN per
+decode the first time a calendar-locked (non-freerun) IRIG record is
+decoded, pointing the operator to the documented limitation
+(`docs/VENDOR-CSV-DIFFS.md` §5); freerun records do not trigger it and it
+can be silenced with `--log-level ERROR`. A Python caplog test asserts it
+fires exactly once per decode (not once per record). The underlying
+reverse-engineering of the per-firmware day-of-year encoding remains the
+open "IRIG day-field decoding across DDC card models" investigation item.
 
 ## Shared Commitments
 

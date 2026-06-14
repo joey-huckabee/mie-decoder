@@ -284,6 +284,75 @@ fn recovery_scan_is_forward_only_and_bounded() {
     );
 }
 
+/// L2-DEC-009: payload extraction is bounded by the Type Word's declared
+/// extent and never consumes bytes from the following record. A Command
+/// Word that declares more data words than the Type Word's `word_count`
+/// can hold is rejected by the L2-SYN-022 capacity invariant *before*
+/// extraction runs, and the reader additionally slices to the record
+/// extent (`&self.data[..record_end]`) — so a malformed record can never
+/// overrun into its successor.
+/// Requirements: L2-DEC-009
+#[test]
+fn payload_extraction_does_not_overrun_into_next_record() {
+    use mie_decoder::error::MieErrorKind;
+    use mie_decoder::models::TimestampFormat;
+    use mie_decoder::reader::ReaderOptions;
+
+    // R1: Type Word declares word_count = 10 words (20 bytes), but the
+    // Command Word 0x797E declares data_word_count = 30 — far more payload
+    // than 10 words can hold. R2: a normal valid record immediately after.
+    let mut r1 = Vec::new();
+    r1.extend_from_slice(&0x0A02u16.to_le_bytes()); // Type: wc=10, type=0x02 (BC->RT)
+    r1.extend_from_slice(&[0x0F, 0x18, 0x26, 0xDB, 0x21, 0xF6]); // IRIG ts (3 words)
+    r1.extend_from_slice(&0x797Eu16.to_le_bytes()); // Cmd: RT15 R SA11 dwc=30
+    r1.extend_from_slice(&[0u8; 10]); // 5 payload words → total 10 words = 20 bytes
+    assert_eq!(r1.len(), 20);
+
+    let r2 = record_rt15_sa11_rcv();
+    let mut bytes = r1.clone();
+    bytes.extend_from_slice(&r2);
+    let f = TempFile::new(&bytes);
+
+    // Strict: the over-declaration is rejected (capacity invariant) rather
+    // than silently decoded into an overrun.
+    let reader = MieFileReader::with_options(
+        f.path(),
+        ReaderOptions {
+            strict: true,
+            time_format: TimestampFormat::Irig,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    match reader.iter().next() {
+        Some(Err(e)) => assert_eq!(
+            e.kind(),
+            MieErrorKind::PayloadError,
+            "over-declaring record should be a capacity rejection, got {:?}",
+            e.kind()
+        ),
+        other => panic!("expected Some(Err(PayloadError)), got {other:?}"),
+    }
+
+    // Lenient: R1 is skipped and the following R2 decodes intact at its
+    // true offset — proving R1 consumed nothing beyond its 20-byte extent.
+    let reader = MieFileReader::with_options(
+        f.path(),
+        ReaderOptions {
+            time_format: TimestampFormat::Irig,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+    assert_eq!(msgs.len(), 1, "only the valid R2 survives");
+    assert_eq!(
+        msgs[0].file_offset, 20,
+        "R2 begins exactly after R1's 20-byte declared extent"
+    );
+    assert_eq!(msgs[0].command_word.unwrap().rt, 15);
+}
+
 /// Requirements: L2-RDR-009
 #[test]
 fn delta_tracker_per_rt_msg_key() {

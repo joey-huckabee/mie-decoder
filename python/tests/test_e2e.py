@@ -161,6 +161,70 @@ class TestMieFileReader:
         with pytest.raises(MieDecoderError):
             list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
 
+    @pytest.mark.requirement("L2-DEC-009")
+    def test_payload_extraction_does_not_overrun_into_next_record(
+        self, tmp_path: Path
+    ) -> None:
+        """L2-DEC-009: payload extraction is bounded by the Type Word's
+        declared extent and never consumes bytes from the following record.
+        A Command Word declaring more data words than `word_count` can hold
+        is rejected by the L2-SYN-022 capacity invariant before extraction,
+        and the reader slices to the record extent — so a malformed record
+        cannot overrun its successor. Mirrors the Rust
+        payload_extraction_does_not_overrun_into_next_record test.
+        """
+        from mie_decoder.exceptions import MiePayloadError
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        # R1: Type Word word_count=10 (20 bytes) but Command Word 0x797E
+        # declares data_word_count=30. R2: a normal valid record after it.
+        r1 = (
+            b"\x02\x0a"  # Type: wc=10, type=0x02 (BC->RT), little-endian 0x0A02
+            + b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
+            + b"\x7e\x79"  # Cmd 0x797E (RT15 R SA11 dwc=30), little-endian
+            + bytes(10)  # 5 payload words -> total 10 words = 20 bytes
+        )
+        assert len(r1) == 20
+        data = r1 + RECORD_RT15_SA11_RCV
+        fpath = tmp_path / "overrun.mie"
+        fpath.write_bytes(data)
+
+        # Strict: the over-declaration is rejected, not decoded into an overrun.
+        with pytest.raises(MiePayloadError):
+            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+
+        # Lenient: R1 is skipped; R2 decodes intact at its true offset,
+        # proving R1 consumed nothing beyond its 20-byte declared extent.
+        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        assert len(messages) == 1
+        assert messages[0].file_offset == 20
+        assert messages[0].command_word is not None
+        assert messages[0].command_word.rt == 15
+
+    @pytest.mark.requirement("L2-DEC-002")
+    def test_irig_day_of_year_warns_once_per_decode(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """PRA-9: decoding calendar-locked (non-freerun) IRIG records emits a
+        one-time advisory about the known day-of-year firmware discrepancy —
+        once per decode, not once per record."""
+        import logging
+
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "irig_day.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV * 3)  # 3 non-freerun IRIG records
+        with caplog.at_level(logging.WARNING, logger="mie_decoder.reader"):
+            messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        assert len(messages) == 3
+        day_warns = [
+            r for r in caplog.records if "day-of-year" in r.getMessage()
+        ]
+        assert len(day_warns) == 1, (
+            "day-of-year advisory should fire exactly once per decode, got "
+            f"{[w.getMessage() for w in day_warns]}"
+        )
+
     @pytest.mark.requirement("L2-DEC-010")
     def test_file_offset_tracking(self, tmp_mie_file: Path) -> None:
         """Each message should report its byte offset in the file."""

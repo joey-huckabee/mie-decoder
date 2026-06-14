@@ -229,6 +229,8 @@ class MieFileReader:
         """
         delta_tracker: dict[str, int] = {}
         warned_ooo_keys: set[str] = set()
+        # PRA-9: one-time IRIG day-of-year discrepancy advisory per decode.
+        warned_irig_day = False
         msg_count = 0
         sync_losses = 0
         # Reset the externally-visible counter at the start of each
@@ -533,6 +535,22 @@ class MieFileReader:
                         if isinstance(timestamp, IrigTimestamp) and timestamp.freerun:
                             logger.warning(
                                 "Freerun timestamp at 0x%X", offset
+                            )
+                        elif (
+                            isinstance(timestamp, IrigTimestamp)
+                            and not warned_irig_day
+                        ):
+                            # PRA-9: the IRIG day-of-year field has a known
+                            # firmware-dependent decode discrepancy on some
+                            # DDC cards; time-of-day fields are unaffected.
+                            # Emit a one-time advisory (not a decode failure).
+                            warned_irig_day = True
+                            logger.warning(
+                                "IRIG day-of-year decoded for this recording; the "
+                                "day-of-year field has a known firmware-dependent "
+                                "discrepancy on some DDC cards (hour/minute/second/"
+                                "microsecond are unaffected) — see "
+                                "docs/VENDOR-CSV-DIFFS.md §5"
                             )
                     else:
                         timestamp = decode_standard_timestamp(

@@ -34,12 +34,12 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L2-DEC-001 | _(none)_ | `python/tests/test_decode.py::test_receive_bus_a`<br>`python/tests/test_decode.py::test_receive_bus_a_wc17`<br>`python/tests/test_decode.py::test_transmit_bus_a`<br>`python/tests/test_decode.py::test_transmit_bus_b`<br>`src/decode.rs::type_word_bus_b_and_error_bit`<br>`src/decode.rs::type_word_layout` | Implemented |
-| L2-DEC-002 | _(none)_ | `python/tests/test_decode.py::test_bus_b_timestamp`<br>`python/tests/test_decode.py::test_known_good_timestamp`<br>`python/tests/test_decode.py::test_second_timestamp`<br>`python/tests/test_decode.py::test_total_microseconds`<br>`python/tests/test_models.py::test_frozen`<br>`python/tests/test_models.py::test_total_microseconds`<br>`src/decode.rs::irig_timestamp_known_value`<br>`src/models.rs::timestamp_word_counts` | Implemented |
+| L2-DEC-002 | _(none)_ | `python/tests/test_decode.py::test_bus_b_timestamp`<br>`python/tests/test_decode.py::test_known_good_timestamp`<br>`python/tests/test_decode.py::test_second_timestamp`<br>`python/tests/test_decode.py::test_total_microseconds`<br>`python/tests/test_e2e.py::test_irig_day_of_year_warns_once_per_decode`<br>`python/tests/test_models.py::test_frozen`<br>`python/tests/test_models.py::test_total_microseconds`<br>`src/decode.rs::irig_timestamp_known_value`<br>`src/models.rs::timestamp_word_counts` | Implemented |
 | L2-DEC-003 | _(none)_ | `python/tests/test_decode.py::test_freerun_flag`<br>`src/decode.rs::irig_freerun_bit` | Implemented |
 | L2-DEC-004 | L3-RS-005 | `python/tests/test_decode.py::test_rt15_sa10_transmit_wc30`<br>`python/tests/test_decode.py::test_rt15_sa11_receive_wc30`<br>`python/tests/test_decode.py::test_rt15_sa22_receive_wc11`<br>`python/tests/test_decode.py::test_rt15_sa22_transmit_wc30`<br>`python/tests/test_decode.py::test_rt30_sa11_transmit_wc30`<br>`python/tests/test_decode.py::test_wc_zero_means_32`<br>`python/tests/test_models.py::test_is_broadcast`<br>`python/tests/test_models.py::test_is_mode_code_sa0`<br>`python/tests/test_models.py::test_is_mode_code_sa31`<br>`python/tests/test_models.py::test_not_broadcast`<br>`python/tests/test_models.py::test_not_mode_code`<br>`src/decode.rs::command_word_known_value`<br>`src/decode.rs::command_word_zero_means_thirty_two`<br>`src/models.rs::command_word_predicates`<br>`src/models.rs::data_words_inline_buffer`<br>`src/models.rs::data_words_max_capacity`<br>`src/models.rs::data_words_overflow_panics` | Implemented |
 | L2-DEC-007 | _(none)_ | `python/tests/test_decode.py::test_basic_decode`<br>`python/tests/test_decode.py::test_format`<br>`python/tests/test_decode.py::test_max_value`<br>`python/tests/test_decode.py::test_raw_ticks_returns_counter_value`<br>`python/tests/test_decode.py::test_zero`<br>`src/decode.rs::standard_timestamp_round_trip`<br>`src/models.rs::standard_format_hex`<br>`src/models.rs::timestamp_word_counts` | Implemented |
 | L2-DEC-008 | _(none)_ | `python/tests/test_decode.py::test_read_array`<br>`python/tests/test_decode.py::test_read_array_at_offset`<br>`python/tests/test_decode.py::test_read_at_offset`<br>`python/tests/test_decode.py::test_read_single`<br>`src/decode.rs::read_u16_array_into_slice`<br>`src/decode.rs::read_u16_le` | Implemented |
-| L2-DEC-009 | _(none)_ | _(TBD)_ | Implemented (I) |
+| L2-DEC-009 | _(none)_ | `python/tests/test_e2e.py::test_payload_extraction_does_not_overrun_into_next_record`<br>`tests/integration.rs::payload_extraction_does_not_overrun_into_next_record` | Implemented |
 | L2-DEC-010 | _(none)_ | `python/tests/test_e2e.py::test_file_offset_tracking`<br>`python/tests/test_models.py::test_frozen`<br>`python/tests/test_models.py::test_optional_fields_none` | Implemented |
 | L2-DEC-011 | _(none)_ | `python/tests/test_decode.py::test_detects_irig_from_known_data`<br>`python/tests/test_decode.py::test_detects_irig_from_transmit` | Implemented |
 | L2-DEC-012 | _(none)_ | `python/tests/test_decode.py::test_zero_score_ties_to_irig`<br>`src/decode.rs::probe_zero_score_ties_to_irig` | Implemented |
@@ -305,7 +305,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | Category | L1 | L2 | L3 | L2 tested | L3 tested | L2 verified | L3 verified |
 |----------|----|----|-----|-----------|-----------|-------------|-------------|
-| DEC | 5 | 15 | 0 | 14 | 0 | 15 | 0 |
+| DEC | 5 | 15 | 0 | 15 | 0 | 15 | 0 |
 | OUT | 2 | 0 | 0 | 0 | 0 | 0 | 0 |
 | DLT | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | CLI | 2 | 10 | 0 | 10 | 0 | 10 | 0 |
@@ -323,11 +323,11 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
-| **Total** | **26** | **109** | **25** | **104** | **14** | **109** | **25** |
+| **Total** | **26** | **109** | **25** | **105** | **14** | **109** | **25** |
 
 The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 124 of 140 (88.6%).
+**Tested by at least one test marker**: 125 of 140 (89.3%).
 
 **Verified (Test or declared Inspection/Analysis/Demonstration)**: 140 of 140 (100.0%).
 

@@ -432,6 +432,7 @@ impl MieFileReader {
             prev_was_error: false,
             delta_tracker: HashMap::new(),
             warned_ooo_keys: HashSet::new(),
+            warned_irig_day: false,
             msg_count: 0,
             sync_losses: 0,
             sync_losses_atomic: &self.sync_losses,
@@ -491,6 +492,10 @@ pub struct RecordIter<'a> {
     /// been emitted. Limits log volume on chronically out-of-order files
     /// to one line per key per recording.
     warned_ooo_keys: HashSet<u32>,
+    /// Whether the one-time IRIG day-of-year discrepancy advisory has been
+    /// emitted for this decode (PRA-9). Fires once on the first
+    /// calendar-locked (non-freerun) IRIG record.
+    warned_irig_day: bool,
     msg_count: u64,
     /// Per-iteration sync-loss counter, kept locally to avoid an
     /// atomic load on every record. Mirrored to `sync_losses_atomic`
@@ -706,6 +711,19 @@ impl<'a> Iterator for RecordIter<'a> {
                     let irig = decode_irig_timestamp(upper, middle, lower);
                     if irig.freerun {
                         log_warn!("freerun timestamp at 0x{:X}", self.offset);
+                    } else if !self.warned_irig_day {
+                        // PRA-9: the IRIG day-of-year field has a known
+                        // firmware-dependent decode discrepancy on some DDC
+                        // cards; the time-of-day fields are unaffected. Emit a
+                        // one-time advisory (not a decode failure) so the
+                        // operator is nudged to the documented limitation.
+                        self.warned_irig_day = true;
+                        log_warn!(
+                            "IRIG day-of-year decoded for this recording; the day-of-year field \
+                             has a known firmware-dependent discrepancy on some DDC cards \
+                             (hour/minute/second/microsecond are unaffected) — see \
+                             docs/VENDOR-CSV-DIFFS.md §5"
+                        );
                     }
                     Timestamp::Irig(irig)
                 }

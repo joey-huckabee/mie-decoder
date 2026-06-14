@@ -114,6 +114,8 @@ The MIE-Decoder LF-only choice is pinned by L2-WRT-012 and is intentional — ke
 
 > Empirical testing has shown a discrepancy between the binary-decoded value and vendor CSV output for the day-of-year field on some DDC card models. The bit extraction is correct per the DDC specification, but the card firmware may use a different encoding (possibly BCD or a different field width).
 
+To make this limitation visible at decode time, the decoder emits a **one-time WARN** per decode the first time it decodes a calendar-locked (non-freerun) IRIG record, pointing back to this section. It is advisory — not a decode failure — and can be silenced with `--log-level ERROR`. Freerun recordings (where day-of-year carries no calendar meaning) do not trigger it.
+
 This is the only known column-content discrepancy. If you see day-of-year mismatch between MIE-Decoder output and vendor CSV for the same recording:
 
 1. **Confirm both tools are looking at the same source file** (no transfer corruption).

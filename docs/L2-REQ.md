@@ -80,8 +80,8 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 
 **Parent**: L1-DEC-003
 **Statement**: Payload extraction SHALL remain bounded by the Type Word's declared record extent and SHALL NOT consume bytes from a following record.
-**Rationale**: A Command Word with `data_word_count = 32` declares a payload that may exceed the Type Word's declared extent on a malformed or truncated record. The decoder respects the Type Word extent as authoritative to avoid overrunning into the next record. This is structurally guaranteed by per-record slicing in the reader (Python: `record_data = self._data[:record_end]`; Rust: `let record_data = &self.data[..record_end]`) — payload extraction reads from the slice, not the full file. The L2-SYN-022 capacity invariant catches the upstream case (Cmd Word declares more payload than Type Word can hold) before extraction runs.
-**Verification Method**: Inspection (I)
+**Rationale**: A Command Word with `data_word_count = 32` declares a payload that may exceed the Type Word's declared extent on a malformed or truncated record. The decoder respects the Type Word extent as authoritative to avoid overrunning into the next record. This is structurally guaranteed by per-record slicing in the reader (Python: `record_data = self._data[:record_end]`; Rust: `let record_data = &self.data[..record_end]`) — payload extraction reads from the slice, not the full file. The L2-SYN-022 capacity invariant catches the upstream case (Cmd Word declares more payload than Type Word can hold) before extraction runs. A targeted test (`payload_extraction_does_not_overrun_into_next_record`, both implementations) constructs an over-declaring record before a valid one and confirms strict mode rejects it and lenient mode decodes the following record intact at its true offset.
+**Verification Method**: Test (T), Inspection (I)
 
 #### L2-DEC-010
 

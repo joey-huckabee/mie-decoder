@@ -17,6 +17,17 @@ full release workflow.
 
 ### Added
 
+- One-time IRIG day-of-year advisory (ROADMAP PRA-9). Both readers now emit
+  a single WARN per decode the first time a calendar-locked (non-freerun)
+  IRIG record is decoded, pointing to the documented day-of-year
+  firmware-discrepancy limitation (`docs/VENDOR-CSV-DIFFS.md` §5). Advisory
+  only — not a decode failure; freerun records don't trigger it and
+  `--log-level ERROR` silences it.
+- Targeted `L2-DEC-009` payload-bounding test in both implementations
+  (ROADMAP PRA-8): an over-declaring record before a valid one is rejected
+  in strict mode and skipped in lenient mode, with the following record
+  decoded intact at its true offset — proving extraction never overruns
+  into the next record. `L2-DEC-009` is now Test + Inspection verified.
 - Scheduled fuzz burn-in (ROADMAP PRA-5). The L1-ROB-001 no-panic
   harnesses now honor a `MIE_FUZZ_ITERATIONS` override (default 256,
   deterministic), and a new `.github/workflows/fuzz.yml` runs them daily
