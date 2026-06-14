@@ -212,22 +212,28 @@ for reference only (`PRA-N`).
 
 ### Documentation & comment hygiene
 
-**PRA-6 — Stale counts/versions in normative (non-historical) docs.**
-*Severity: Medium (misleads readers; not a runtime issue).*
-- **Concern.** Several *current* statements carry outdated numbers.
-  CHANGELOG and ROADMAP historical/release-status entries are correct and
-  out of scope.
-- **Evidence.** `CLAUDE.md` Project Overview still says the joint cut is
-  at the initial release and states an L2 requirement count of 102
-  (current is 109 after `L2-DEC-017` / `L2-CFG-011` / `L2-CLI-012`);
-  `README.md` advertises a "27-case" conformance suite (current is 29)
-  and an opening release line one minor version behind; `docs/L1-REQ.md`
-  scope clause and `docs/MAINTAINER-GUIDE.md` repo-layout notes carry an
-  older version. (Counts as of this audit; verify at fix time.)
-- **Proposed adjustment.** Refresh the current-state counts/versions, or
-  make them version-agnostic so they don't drift each release. Consider a
-  CI check (or a generated snippet) for the conformance-case and
-  requirement counts to prevent recurrence.
+**~~PRA-6 — Stale counts/versions in normative (non-historical) docs.~~**
+*Resolved.* *Severity: Medium (misleads readers; not a runtime issue).*
+- **Concern.** Several *current* statements carried outdated release
+  versions and hardcoded counts that drift each release.
+- **Resolution (policy).** Rather than refresh the numbers, release
+  versions and hardcoded counts were **removed** from `CLAUDE.md`,
+  `README.md`, and the requirements docs — they now live only in their
+  source of truth: the actual conformance suite (`tests/conformance/`),
+  the requirements docs / `TRACE-MATRIX.md` for requirement counts, and
+  `git tag` / `CHANGELOG.md` for versions. Specifically: dropped the
+  `v1.x` release versions and L1/L2/L3 counts from `CLAUDE.md`; dropped
+  the release versions and the "N-case" conformance count from
+  `README.md`; removed the version scope note from `docs/L1-REQ.md` and
+  the `withdrawn in v1.2.0` version refs from `docs/L3-REQ.md` (counts
+  retained — the req docs are their source of truth); and removed the
+  release version from the `docs/MAINTAINER-GUIDE.md` repo-layout tree
+  (edition/MSRV/Python-range build facts retained). Release-process
+  sections that legitimately teach versioning, and CHANGELOG/ROADMAP
+  historical entries, were left unchanged.
+- **Follow-up (optional, not done).** A CI check (or generated snippet)
+  that asserts any *intentional* count claims against the suite /
+  requirement set, to prevent recurrence if counts are reintroduced.
 
 **~~PRA-7 — Version-anchored source comments.~~** *Resolved.*
 *Severity: Low (cosmetic).*

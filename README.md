@@ -6,17 +6,17 @@ MIE-Decoder reads proprietary binary files produced by Data Device Corporation (
 
 MIE-Decoder is maintained in two implementations:
 
-- **Rust v1.3.0** — streaming CSV writer (constant memory), hand-rolled
+- **Rust** — streaming CSV writer (constant memory), hand-rolled
   CLI, single native release binary.
-- **Python v1.3.0** — the Python package and CLI, maintained in
+- **Python** — the Python package and CLI, maintained in
   [`python/`](python/).
 
-Both implementations ship together as the joint **v1.3.0** release from a
-single repository tag (`v1.3.0`). Future releases may diverge in version
-via impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`). The implementations
-share the MIE format documentation, the vendor-compatible CSV behavior, and
-a 27-case byte-exact cross-implementation conformance suite. See
-[`CHANGELOG.md`](CHANGELOG.md) for the full v1.3.0 deliverables.
+Both implementations ship together as a joint cut from a single
+repository tag. Future releases may diverge via impl-prefixed tags
+(`rust-vX.Y.Z`, `python-vX.Y.Z`). The implementations share the MIE format
+documentation, the vendor-compatible CSV behavior, and a byte-exact
+cross-implementation conformance suite (`tests/conformance/`). See
+[`CHANGELOG.md`](CHANGELOG.md) for the release history.
 
 ## Rust Build
 
@@ -311,7 +311,7 @@ python tests/conformance/run.py
 ## Known Limitations
 
 - The Day field in IRIG timestamps may not decode correctly on all DDC card models.
-- `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but empty in v1.3.0.
+- `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but currently empty (by spec).
 - Standard timestamp tick-to-microsecond conversion requires external calibration.
 - SPURIOUS_DATA payload structure is raw words with no further interpretation.
 

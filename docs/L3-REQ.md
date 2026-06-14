@@ -30,7 +30,7 @@ All other L3 categories mirror the L2 category they refine (e.g., `L3-WRT-*` dec
 |-----------|---------------------------------------------|-------------|----------|
 | `WRT`     | CSV output and destination integrity        | partial     | 2        |
 | `PY`      | Python implementation technology            | cross-cutting | 12     |
-| `RS`      | Rust implementation technology              | cross-cutting | 11 (12 IDs allocated; L3-RS-007 withdrawn in v1.2.0) |
+| `RS`      | Rust implementation technology              | cross-cutting | 11 (12 IDs allocated; L3-RS-007 withdrawn) |
 | **Total** |                                             |             | **25 active (26 IDs allocated)** |
 
 Most L2 requirements are sufficiently testable at the L2 level (the statement names the exact behavior the test asserts) and do not require an L3 decomposition. L3 entries are added only where there is genuine implementation detail that cannot be inferred from the L2 statement — chiefly the per-implementation technology constraints (`L3-PY-*`, `L3-RS-*`) and a small set of cross-implementation naming patterns (`L3-WRT-*`).
@@ -107,7 +107,7 @@ Rust `DataWords` SHALL be a fixed-capacity inline buffer (`[u16; 32]` plus a len
 **L3-RS-006** · Parent: L2-CLI-005 · Verification: T
 Rust fallible APIs SHALL return `Result<T, MieError>`. `MieError` SHALL be a single enum (not a hierarchy) with a `kind()` discriminant and structured details for file, record, and writer failures. The CLI entry point SHALL map `MieError` to non-zero exit codes per L2-CLI-011.
 
-**L3-RS-007** · *Withdrawn in v1.2.0.* Previously mandated static-musl SLES 12 deployment support. The ID is reserved (not reused) so historical references and the trace matrix stay coherent.
+**L3-RS-007** · *Withdrawn.* Previously mandated static-musl SLES 12 deployment support. The ID is reserved (not reused) so historical references and the trace matrix stay coherent.
 
 **L3-RS-008** · Parent: L2-CLI-008 · Verification: T
 Rust message counting SHALL be available through the `count` subcommand. Stdout SHALL contain only the integer record count followed by a single newline — no prose, no path, no leading or trailing whitespace beyond that newline — so the output is directly consumable in shell pipelines (`n=$(mie-decoder count rec.mie)`). A human-readable status line including the input path SHALL be written to stderr so an interactive operator still sees context; this stderr line is not gated by `--log-level` and is always emitted on a successful count.

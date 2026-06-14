@@ -10,7 +10,7 @@ This guide is for **maintainers**. End-user CLI usage belongs in `docs/USER-GUID
 
 ```
 mie-decoder/
-├── src/                    Rust crate (v1.0.0, edition 2024, MSRV 1.85)
+├── src/                    Rust crate (edition 2024, MSRV 1.85)
 │   ├── reader.rs           mmap-backed sequential reader; the central pipeline
 │   ├── sync.rs             validate_record, find_first_record, recover_sync
 │   ├── decode.rs           Type Word, IRIG/Standard timestamps, Cmd Word, classification
@@ -30,7 +30,7 @@ mie-decoder/
 │       ├── expected/*.csv  byte-exact CSV oracles
 │       ├── configs/*.toml  per-case TOML config
 │       └── run.py          the runner
-├── python/                 Python package (v1.0.0, supports 3.10–3.14)
+├── python/                 Python package (supports 3.10–3.14)
 │   ├── pyproject.toml      Poetry + PEP 621 hybrid; pytest markers registered here
 │   ├── poetry.lock         pinned dependencies; committed
 │   ├── src/mie_decoder/    package source (mirrors Rust module names)

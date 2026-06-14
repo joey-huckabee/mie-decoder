@@ -32,6 +32,11 @@ full release workflow.
   `python/.../writer.py`, `python/.../config.py`, and `src/config.rs` to
   describe current behavior — the empty vendor columns now cite
   `L2-WRT-013` and the output-format notes read "currently only csv".
+- Removed drift-prone release versions and hardcoded counts from
+  `CLAUDE.md`, `README.md`, and the requirements docs (ROADMAP PRA-6).
+  These now live only in their source of truth — the conformance suite
+  for case counts, the requirements docs / `TRACE-MATRIX.md` for
+  requirement counts, and `git tag` / `CHANGELOG.md` for versions.
 
 ## [1.4.1] — 2026-06-14
 

@@ -10,11 +10,12 @@ decode proprietary binary recording files produced by Data Device Corporation
 recording software so a decoded file can be diffed against vendor output for
 validation.
 
-Both implementations ship at v1.0.0 as a joint cut from a single
-repository tag (`v1.0.0`); future releases may diverge in version
-via impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`). The Rust
+Both implementations ship together as a joint cut from a single
+repository tag; future releases may diverge via impl-prefixed tags
+(`rust-vX.Y.Z`, `python-vX.Y.Z`). The Rust
 implementation lives at the repository root; the Python
-implementation lives at `python/`. See `CHANGELOG.md`. The Rust implementation was a clean rewrite,
+implementation lives at `python/`. See `CHANGELOG.md` for the release
+history and `git tag` for the current version. The Rust implementation was a clean rewrite,
 not a transliteration: its CLI was redesigned, its writer is streaming
 (constant memory), and its data-words container is an inline `[u16; 32]`
 buffer. Maintain each implementation according to its own architecture while
@@ -98,9 +99,9 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - `docs/ERROR-CATALOG.md` — operator-facing reference for every CLI exit code, error class, DDC error code (`0x01xx`), and decoder-assigned code (`0x20xx`). Updated when error variants are added or removed.
 - `docs/MAINTAINER-GUIDE.md` — repo layout, local dev setup, command cheat sheet, workflows for adding requirements / tests / conformance fixtures / error variants / CLI flags, CI architecture, coverage workflow, release process, cross-impl alignment principles. Start here when onboarding to make changes to the codebase.
 - `docs/MIE-FORMAT.md` — comprehensive MIE binary format reference: file-level framing, the three-section record shape, Type Word / IRIG and Standard timestamp / Command Word / Status Word bit layouts, per-format payload shapes for all 11 transaction types, error-record lifecycle (Type Word bit 14 → truncated payload → Error Word → optional SPURIOUS continuation), the DDC `0x01xx` and decoder-assigned `0x20xx` error code tables, full CSV output reference, three worked hex-to-CSV decodes. The deep reference for reverse-engineering or adding format support.
-- `docs/L1-REQ.md` — Level 1 SHALL statements (24 system requirements in 12 categories + NR-001 out-of-scope).
-- `docs/L2-REQ.md` — Level 2 architectural derivations (102 requirements, each with a single L1 parent).
-- `docs/L3-REQ.md` — Level 3 implementation obligations (25 active requirements: 2 cross-impl L3-WRT-*, 12 L3-PY-*, 11 L3-RS-* — L3-RS-007 withdrawn in v1.2.0 when static-musl support was retired).
+- `docs/L1-REQ.md` — Level 1 SHALL statements (system requirements grouped by category, plus the NR-001 out-of-scope note).
+- `docs/L2-REQ.md` — Level 2 architectural derivations (each with a single L1 parent).
+- `docs/L3-REQ.md` — Level 3 implementation obligations (cross-impl `L3-WRT-*`, plus per-impl `L3-PY-*` / `L3-RS-*`; `L3-RS-007` is withdrawn and its ID reserved, from when static-musl support was retired).
 - `docs/TRACE-MATRIX.md` — auto-generated trace matrix produced by `scripts/build-trace-matrix.py`. Forward trace from L1 through L2 and L3 to test artifacts (`@pytest.mark.requirement` markers in `python/tests/` and `/// Requirements:` doc-comments above Rust `#[test]` items). Treat as the single source of truth for live status; the source docs hold spec content only.
 - `docs/ROADMAP.md` — versioned roadmap with explicit "do not drop" commitments (TOML config, CSV byte-compat, sync semantics).
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
@@ -114,7 +115,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - **Streaming CSV.** Rows must flow through a `Write` impl as they are produced. Do not introduce `Vec<MieMessage>` or `Vec<Row>` buffering in the writer — constant memory is the design point.
 - **Two-record look-ahead in `sync.rs`.** Don't remove it. Removing the look-ahead reintroduces false-positive resyncs.
 - **`DataWords` is fixed-capacity by design.** MIL-STD-1553B caps a single transaction at 32 data words. Don't switch to `Vec<u16>` "for flexibility."
-- **CSV column names and order are dictated by DDC vendor output.** Don't "clean up" `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` even though they're empty in v1.0.0 — they're columns by spec.
+- **CSV column names and order are dictated by DDC vendor output.** Don't "clean up" `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` even though they're currently empty — they're columns by spec (`L2-WRT-013`).
 - **`sync.rs` is pure** (no logging, no I/O). The reader handles any user-facing messaging based on returned values. Don't move logging into validation helpers.
 - **Shared conformance fixtures are byte-exact.** Treat
   `tests/conformance/` as the cross-implementation oracle; update expected CSV
