@@ -1,0 +1,6 @@
+# Conformance fixture: an invalid configuration value. Used by the
+# `config-error-invalid-value` case to assert that both implementations
+# reject a malformed/invalid config with exit 5 (configuration error,
+# L2-CLI-011) — distinct from a usage error (4) and a no-records (2).
+[decode]
+time_format = "potato"

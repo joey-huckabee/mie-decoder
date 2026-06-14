@@ -13,7 +13,7 @@ This doc covers the **observable surface**. Spec rationale lives in [`L1-REQ.md`
 
 ## 1. CLI exit codes
 
-The four exit-code classes are pinned by L1-EXIT-001 through L1-EXIT-004 and L2-CLI-011. Every decode invocation logs a one-line `decode exit class:` summary (L1-EXIT-005) so the class is grep-able even when only stderr is captured.
+The exit-code taxonomy is pinned by L1-EXIT-001 through L1-EXIT-008 and the L2-CLI-011 table, and is identical across both implementations. Every decode invocation logs a one-line `decode exit class:` summary (L1-EXIT-005) so the class is grep-able even when only stderr is captured.
 
 | Code | Class | Triggering errors | What it means | Operator action |
 |------|-------|-------------------|---------------|-----------------|
@@ -21,13 +21,15 @@ The four exit-code classes are pinned by L1-EXIT-001 through L1-EXIT-004 and L2-
 | **0** | `partial-recovered` | (none — decode finished after sync loss recovery) | At least one mid-file sync loss occurred and was recovered. INFO summary names the recovery count. | Investigate the recording source if recovery counts are high or trending up. |
 | **0** | `complete` (`--allow-partial`) | `UnrecoverableSyncLoss` on the unrecoverable-but-tolerated path | An unrecoverable sync loss occurred but `--allow-partial` preserved the rows decoded so far as `<dest>.partial`. | Inspect the `.partial` output, then triage the recording. |
 | **0** | `complete (broken-pipe on stdout)` | `BrokenPipeError` on stdout output | A downstream consumer closed early (e.g. `mie-decoder decode … \| head`). Not an error. | None. |
-| **1** | (record / usage error) | `RecordTruncated`, `FirstRecordTruncated`, `PayloadError`, `InvalidTypeWord`, `UnknownTypeWord`, `UnknownErrorCode`, `WriterError` (non-broken-pipe), CLI usage errors, file I/O errors | Per-record validation failed in strict mode, the CLI was misused, or the output sink failed. | Read the stderr message; if it's a record error, lenient mode (`decode.strict = false`) usually skips and continues. |
+| **1** | runtime / decode error | `RecordTruncated`, `FirstRecordTruncated`, `PayloadError`, `InvalidTypeWord`, `UnknownTypeWord`, `UnknownErrorCode`, `WriterError` (non-broken-pipe), file I/O errors (incl. input not found) | Per-record validation failed in strict mode, the input couldn't be opened, or the output sink failed. | Read the stderr message; if it's a record error, lenient mode (`decode.strict = false`) usually skips and continues. |
 | **2** | `no-records` | `NoValidRecords`, `HomogeneousPayload`, `TimestampFormatMismatch` (strict mode only) | The input file isn't an MIE recording at all (wrong file type, single-byte-pad, ambiguous timestamp format, etc.). No output file is created. | Verify the input path. If it's actually a recording, check that records begin within the first 64 KB and that the timestamp format is recognizable; pass `--time-format irig\|standard` to override auto-detection. |
 | **3** | `partial-unrecoverable` | `UnrecoverableSyncLoss` without `--allow-partial` | A mid-file sync loss could not be recovered within the 64 KB scan window. | Re-run with `--allow-partial` to keep the rows decoded before the loss as `<dest>.partial`, then triage the recording. |
+| **4** | usage error | unknown/missing/invalid flag or argument, invalid flag value (e.g. `--detect-records 99`, `--standard-tick-rate-hz 0`), no subcommand | The command line itself is wrong. No input is opened and no output file is created. | Fix the invocation; run `--help` for the accepted flags. |
+| **5** | configuration error | config file not found, malformed TOML, or an invalid config value (e.g. `time_format = "potato"`, out-of-range `detect_records`) | The `--config` file can't be loaded or fails validation. No input is opened and no output file is created. | Fix the TOML file named in the stderr message. |
 
-The `count` and `dump` subcommands inherit `0`, `1`, and `2` only — they don't write a streaming output that could be partial, so exit `3` cannot occur (L2-CLI-011).
+The `count` and `dump` subcommands inherit `0`, `1`, `2`, `4`, and `5` — they don't write a streaming output that could be partial, so exit `3` cannot occur (L2-CLI-011).
 
-**Configuration and flag-value validation.** Out-of-range or malformed configuration values are rejected *before* decoding begins, with a stderr message naming the offending key or flag — for example an out-of-range `decode.detect_records` / `decode.lookahead_records`, or a non-positive `decode.standard_tick_rate_hz` / `--standard-tick-rate-hz` (L2-CFG-011, L2-CLI-012). A bad TOML value surfaces as a configuration-load error; a bad CLI flag value surfaces as a usage error (the Rust CLI prints usage and the Python CLI prints an `Error:` line). Either way the input is never opened and no output file is created.
+**Configuration vs. flag-value validation.** Out-of-range or malformed values are rejected *before* decoding begins, with a stderr message naming the offending key or flag. The same logical check yields a different code depending on the *source*: a bad **CLI flag value** (e.g. a non-positive `--standard-tick-rate-hz`, an out-of-range `--detect-records`) is a **usage error → exit 4**, while the same value supplied through a **TOML key** is a **configuration error → exit 5** (L2-CFG-011, L2-CLI-012). Either way the input is never opened and no output file is created.
 
 ---
 

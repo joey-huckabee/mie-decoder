@@ -498,11 +498,13 @@ class TestAtomicWriteSafety:
 
     @pytest.mark.requirement("L2-CLI-012")
     @pytest.mark.requirement("L2-DEC-017")
+    @pytest.mark.requirement("L2-CLI-011")
+    @pytest.mark.requirement("L1-EXIT-007")
     def test_cli_standard_tick_rate_hz_flag_rejects_nonpositive(
         self, tmp_mie_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--standard-tick-rate-hz <= 0 is rejected at parse time with a
-        non-zero exit and the offending flag in stderr."""
+        """--standard-tick-rate-hz <= 0 is a CLI usage error: exit 4
+        (L2-CLI-011/L2-CLI-012) with the offending flag in stderr."""
         from mie_decoder.cli import main
 
         out = tmp_path / "out.csv"
@@ -514,7 +516,7 @@ class TestAtomicWriteSafety:
             "--standard-tick-rate-hz",
             "0",
         ])
-        assert rc == 1
+        assert rc == 4
         captured = capsys.readouterr()
         assert "--standard-tick-rate-hz" in captured.err
 
@@ -917,12 +919,40 @@ class TestCliEndToEnd:
         assert rc == 1
 
     @pytest.mark.requirement("L2-CLI-005")
+    @pytest.mark.requirement("L2-CLI-011")
+    @pytest.mark.requirement("L1-EXIT-007")
     def test_cli_no_subcommand(self) -> None:
-        """CLI with no subcommand should return exit code 1."""
+        """CLI with no subcommand is a usage error: exit 4 (L2-CLI-011)."""
         from mie_decoder.cli import main
 
         rc = main([])
-        assert rc == 1
+        assert rc == 4
+
+    @pytest.mark.requirement("L2-CLI-011")
+    @pytest.mark.requirement("L1-EXIT-007")
+    def test_cli_unknown_flag_is_usage_error(self) -> None:
+        """An unknown flag is a usage error: exit 4. argparse defaults to 2,
+        which would collide with no-records; the parser remaps it to 4."""
+        from mie_decoder.cli import main
+
+        # argparse usage errors raise SystemExit rather than returning.
+        with pytest.raises(SystemExit) as exc_info:
+            main(["decode", "--no-such-flag", "rec.mie"])
+        assert exc_info.value.code == 4
+
+    @pytest.mark.requirement("L2-CLI-011")
+    @pytest.mark.requirement("L1-EXIT-008")
+    def test_cli_malformed_config_is_config_error(self, tmp_path: Path) -> None:
+        """A malformed/invalid config is a configuration error: exit 5
+        (distinct from a usage error and from a runtime error)."""
+        from mie_decoder.cli import main
+
+        bad = tmp_path / "bad.toml"
+        bad.write_text('[decode]\ntime_format = "potato"\n')
+        # Config load fails before the input file is opened, so the input
+        # path need not exist.
+        rc = main(["decode", str(tmp_path / "missing.mie"), "--config", str(bad)])
+        assert rc == 5
 
 
 class TestDeltaAndErrorRecords:

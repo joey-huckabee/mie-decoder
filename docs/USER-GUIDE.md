@@ -317,15 +317,17 @@ For the binary-level field reference (what's in the Type Word, how IRIG packing 
 
 ## 8. When something goes wrong
 
-The CLI exits with one of four codes (L1-EXIT-001 through L1-EXIT-004):
+The CLI exits with one of six codes (L1-EXIT-001 through L1-EXIT-008), identical across the Rust and Python implementations:
 
 | Code | Class | Likely cause |
 |------|-------|--------------|
 | **0** | `complete` / `partial-recovered` | Decoded successfully (possibly after auto-recovery from in-stream corruption). |
 | **0** | `complete (broken-pipe)` | stdout consumer closed early. Not an error. |
-| **1** | (record / usage error) | Per-record validation failed in strict mode, the CLI was misused, or the output sink failed. Read the stderr error line. |
+| **1** | runtime / decode error | Per-record validation failed in strict mode, the input couldn't be opened, or the output sink failed. Read the stderr error line. |
 | **2** | `no-records` | The input file isn't an MIE recording at all (wrong file type, single-byte pad). No output file created. |
 | **3** | `partial-unrecoverable` | Mid-file sync loss that couldn't be recovered. Re-run with `--allow-partial` to keep what was decoded. |
+| **4** | usage error | The command line is wrong — unknown/invalid flag or argument, bad flag value, or no subcommand. Run `--help`. |
+| **5** | configuration error | The `--config` TOML file can't be found, parsed, or fails validation. Fix the file named in the error. |
 
 The `decode exit class:` summary log line names the class explicitly, even when stderr is captured to a pipeline log.
 

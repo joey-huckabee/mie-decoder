@@ -33,6 +33,7 @@ import math
 import sys
 import time
 from pathlib import Path
+from typing import NoReturn
 
 from mie_decoder import __version__
 from mie_decoder.exceptions import (
@@ -50,6 +51,31 @@ from mie_decoder.logger import configure_logging
 
 logger = logging.getLogger(__name__)
 
+# Process exit codes — the normative contract pinned by L2-CLI-011 /
+# L1-EXIT-002..006. Mirrors the Rust `cli::exit_code` module so both
+# implementations return identical codes for the same condition.
+EXIT_OK = 0  # complete / recovered / --allow-partial partial
+EXIT_RUNTIME = 1  # runtime / decode error (I/O, writer, strict record failures)
+EXIT_NO_RECORDS = 2  # input is not an MIE recording
+EXIT_SYNC_LOSS = 3  # unrecoverable mid-file sync loss without --allow-partial
+EXIT_USAGE = 4  # CLI usage error (bad/unknown/missing flag or argument)
+EXIT_CONFIG = 5  # configuration error (missing/malformed/invalid config)
+
+
+class _UsageErrorParser(argparse.ArgumentParser):
+    """``ArgumentParser`` that exits with :data:`EXIT_USAGE` on a usage error.
+
+    argparse defaults to exit code 2 for command-line usage errors, but in
+    this tool exit 2 means "no valid records" (L2-CLI-011), so usage errors
+    are remapped to 4 to avoid the collision and match the Rust CLI. The
+    subclass propagates to subparsers automatically (argparse builds them
+    with ``type(self)``).
+    """
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the CLI.
@@ -57,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     Returns:
         Configured ArgumentParser with ``decode`` and ``dump`` subcommands.
     """
-    parser = argparse.ArgumentParser(
+    parser = _UsageErrorParser(
         prog="mie-decoder",
         description=(
             "Decode DDC MIL-STD-1553 MIE binary recording files "
@@ -310,7 +336,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         config = load_config(args.config)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"Config error: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_CONFIG
 
     _apply_config_log_level(args, config.log_level)
 
@@ -327,7 +353,7 @@ def _run_decode(args: argparse.Namespace) -> int:
             overrides["exclude_types"] = _parse_type_names(args.exclude_types)
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
-            return 1
+            return EXIT_USAGE
     if args.exclude_rts is not None:
         overrides["exclude_rts"] = args.exclude_rts
     if args.exclude_buses is not None:
@@ -335,7 +361,7 @@ def _run_decode(args: argparse.Namespace) -> int:
             overrides["exclude_buses"] = _parse_bus_names(args.exclude_buses)
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
-            return 1
+            return EXIT_USAGE
     if args.exclude_subaddresses is not None:
         overrides["exclude_subaddresses"] = args.exclude_subaddresses
     # CLI flag flips no_clobber on; absence leaves config value intact.
@@ -353,7 +379,7 @@ def _run_decode(args: argparse.Namespace) -> int:
                 f"valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]",
                 file=sys.stderr,
             )
-            return 1
+            return EXIT_USAGE
         overrides["detect_records"] = args.detect_records
     if args.lookahead_records is not None:
         # L2-SYN-026: parse-time range check mirrors the TOML
@@ -364,7 +390,7 @@ def _run_decode(args: argparse.Namespace) -> int:
                 f"valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]",
                 file=sys.stderr,
             )
-            return 1
+            return EXIT_USAGE
         overrides["lookahead_records"] = args.lookahead_records
     if args.standard_tick_rate_hz is not None:
         # L2-DEC-017 / L2-CLI-012: parse-time validation mirrors the TOML
@@ -377,7 +403,7 @@ def _run_decode(args: argparse.Namespace) -> int:
                 f"must be a finite value greater than 0",
                 file=sys.stderr,
             )
-            return 1
+            return EXIT_USAGE
         overrides["standard_tick_rate_hz"] = hz
 
     config = config.with_overrides(**overrides)
@@ -395,7 +421,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     except MieFileError as exc:
         logger.error("Failed to open input file: %s", exc)
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
 
     logger.info("Opened %s (%d bytes)", reader.path.name, reader.file_size)
 
@@ -414,7 +440,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         # sees it without having to opt into INFO logging).
         print(count)
         print(f"counted {count} messages in {reader.path.name}", file=sys.stderr)
-        return 0
+        return EXIT_OK
 
     # WriteOptions populated once with all three file-output safety
     # checks (L2-WRT-014 collision, L2-WRT-017 no-clobber, L1-EXIT-004
@@ -447,16 +473,16 @@ def _run_decode(args: argparse.Namespace) -> int:
                 outcome.normal_count, dest, elapsed,
             )
     except (MieInputOutputCollisionError, MieClobberRefusedError) as exc:
-        # File-safety preflight (L2-WRT-014/017). Generic exit 1.
+        # File-safety preflight (L2-WRT-014/017). Generic runtime error.
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
     except MieNoValidRecordsError as exc:
-        # L1-EXIT-002 → exit 2.
+        # L1-EXIT-002 → no-records.
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         logger.info("decode exit class: no-records")
-        return 2
+        return EXIT_NO_RECORDS
     except MieHomogeneousPayloadError as exc:
         # L2-SYN-018 + L1-EXIT-002: semantically a "wrong file type"
         # rejection (single-byte pad, not an MIE recording), same
@@ -464,7 +490,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         logger.info("decode exit class: no-records")
-        return 2
+        return EXIT_NO_RECORDS
     except MieTimestampFormatMismatchError as exc:
         # L2-DEC-016 + L1-EXIT-002: ambiguous timestamp format is
         # semantically another "wrong file type" rejection — the
@@ -476,7 +502,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         logger.info("decode exit class: no-records (timestamp-format-mismatch)")
-        return 2
+        return EXIT_NO_RECORDS
     except MieUnrecoverableSyncLossError as exc:
         # L1-EXIT-004 → exit 3 (allow_partial would have caught this
         # inside the writer and returned a WriteOutcome instead).
@@ -487,20 +513,20 @@ def _run_decode(args: argparse.Namespace) -> int:
             "pass --allow-partial to preserve the rows decoded so far",
             exc.sync_losses,
         )
-        return 3
+        return EXIT_SYNC_LOSS
     except BrokenPipeError:
         # L2-WRT-018 — already handled inside dataframe_to_csv for
         # streams, but cover the edge case where it escapes.
         logger.info("decode exit class: complete (broken-pipe on stdout)")
-        return 0
+        return EXIT_OK
     except MieWriterError as exc:
         logger.error("Write failed: %s", exc)
         print(f"Error writing output: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
     except MieDecoderError as exc:
         logger.error("Decode failed: %s", exc)
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
 
     # L1-EXIT-005 exit-class summary. Distinguish complete from
     # partial-recovered via reader.sync_losses, partial-committed
@@ -513,7 +539,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     else:
         cls = "complete"
     logger.info("decode exit class: %s (sync_losses=%d)", cls, sync_losses)
-    return 0
+    return EXIT_OK
 
 
 def _run_dump(args: argparse.Namespace) -> int:
@@ -536,7 +562,7 @@ def _run_dump(args: argparse.Namespace) -> int:
         config = load_config(args.config)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"Config error: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_CONFIG
     _apply_config_log_level(args, config.log_level)
 
     try:
@@ -554,9 +580,9 @@ def _run_dump(args: argparse.Namespace) -> int:
             )
     except MieFileError as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_RUNTIME
 
-    return 0
+    return EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -566,7 +592,9 @@ def main(argv: list[str] | None = None) -> int:
         argv: Command-line arguments. If ``None``, uses ``sys.argv[1:]``.
 
     Returns:
-        Exit code: 0 on success, 1 on error.
+        Process exit code per L2-CLI-011: 0 success; 1 runtime/decode
+        error; 2 no valid records; 3 unrecoverable sync loss; 4 CLI usage
+        error; 5 configuration error.
     """
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -587,5 +615,6 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "dump":
         return _run_dump(args)
     else:
+        # No subcommand given — a usage error, not a runtime failure.
         parser.print_help()
-        return 1
+        return EXIT_USAGE

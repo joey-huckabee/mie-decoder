@@ -289,6 +289,22 @@ Out-of-scope items are listed separately under **Non-Requirements** (1 item).
 
 **Verification Method**: Inspection (I), Analysis (A)
 
+### L1-EXIT-007
+
+**Statement**: A CLI usage error — an unknown, missing, or invalid command-line flag or argument, an invalid flag value, or an invocation with no subcommand — SHALL exit with code `4` and SHALL NOT create an output file. Both implementations SHALL return the same code for the same usage error.
+
+**Rationale**: A usage error is an operator mistake at the command line, operationally distinct from a bad input file (`2`) or a bad configuration file (`5`); the fix is to correct the invocation, not the data or the config. A dedicated code lets a pipeline branch on "the command was wrong". Code `4` is used rather than the argparse / Unix default `2` because `2` is already the no-valid-records class — putting usage errors there would conflate "you typed a bad flag" with "you pointed me at the wrong file".
+
+**Verification Method**: Test (T)
+
+### L1-EXIT-008
+
+**Statement**: A configuration error — a config file that cannot be found, cannot be parsed, or whose values fail validation — SHALL exit with code `5` and SHALL NOT create an output file. Both implementations SHALL return the same code for the same configuration error.
+
+**Rationale**: A bad config file is distinct from a bad command line (`4`) and a bad input recording (`2`): the operator's fix is to edit the TOML. A dedicated code makes that actionable in automation rather than being lumped into a generic failure.
+
+**Verification Method**: Test (T)
+
 ---
 
 ## L1-ROB: Robustness against arbitrary input

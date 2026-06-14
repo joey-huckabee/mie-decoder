@@ -100,38 +100,36 @@ for reference only (`PRA-N`).
 
 ### Correctness
 
-**PRA-1 — CLI exit-code taxonomy: cross-impl divergence and spec conflict.**
-*Severity: High.*
-- **Concern.** Usage/flag-parse errors do not produce a consistent,
-  spec-conformant exit code across the two implementations, and the Rust
-  behavior contradicts `L2-CLI-011`.
-- **Evidence.** `L2-CLI-011` assigns exit `1` to "usage or configuration
-  failure" and `2` to "no-valid-records." Rust routes every usage/parse
-  error through `die()` → `ExitCode::from(2)` (`src/cli.rs`), so a bad
-  flag, unknown flag, or missing input returns `2` — contradicting the
-  spec and **colliding exit 2 between two operationally opposite
-  situations** ("you typed a bad flag" vs "this isn't an MIE file").
-  Python is internally inconsistent: an out-of-range value for
-  `--detect-records` / `--lookahead-records` / `--standard-tick-rate-hz`
-  returns exit `1` via a custom check (`python/src/mie_decoder/cli.py`),
-  but a non-numeric value for the same flags exits `2` via argparse's
-  native `error()`. Config-load errors (both impls) and strict-mode
-  record errors correctly map to exit `1`. There is **no conformance
-  case** exercising a usage/flag error, so the divergence is invisible to
-  CI (the runner requires both impls to share an exit code).
-- **Open decision (for the team).** Both implementations must agree; the
-  contract itself is undecided:
-  - *(a) Align to the existing spec.* Make Rust `die()` return exit `1`
-    for usage/flag errors (frees `2` for no-records only); make Python's
-    flag validators raise through argparse so both bad-value forms exit
-    consistently. Minimal spec change.
-  - *(b) Define a richer documented exit-code scheme.* Introduce distinct
-    codes (e.g., separate usage-error vs config-error vs no-records vs
-    sync-loss) and revise `L1-EXIT-*` / `L2-CLI-011` + `ERROR-CATALOG.md`
-    accordingly. More expressive for pipeline consumers; larger change.
-  - Either path SHALL add a `usage-error-exit` conformance case asserting
-    both implementations return the agreed code, and reconcile the
-    `count` / `dump` bad-flag path with the chosen scheme.
+**~~PRA-1 — CLI exit-code taxonomy: cross-impl divergence and spec conflict.~~**
+*Resolved.* *Severity: High.*
+- **Concern.** Usage/flag-parse errors did not produce a consistent,
+  spec-conformant exit code across the two implementations: Rust routed
+  every usage error through `die()` → exit `2`, colliding with the
+  no-records class and contradicting `L2-CLI-011`; Python was internally
+  inconsistent (custom flag checks exited `1`, argparse-native errors `2`).
+- **Resolution (chosen: richer documented scheme).** Adopted a granular
+  contiguous taxonomy and aligned both implementations to it:
+
+  | Code | Class |
+  |------|-------|
+  | `0` | success / recovered / `--allow-partial` partial |
+  | `1` | runtime / decode error |
+  | `2` | no valid records *(unchanged)* |
+  | `3` | unrecoverable sync loss *(unchanged)* |
+  | `4` | CLI usage error |
+  | `5` | configuration error |
+
+  The previously-shipped `2`/`3` meanings were preserved (no renumbering);
+  usage moved off the colliding `2` to its own `4`, and config split out of
+  the lumped `1` to its own `5`. Rust gained a code-carrying `CliError` and
+  named `exit_code::*` constants (usage `die()` → `4`, `load_config`
+  errors → `5`); Python gained a `_UsageErrorParser` (argparse usage → `4`)
+  and routed config-load errors → `5`, fixing its internal inconsistency.
+  Spec updated: new `L1-EXIT-007` (usage) / `L1-EXIT-008` (config) and the
+  `L2-CLI-011` numeric table; `ERROR-CATALOG.md` / `USER-GUIDE.md` /
+  `EXAMPLES.md` refreshed. Two cross-impl conformance cases lock it in:
+  `usage-error-bad-flag-value` (exit `4`) and `config-error-invalid-value`
+  (exit `5`). `count` / `dump` inherit `0/1/2/4/5` but never `3`.
 
 **PRA-2 — `L2-DEC-013` forced-format validation is unimplemented (spec drift).**
 *Severity: High.*

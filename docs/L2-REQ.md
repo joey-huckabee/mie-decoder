@@ -774,7 +774,7 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 
 **Parent**: L1-EXIT-001
 **Statement**: Successful commands SHALL return exit code zero; usage or runtime failures SHALL return non-zero.
-**Rationale**: Foundational exit-code contract. The specific non-zero codes for decode are pinned by L1-EXIT-002 through L1-EXIT-004 and L2-CLI-011.
+**Rationale**: Foundational exit-code contract. The specific non-zero codes are pinned by L1-EXIT-002 through L1-EXIT-008 and the L2-CLI-011 table.
 **Verification Method**: Test (T)
 
 #### L2-CLI-006
@@ -808,8 +808,19 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 #### L2-CLI-011
 
 **Parent**: L1-EXIT-001
-**Statement**: Decode exit codes SHALL follow L1-EXIT-002 through L1-EXIT-004: `0` on a complete or recovered decode (and on `--allow-partial` partials), `1` on usage or configuration failure, `2` on no-valid-records, `3` on unrecoverable mid-file sync loss without `--allow-partial`. The `count` and `dump` commands inherit `0`, `1`, and `2` but SHALL NOT produce exit `3` because they do not write a streaming output that could be partial.
-**Rationale**: The four-class exit-code contract is the single most operationally useful piece of CLI behavior. Pinning the count/dump exemption from `3` keeps the semantics clean — `3` is specifically about a partial output that did not complete.
+**Statement**: Exit codes SHALL follow L1-EXIT-002 through L1-EXIT-008 and SHALL be identical across both implementations for the same condition:
+
+| Code | Class | Condition |
+|------|-------|-----------|
+| `0` | success | complete decode, recovered decode, or `--allow-partial` partial |
+| `1` | runtime/decode error | input I/O (incl. file-not-found), writer failure, strict-mode record or structural-invariant failure |
+| `2` | no valid records | input is not an MIE recording (wrong file type, homogeneous-payload, ambiguous timestamp format in strict mode) |
+| `3` | unrecoverable sync loss | mid-file sync loss without `--allow-partial` |
+| `4` | CLI usage error | unknown/missing/invalid flag or argument, invalid flag value, no subcommand |
+| `5` | configuration error | config file not found, malformed TOML, or invalid config value |
+
+The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NOT produce exit `3` because they do not write a streaming output that could be partial.
+**Rationale**: The exit-code taxonomy is the single most operationally useful piece of CLI behavior, so each failure class an operator can act on differently gets its own code: a bad command line (`4`), a bad config file (`5`), a bad input (`2`), and a corruption event (`3`) are distinct situations with distinct fixes. Usage errors use `4` rather than the argparse / Unix default `2` because `2` is the no-valid-records class — overloading it would conflate "you typed a bad flag" with "you pointed me at the wrong file". The count/dump exemption from `3` keeps `3` specifically about a partial output that did not complete.
 **Verification Method**: Test (T)
 
 #### L2-CLI-012

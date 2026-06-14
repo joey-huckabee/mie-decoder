@@ -15,6 +15,23 @@ full release workflow.
 
 ## [Unreleased]
 
+### Changed
+
+- **CLI exit codes are now a granular, cross-impl-identical taxonomy**
+  (ROADMAP PRA-1). Behavior change: CLI **usage errors** (unknown/invalid/
+  missing flag or argument, bad flag value, no subcommand) now exit **4**,
+  and **configuration errors** (config file missing, malformed, or invalid
+  value) now exit **5**. Previously Rust exited `2` for usage errors
+  (colliding with the no-records class) and Python was inconsistent
+  (`1` vs `2`). The shipped meanings of `0`, `2` (no records), and `3`
+  (unrecoverable sync loss) are unchanged; `1` is now specifically the
+  runtime/decode-error class. `count`/`dump` inherit `0/1/2/4/5` but never
+  `3`. Both implementations return identical codes for the same condition,
+  verified by the new `usage-error-bad-flag-value` (4) and
+  `config-error-invalid-value` (5) conformance cases. Spec: new
+  `L1-EXIT-007`/`L1-EXIT-008` and the revised `L2-CLI-011` table; docs:
+  `ERROR-CATALOG.md`, `USER-GUIDE.md`, `EXAMPLES.md`.
+
 ### Documentation
 
 - Added a Production-Readiness Audit backlog (`PRA-1`–`PRA-9`) to

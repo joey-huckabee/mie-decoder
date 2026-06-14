@@ -313,7 +313,8 @@ case $rc in
         echo "OK: decoded $input -> $output"
         ;;
     1)
-        # Generic / record error / usage failure / writer error.
+        # Runtime / decode error: record error in strict mode, input I/O,
+        # or writer failure.
         echo "FAIL: $input — see stderr" >&2
         exit 1
         ;;
@@ -332,6 +333,18 @@ case $rc in
             echo "  recovered $(wc -l < "${output}.partial") rows to ${output}.partial"
         fi
         ;;
+    4)
+        # Usage error: the command line itself is wrong (bad flag, etc.).
+        # This is a bug in the batch script, not a data problem — abort.
+        echo "BUG: bad mie-decoder invocation for $input" >&2
+        exit 2
+        ;;
+    5)
+        # Configuration error: the --config TOML is missing or invalid.
+        # Fix the config; don't keep looping over inputs.
+        echo "BUG: invalid mie-decoder config" >&2
+        exit 2
+        ;;
     *)
         echo "UNEXPECTED exit $rc for $input" >&2
         exit "$rc"
@@ -339,7 +352,7 @@ case $rc in
 esac
 ```
 
-This pattern is the canonical batch loop: 0 succeeds, 2 means "not our file type, skip", 3 means "try `--allow-partial`", everything else is a real failure.
+This pattern is the canonical batch loop: 0 succeeds, 2 means "not our file type, skip", 3 means "try `--allow-partial`", 4/5 mean the script or its config is wrong (abort the batch), everything else is a real failure.
 
 The `decode exit class:` log line in stderr (emitted at INFO per L1-EXIT-005) names the class explicitly for log-grep:
 

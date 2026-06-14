@@ -268,13 +268,15 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1-EXIT-004 | L2-WRT-016 | Implemented |
 | L1-EXIT-005 | _(none)_ | Implemented |
 | L1-EXIT-006 | L2-RDR-020 | Implemented |
+| L1-EXIT-007 | _(none)_ | Implemented |
+| L1-EXIT-008 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L2-CLI-005 | L3-RS-006 | `python/tests/test_e2e.py::test_cli_decode_missing_file`<br>`python/tests/test_e2e.py::test_cli_no_subcommand`<br>`src/cli.rs::parse_decode_unknown_flag_returns_other`<br>`src/cli.rs::run_count_propagates_config_load_error`<br>`src/cli.rs::run_dump_propagates_config_load_error`<br>`src/error.rs::display_includes_offset_in_hex`<br>`src/error.rs::kind_classification`<br>`src/error.rs::source_chain_for_io_errors`<br>`tests/cli.rs::no_args_invocation_exits_non_zero`<br>`tests/cli.rs::version_prints_crate_version` | Implemented |
-| L2-CLI-011 | L3-PY-006 | `python/tests/test_e2e.py::test_cli_no_valid_records_returns_exit_2`<br>`python/tests/test_e2e.py::test_cli_unrecoverable_allow_partial_returns_exit_0`<br>`python/tests/test_e2e.py::test_cli_unrecoverable_default_returns_exit_3`<br>`python/tests/test_exceptions.py::test_catch_all_with_base_class`<br>`python/tests/test_exceptions.py::test_file_empty_is_file_error`<br>`python/tests/test_exceptions.py::test_file_not_found_is_file_error`<br>`python/tests/test_exceptions.py::test_invalid_type_word_is_record_error`<br>`python/tests/test_exceptions.py::test_payload_error_is_record_error`<br>`python/tests/test_exceptions.py::test_record_truncated_is_record_error`<br>`python/tests/test_exceptions.py::test_unknown_error_code_is_record_error`<br>`python/tests/test_exceptions.py::test_unknown_type_word_is_record_error`<br>`python/tests/test_exceptions.py::test_writer_error_is_decoder_error` | Implemented |
+| L2-CLI-011 | L3-PY-006 | `python/tests/test_e2e.py::test_cli_malformed_config_is_config_error`<br>`python/tests/test_e2e.py::test_cli_no_subcommand`<br>`python/tests/test_e2e.py::test_cli_no_valid_records_returns_exit_2`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_flag_rejects_nonpositive`<br>`python/tests/test_e2e.py::test_cli_unknown_flag_is_usage_error`<br>`python/tests/test_e2e.py::test_cli_unrecoverable_allow_partial_returns_exit_0`<br>`python/tests/test_e2e.py::test_cli_unrecoverable_default_returns_exit_3`<br>`python/tests/test_exceptions.py::test_catch_all_with_base_class`<br>`python/tests/test_exceptions.py::test_file_empty_is_file_error`<br>`python/tests/test_exceptions.py::test_file_not_found_is_file_error`<br>`python/tests/test_exceptions.py::test_invalid_type_word_is_record_error`<br>`python/tests/test_exceptions.py::test_payload_error_is_record_error`<br>`python/tests/test_exceptions.py::test_record_truncated_is_record_error`<br>`python/tests/test_exceptions.py::test_unknown_error_code_is_record_error`<br>`python/tests/test_exceptions.py::test_unknown_type_word_is_record_error`<br>`python/tests/test_exceptions.py::test_writer_error_is_decoder_error`<br>`src/cli.rs::run_count_propagates_config_load_error`<br>`src/cli.rs::run_count_propagates_missing_config_file`<br>`src/cli.rs::run_count_with_invalid_cli_log_level_fails_via_resolve_config`<br>`src/cli.rs::run_count_with_invalid_config_log_level_fails`<br>`src/cli.rs::run_dump_propagates_config_load_error` | Implemented |
 | L2-RDR-005 | _(none)_ | `python/tests/test_e2e.py::test_file_not_found`<br>`python/tests/test_exceptions.py::test_file_not_found_path`<br>`src/dump.rs::missing_file_returns_error`<br>`src/reader.rs::rejects_missing_file` | Implemented |
 | L2-RDR-006 | _(none)_ | `python/tests/test_e2e.py::test_empty_file`<br>`python/tests/test_exceptions.py::test_file_empty_path`<br>`src/reader.rs::rejects_empty_file` | Implemented |
 | L2-RDR-020 | L3-PY-009, L3-RS-003 | `src/reader.rs::decodes_rt15_sa11_record` | Implemented |
@@ -313,7 +315,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CONF | 1 | 5 | 0 | 3 | 0 | 5 | 0 |
-| EXIT | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
+| EXIT | 8 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
@@ -321,7 +323,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
-| **Total** | **24** | **109** | **25** | **104** | **14** | **109** | **25** |
+| **Total** | **26** | **109** | **25** | **104** | **14** | **109** | **25** |
 
 **Tested by at least one test marker**: 118 of 134 (88.1%).
 

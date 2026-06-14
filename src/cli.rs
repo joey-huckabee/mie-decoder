@@ -142,6 +142,54 @@ struct GlobalArgs {
     config: Option<PathBuf>,
 }
 
+/// Process exit codes, the normative contract pinned by L2-CLI-011 /
+/// L1-EXIT-002..008. Kept as named constants so every exit site is
+/// self-documenting and the taxonomy lives in one place.
+mod exit_code {
+    /// Runtime / decode error: input I/O (incl. file-not-found), writer
+    /// failure, strict-mode record & structural-invariant failures.
+    pub const RUNTIME: u8 = 1;
+    /// No valid records — the input is not an MIE recording.
+    pub const NO_RECORDS: u8 = 2;
+    /// Unrecoverable mid-file sync loss without `--allow-partial`.
+    pub const SYNC_LOSS: u8 = 3;
+    /// CLI usage error: unknown/missing/invalid flag or argument,
+    /// unknown subcommand, bad flag value.
+    pub const USAGE: u8 = 4;
+    /// Configuration error: config file not found, malformed TOML, or an
+    /// invalid configuration value.
+    pub const CONFIG: u8 = 5;
+}
+
+/// A subcommand failure carrying the exit code it should map to. Lets the
+/// runners distinguish a configuration error (`CONFIG`) from a generic
+/// runtime/decode error (`RUNTIME`) without flattening both to exit 1.
+struct CliError {
+    code: u8,
+    message: String,
+}
+
+impl CliError {
+    fn runtime(message: impl Into<String>) -> Self {
+        Self {
+            code: exit_code::RUNTIME,
+            message: message.into(),
+        }
+    }
+    fn config(message: impl Into<String>) -> Self {
+        Self {
+            code: exit_code::CONFIG,
+            message: message.into(),
+        }
+    }
+    fn usage(message: impl Into<String>) -> Self {
+        Self {
+            code: exit_code::USAGE,
+            message: message.into(),
+        }
+    }
+}
+
 // ── Top-level entry ───────────────────────────────────────────────────
 
 pub fn run(argv: Vec<String>) -> ExitCode {
@@ -188,14 +236,14 @@ pub fn run(argv: Vec<String>) -> ExitCode {
             Some(_) => break iter.next(),
             None => {
                 eprint!("{HELP}");
-                return ExitCode::from(2);
+                return ExitCode::from(exit_code::USAGE);
             }
         }
     };
 
     let Some(cmd_token) = cmd_token else {
         eprint!("{HELP}");
-        return ExitCode::from(2);
+        return ExitCode::from(exit_code::USAGE);
     };
 
     // Parse subcommand-specific args. Process control (printing help,
@@ -248,12 +296,13 @@ pub fn run(argv: Vec<String>) -> ExitCode {
 
     log_info!("mie-decoder v{VERSION}");
 
-    // Decode returns a Result<ExitCode, String> so it can choose exit
-    // codes 2 (no-records) and 3 (partial-unrecoverable) without
-    // routing through the generic exit-1 error path. Count/Dump still
-    // use the simpler Result<(), String> contract and map to either 0
-    // (Ok) or 1 (Err) via map_simple_to_exit below.
-    let result: Result<ExitCode, String> = match command {
+    // Decode returns a Result<ExitCode, CliError> so it can choose exit
+    // codes 2 (no-records) and 3 (partial-unrecoverable) directly. The
+    // CliError on the failure path carries its own code so a config
+    // error (5) is distinguished from a generic runtime error (1).
+    // Count/Dump use the simpler Result<(), CliError> contract and map
+    // Ok to exit 0.
+    let result: Result<ExitCode, CliError> = match command {
         Command::Decode(args) => run_decode(globals, *args),
         Command::Count(input) => run_count(globals, input).map(|()| ExitCode::SUCCESS),
         Command::Dump(args) => run_dump(globals, *args).map(|()| ExitCode::SUCCESS),
@@ -262,16 +311,16 @@ pub fn run(argv: Vec<String>) -> ExitCode {
     match result {
         Ok(code) => code,
         Err(e) => {
-            log_error!("{e}");
-            eprintln!("Error: {e}");
-            ExitCode::from(1)
+            log_error!("{}", e.message);
+            eprintln!("Error: {}", e.message);
+            ExitCode::from(e.code)
         }
     }
 }
 
 fn die(msg: &str) -> ExitCode {
     eprintln!("Error: {msg}\n\n{HELP}");
-    ExitCode::from(2)
+    ExitCode::from(exit_code::USAGE)
 }
 
 // ── Subcommand parsing ────────────────────────────────────────────────
@@ -665,17 +714,19 @@ fn apply_log_level(source: &str, value: &str) -> Result<(), String> {
 /// overrides config. Used by every subcommand so a malformed config
 /// file is rejected uniformly regardless of whether you ran `decode`,
 /// `count`, or `dump`.
-fn resolve_config(globals: &GlobalArgs) -> Result<DecoderConfig, String> {
-    let cfg = load_config(globals.config.as_deref()).map_err(|e| e.0)?;
+fn resolve_config(globals: &GlobalArgs) -> Result<DecoderConfig, CliError> {
+    let cfg = load_config(globals.config.as_deref()).map_err(|e| CliError::config(e.0))?;
 
     // The config file's log_level is validated at load time (see
     // config::parse_into_config), so apply_log_level cannot fail here
     // unless someone constructed a DecoderConfig manually with a bogus
-    // string. Treat that case the same as an invalid CLI value.
-    apply_log_level("[logging].level (in config)", &cfg.log_level)?;
+    // string — treat that as a configuration error.
+    apply_log_level("[logging].level (in config)", &cfg.log_level).map_err(CliError::config)?;
 
+    // An invalid `--log-level` is a CLI usage error. In practice run()
+    // validates it earlier (and exits via die()), so this is defensive.
     if let Some(s) = &globals.log_level {
-        apply_log_level("--log-level", s)?;
+        apply_log_level("--log-level", s).map_err(CliError::usage)?;
     }
 
     Ok(cfg)
@@ -684,7 +735,7 @@ fn resolve_config(globals: &GlobalArgs) -> Result<DecoderConfig, String> {
 /// Open the input file and configure the reader from `cfg`. The
 /// String-flavored error type is what every subcommand runner returns,
 /// so the conversion is folded in here.
-fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String> {
+fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, CliError> {
     MieFileReader::with_options(
         path,
         ReaderOptions {
@@ -695,10 +746,10 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String
             standard_tick_rate_hz: cfg.standard_tick_rate_hz,
         },
     )
-    .map_err(format_mie_error)
+    .map_err(|e| CliError::runtime(format_mie_error(e)))
 }
 
-fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String> {
+fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliError> {
     let cfg = resolve_config(&globals)?;
 
     let cfg = cfg.with_overrides(ConfigOverrides {
@@ -730,10 +781,10 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String>
     });
 
     if cfg.output_format != "csv" {
-        return Err(format!(
+        return Err(CliError::runtime(format!(
             "output format {:?} not yet supported (only 'csv')",
             cfg.output_format
-        ));
+        )));
     }
 
     let reader = open_reader(&args.input, &cfg)?;
@@ -818,7 +869,7 @@ fn classify_decode_exit(
             log_error!("{e}");
             eprintln!("Error: {e}");
             log_info!("decode exit class: no-records");
-            ExitCode::from(2)
+            ExitCode::from(exit_code::NO_RECORDS)
         }
         Err(e @ MieError::HomogeneousPayload { .. }) => {
             // L2-SYN-018 + L1-EXIT-002: semantically a "wrong file
@@ -828,7 +879,7 @@ fn classify_decode_exit(
             log_error!("{e}");
             eprintln!("Error: {e}");
             log_info!("decode exit class: no-records");
-            ExitCode::from(2)
+            ExitCode::from(exit_code::NO_RECORDS)
         }
         Err(e @ MieError::TimestampFormatMismatch { .. }) => {
             // L2-DEC-016 + L1-EXIT-002: ambiguous timestamp format is
@@ -840,7 +891,7 @@ fn classify_decode_exit(
             log_error!("{e}");
             eprintln!("Error: {e}");
             log_info!("decode exit class: no-records (timestamp-format-mismatch)");
-            ExitCode::from(2)
+            ExitCode::from(exit_code::NO_RECORDS)
         }
         Err(e @ MieError::UnrecoverableSyncLoss { .. }) => {
             log_error!("{e}");
@@ -849,17 +900,17 @@ fn classify_decode_exit(
                 "decode exit class: partial-unrecoverable (sync_losses={sync_losses}); \
                  pass --allow-partial to preserve the rows decoded so far"
             );
-            ExitCode::from(3)
+            ExitCode::from(exit_code::SYNC_LOSS)
         }
         Err(e) => {
             log_error!("{e}");
             eprintln!("Error: {e}");
-            ExitCode::from(1)
+            ExitCode::from(exit_code::RUNTIME)
         }
     }
 }
 
-fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), String> {
+fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), CliError> {
     let cfg = resolve_config(&globals)?;
     let reader = open_reader(&input, &cfg)?;
 
@@ -870,7 +921,7 @@ fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), String> {
     for item in reader.iter().filter_messages(filter_cfg) {
         match item {
             Ok(_) => count += 1,
-            Err(e) => return Err(format_mie_error(e)),
+            Err(e) => return Err(CliError::runtime(format_mie_error(e))),
         }
     }
     // L3-RS-008: integer count to stdout (the machine-readable data),
@@ -882,7 +933,7 @@ fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-fn run_dump(globals: GlobalArgs, args: DumpArgs) -> Result<(), String> {
+fn run_dump(globals: GlobalArgs, args: DumpArgs) -> Result<(), CliError> {
     // dump only consumes log_level from config; time_format / strict /
     // filters don't apply to a hex view. We still call resolve_config
     // so a malformed config errors out consistently with the other
@@ -890,9 +941,11 @@ fn run_dump(globals: GlobalArgs, args: DumpArgs) -> Result<(), String> {
     let _cfg = resolve_config(&globals)?;
 
     if args.raw {
-        hex_dump_raw_to_stdout(&args.input, args.offset, args.length).map_err(format_mie_error)
+        hex_dump_raw_to_stdout(&args.input, args.offset, args.length)
+            .map_err(|e| CliError::runtime(format_mie_error(e)))
     } else {
-        hex_dump_records_to_stdout(&args.input, args.records, args.offset).map_err(format_mie_error)
+        hex_dump_records_to_stdout(&args.input, args.records, args.offset)
+            .map_err(|e| CliError::runtime(format_mie_error(e)))
     }
 }
 
@@ -1116,7 +1169,7 @@ mod tests {
         p
     }
 
-    /// Requirements: L2-CLI-005
+    /// Requirements: L2-CLI-005, L2-CLI-011, L1-EXIT-008
     #[test]
     fn run_count_propagates_config_load_error() {
         let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
@@ -1128,15 +1181,19 @@ mod tests {
         let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
         let _ = std::fs::remove_file(&bad);
         match result {
-            Err(msg) => assert!(
-                msg.contains("Invalid time_format"),
-                "expected config error, got: {msg}"
-            ),
+            Err(e) => {
+                assert_eq!(e.code, exit_code::CONFIG, "config error should exit 5");
+                assert!(
+                    e.message.contains("Invalid time_format"),
+                    "expected config error, got: {}",
+                    e.message
+                );
+            }
             Ok(()) => panic!("expected config error, got Ok"),
         }
     }
 
-    /// Requirements: L2-CLI-005
+    /// Requirements: L2-CLI-005, L2-CLI-011, L1-EXIT-008
     #[test]
     fn run_dump_propagates_config_load_error() {
         let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
@@ -1151,15 +1208,19 @@ mod tests {
         let result = run_dump(globals, dump_args);
         let _ = std::fs::remove_file(&bad);
         match result {
-            Err(msg) => assert!(
-                msg.contains("Invalid time_format"),
-                "expected config error, got: {msg}"
-            ),
+            Err(e) => {
+                assert_eq!(e.code, exit_code::CONFIG, "config error should exit 5");
+                assert!(
+                    e.message.contains("Invalid time_format"),
+                    "expected config error, got: {}",
+                    e.message
+                );
+            }
             Ok(()) => panic!("expected config error, got Ok"),
         }
     }
 
-    /// Requirements: L2-CFG-005
+    /// Requirements: L2-CFG-005, L2-CLI-011, L1-EXIT-008
     #[test]
     fn run_count_propagates_missing_config_file() {
         let globals = GlobalArgs {
@@ -1168,10 +1229,18 @@ mod tests {
         };
         let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
         match result {
-            Err(msg) => assert!(
-                msg.contains("Config file not found"),
-                "expected 'Config file not found' error, got: {msg}"
-            ),
+            Err(e) => {
+                assert_eq!(
+                    e.code,
+                    exit_code::CONFIG,
+                    "missing config file should exit 5"
+                );
+                assert!(
+                    e.message.contains("Config file not found"),
+                    "expected 'Config file not found' error, got: {}",
+                    e.message
+                );
+            }
             Ok(()) => panic!("expected error, got Ok"),
         }
     }
@@ -1181,9 +1250,9 @@ mod tests {
     // Regression: --log-level NOPE used to be silently ignored (the
     // code did `if let Some(lvl) = Level::parse(s)` and never bothered
     // with the None branch). Now invalid values fail loudly:
-    //   - CLI input fails at run() entry with exit 2 (usage error)
-    //   - Config-file value fails at config load time with exit 1
-    //     (runtime error)
+    //   - CLI input fails at run() entry with exit 4 (usage error)
+    //   - Config-file value fails at config load time with exit 5
+    //     (configuration error)
 
     /// Requirements: L2-CLI-004
     #[test]
@@ -1219,7 +1288,7 @@ mod tests {
         assert!(err.contains("WHATEVER"));
     }
 
-    /// Requirements: L2-CFG-010
+    /// Requirements: L2-CFG-010, L2-CLI-011, L1-EXIT-008
     #[test]
     fn run_count_with_invalid_config_log_level_fails() {
         let bad = write_temp_file(".toml", b"[logging]\nlevel = \"NOPE\"\n");
@@ -1230,30 +1299,43 @@ mod tests {
         let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
         let _ = std::fs::remove_file(&bad);
         match result {
-            Err(msg) => assert!(
-                msg.contains("Invalid logging.level"),
-                "expected config-level error, got: {msg}"
-            ),
+            Err(e) => {
+                assert_eq!(
+                    e.code,
+                    exit_code::CONFIG,
+                    "config-level error should exit 5"
+                );
+                assert!(
+                    e.message.contains("Invalid logging.level"),
+                    "expected config-level error, got: {}",
+                    e.message
+                );
+            }
             Ok(()) => panic!("expected error, got Ok"),
         }
     }
 
-    /// Requirements: L2-CLI-004
+    /// Requirements: L2-CLI-004, L2-CLI-011, L1-EXIT-007
     #[test]
     fn run_count_with_invalid_cli_log_level_fails_via_resolve_config() {
-        // The run() entry-point catches bad CLI levels first (exit 2),
+        // The run() entry-point catches bad CLI levels first (exit 4),
         // but resolve_config — which is what the runners use — also
-        // re-validates the CLI value. Test that path directly.
+        // re-validates the CLI value. Test that path directly; a bad
+        // CLI value is a usage error (exit 4).
         let globals = GlobalArgs {
             log_level: Some("NOPE".to_string()),
             config: None,
         };
         let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
         match result {
-            Err(msg) => assert!(
-                msg.contains("invalid --log-level"),
-                "expected CLI-level error, got: {msg}"
-            ),
+            Err(e) => {
+                assert_eq!(e.code, exit_code::USAGE, "bad --log-level should exit 4");
+                assert!(
+                    e.message.contains("invalid --log-level"),
+                    "expected CLI-level error, got: {}",
+                    e.message
+                );
+            }
             Ok(()) => panic!("expected error, got Ok"),
         }
     }
