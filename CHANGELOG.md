@@ -15,6 +15,18 @@ full release workflow.
 
 ## [Unreleased]
 
+### Documentation
+
+- Added a Production-Readiness Audit backlog (`PRA-1`–`PRA-9`) to
+  `docs/ROADMAP.md`, capturing findings from a comment/docs hygiene sweep
+  and a requirements deep analysis: CLI exit-code taxonomy alignment (open
+  decision), the unimplemented `L2-DEC-013` forced-format validation,
+  trace-matrix L1-marker coverage, Python large-file memory limits and
+  `PY-streaming`, a fuzz CI burn-in plus the `L1-SYN-002` cumulative-scan
+  test, normative-doc/source-comment staleness, and lower-priority
+  test/diagnostic items. Items are unscheduled — no target version is
+  assigned until each is planned for closure.
+
 ## [1.4.1] — 2026-06-14
 
 Joint Rust + Python maintenance release: close the CI dev-tool gap, tighten

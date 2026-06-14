@@ -89,6 +89,177 @@ contract (CSV byte-for-byte equivalence on shared behavior) holds at any
 compatible version pair. See [`docs/MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md)
 section 11 for the release workflow.
 
+## Production-Readiness Audit (2026-06-14)
+
+Findings from a comment/docs hygiene sweep and a requirements deep
+analysis of the current codebase. Captured here as **unscheduled
+backlog** — no target version is assigned to any item; the version is
+decided when the item is planned for closure. Severity reflects
+production impact, not schedule. Items are grouped by theme and numbered
+for reference only (`PRA-N`).
+
+### Correctness
+
+**PRA-1 — CLI exit-code taxonomy: cross-impl divergence and spec conflict.**
+*Severity: High.*
+- **Concern.** Usage/flag-parse errors do not produce a consistent,
+  spec-conformant exit code across the two implementations, and the Rust
+  behavior contradicts `L2-CLI-011`.
+- **Evidence.** `L2-CLI-011` assigns exit `1` to "usage or configuration
+  failure" and `2` to "no-valid-records." Rust routes every usage/parse
+  error through `die()` → `ExitCode::from(2)` (`src/cli.rs`), so a bad
+  flag, unknown flag, or missing input returns `2` — contradicting the
+  spec and **colliding exit 2 between two operationally opposite
+  situations** ("you typed a bad flag" vs "this isn't an MIE file").
+  Python is internally inconsistent: an out-of-range value for
+  `--detect-records` / `--lookahead-records` / `--standard-tick-rate-hz`
+  returns exit `1` via a custom check (`python/src/mie_decoder/cli.py`),
+  but a non-numeric value for the same flags exits `2` via argparse's
+  native `error()`. Config-load errors (both impls) and strict-mode
+  record errors correctly map to exit `1`. There is **no conformance
+  case** exercising a usage/flag error, so the divergence is invisible to
+  CI (the runner requires both impls to share an exit code).
+- **Open decision (for the team).** Both implementations must agree; the
+  contract itself is undecided:
+  - *(a) Align to the existing spec.* Make Rust `die()` return exit `1`
+    for usage/flag errors (frees `2` for no-records only); make Python's
+    flag validators raise through argparse so both bad-value forms exit
+    consistently. Minimal spec change.
+  - *(b) Define a richer documented exit-code scheme.* Introduce distinct
+    codes (e.g., separate usage-error vs config-error vs no-records vs
+    sync-loss) and revise `L1-EXIT-*` / `L2-CLI-011` + `ERROR-CATALOG.md`
+    accordingly. More expressive for pipeline consumers; larger change.
+  - Either path SHALL add a `usage-error-exit` conformance case asserting
+    both implementations return the agreed code, and reconcile the
+    `count` / `dump` bad-flag path with the chosen scheme.
+
+**PRA-2 — `L2-DEC-013` forced-format validation is unimplemented (spec drift).**
+*Severity: High.*
+- **Concern.** `L2-DEC-013` states that an explicit `--time-format` /
+  `decode.time_format` "SHALL still be validated against the first
+  record's word count to detect obviously-wrong selections, surfacing a
+  distinct error class in strict mode and a WARN in lenient mode." This
+  second sentence is not implemented, yet the trace matrix shows the
+  requirement "Implemented."
+- **Evidence.** The Rust forced path is `explicit => explicit`
+  (`src/reader.rs`) with no word-count check; the probe/validation block
+  runs only for `Auto`. No distinct error class exists for a
+  forced-format/word-count mismatch. Tests cover only the happy path. Net
+  effect: `mie-decoder decode --time-format standard` on an IRIG file (or
+  vice versa) silently emits garbage timestamps for the entire file —
+  exactly the failure the requirement was written to prevent.
+- **Proposed adjustment.** Implement the first-record word-count sanity
+  check on the forced path in both implementations (strict → distinct
+  error class; lenient → WARN), add a conformance case, and keep the
+  matrix honest — or, if the behavior is intentionally dropped, retract
+  the second sentence of `L2-DEC-013` rather than leaving it
+  "Implemented."
+
+### Specification & traceability
+
+**PRA-3 — Trace matrix omits L1-level test markers (SSOT undercount).**
+*Severity: Medium.*
+- **Concern.** `scripts/build-trace-matrix.py` renders and counts test
+  artifacts only in the L2/L3 tables; L1 requirements appear only in an
+  artifact-less "L1 → L2" table and are excluded from the coverage
+  denominator. Requirements with a *direct* L1 marker and no L2 child are
+  therefore shown as untested even when they are tested.
+- **Evidence.** `L1-ROB-001` (Verification = Test) has matching fuzz
+  tests in both impls (`tests/integration.rs`, `python/tests/test_e2e.py`)
+  tagged `L1-ROB-001`, plus `/// Requirements: L1-ROB-001` on
+  `src/dump.rs` items — none of which surface in `docs/TRACE-MATRIX.md`.
+  `--check` passes, so this is a generator design gap, not staleness.
+- **Proposed adjustment.** Either add an `L2-ROB-001` child that carries
+  the fuzz markers, or extend the generator to surface and count
+  direct L1-level markers so the safety-critical robustness requirement
+  is visibly verified in the source of truth.
+
+### Robustness & limits
+
+**PRA-4 — Python large-file memory ceiling; `PY-streaming` still open.**
+*Severity: Medium (High for large-recording deployments).*
+- **Concern.** Python materializes the full record stream into a pandas
+  DataFrame before writing (O(record_count) memory) while Rust streams in
+  constant memory; a multi-GB recording can OOM under Python. This is
+  correctly specified (`L3-PY-012` / `L3-RS-012`) but the concrete
+  operator guidance never reached a user-facing limits section.
+- **Evidence.** `python/src/mie_decoder/writer.py` collects all rows into
+  a list then builds a DataFrame; even the `--allow-partial` path
+  buffers. The "~5 GB RSS per 10M records" guideline lives only in this
+  ROADMAP's backlog notes, not in `USER-GUIDE.md` / `ARCHITECTURE.md`.
+- **Proposed adjustment.** Surface a "Performance and limits" section in
+  the user-facing docs with a concrete RSS-per-record guideline, and
+  treat `PY-streaming` (a streaming Python writer to replace DataFrame
+  buffering) as the next Python work item — it also unblocks shared
+  multi-file support (see the Planned note above).
+
+**PRA-5 — Fuzz harness has no CI burn-in; `L1-SYN-002` cumulative-scan bound untested.**
+*Severity: Medium.*
+- **Concern.** Deterministic-PRNG fuzz harnesses exist in both impls and
+  assert the no-panic guarantee, but they run only the fixed default
+  iteration count in the normal suite, and no CI job exercises a longer
+  burn-in. Separately, the `L1-SYN-002` cumulative scan-distance bound
+  ("SHALL NOT re-traverse already-scanned bytes") holds structurally
+  (the reader offset only advances forward) but nothing asserts it.
+- **Evidence.** No fuzz/burn-in job in `.github/workflows/ci.yml`; the
+  per-recovery 64 KB cap is tested but the cumulative bound is not; the
+  `L1-SYN-002` analysis note referenced in `docs/L1-REQ.md` does not
+  exist.
+- **Proposed adjustment.** Add a scheduled (e.g., nightly) longer fuzz
+  run using the harness's iteration override, and an explicit
+  cumulative-bytes-scanned assertion test (or write the bounded-loop
+  analysis note backing the Analysis verification method).
+
+### Documentation & comment hygiene
+
+**PRA-6 — Stale counts/versions in normative (non-historical) docs.**
+*Severity: Medium (misleads readers; not a runtime issue).*
+- **Concern.** Several *current* statements carry outdated numbers.
+  CHANGELOG and ROADMAP historical/release-status entries are correct and
+  out of scope.
+- **Evidence.** `CLAUDE.md` Project Overview still says the joint cut is
+  at the initial release and states an L2 requirement count of 102
+  (current is 109 after `L2-DEC-017` / `L2-CFG-011` / `L2-CLI-012`);
+  `README.md` advertises a "27-case" conformance suite (current is 29)
+  and an opening release line one minor version behind; `docs/L1-REQ.md`
+  scope clause and `docs/MAINTAINER-GUIDE.md` repo-layout notes carry an
+  older version. (Counts as of this audit; verify at fix time.)
+- **Proposed adjustment.** Refresh the current-state counts/versions, or
+  make them version-agnostic so they don't drift each release. Consider a
+  CI check (or a generated snippet) for the conformance-case and
+  requirement counts to prevent recurrence.
+
+**PRA-7 — Version-anchored source comments.**
+*Severity: Low (cosmetic).*
+- **Concern.** A few module/doc comments frame current behavior with
+  dated qualifiers.
+- **Evidence.** `src/cli.rs` and `src/filter.rs` describe the CLI surface
+  as a "v2 redesign" (it is the current stable surface);
+  `python/src/mie_decoder/writer.py` and `config.py` annotate the
+  intentionally-empty vendor columns and the CSV-only output format as
+  "empty in v1.0" / "csv for v1.0" (accurate behavior, dated framing).
+- **Proposed adjustment.** Reword to describe current behavior without a
+  version anchor (e.g., "currently empty by spec — see Shared
+  Commitments"), so the comments don't read as obsolete at later point
+  releases.
+
+### Lower priority
+
+**PRA-8 — Add tests for Inspection-only memory-safety boundaries.**
+*Severity: Low.* `L2-DEC-009` (payload extraction bounded by Type Word
+extent — no read into the next record) is verified by Inspection only. A
+targeted test that proves a record never reads past its declared extent
+would cheaply lock in a memory-safety boundary; similarly `L2-SYN-014`
+(single shared validation path).
+
+**PRA-9 — Operator WARN on the known IRIG day-of-year discrepancy.**
+*Severity: Low.* The IRIG day-of-year firmware discrepancy is documented
+and bounded (`docs/VENDOR-CSV-DIFFS.md` §5), but produces a *silent*
+wrong value on affected firmware. Consider a one-time WARN when the
+day-of-year field is consumed on a calendar-locked (non-freerun) record,
+nudging operators to the documented limitation. Pairs with the existing
+"IRIG day-field decoding across DDC card models" investigation item.
+
 ## Shared Commitments
 
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.
