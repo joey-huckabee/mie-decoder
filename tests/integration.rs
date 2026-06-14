@@ -223,6 +223,67 @@ fn lenient_mode_unrecoverable_sync_loss_yields_terminal_error() {
     assert!(reader.sync_losses() >= 1);
 }
 
+/// L1-SYN-002: recovery scanning is forward-only and bounded — across a
+/// full decode the cumulative scan never re-traverses already-scanned
+/// bytes. We exercise repeated recoveries (valid records separated by
+/// short recoverable garbage) and assert the observable consequence: the
+/// decoded record offsets advance strictly forward and stay within the
+/// file, and the recovery count is bounded (one per corruption region,
+/// never an unbounded re-scan).
+/// Requirements: L1-SYN-002
+#[test]
+fn recovery_scan_is_forward_only_and_bounded() {
+    // Three RR blocks separated by short recoverable garbage:
+    //   RR [garbage] RR [garbage] RR
+    // Two valid records per block so the leading record passes its
+    // two-record look-ahead; each 0xFF run fails validation at the
+    // post-block boundary, so recover_sync walks forward (well within the
+    // 64 KB per-recovery cap) to the next block.
+    const GARBAGE: usize = 16;
+    let rec = record_rt15_sa11_rcv();
+    let mut block = rec.clone();
+    block.extend(&rec);
+    let mut bytes = Vec::new();
+    bytes.extend(&block);
+    bytes.extend(vec![0xFFu8; GARBAGE]);
+    bytes.extend(&block);
+    bytes.extend(vec![0xFFu8; GARBAGE]);
+    bytes.extend(&block);
+    let file_len = bytes.len() as u64;
+
+    let f = TempFile::new(&bytes);
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let msgs: Vec<_> = reader
+        .iter()
+        .collect::<Result<_, _>>()
+        .expect("recoverable corruption must decode to completion, not error");
+
+    // Recovery fired (more than one block decoded) but bounded.
+    assert!(msgs.len() >= 2, "recovery should reach later blocks");
+
+    // Forward-only: offsets strictly increase and never exceed the file —
+    // the reader never rewinds into already-scanned bytes (the core of the
+    // L1-SYN-002 cumulative bound).
+    for pair in msgs.windows(2) {
+        assert!(
+            pair[1].file_offset > pair[0].file_offset,
+            "record offsets must advance strictly forward: {} then {}",
+            pair[0].file_offset,
+            pair[1].file_offset
+        );
+    }
+    assert!(msgs.last().unwrap().file_offset < file_len);
+
+    // Bounded: one recovery per corruption region (two regions here),
+    // never an unbounded re-scan. A forward-only scanner can recover at
+    // most once per 2-byte step, far below file_len/2.
+    let losses = reader.sync_losses();
+    assert!(
+        (1..=2).contains(&losses),
+        "expected 1-2 recoveries (one per corruption region), got {losses}"
+    );
+}
+
 /// Requirements: L2-RDR-009
 #[test]
 fn delta_tracker_per_rt_msg_key() {
@@ -447,12 +508,17 @@ fn fuzz_arbitrary_bytes_never_panic() {
     let mut state = seed;
     // 256 iterations runs in a few seconds and consistently exercises
     // every invariant + recovery branch (verified by inspecting the
-    // WARN/ERROR log stream). CI environments that want a longer
-    // burn-in can override this via a separate fuzz job; we keep the
-    // default-suite cost bounded.
-    const ITERATIONS: usize = 256;
+    // WARN/ERROR log stream). The scheduled CI fuzz job overrides this
+    // via the MIE_FUZZ_ITERATIONS env var for a longer burn-in; the
+    // default-suite cost stays bounded. The PRNG is deterministic, so a
+    // burn-in is a strict superset of the default run (same first 256).
+    let iterations: usize = std::env::var("MIE_FUZZ_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(256);
 
-    for i in 0..ITERATIONS {
+    for i in 0..iterations {
         // Sizes range from 32 B (slightly above MIN_RECORD_BYTES_STANDARD)
         // to ~8 KB. The lower bound keeps record headers reachable; the
         // upper bound keeps each iteration fast.

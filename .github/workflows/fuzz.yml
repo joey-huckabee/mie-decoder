@@ -1,0 +1,72 @@
+name: Fuzz burn-in
+
+# Longer-running fuzz burn-in for the L1-ROB-001 no-panic harnesses. The
+# normal CI suite runs the fixed 256-iteration default (kept fast); this
+# scheduled job overrides MIE_FUZZ_ITERATIONS for a much deeper sweep. The
+# PRNG is deterministic, so a burn-in is a strict superset of the default
+# run (same first 256 iterations) and a failure is reproducible from the
+# printed seed against either implementation.
+
+on:
+  schedule:
+    # Daily at 06:00 UTC.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Fuzz iterations per implementation"
+        default: "25000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz-rust:
+    name: Rust fuzz burn-in
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+
+      - name: Run the L1-ROB-001 fuzz harness (burn-in)
+        run: cargo test --locked --test integration fuzz_arbitrary_bytes_never_panic -- --nocapture
+
+  fuzz-python:
+    name: Python fuzz burn-in
+    runs-on: ubuntu-latest
+    env:
+      MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: pipx install poetry==2.3.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: poetry
+          cache-dependency-path: python/poetry.lock
+
+      - name: Synchronize locked dependencies
+        run: poetry -C python sync --no-interaction --no-ansi
+
+      - name: Run the L1-ROB-001 fuzz harness (burn-in)
+        run: poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness -v

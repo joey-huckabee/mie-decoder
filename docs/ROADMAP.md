@@ -206,22 +206,24 @@ large-recording deployments).*
   open in **Planned**; it is the larger refactor that actually removes the
   ceiling and also unblocks shared multi-file support.
 
-**PRA-5 — Fuzz harness has no CI burn-in; `L1-SYN-002` cumulative-scan bound untested.**
-*Severity: Medium.*
-- **Concern.** Deterministic-PRNG fuzz harnesses exist in both impls and
-  assert the no-panic guarantee, but they run only the fixed default
-  iteration count in the normal suite, and no CI job exercises a longer
-  burn-in. Separately, the `L1-SYN-002` cumulative scan-distance bound
-  ("SHALL NOT re-traverse already-scanned bytes") holds structurally
-  (the reader offset only advances forward) but nothing asserts it.
-- **Evidence.** No fuzz/burn-in job in `.github/workflows/ci.yml`; the
-  per-recovery 64 KB cap is tested but the cumulative bound is not; the
-  `L1-SYN-002` analysis note referenced in `docs/L1-REQ.md` does not
-  exist.
-- **Proposed adjustment.** Add a scheduled (e.g., nightly) longer fuzz
-  run using the harness's iteration override, and an explicit
-  cumulative-bytes-scanned assertion test (or write the bounded-loop
-  analysis note backing the Analysis verification method).
+**~~PRA-5 — Fuzz harness has no CI burn-in; `L1-SYN-002` cumulative-scan bound untested.~~**
+*Resolved.* *Severity: Medium.*
+- **Concern.** The deterministic fuzz harnesses ran only the fixed
+  256-iteration default with no CI burn-in, and the `L1-SYN-002`
+  cumulative scan-distance bound ("SHALL NOT re-traverse already-scanned
+  bytes") held structurally but nothing asserted it.
+- **Resolution.** Both fuzz harnesses now honor a `MIE_FUZZ_ITERATIONS`
+  override (default 256, deterministic so a burn-in is a strict superset
+  of the default run). A new scheduled workflow `.github/workflows/fuzz.yml`
+  runs the burn-in daily (and on manual `workflow_dispatch`) at 25 000
+  iterations per implementation. The `L1-SYN-002` cumulative bound is now
+  asserted by `tests/integration.rs::recovery_scan_is_forward_only_and_bounded`
+  and `python/tests/test_sync.py::test_recovery_scan_forward_only_and_bounded`,
+  which exercise repeated recoveries and check that decoded record offsets
+  advance strictly forward (never re-traversing already-scanned bytes),
+  stay within the file, and the recovery count is bounded (one per
+  corruption region). The MAINTAINER-GUIDE CI section documents the
+  burn-in workflow and the local reproduce command.
 
 ### Documentation & comment hygiene
 

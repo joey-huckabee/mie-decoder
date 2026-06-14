@@ -15,6 +15,17 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- Scheduled fuzz burn-in (ROADMAP PRA-5). The L1-ROB-001 no-panic
+  harnesses now honor a `MIE_FUZZ_ITERATIONS` override (default 256,
+  deterministic), and a new `.github/workflows/fuzz.yml` runs them daily
+  (and on manual dispatch) at 25 000 iterations per implementation. Added
+  an explicit `L1-SYN-002` cumulative-scan-bound test in both impls
+  (`recovery_scan_is_forward_only_and_bounded`) asserting that repeated
+  recoveries advance strictly forward and never re-traverse already-scanned
+  bytes.
+
 ### Fixed
 
 - **Forcing the wrong `--time-format` no longer silently emits garbage

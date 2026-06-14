@@ -166,7 +166,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025, L2-SYN-026 | _(none)_ | Implemented |
-| L1-SYN-002 | L2-SYN-007, L2-SYN-010 | `src/sync.rs::recover_sync_capped_at_max_scan` | Implemented |
+| L1-SYN-002 | L2-SYN-007, L2-SYN-010 | `python/tests/test_sync.py::test_recovery_scan_forward_only_and_bounded`<br>`src/sync.rs::recover_sync_capped_at_max_scan`<br>`tests/integration.rs::recovery_scan_is_forward_only_and_bounded` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 

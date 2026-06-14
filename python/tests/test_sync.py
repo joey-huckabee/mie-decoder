@@ -298,6 +298,39 @@ class TestRecoverSync:
         # remain.
         assert len(messages) == 3
 
+    @pytest.mark.requirement("L1-SYN-002")
+    def test_recovery_scan_forward_only_and_bounded(
+        self, tmp_path: Path, single_receive_record: bytes
+    ) -> None:
+        """L1-SYN-002: recovery scanning is forward-only and bounded — the
+        cumulative scan never re-traverses already-scanned bytes. Exercise
+        repeated recoveries (RR blocks separated by short recoverable
+        garbage) and assert the decoded offsets advance strictly forward,
+        stay within the file, and the recovery count is bounded (one per
+        corruption region). Mirrors the Rust
+        recovery_scan_is_forward_only_and_bounded integration test.
+        """
+        from mie_decoder.reader import MieFileReader
+
+        block = single_receive_record * 2  # two records pass look-ahead
+        garbage = b"\xFF" * 16
+        data = block + garbage + block + garbage + block
+        fpath = tmp_path / "multi_recover.mie"
+        fpath.write_bytes(data)
+
+        reader = MieFileReader(fpath, time_format=TimestampFormat.IRIG)
+        messages = list(reader)
+
+        assert len(messages) >= 2, "recovery should reach later blocks"
+        # Forward-only: offsets strictly increase and stay within the file —
+        # the reader never rewinds into already-scanned bytes.
+        offsets = [m.file_offset for m in messages]
+        assert offsets == sorted(offsets)
+        assert len(set(offsets)) == len(offsets)
+        assert offsets[-1] < len(data)
+        # Bounded: one recovery per corruption region (two regions here).
+        assert 1 <= reader.sync_losses <= 2
+
     @pytest.mark.requirement("L2-SYN-016")
     def test_reader_strict_raises_on_corruption(
         self, tmp_path: Path, single_receive_record: bytes

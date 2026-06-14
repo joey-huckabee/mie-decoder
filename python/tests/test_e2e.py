@@ -1141,7 +1141,17 @@ class TestFuzzHarness:
 
         seed = 0x0DDCD1ECDDC0DEC0
         state = seed
+        # The scheduled CI fuzz job overrides the iteration count via
+        # MIE_FUZZ_ITERATIONS for a longer burn-in; the default-suite cost
+        # stays bounded. Deterministic PRNG, so a burn-in is a strict
+        # superset of the default run (same first 256 iterations). Mirrors
+        # the Rust harness's MIE_FUZZ_ITERATIONS handling.
+        import os
+
         iterations = 256
+        override = os.environ.get("MIE_FUZZ_ITERATIONS")
+        if override and override.isdigit() and int(override) > 0:
+            iterations = int(override)
 
         for i in range(iterations):
             state, r = self._xorshift64(state)
