@@ -30,7 +30,7 @@ The decoder is shipped as two interoperable implementations — a Rust crate + C
 | Implementation | Use when |
 |----------------|----------|
 | **Rust** | You want a native compiled binary, constant-memory streaming decode of multi-GB recordings, or the fastest decode throughput. |
-| **Python** | You want to drop into an existing Python analysis pipeline, you're on Windows / macOS for ad-hoc work, or you'd rather `pip install` than build from source. Memory usage is O(record_count) so very large files (10M+ records) may not fit in RAM; otherwise the Python implementation is functionally identical. |
+| **Python** | You want to drop into an existing Python analysis pipeline, you're on Windows / macOS for ad-hoc work, or you'd rather `pip install` than build from source. Memory usage is O(record_count) so very large files (10M+ records) may not fit in RAM (see [§10 Performance and large recordings](#10-performance-and-large-recordings)); otherwise the Python implementation is functionally identical. |
 
 CSV output is byte-identical between the two — your choice doesn't change the result.
 
@@ -371,7 +371,22 @@ For every accepted key, its type, default, validation behavior, and CLI override
 
 ---
 
-## 10. What's next
+## 10. Performance and large recordings
+
+Both implementations produce byte-identical CSV and decode at broadly similar speed. They differ in **memory**, and on a large enough recording that difference decides whether the decode completes at all.
+
+| Implementation | Memory while decoding | Practical ceiling |
+|----------------|-----------------------|-------------------|
+| **Rust** | Constant — `O(1)` in the record count. A 10 GB recording uses the same memory as a 10 MB one (rows stream straight to the output). | Bounded by disk, not RAM. |
+| **Python** | Grows with the file — `O(record_count)`. The writer builds the entire table in memory (a `pandas.DataFrame`) before writing it out. | Bounded by RAM. As a planning rule, budget on the order of **~5 GB of RAM per ~10 million records** (roughly half a kilobyte per record). A recording large enough to exceed available memory fails with an out-of-memory error. |
+
+**Rule of thumb:** for multi-GB recordings, files with **10M+ records**, or memory-constrained machines, use the **Rust** CLI — the output is identical, and memory stops being a concern. Reach for Python when the recording comfortably fits in RAM and you want to stay inside a Python pipeline.
+
+This is the one functional difference between the implementations and is tracked as `L3-PY-012` (Python) / `L3-RS-012` (Rust). A future **PY-streaming** change will give the Python writer the same constant-memory behavior; until then, the table above is the guidance. See [`ARCHITECTURE.md`](ARCHITECTURE.md) §12 (memory profile) and §14 (operational limits) for the underlying detail.
+
+---
+
+## 11. What's next
 
 - **Hit a column you don't recognize?** [`MIE-FORMAT.md`](MIE-FORMAT.md) is the per-column reference (binary layout + CSV format).
 - **Hit an exit code or error message you don't recognize?** [`ERROR-CATALOG.md`](ERROR-CATALOG.md) covers every variant with operator guidance.

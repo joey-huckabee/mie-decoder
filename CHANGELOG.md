@@ -47,6 +47,13 @@ full release workflow.
 
 ### Documentation
 
+- Surfaced the Python large-file memory ceiling for operators (ROADMAP
+  PRA-4). New `USER-GUIDE.md` §10 "Performance and large recordings" gives
+  the per-implementation memory table, the "~5 GB RAM per ~10 M records"
+  planning rule, and the recommendation to use the Rust CLI for multi-GB /
+  10M+-record recordings (byte-identical output). `PY-streaming` (the
+  constant-memory Python writer that will remove the ceiling) is now an
+  explicit Planned entry and the next Python work item.
 - Trace-matrix generator now surfaces and counts L1-level test markers
   (ROADMAP PRA-3). The "L1 → L2" table gained a Test Artifacts column, so
   direct-L1-marked leaves (e.g. `L1-ROB-001`'s fuzz harness) list their

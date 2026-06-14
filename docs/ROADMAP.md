@@ -73,15 +73,22 @@ here; when ready to cut a release, follow the version-bump checklist in
 
 | Version | Feature |
 |---------|---------|
+| Python (next) | **PY-streaming**: a constant-memory, chunked CSV writer to replace the full-`DataFrame` buffering, bringing Python decode memory from `O(record_count)` to `O(1)` to match Rust (`L3-PY-012`). The current next Python work item. |
 | Rust v1.x | Multi-file input, time-sorted merge to single CSV. |
 | Rust v2.0 | Data word decoders, additional per-message-type CSVs. |
 | Rust v3.0 | Apache Parquet output. |
 
+**PY-streaming is the next Python work item.** Today the Python writer
+materializes the full record stream into a `pandas.DataFrame` before flushing,
+so decoding a very large recording consumes memory proportional to the record
+count (budget ~5 GB RSS per ~10 M records; see `docs/USER-GUIDE.md` §10 and
+`docs/ARCHITECTURE.md` §12). Until PY-streaming lands, the Rust CLI is the
+recommended path for multi-GB recordings — its output is byte-identical.
+
 Multi-file input is Rust-only in the current roadmap because the Rust writer
-already streams in constant memory. Python currently materializes the full
-record stream into a pandas DataFrame; shared multi-file support should follow
-the separate Python streaming-writer work rather than multiply that memory
-cost across several recordings.
+already streams in constant memory. Shared multi-file support should follow
+PY-streaming rather than multiply the Python memory cost across several
+recordings.
 
 Subsequent releases may diverge in version via impl-prefixed tags
 (`rust-vX.Y.Z`, `python-vX.Y.Z`); the cross-implementation conformance
@@ -177,22 +184,27 @@ for reference only (`PRA-N`).
 
 ### Robustness & limits
 
-**PRA-4 — Python large-file memory ceiling; `PY-streaming` still open.**
-*Severity: Medium (High for large-recording deployments).*
+**~~PRA-4 — Python large-file memory ceiling; surface guidance + prioritize `PY-streaming`.~~**
+*Resolved (documentation + prioritization; the `PY-streaming` implementation
+remains the elevated Planned item).* *Severity: Medium (High for
+large-recording deployments).*
 - **Concern.** Python materializes the full record stream into a pandas
   DataFrame before writing (O(record_count) memory) while Rust streams in
-  constant memory; a multi-GB recording can OOM under Python. This is
-  correctly specified (`L3-PY-012` / `L3-RS-012`) but the concrete
-  operator guidance never reached a user-facing limits section.
-- **Evidence.** `python/src/mie_decoder/writer.py` collects all rows into
-  a list then builds a DataFrame; even the `--allow-partial` path
-  buffers. The "~5 GB RSS per 10M records" guideline lives only in this
-  ROADMAP's backlog notes, not in `USER-GUIDE.md` / `ARCHITECTURE.md`.
-- **Proposed adjustment.** Surface a "Performance and limits" section in
-  the user-facing docs with a concrete RSS-per-record guideline, and
-  treat `PY-streaming` (a streaming Python writer to replace DataFrame
-  buffering) as the next Python work item — it also unblocks shared
-  multi-file support (see the Planned note above).
+  constant memory; a multi-GB recording can OOM under Python. Correctly
+  specified (`L3-PY-012` / `L3-RS-012`), but the concrete operator
+  guidance had not reached a user-facing limits section.
+- **Resolution.** Added a "Performance and large recordings" section to
+  `docs/USER-GUIDE.md` (§10) with the per-implementation memory table, the
+  concrete "~5 GB RAM per ~10 M records" planning rule, and the explicit
+  recommendation to use the Rust CLI for multi-GB / 10M+-record recordings
+  (byte-identical output); cross-linked from the §2 implementation-choice
+  table and to `ARCHITECTURE.md` §12/§14 (which already carried the
+  figure). `PY-streaming` is now an explicit row in the **Planned** table
+  and is called out as the next Python work item.
+- **Carried forward (not in scope here).** The `PY-streaming`
+  *implementation* — a constant-memory chunked Python writer — remains
+  open in **Planned**; it is the larger refactor that actually removes the
+  ceiling and also unblocks shared multi-file support.
 
 **PRA-5 — Fuzz harness has no CI burn-in; `L1-SYN-002` cumulative-scan bound untested.**
 *Severity: Medium.*
