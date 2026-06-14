@@ -47,6 +47,13 @@ full release workflow.
 
 ### Documentation
 
+- Trace-matrix generator now surfaces and counts L1-level test markers
+  (ROADMAP PRA-3). The "L1 → L2" table gained a Test Artifacts column, so
+  direct-L1-marked leaves (e.g. `L1-ROB-001`'s fuzz harness) list their
+  tests instead of appearing untested, and the coverage denominator folds
+  in the Test-verifiable L1 *leaves* (composite L1s stay excluded to avoid
+  double-counting their L2/L3 children). Headline moved 118/134 → 124/140
+  tested, 100% verified.
 - Added a Production-Readiness Audit backlog (`PRA-1`–`PRA-9`) to
   `docs/ROADMAP.md`, capturing findings from a comment/docs hygiene sweep
   and a requirements deep analysis: CLI exit-code taxonomy alignment (open

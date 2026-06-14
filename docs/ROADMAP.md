@@ -153,22 +153,27 @@ for reference only (`PRA-N`).
 
 ### Specification & traceability
 
-**PRA-3 — Trace matrix omits L1-level test markers (SSOT undercount).**
-*Severity: Medium.*
-- **Concern.** `scripts/build-trace-matrix.py` renders and counts test
-  artifacts only in the L2/L3 tables; L1 requirements appear only in an
-  artifact-less "L1 → L2" table and are excluded from the coverage
-  denominator. Requirements with a *direct* L1 marker and no L2 child are
-  therefore shown as untested even when they are tested.
-- **Evidence.** `L1-ROB-001` (Verification = Test) has matching fuzz
-  tests in both impls (`tests/integration.rs`, `python/tests/test_e2e.py`)
-  tagged `L1-ROB-001`, plus `/// Requirements: L1-ROB-001` on
-  `src/dump.rs` items — none of which surface in `docs/TRACE-MATRIX.md`.
-  `--check` passes, so this is a generator design gap, not staleness.
-- **Proposed adjustment.** Either add an `L2-ROB-001` child that carries
-  the fuzz markers, or extend the generator to surface and count
-  direct L1-level markers so the safety-critical robustness requirement
-  is visibly verified in the source of truth.
+**~~PRA-3 — Trace matrix omits L1-level test markers (SSOT undercount).~~**
+*Resolved.* *Severity: Medium.*
+- **Concern.** `scripts/build-trace-matrix.py` rendered and counted test
+  artifacts only in the L2/L3 tables; L1 requirements appeared in an
+  artifact-less "L1 → L2" table and were excluded from the coverage
+  denominator, so a *direct*-L1-marked, no-L2-child requirement
+  (`L1-ROB-001`'s fuzz harness, the `L1-EXIT-*` leaves) had its tests
+  invisible and uncounted.
+- **Resolution (extended the generator — option b).** The "L1 → L2" table
+  gained a **Test Artifacts** column that renders direct L1 markers, so
+  `L1-ROB-001` now visibly lists `fuzz_arbitrary_bytes_never_panic`, the
+  `src/dump.rs` no-panic tests, and the Python fuzz test. The coverage
+  summary now folds the Test-verifiable **L1 leaves** (L1s with no L2
+  decomposition) into the denominator — composite L1s remain excluded so
+  they are not double-counted against their already-counted L2/L3
+  children. The headline moved from "118 of 134" to "124 of 140" tested
+  (100% verified), now correctly accounting for the L1-level fuzz/exit
+  tests. Chose option (b) over adding an `L2-ROB-001` child because the
+  same direct-L1-marker pattern already exists across the `L1-EXIT-*`
+  leaves, so a generator fix is the uniform solution rather than minting a
+  synthetic L2 per L1 leaf.
 
 ### Robustness & limits
 

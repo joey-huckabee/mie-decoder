@@ -21,13 +21,13 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-DEC-001 | L2-DEC-001, L2-DEC-008, L2-DEC-010 | Implemented |
-| L1-DEC-002 | L2-DEC-002, L2-DEC-003, L2-DEC-007, L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016, L2-DEC-017 | Implemented |
-| L1-DEC-003 | L2-DEC-004, L2-DEC-009, L2-MSG-001, L2-MSG-003, L2-RDR-007, L2-RDR-008 | Implemented |
-| L1-DEC-004 | L2-MSG-002 | Implemented |
-| L1-DEC-005 | L2-RDR-002 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-DEC-001 | L2-DEC-001, L2-DEC-008, L2-DEC-010 | _(none)_ | Implemented |
+| L1-DEC-002 | L2-DEC-002, L2-DEC-003, L2-DEC-007, L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016, L2-DEC-017 | _(none)_ | Implemented |
+| L1-DEC-003 | L2-DEC-004, L2-DEC-009, L2-MSG-001, L2-MSG-003, L2-RDR-007, L2-RDR-008 | _(none)_ | Implemented |
+| L1-DEC-004 | L2-MSG-002 | _(none)_ | Implemented |
+| L1-DEC-005 | L2-RDR-002 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -57,10 +57,10 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-OUT-001 | L2-DEC-014, L2-ERR-007, L2-ERR-010, L2-WRT-001, L2-WRT-002, L2-WRT-003, L2-WRT-004, L2-WRT-007, L2-WRT-011, L2-WRT-012, L2-WRT-013 | Implemented |
-| L1-OUT-002 | L2-WRT-014, L2-WRT-015, L2-WRT-017 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-OUT-001 | L2-DEC-014, L2-ERR-007, L2-ERR-010, L2-WRT-001, L2-WRT-002, L2-WRT-003, L2-WRT-004, L2-WRT-007, L2-WRT-011, L2-WRT-012, L2-WRT-013 | _(none)_ | Implemented |
+| L1-OUT-002 | L2-WRT-014, L2-WRT-015, L2-WRT-017 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -85,9 +85,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-DLT-001 | L2-RDR-009, L2-RDR-010, L2-RDR-016, L2-RDR-017, L2-RDR-018, L2-RDR-019 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-DLT-001 | L2-RDR-009, L2-RDR-010, L2-RDR-016, L2-RDR-017, L2-RDR-018, L2-RDR-019 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -104,10 +104,10 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-CLI-001 | L2-CLI-001, L2-CLI-002, L2-CLI-008, L2-CLI-009, L2-CLI-010 | Implemented |
-| L1-CLI-002 | L2-CFG-004, L2-CFG-006, L2-CFG-007, L2-FLT-001, L2-FLT-002 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-CLI-001 | L2-CLI-001, L2-CLI-002, L2-CLI-008, L2-CLI-009, L2-CLI-010 | _(none)_ | Implemented |
+| L1-CLI-002 | L2-CFG-004, L2-CFG-006, L2-CFG-007, L2-FLT-001, L2-FLT-002 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -128,9 +128,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-LOG-001 | L2-CLI-004, L2-CLI-006, L2-SYN-012, L2-SYN-013 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-LOG-001 | L2-CLI-004, L2-CLI-006, L2-SYN-012, L2-SYN-013 | `src/log.rs::level_ordering` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -145,9 +145,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-MODE-001 | L2-ERR-004, L2-RDR-003, L2-RDR-004, L2-SYN-015, L2-SYN-016 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-MODE-001 | L2-ERR-004, L2-RDR-003, L2-RDR-004, L2-SYN-015, L2-SYN-016 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -163,10 +163,10 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025, L2-SYN-026 | Implemented |
-| L1-SYN-002 | L2-SYN-007, L2-SYN-010 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025, L2-SYN-026 | _(none)_ | Implemented |
+| L1-SYN-002 | L2-SYN-007, L2-SYN-010 | `src/sync.rs::recover_sync_capped_at_max_scan` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -198,9 +198,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-ERR-001 | L2-ERR-001, L2-ERR-002, L2-ERR-003, L2-ERR-005, L2-ERR-006, L2-ERR-008, L2-ERR-011, L2-SYN-017, L2-SYN-024 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-ERR-001 | L2-ERR-001, L2-ERR-002, L2-ERR-003, L2-ERR-005, L2-ERR-006, L2-ERR-008, L2-ERR-011, L2-SYN-017, L2-SYN-024 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -220,9 +220,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-CFG-001 | L2-CFG-001, L2-CFG-003, L2-CFG-005, L2-CFG-008, L2-CFG-009, L2-CFG-010, L2-CFG-011, L2-CLI-012, L2-DEC-013 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-CFG-001 | L2-CFG-001, L2-CFG-003, L2-CFG-005, L2-CFG-008, L2-CFG-009, L2-CFG-010, L2-CFG-011, L2-CLI-012, L2-DEC-013 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -242,9 +242,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-CONF-001 | L2-CONF-001, L2-CONF-002, L2-CONF-003, L2-CONF-004, L2-CONF-005 | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-CONF-001 | L2-CONF-001, L2-CONF-002, L2-CONF-003, L2-CONF-004, L2-CONF-005 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -260,16 +260,16 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-EXIT-001 | L2-CLI-005, L2-CLI-011, L2-RDR-005, L2-RDR-006, L2-WRT-018 | Implemented |
-| L1-EXIT-002 | _(none)_ | Implemented |
-| L1-EXIT-003 | _(none)_ | Implemented |
-| L1-EXIT-004 | L2-WRT-016 | Implemented |
-| L1-EXIT-005 | _(none)_ | Implemented |
-| L1-EXIT-006 | L2-RDR-020 | Implemented |
-| L1-EXIT-007 | _(none)_ | Implemented |
-| L1-EXIT-008 | _(none)_ | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-EXIT-001 | L2-CLI-005, L2-CLI-011, L2-RDR-005, L2-RDR-006, L2-WRT-018 | _(none)_ | Implemented |
+| L1-EXIT-002 | _(none)_ | `python/tests/test_e2e.py::test_cli_no_valid_records_returns_exit_2`<br>`python/tests/test_e2e.py::test_no_valid_records_raises`<br>`src/reader.rs::no_valid_records_surfaces_as_iter_error`<br>`tests/cli.rs::no_args_invocation_exits_non_zero`<br>`tests/integration.rs::non_mie_file_surfaces_error_not_silent_zero_messages` | Implemented |
+| L1-EXIT-003 | _(none)_ | `python/tests/test_sync.py::test_reader_recovers_from_corruption` | Implemented |
+| L1-EXIT-004 | L2-WRT-016 | `python/tests/test_e2e.py::test_cli_unrecoverable_allow_partial_returns_exit_0`<br>`python/tests/test_e2e.py::test_cli_unrecoverable_default_returns_exit_3`<br>`python/tests/test_e2e.py::test_lenient_unrecoverable_sync_loss_raises`<br>`python/tests/test_e2e.py::test_write_csv_with_allow_partial_commits_dot_partial`<br>`src/writer.rs::write_csv_with_allow_partial_commits_on_unrecoverable`<br>`src/writer.rs::write_csv_without_allow_partial_propagates_unrecoverable`<br>`tests/integration.rs::lenient_mode_unrecoverable_sync_loss_yields_terminal_error` | Implemented |
+| L1-EXIT-005 | _(none)_ | `python/tests/test_e2e.py::test_cli_emits_exit_class_summary_on_complete_decode`<br>`python/tests/test_e2e.py::test_cli_emits_no_records_exit_class_summary`<br>`tests/cli.rs::decode_emits_exit_class_summary_at_info_level` | Implemented |
+| L1-EXIT-006 | L2-RDR-020 | _(none)_ | Implemented |
+| L1-EXIT-007 | _(none)_ | `python/tests/test_e2e.py::test_cli_no_subcommand`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_flag_rejects_nonpositive`<br>`python/tests/test_e2e.py::test_cli_unknown_flag_is_usage_error`<br>`src/cli.rs::run_count_with_invalid_cli_log_level_fails_via_resolve_config` | Implemented |
+| L1-EXIT-008 | _(none)_ | `python/tests/test_e2e.py::test_cli_malformed_config_is_config_error`<br>`src/cli.rs::run_count_propagates_config_load_error`<br>`src/cli.rs::run_count_propagates_missing_config_file`<br>`src/cli.rs::run_count_with_invalid_config_log_level_fails`<br>`src/cli.rs::run_dump_propagates_config_load_error` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -287,9 +287,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 **L1 -> L2**
 
-| L1 ID | L2 Children | Status |
-|-------|-------------|--------|
-| L1-ROB-001 | _(none)_ | Implemented |
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-ROB-001 | _(none)_ | `python/tests/test_e2e.py::test_arbitrary_bytes_never_raise_unexpected_exceptions`<br>`src/dump.rs::raw_dump_offset_max_length_max_does_not_panic`<br>`src/dump.rs::raw_dump_offset_max_length_one_does_not_panic`<br>`src/dump.rs::record_dump_offset_just_short_of_max_does_not_panic`<br>`src/dump.rs::record_dump_offset_max_does_not_panic`<br>`tests/integration.rs::fuzz_arbitrary_bytes_never_panic` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -325,9 +325,11 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
 | **Total** | **26** | **109** | **25** | **104** | **14** | **109** | **25** |
 
-**Tested by at least one test marker**: 118 of 134 (88.1%).
+The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 134 of 134 (100.0%).
+**Tested by at least one test marker**: 124 of 140 (88.6%).
+
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 140 of 140 (100.0%).
 
 ### Orphan check
 

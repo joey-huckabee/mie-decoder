@@ -15,9 +15,17 @@ The output per requirement row includes:
 
 * L2/L3 children (from parent fields)
 * Test artifacts (from markers) in pytest discovery format for Python tests
-  and ``path::function_name`` for Rust tests
+  and ``path::function_name`` for Rust tests. Direct markers on an L1
+  requirement are rendered too — most L1s decompose into L2/L3 and carry
+  none, but Test-verified L1 *leaves* (no L2 decomposition, e.g.
+  ``L1-ROB-001`` for the fuzz harness) attach their tests at L1.
 * Status rolled up by :func:`compute_status` per the same rule as the
   Message-Service version of this script.
+
+The coverage-summary denominator is every L2 and L3 requirement plus the
+Test-verifiable L1 *leaves*. Composite L1s are excluded from the count
+because they are verified transitively through their (counted) children;
+counting them too would double-count.
 
 Usage:
     python scripts/build-trace-matrix.py            # regenerate in place
@@ -350,8 +358,8 @@ def build_matrix() -> str:
 
         lines.append("**L1 -> L2**")
         lines.append("")
-        lines.append("| L1 ID | L2 Children | Status |")
-        lines.append("|-------|-------------|--------|")
+        lines.append("| L1 ID | L2 Children | Test Artifacts | Status |")
+        lines.append("|-------|-------------|----------------|--------|")
         for l1_id in cat_l1s:
             children = l1_to_l2.get(l1_id, [])
             children_str = ", ".join(children) if children else "_(none)_"
@@ -359,12 +367,22 @@ def build_matrix() -> str:
                 _l2_status(l2_id, l2_to_l3, test_markers, l2_methods, l3_methods)
                 for l2_id in children
             ]
+            # Render direct L1 markers. Most L1s decompose into L2/L3 and
+            # carry none; the exceptions are Test-verified L1 *leaves*
+            # (no L2 decomposition, e.g. L1-ROB-001) whose tests would
+            # otherwise be invisible in the matrix.
+            l1_artifacts = sorted(test_markers.get(l1_id, []))
+            artifacts_str = (
+                "<br>".join(f"`{a}`" for a in l1_artifacts)
+                if l1_artifacts
+                else "_(none)_"
+            )
             status = compute_status(
                 has_direct_artifacts=bool(test_markers.get(l1_id)),
                 children_statuses=child_statuses,
                 verification_methods=l1_methods.get(l1_id),
             )
-            lines.append(f"| {l1_id} | {children_str} | {status} |")
+            lines.append(f"| {l1_id} | {children_str} | {artifacts_str} | {status} |")
         lines.append("")
 
         lines.append("**L2 -> L3 -> Verification Artifacts**")
@@ -443,20 +461,39 @@ def build_matrix() -> str:
         f"**{total_l2_verified}** | **{total_l3_verified}** |"
     )
     lines.append("")
-    if total_l2 + total_l3 > 0:
-        total_reqs = total_l2 + total_l3
-        tested_pct = (total_l2_tested + total_l3_tested) * 100 / total_reqs
-        verified_pct = (total_l2_verified + total_l3_verified) * 100 / total_reqs
+
+    # L1 requirements are normally decomposed into L2/L3 and verified
+    # transitively (so they are NOT double-counted in the denominator).
+    # The exceptions are Test-verifiable L1 *leaves* — L1 requirements with
+    # no L2 child (e.g. L1-ROB-001) — which are the only place certain tests
+    # (the fuzz harness) attach. Those leaves are countable requirements in
+    # their own right and are folded into the totals below.
+    l1_leaves = [l1 for l1 in l1_ids if not l1_to_l2.get(l1)]
+    l1_leaf_tested = sum(1 for l1 in l1_leaves if test_markers.get(l1))
+    l1_leaf_verified = sum(1 for l1 in l1_leaves if _is_verified(l1, l1_methods))
+
+    countable = total_l2 + total_l3 + len(l1_leaves)
+    if countable > 0:
+        tested_n = total_l2_tested + total_l3_tested + l1_leaf_tested
+        verified_n = total_l2_verified + total_l3_verified + l1_leaf_verified
+        tested_pct = tested_n * 100 / countable
+        verified_pct = verified_n * 100 / countable
+        lines.append(
+            f"The countable requirement set is every L2 and L3 requirement plus "
+            f"the {len(l1_leaves)} Test-verifiable L1 *leaf* requirement(s) "
+            f"(L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test "
+            f"markers attach directly). Composite L1s are verified transitively "
+            f"through their L2/L3 children, which are counted individually above."
+        )
+        lines.append("")
         lines.append(
             f"**Tested by at least one test marker**: "
-            f"{total_l2_tested + total_l3_tested} of {total_reqs} "
-            f"({tested_pct:.1f}%)."
+            f"{tested_n} of {countable} ({tested_pct:.1f}%)."
         )
         lines.append("")
         lines.append(
             f"**Verified (Test or declared Inspection/Analysis/Demonstration)**: "
-            f"{total_l2_verified + total_l3_verified} of {total_reqs} "
-            f"({verified_pct:.1f}%)."
+            f"{verified_n} of {countable} ({verified_pct:.1f}%)."
         )
         lines.append("")
 
