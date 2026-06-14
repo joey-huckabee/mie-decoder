@@ -27,6 +27,8 @@ The four exit-code classes are pinned by L1-EXIT-001 through L1-EXIT-004 and L2-
 
 The `count` and `dump` subcommands inherit `0`, `1`, and `2` only — they don't write a streaming output that could be partial, so exit `3` cannot occur (L2-CLI-011).
 
+**Configuration and flag-value validation.** Out-of-range or malformed configuration values are rejected *before* decoding begins, with a stderr message naming the offending key or flag — for example an out-of-range `decode.detect_records` / `decode.lookahead_records`, or a non-positive `decode.standard_tick_rate_hz` / `--standard-tick-rate-hz` (L2-CFG-011, L2-CLI-012). A bad TOML value surfaces as a configuration-load error; a bad CLI flag value surfaces as a usage error (the Rust CLI prints usage and the Python CLI prints an `Error:` line). Either way the input is never opened and no output file is created.
+
 ---
 
 ## 2. Library exception / error hierarchy

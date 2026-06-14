@@ -88,6 +88,28 @@ strict = false
 # ──────────────────────────────────────────────────────────────────────────
 error_mode = "separate"
 
+# ──────────────────────────────────────────────────────────────────────────
+# Standard-timestamp tick rate (Hz).
+#
+# The "standard" timestamp format is a free-running 32-bit counter. Its
+# tick rate is card-dependent and is NOT recorded in the file, so by
+# default the decoder cannot express Standard timestamps as real time:
+# the DELTA column is left empty for Standard-format records.
+#
+# If you know your recording card's counter frequency, set it here (in
+# Hz) to convert ticks to microseconds and enable DELTA for Standard
+# records. For example, a 1 MHz counter:
+#
+#   standard_tick_rate_hz = 1000000.0
+#
+# The value must be greater than 0. This setting has no effect on IRIG
+# recordings (IRIG already carries absolute time). Leaving it unset
+# preserves the default empty-DELTA behavior.
+#
+# Default: unset (no calibration)
+# ──────────────────────────────────────────────────────────────────────────
+# standard_tick_rate_hz = 1000000.0
+
 
 [filter]
 # ──────────────────────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 import time
 from pathlib import Path
@@ -201,6 +202,19 @@ def build_parser() -> argparse.ArgumentParser:
             "key."
         ),
     )
+    decode_parser.add_argument(
+        "--standard-tick-rate-hz",
+        type=float,
+        default=None,
+        metavar="HZ",
+        help=(
+            "Standard-counter frequency in Hz. When set, Standard "
+            "timestamps are converted to microseconds and join DELTA "
+            "tracking; must be > 0 (default: unset -> empty DELTA for "
+            "Standard records). L2-DEC-017. Mirrors the "
+            "decode.standard_tick_rate_hz config key."
+        ),
+    )
 
     # ── dump subcommand ────────────────────────────────────────────
     dump_parser = subparsers.add_parser(
@@ -352,6 +366,19 @@ def _run_decode(args: argparse.Namespace) -> int:
             )
             return 1
         overrides["lookahead_records"] = args.lookahead_records
+    if args.standard_tick_rate_hz is not None:
+        # L2-DEC-017 / L2-CLI-012: parse-time validation mirrors the TOML
+        # load-time check in config.load_config — a finite, strictly-
+        # positive frequency.
+        hz = args.standard_tick_rate_hz
+        if not math.isfinite(hz) or hz <= 0.0:
+            print(
+                f"Error: invalid --standard-tick-rate-hz: {hz}; "
+                f"must be a finite value greater than 0",
+                file=sys.stderr,
+            )
+            return 1
+        overrides["standard_tick_rate_hz"] = hz
 
     config = config.with_overrides(**overrides)
 
@@ -363,6 +390,7 @@ def _run_decode(args: argparse.Namespace) -> int:
             strict=config.strict,
             detect_records=config.detect_records,
             lookahead_records=config.lookahead_records,
+            standard_tick_rate_hz=config.standard_tick_rate_hz,
         )
     except MieFileError as exc:
         logger.error("Failed to open input file: %s", exc)

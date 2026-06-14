@@ -54,6 +54,8 @@ mie-decoder decode <input> [options]
   --inline-errors                  Errors inline in main CSV
                                    (default: separate <stem>_errors.csv)
   --time-format auto|irig|standard Default auto
+  --standard-tick-rate-hz HZ       Standard-counter Hz; enables DELTA for
+                                   Standard timestamps (default: unset)
   --strict                         Raise on invalid records
   --format csv                     Output format (csv only at present)
   --exclude-types VAL              Comma-separated names or 0xNN hex codes
@@ -123,6 +125,9 @@ mie-decoder decode rec.mie -o all.csv --inline-errors
 
 # Force Standard timestamp format
 mie-decoder decode rec.mie -o decoded.csv --time-format standard
+
+# Standard format with a known counter rate (enables the DELTA column)
+mie-decoder decode rec.mie -o decoded.csv --time-format standard --standard-tick-rate-hz 1000000
 
 # Debug logging
 mie-decoder --log-level DEBUG decode rec.mie -o decoded.csv
@@ -199,6 +204,7 @@ level = "INFO"
 time_format = "auto"      # auto, irig, standard
 strict = false
 error_mode = "separate"   # separate, inline
+# standard_tick_rate_hz = 1000000.0   # Standard counter Hz; enables DELTA (default: unset)
 
 [filter]
 exclude_types = ["SPURIOUS_DATA"]

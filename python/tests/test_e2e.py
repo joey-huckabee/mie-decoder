@@ -496,6 +496,82 @@ class TestAtomicWriteSafety:
         captured = capsys.readouterr()
         assert "--detect-records" in captured.err and "999" in captured.err
 
+    @pytest.mark.requirement("L2-CLI-012")
+    @pytest.mark.requirement("L2-DEC-017")
+    def test_cli_standard_tick_rate_hz_flag_rejects_nonpositive(
+        self, tmp_mie_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--standard-tick-rate-hz <= 0 is rejected at parse time with a
+        non-zero exit and the offending flag in stderr."""
+        from mie_decoder.cli import main
+
+        out = tmp_path / "out.csv"
+        rc = main([
+            "decode",
+            str(tmp_mie_file),
+            "-o",
+            str(out),
+            "--standard-tick-rate-hz",
+            "0",
+        ])
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "--standard-tick-rate-hz" in captured.err
+
+    @pytest.mark.requirement("L2-CLI-012")
+    @pytest.mark.requirement("L2-DEC-017")
+    @pytest.mark.requirement("L2-RDR-019")
+    def test_cli_standard_tick_rate_hz_enables_delta(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """With --standard-tick-rate-hz set, Standard-timestamp records
+        get a non-empty DELTA; without it, DELTA stays empty. Uses the
+        shared conformance fixture so the bytes match what CI validates.
+
+        The two records are 16 ticks apart (100000 -> 100016); at 1 MHz
+        that is 0.000016 s.
+        """
+        import csv as _csv
+
+        from mie_decoder.cli import main
+
+        fixture = (
+            Path(__file__).resolve().parents[2]
+            / "tests" / "conformance" / "inputs" / "standard-timestamps.hex"
+        )
+        # Same hex-fixture parse as tests/conformance/run.py:read_hex —
+        # strip per-line `#` comments, join, decode (fromhex ignores
+        # whitespace).
+        hex_text = "".join(
+            line.split("#", 1)[0] for line in fixture.read_text().splitlines()
+        )
+        data = bytes.fromhex(hex_text)
+        rec = tmp_path / "standard.mie"
+        rec.write_bytes(data)
+
+        # Calibrated: DELTA populated.
+        out = tmp_path / "calibrated.csv"
+        rc = main([
+            "decode", str(rec), "-o", str(out),
+            "--time-format", "standard",
+            "--standard-tick-rate-hz", "1000000",
+        ])
+        assert rc == 0
+        rows = list(_csv.DictReader(out.read_text().splitlines()))
+        assert rows[0]["DELTA"] == "0.000000"
+        assert rows[1]["DELTA"] == "0.000016"
+
+        # Uncalibrated: DELTA empty (unchanged historical behavior).
+        out2 = tmp_path / "uncalibrated.csv"
+        rc = main([
+            "decode", str(rec), "-o", str(out2),
+            "--time-format", "standard",
+        ])
+        assert rc == 0
+        rows2 = list(_csv.DictReader(out2.read_text().splitlines()))
+        assert rows2[0]["DELTA"] == ""
+        assert rows2[1]["DELTA"] == ""
+
     @pytest.mark.requirement("L2-CLI-011")
     @pytest.mark.requirement("L1-EXIT-002")
     def test_cli_no_valid_records_returns_exit_2(self, tmp_path: Path) -> None:

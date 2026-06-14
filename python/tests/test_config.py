@@ -439,6 +439,38 @@ class TestSchemaValidation:
         config = load_config(cfg)
         assert config.filters.exclude_rts == {0, 31}
 
+    @pytest.mark.requirement("L2-CFG-011")
+    @pytest.mark.requirement("L2-DEC-017")
+    def test_standard_tick_rate_hz_default_is_none(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "std.toml"
+        cfg.write_text("[decode]\ntime_format = \"standard\"\n")
+        config = load_config(cfg)
+        assert config.standard_tick_rate_hz is None
+
+    @pytest.mark.requirement("L2-CFG-011")
+    def test_standard_tick_rate_hz_accepts_float_and_int(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "std_float.toml"
+        cfg.write_text("[decode]\nstandard_tick_rate_hz = 1000000.0\n")
+        assert load_config(cfg).standard_tick_rate_hz == 1_000_000.0
+        # A bare integer is accepted and coerced to float.
+        cfg2 = tmp_path / "std_int.toml"
+        cfg2.write_text("[decode]\nstandard_tick_rate_hz = 1000000\n")
+        assert load_config(cfg2).standard_tick_rate_hz == 1_000_000.0
+
+    @pytest.mark.requirement("L2-CFG-011")
+    @pytest.mark.requirement("L2-CFG-010")
+    def test_standard_tick_rate_hz_rejects_nonpositive(self, tmp_path: Path) -> None:
+        for bad in ["0", "0.0", "-1.0"]:
+            cfg = tmp_path / f"std_bad_{bad}.toml"
+            cfg.write_text(f"[decode]\nstandard_tick_rate_hz = {bad}\n")
+            with pytest.raises(ValueError, match="standard_tick_rate_hz"):
+                load_config(cfg)
+
+    @pytest.mark.requirement("L2-CFG-003")
+    def test_standard_tick_rate_hz_override_applies(self) -> None:
+        config = load_config(None).with_overrides(standard_tick_rate_hz=2_000_000.0)
+        assert config.standard_tick_rate_hz == 2_000_000.0
+
     @pytest.mark.requirement("L2-CFG-009")
     def test_unknown_top_level_key_is_warned_not_rejected(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture,

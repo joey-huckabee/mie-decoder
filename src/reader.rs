@@ -49,6 +49,12 @@ pub struct MieFileReader {
     /// `DEFAULT_LOOKAHEAD_RECORDS` (2), preserving the historical
     /// two-record look-ahead behavior.
     lookahead_records: usize,
+    /// L2-DEC-017: optional Standard-counter tick rate in Hz. When `Some`
+    /// with a finite, strictly-positive value, Standard timestamps are
+    /// converted to microseconds and participate in DELTA tracking like
+    /// IRIG. `None` (the default) preserves the historical empty-DELTA
+    /// behavior for Standard records.
+    standard_tick_rate_hz: Option<f64>,
     /// Cumulative sync-recovery attempts during the most recent iter()
     /// call. Reset to 0 at the start of each iter(). Shared with the
     /// active RecordIter via a reference so the CLI can query it
@@ -71,6 +77,12 @@ pub struct ReaderOptions {
     /// `validate_record` checks (1 candidate + N-1 look-ahead).
     /// Clamped to [1, 32] upstream by config / CLI parsing.
     pub lookahead_records: usize,
+    /// L2-DEC-017 Standard-counter tick rate in Hz. `Some` with a
+    /// finite, strictly-positive value enables tick→microsecond
+    /// conversion and DELTA for Standard records; `None` keeps the
+    /// historical empty-DELTA behavior. Validated upstream by
+    /// config / CLI parsing.
+    pub standard_tick_rate_hz: Option<f64>,
 }
 
 impl Default for ReaderOptions {
@@ -80,6 +92,7 @@ impl Default for ReaderOptions {
             time_format: TimestampFormat::Auto,
             detect_records: DEFAULT_DETECT_RECORDS,
             lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
+            standard_tick_rate_hz: None,
         }
     }
 }
@@ -132,6 +145,7 @@ impl MieFileReader {
             time_format: opts.time_format,
             detect_records: opts.detect_records.max(1),
             lookahead_records: opts.lookahead_records.max(1),
+            standard_tick_rate_hz: opts.standard_tick_rate_hz,
             sync_losses: AtomicU64::new(0),
         })
     }
@@ -362,6 +376,7 @@ impl MieFileReader {
             strict: self.strict,
             resolved_format,
             lookahead_records: self.lookahead_records,
+            standard_tick_rate_hz: self.standard_tick_rate_hz,
             prev_was_error: false,
             delta_tracker: HashMap::new(),
             warned_ooo_keys: HashSet::new(),
@@ -409,11 +424,16 @@ pub struct RecordIter<'a> {
     /// the per-record `validate_record` call inside `next()` and by
     /// the `recover_sync` call on sync-loss recovery.
     lookahead_records: usize,
+    /// L2-DEC-017 Standard-counter tick rate threaded from the reader.
+    /// Passed to `Timestamp::to_microseconds` in `delta_for`; `None`
+    /// keeps Standard records out of DELTA tracking.
+    standard_tick_rate_hz: Option<f64>,
     prev_was_error: bool,
-    /// Per-RT/MSG last-seen timestamp in microseconds. Only populated when
-    /// the source timestamp has a microsecond basis (IRIG today). Standard
-    /// timestamps yield None from `Timestamp::to_microseconds()` and bypass
-    /// the tracker entirely.
+    /// Per-RT/MSG last-seen timestamp in microseconds. Populated when the
+    /// source timestamp has a microsecond basis: IRIG always, and Standard
+    /// when a tick rate is configured. Uncalibrated Standard timestamps
+    /// yield None from `Timestamp::to_microseconds()` and bypass the
+    /// tracker entirely.
     delta_tracker: HashMap<u32, u64>,
     /// RT/MSG keys for which a non-monotonic-timestamp WARN has already
     /// been emitted. Limits log volume on chronically out-of-order files
@@ -952,14 +972,15 @@ impl<'a> RecordIter<'a> {
     /// Compute DELTA for `key` given the current record's `timestamp`,
     /// and update the tracker accordingly. Implements the shared contract:
     ///
-    /// - `Timestamp::to_microseconds()` returns `None` (Standard, uncalibrated)
-    ///   → return `None` and skip tracker update (nothing to compare against).
+    /// - `Timestamp::to_microseconds()` returns `None` (Standard with no
+    ///   configured tick rate) → return `None` and skip tracker update
+    ///   (nothing to compare against).
     /// - First occurrence of `key` → return `Some(0.0)`, record current us.
     /// - Subsequent with non-negative gap → return `Some(seconds)`, record current us.
     /// - Subsequent with negative gap (non-monotonic) → return `None`, record
     ///   current us, emit a WARN once per key per recording.
     fn delta_for(&mut self, key: u32, timestamp: &Timestamp) -> Option<f64> {
-        let curr_us = timestamp.to_microseconds()?;
+        let curr_us = timestamp.to_microseconds(self.standard_tick_rate_hz)?;
         let result = match self.delta_tracker.get(&key) {
             None => Some(0.0),
             Some(&prev) if curr_us >= prev => Some((curr_us - prev) as f64 / 1_000_000.0),
@@ -1239,6 +1260,7 @@ mod tests {
                 time_format: TimestampFormat::Auto,
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
+                standard_tick_rate_hz: None,
             },
         )
         .unwrap();

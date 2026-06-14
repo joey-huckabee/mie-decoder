@@ -40,6 +40,7 @@ Error Handling:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import IntEnum, unique
 from typing import Final
@@ -235,12 +236,14 @@ class IrigTimestamp:
             + self.microsecond
         )
 
-    def to_microseconds(self) -> int | None:
+    def to_microseconds(self, standard_tick_rate_hz: float | None = None) -> int | None:
         """Absolute microseconds from a known epoch.
 
-        Always returns the IRIG conversion. Defined on both timestamp
-        types so the reader can call ``timestamp.to_microseconds()``
-        without a type check; Standard returns None.
+        Always returns the IRIG conversion. Defined with the same
+        signature as :meth:`StandardTimestamp.to_microseconds` so the
+        reader can call ``timestamp.to_microseconds(rate)`` without a
+        type check; ``standard_tick_rate_hz`` is accepted and ignored
+        here because IRIG already has an absolute microsecond basis.
         """
         return self.to_total_microseconds()
 
@@ -283,15 +286,28 @@ class StandardTimestamp:
         """
         return self.raw_value
 
-    def to_microseconds(self) -> int | None:
-        """Standard timestamps have no known microsecond basis.
+    def to_microseconds(self, standard_tick_rate_hz: float | None = None) -> int | None:
+        """Convert raw counter ticks to microseconds, if calibrated.
 
-        Returns ``None`` so callers (DELTA computation) can treat the
-        absence of a microsecond conversion explicitly rather than
-        silently using raw ticks as if they were microseconds.
-        A future calibration feature will widen this.
+        ``standard_tick_rate_hz`` is the card-dependent counter frequency
+        in Hz, supplied out-of-band (the file does not encode it). Returns
+        ``None`` unless the rate is finite and strictly positive, so an
+        uncalibrated or invalid rate can never be mistaken for real timing
+        — callers (DELTA computation) treat the absence explicitly rather
+        than using raw ticks as if they were microseconds.
+
+        Rounding is half-away-from-zero (``int(x + 0.5)``); ticks are
+        non-negative so this matches the Rust implementation's
+        ``f64::round`` exactly (see L2-DEC-017).
         """
-        return None
+        if (
+            standard_tick_rate_hz is None
+            or not math.isfinite(standard_tick_rate_hz)
+            or standard_tick_rate_hz <= 0.0
+        ):
+            return None
+        micros = self.raw_value * 1_000_000 / standard_tick_rate_hz
+        return int(micros + 0.5)
 
     def format(self) -> str:
         """Format as ``0xNNNNNNNN`` hexadecimal string."""

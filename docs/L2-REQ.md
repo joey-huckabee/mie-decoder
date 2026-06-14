@@ -132,6 +132,13 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 **Rationale**: The probe in L2-DEC-015 strengthens the common case (clear winner) without addressing the genuinely-ambiguous case (no clear winner). The strict-mode error gives operators who care about correctness a loud failure to act on (e.g., `--time-format` override or "this isn't an MIE recording"). The lenient-mode WARN preserves the current decode-and-hope behavior while making the ambiguity visible. The thresholds are intentionally conservative: they fire only when the probe genuinely could not distinguish, not when the call is decisive but the absolute score is low because of a small probe set.
 **Verification Method**: Test (T)
 
+#### L2-DEC-017
+
+**Parent**: L1-DEC-002
+**Statement**: The Standard timestamp is a free-running counter whose tick rate is card-dependent and not encoded in the file. When, and only when, a Standard tick rate is supplied out-of-band — via the `decode.standard_tick_rate_hz` configuration key or the `--standard-tick-rate-hz` CLI flag (see L2-CFG-011, L2-CLI-012) — the decoder SHALL convert a raw counter value to microseconds as `microseconds = round(raw_ticks × 1_000_000 / standard_tick_rate_hz)`, where `round` is half-away-from-zero. The supplied rate SHALL be a finite value strictly greater than zero; a non-finite or non-positive rate SHALL be rejected (L2-CFG-011, L2-CLI-012) and never silently treated as uncalibrated. When no rate is supplied, the Standard-to-microseconds conversion SHALL yield "no value" (`Timestamp::to_microseconds` returns `None` / `to_microseconds` returns `None`), preserving the historical behavior in which Standard records do not participate in `DELTA` (see L2-RDR-019). IRIG timestamps SHALL ignore the rate.
+**Rationale**: Operators analyzing Standard-format recordings need inter-message timing, but the tick rate genuinely is not in the file, so the decoder cannot invent one. Making calibration explicit and opt-in keeps the default output truthful (an empty `DELTA` rather than a fabricated seconds value) while letting an operator who knows their card's counter frequency recover real timing. Pinning half-away-from-zero rounding keeps the two implementations byte-identical (Rust `f64::round` and Python `int(x + 0.5)` agree for the non-negative tick domain); banker's rounding would diverge at the half-tick boundary.
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-SYN: Synchronization, validation, invariants
@@ -421,8 +428,8 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 #### L2-RDR-019
 
 **Parent**: L1-DLT-001
-**Statement**: Standard-format timestamps have no known microsecond tick rate. Records carrying a Standard timestamp SHALL have an empty `DELTA` and SHALL NOT participate in per-key tracking until a future tick-rate calibration feature is configured.
-**Rationale**: A numeric DELTA computed from raw 32-bit counter ticks would be in unknown units. Per L1-DLT-001, the correct response is to surface emptiness rather than a misleading number.
+**Statement**: Standard-format timestamps have no tick rate encoded in the file. When no Standard tick rate is configured, records carrying a Standard timestamp SHALL have an empty `DELTA` and SHALL NOT participate in per-key tracking. When a valid Standard tick rate is configured (per L2-DEC-017), Standard timestamps SHALL be converted to microseconds and SHALL participate in per-key `DELTA` tracking on the same terms as IRIG timestamps (L2-RDR-016 through L2-RDR-018), including the first-occurrence `0.0` rule and the non-monotonic empty-`DELTA`-with-WARN rule.
+**Rationale**: A numeric DELTA computed from raw 32-bit counter ticks in unknown units would be misleading, so the truthful default per L1-DLT-001 is emptiness. Once an operator supplies the card's counter frequency out-of-band, the ticks acquire a real microsecond basis and there is no longer any reason to withhold `DELTA` — the conversion is well-defined (L2-DEC-017) and the existing tracking rules apply unchanged.
 **Verification Method**: Test (T)
 
 #### L2-RDR-020
@@ -693,9 +700,16 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 **Rationale**: Load-time validation produces immediate operator feedback and makes the loaded config a trustworthy value. Use-site validation drifts and inevitably creates inconsistent error messages depending on which code path first observed the bad value.
 **Verification Method**: Test (T)
 
+#### L2-CFG-011
+
+**Parent**: L1-CFG-001
+**Statement**: The configuration schema SHALL accept an optional `decode.standard_tick_rate_hz` key of numeric type (TOML float, or integer coerced to float). When present, its value SHALL be validated at load time as a finite value strictly greater than zero; a non-finite or non-positive value SHALL be rejected with an error naming the key. When absent, the loaded configuration SHALL leave the rate unset (no calibration), preserving the L2-RDR-019 default. The validated value feeds the Standard tick calibration of L2-DEC-017.
+**Rationale**: The tick rate is the one piece of timing information the file cannot supply, so it must come from configuration. Validating it at load time (per L2-CFG-010) keeps a bad rate from silently producing garbage microseconds far from the config that introduced it. Accepting an integer as well as a float lets operators write the natural `1000000` instead of being forced to `1000000.0`.
+**Verification Method**: Test (T)
+
 ### L2-CFG schema reference
 
-The table below pins the accepted TOML keys, their types, valid ranges, and unknown-value handling. This schema is normative for `L2-CFG-001`, `L2-CFG-008`, `L2-CFG-009`, and `L2-CFG-010`.
+The table below pins the accepted TOML keys, their types, valid ranges, and unknown-value handling. This schema is normative for `L2-CFG-001`, `L2-CFG-008`, `L2-CFG-009`, `L2-CFG-010`, and `L2-CFG-011`.
 
 | Key | Type | Range / Enum | Unknown-value handling |
 |-----|------|--------------|------------------------|
@@ -704,6 +718,7 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 | `decode.strict` | bool | TOML boolean only (not coerced from strings) | reject non-bool |
 | `decode.error_mode` | string | one of `separate`/`inline` | reject at load time |
 | `decode.allow_partial` | bool | TOML boolean only (see L1-EXIT-004) | reject non-bool |
+| `decode.standard_tick_rate_hz` | float (int coerced) | finite and `> 0` (see L2-DEC-017); unset = no calibration | reject non-finite/non-positive at load time |
 | `output.format` | string | `csv` is the only valid value in v1 | reject at load time |
 | `output.no_clobber` | bool | TOML boolean only (see L2-WRT-017) | reject non-bool |
 | `filter.exclude_types` | array of string\|int | per-element validated against `L2-CFG-007` | reject at load time |
@@ -795,6 +810,13 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 **Parent**: L1-EXIT-001
 **Statement**: Decode exit codes SHALL follow L1-EXIT-002 through L1-EXIT-004: `0` on a complete or recovered decode (and on `--allow-partial` partials), `1` on usage or configuration failure, `2` on no-valid-records, `3` on unrecoverable mid-file sync loss without `--allow-partial`. The `count` and `dump` commands inherit `0`, `1`, and `2` but SHALL NOT produce exit `3` because they do not write a streaming output that could be partial.
 **Rationale**: The four-class exit-code contract is the single most operationally useful piece of CLI behavior. Pinning the count/dump exemption from `3` keeps the semantics clean — `3` is specifically about a partial output that did not complete.
+**Verification Method**: Test (T)
+
+#### L2-CLI-012
+
+**Parent**: L1-CFG-001
+**Statement**: The `decode` command SHALL accept a `--standard-tick-rate-hz <HZ>` flag (both space-separated and `=`-joined forms) that overrides `decode.standard_tick_rate_hz` per the standard precedence (CLI over config over default). The supplied value SHALL be validated at parse time as a finite value strictly greater than zero, mirroring the load-time validation of L2-CFG-011; an invalid value SHALL be rejected before decoding begins with a diagnostic naming the flag, following each implementation's existing convention for rejecting a bad flag value (the same path as `--detect-records` / `--lookahead-records`). The validated value enables the Standard tick calibration of L2-DEC-017.
+**Rationale**: A per-invocation flag lets an operator calibrate one recording without editing a config file, and matches how the other decode-tuning knobs are exposed. Parse-time validation gives immediate feedback consistent with the config path so the two entry points reject the same inputs.
 **Verification Method**: Test (T)
 
 ---

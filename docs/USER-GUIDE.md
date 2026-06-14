@@ -231,6 +231,34 @@ mie-decoder decode flight.mie \
 
 Type filter accepts both symbolic names (`SPURIOUS_DATA`, `BC_TO_RT`, etc.) and hex codes (`0x20`, `0x02`) interchangeably.
 
+### Calibrating Standard timestamps
+
+Some recordings use the **Standard** timestamp format — a 32-bit free-running counter — instead of IRIG. The counter ticks at a card-dependent rate that is **not stored in the file**, so the decoder cannot turn raw ticks into elapsed seconds on its own. By default, the `DELTA` column is therefore left empty for every Standard record:
+
+```bash
+mie-decoder decode counter.mie --time-format standard -o out.csv
+# TIME_STAMP in 0xNNNNNNNN form; DELTA column empty for all rows
+```
+
+If you know your card's counter frequency, pass it with `--standard-tick-rate-hz` (in Hz). The decoder then converts ticks to microseconds and fills in `DELTA` just as it would for an IRIG recording:
+
+```bash
+# Card runs a 1 MHz counter (1 tick = 1 microsecond):
+mie-decoder decode counter.mie --time-format standard --standard-tick-rate-hz 1000000 -o out.csv
+```
+
+With calibration on, two consecutive records of the same RT/MSG that are 16 ticks apart show `DELTA = 0.000016` at 1 MHz; the first occurrence of each RT/MSG key is still `0.000000`. The rate must be greater than 0, and it has no effect on IRIG recordings.
+
+**Finding the rate.** The tick rate comes from the recording card's configuration (often documented in the card datasheet or your acquisition setup), not from the file. If you don't know it, leave the flag off — an empty `DELTA` is the honest answer, and the raw counter value is still shown in `TIME_STAMP`.
+
+The same setting is available in a config file as `decode.standard_tick_rate_hz`:
+
+```toml
+[decode]
+time_format = "standard"
+standard_tick_rate_hz = 1000000.0
+```
+
 ### Site-wide configuration
 
 If you find yourself repeating the same flags across recordings, put them in a TOML file:
@@ -270,7 +298,7 @@ The column layout matches DDC vendor output byte-for-byte. Columns in order:
 | `CMD` | Command Word, 4-character uppercase hex. Empty for SPURIOUS_DATA. |
 | `MUX`, `TERM_NAME` | Vendor compatibility columns. Always empty in v1; reserved for future per-card metadata. |
 | `BUS` | `A` or `B`. |
-| `DELTA` | Seconds since the previous message on the same RT/MSG key. `0.000000` on first occurrence. Empty when the timestamp basis is unknown (Standard format), the record is SPURIOUS_DATA, or the timestamp is non-monotonic. |
+| `DELTA` | Seconds since the previous message on the same RT/MSG key. `0.000000` on first occurrence. Empty when the timestamp basis is unknown (uncalibrated Standard format — see [Calibrating Standard timestamps](#calibrating-standard-timestamps)), the record is SPURIOUS_DATA, or the timestamp is non-monotonic. |
 | `ERROR` | `ERROR`, `SPURIOUS`, or empty. Empty in clean rows of separate-mode CSV. |
 | `ERROR_CODE` | DDC hardware code (`011E`, `0120`, `0136`, `0140`, `0150`) or decoder-assigned code (`2000`, `2001`). Empty in clean rows of separate-mode CSV. |
 | `IM_GAP`, `RCV_GAP`, `XMT_GAP` | Vendor compatibility columns. Always empty in v1; reserved for future inter-message gap timing. |

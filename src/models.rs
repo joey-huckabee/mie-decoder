@@ -246,6 +246,23 @@ impl StandardTimestamp {
         self.raw_value
     }
 
+    /// Convert raw counter ticks to microseconds using an external tick rate.
+    ///
+    /// `standard_tick_rate_hz` is the card-dependent counter frequency in Hz,
+    /// supplied out-of-band (the file does not encode it). Returns `None`
+    /// unless the rate is finite and strictly positive, so an uncalibrated or
+    /// invalid rate can never be mistaken for real timing.
+    ///
+    /// Rounding is half-away-from-zero; ticks are non-negative so this matches
+    /// the Python implementation's `int(x + 0.5)` exactly (see L2-DEC-017).
+    pub fn to_microseconds(self, standard_tick_rate_hz: f64) -> Option<u64> {
+        if !standard_tick_rate_hz.is_finite() || standard_tick_rate_hz <= 0.0 {
+            return None;
+        }
+        let micros = f64::from(self.raw_value) * 1_000_000.0 / standard_tick_rate_hz;
+        Some(micros.round() as u64)
+    }
+
     /// Format as `0xNNNNNNNN`.
     pub fn format(&self) -> String {
         format!("0x{:08X}", self.raw_value)
@@ -262,13 +279,16 @@ impl Timestamp {
     /// Absolute microseconds from a known epoch, if convertible.
     ///
     /// `Some(us)` for IRIG (microseconds from start of year).
-    /// `None` for Standard — raw counter ticks have no known tick rate
-    /// or epoch, so DELTA in seconds cannot be computed truthfully.
-    /// A future calibration feature will widen this for Standard.
-    pub fn to_microseconds(&self) -> Option<u64> {
+    ///
+    /// For Standard, the result depends on calibration: `Some(us)` when
+    /// `standard_tick_rate_hz` is a finite, strictly-positive counter
+    /// frequency, otherwise `None` — raw counter ticks have no known tick
+    /// rate or epoch, so DELTA in seconds cannot be computed truthfully
+    /// without one. IRIG ignores `standard_tick_rate_hz`. See L2-DEC-017.
+    pub fn to_microseconds(&self, standard_tick_rate_hz: Option<f64>) -> Option<u64> {
         match self {
             Self::Irig(t) => Some(t.to_total_microseconds()),
-            Self::Standard(_) => None,
+            Self::Standard(t) => standard_tick_rate_hz.and_then(|hz| t.to_microseconds(hz)),
         }
     }
 
@@ -561,6 +581,48 @@ mod tests {
             lower_word: 0xABCD,
         };
         assert_eq!(t.format(), "0x1234ABCD");
+    }
+
+    /// Requirements: L2-RDR-019, L2-DEC-017
+    #[test]
+    fn standard_to_microseconds_requires_calibration() {
+        let t = StandardTimestamp {
+            raw_value: 100_016,
+            upper_word: 0x0001,
+            lower_word: 0x86B0,
+        };
+        let ts = Timestamp::Standard(t);
+
+        // Uncalibrated (and invalid rates) yield no microseconds.
+        assert_eq!(ts.to_microseconds(None), None);
+        assert_eq!(ts.to_microseconds(Some(0.0)), None);
+        assert_eq!(ts.to_microseconds(Some(-1.0)), None);
+        assert_eq!(ts.to_microseconds(Some(f64::NAN)), None);
+        assert_eq!(ts.to_microseconds(Some(f64::INFINITY)), None);
+
+        // 1 MHz: one tick == one microsecond.
+        assert_eq!(ts.to_microseconds(Some(1_000_000.0)), Some(100_016));
+        assert_eq!(t.to_microseconds(1_000_000.0), Some(100_016));
+    }
+
+    /// Requirements: L2-DEC-017
+    #[test]
+    fn standard_to_microseconds_rounds_half_away_from_zero() {
+        // 3 ticks at 2 MHz = 1.5 µs → rounds up to 2 (half-away-from-zero,
+        // matching Python's `int(x + 0.5)`).
+        let t = StandardTimestamp {
+            raw_value: 3,
+            upper_word: 0,
+            lower_word: 3,
+        };
+        assert_eq!(t.to_microseconds(2_000_000.0), Some(2));
+        // 1 tick at 2 MHz = 0.5 µs → rounds up to 1.
+        let one = StandardTimestamp {
+            raw_value: 1,
+            upper_word: 0,
+            lower_word: 1,
+        };
+        assert_eq!(one.to_microseconds(2_000_000.0), Some(1));
     }
 
     /// Requirements: L3-RS-005

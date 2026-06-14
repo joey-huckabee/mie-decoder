@@ -139,7 +139,41 @@ Filter axes use **OR logic** (a message is dropped if it matches ANY criterion) 
 
 ---
 
-## 5. Recover what you can from a corrupt recording
+## 5. Get DELTA timing from a Standard-counter recording
+
+Your recording uses the Standard (free-running counter) timestamp format, not IRIG. Decoded as-is, `TIME_STAMP` is a raw hex counter and `DELTA` is empty for every row — the counter's tick rate isn't stored in the file, so the decoder won't guess at elapsed time:
+
+```bash
+mie-decoder decode counter.mie --time-format standard -o out.csv
+# DELTA column blank on every row
+```
+
+You know from the card's configuration that the counter runs at 1 MHz. Supply it and `DELTA` comes to life:
+
+```bash
+mie-decoder decode counter.mie --time-format standard --standard-tick-rate-hz 1000000 -o out.csv
+```
+
+Now each RT/MSG key gets `0.000000` on first sight and real elapsed seconds thereafter — e.g. two records of the same key 16 ticks apart show `DELTA = 0.000016`. The conversion is `round(raw_ticks × 1_000_000 / rate)`; the rate must be `> 0`.
+
+Prefer to bake it into site config (handy when every recording from a given card shares a rate):
+
+```toml
+# counter-card.toml
+[decode]
+time_format = "standard"
+standard_tick_rate_hz = 1000000.0
+```
+
+```bash
+mie-decoder decode counter.mie --config counter-card.toml -o out.csv
+```
+
+The flag overrides the config value if both are present (CLI > config > default). The setting is a no-op on IRIG recordings. See [`USER-GUIDE.md` → Calibrating Standard timestamps](USER-GUIDE.md#calibrating-standard-timestamps) for background on where the rate comes from.
+
+---
+
+## 6. Recover what you can from a corrupt recording
 
 The recording has unrecoverable mid-file corruption. Default behavior exits 3 with no output (so you can't mistake a partial result for a complete one). To preserve what was decoded before the corruption:
 
@@ -171,7 +205,7 @@ Inspect `decoded.csv.partial` to see what was salvageable; investigate the sourc
 
 ---
 
-## 6. Stream to a downstream pipeline (pandas / awk / a script)
+## 7. Stream to a downstream pipeline (pandas / awk / a script)
 
 Omit `-o` to write CSV to stdout. The decoder forces inline-error mode (you can't split stdout into two streams) and a broken-pipe condition exits 0 with no error per L2-WRT-018.
 
@@ -211,7 +245,7 @@ The decoder's writer detects the broken pipe and exits 0 silently. You won't see
 
 ---
 
-## 7. Site-wide config + per-invocation override
+## 8. Site-wide config + per-invocation override
 
 Site-wide defaults in TOML, per-invocation tweaks on the CLI. CLI arguments win on conflict (L2-CFG-003); filter arrays merge (L2-CFG-004).
 
@@ -259,7 +293,7 @@ See [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md) for every accepted key and its 
 
 ---
 
-## 8. CI / batch script that handles exit codes properly
+## 9. CI / batch script that handles exit codes properly
 
 The CLI exits with one of four codes per L1-EXIT-001 through L1-EXIT-004. A robust batch script:
 
@@ -318,7 +352,7 @@ INFO  decode exit class: partial-unrecoverable (sync_losses=12); pass --allow-pa
 
 ---
 
-## 9. Investigate a file the decoder rejected
+## 10. Investigate a file the decoder rejected
 
 The CLI exited 2 with `No valid MIE records found` or `Pathological homogeneous-payload input rejected`. Use the `dump` subcommand to see what's in the file:
 
@@ -365,7 +399,7 @@ See [`USER-GUIDE.md`](USER-GUIDE.md) §5 for the full `dump` subcommand referenc
 
 ---
 
-## 10. Diff against vendor CSV
+## 11. Diff against vendor CSV
 
 You want to validate that MIE-Decoder reproduces vendor output for a known-good recording.
 
@@ -395,7 +429,7 @@ If you see differences:
 
 ---
 
-## 11. One-off ad-hoc filters with shell tools
+## 12. One-off ad-hoc filters with shell tools
 
 The shell composes well with MIE-Decoder output. Some recipes that come up:
 
@@ -419,7 +453,7 @@ Column indices reference the spec column order (1 = TIME_STAMP, 2 = RT, 3 = MSG,
 
 ---
 
-## 12. See also
+## 13. See also
 
 - [`USER-GUIDE.md`](USER-GUIDE.md) — How each piece works (vs this doc, which shows the pieces composed).
 - [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md) — Every TOML key, type, default, CLI override.

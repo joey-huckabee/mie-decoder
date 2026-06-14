@@ -152,6 +152,7 @@ class MieFileReader:
         time_format: TimestampFormat = TimestampFormat.AUTO,
         detect_records: int = DEFAULT_DETECT_RECORDS,
         lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
+        standard_tick_rate_hz: float | None = None,
     ) -> None:
         self._path = Path(path)
         self._strict = strict
@@ -165,6 +166,13 @@ class MieFileReader:
         # >= 1 with the same library-caller-friendly invariant as
         # detect_records.
         self._lookahead_records = max(1, lookahead_records)
+        # L2-DEC-017: optional Standard-counter tick rate in Hz. None
+        # (the default) keeps the historical empty-DELTA behavior for
+        # Standard records; a finite, strictly-positive value enables
+        # tick->microsecond conversion and DELTA participation. The CLI /
+        # config layer validates the value; passed through to
+        # _compute_delta.
+        self._standard_tick_rate_hz = standard_tick_rate_hz
         # Cumulative sync-recovery count from the most recent __iter__
         # call. Reset to 0 on each iteration so the CLI can read it
         # after the loop completes (for L1-EXIT-003 / L1-EXIT-005 exit-class
@@ -540,6 +548,7 @@ class MieFileReader:
                         delta = _compute_delta(
                             delta_tracker, warned_ooo_keys,
                             msg.delta_key, timestamp, offset,
+                            self._standard_tick_rate_hz,
                         )
                         msg = MieMessage(
                             timestamp=msg.timestamp,
@@ -638,6 +647,7 @@ class MieFileReader:
                     delta = _compute_delta(
                         delta_tracker, warned_ooo_keys,
                         delta_key, timestamp, offset,
+                        self._standard_tick_rate_hz,
                     )
 
                     yield MieMessage(
@@ -741,11 +751,12 @@ def _compute_delta(
     key: str,
     timestamp: Timestamp,
     offset: int,
+    standard_tick_rate_hz: float | None = None,
 ) -> float | None:
     """Compute DELTA for ``key`` per the shared contract and update tracker.
 
-    - ``timestamp.to_microseconds()`` returns ``None`` (Standard, uncalibrated)
-      → return ``None`` and skip tracker update.
+    - ``timestamp.to_microseconds()`` returns ``None`` (Standard with no
+      configured tick rate) → return ``None`` and skip tracker update.
     - SPURIOUS_DATA passes an empty key → return ``None``.
     - First occurrence of ``key`` → return ``0.0``, record current us.
     - Subsequent with non-negative gap → return ``seconds``, record current us.
@@ -754,7 +765,7 @@ def _compute_delta(
     """
     if not key:
         return None
-    curr_us = timestamp.to_microseconds()
+    curr_us = timestamp.to_microseconds(standard_tick_rate_hz)
     if curr_us is None:
         return None
     prev = delta_tracker.get(key)

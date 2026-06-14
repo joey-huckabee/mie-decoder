@@ -24,7 +24,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
 | L1-DEC-001 | L2-DEC-001, L2-DEC-008, L2-DEC-010 | Implemented |
-| L1-DEC-002 | L2-DEC-002, L2-DEC-003, L2-DEC-007, L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016 | Implemented |
+| L1-DEC-002 | L2-DEC-002, L2-DEC-003, L2-DEC-007, L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016, L2-DEC-017 | Implemented |
 | L1-DEC-003 | L2-DEC-004, L2-DEC-009, L2-MSG-001, L2-MSG-003, L2-RDR-007, L2-RDR-008 | Implemented |
 | L1-DEC-004 | L2-MSG-002 | Implemented |
 | L1-DEC-005 | L2-RDR-002 | Implemented |
@@ -45,6 +45,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-DEC-012 | _(none)_ | `python/tests/test_decode.py::test_zero_score_ties_to_irig`<br>`src/decode.rs::probe_zero_score_ties_to_irig` | Implemented |
 | L2-DEC-015 | _(none)_ | `python/tests/test_decode.py::test_detects_irig_from_known_data`<br>`python/tests/test_decode.py::test_detects_irig_from_transmit`<br>`python/tests/test_decode.py::test_eight_irig_records_aggregates_decisively`<br>`python/tests/test_decode.py::test_max_records_zero_clamps_to_one`<br>`python/tests/test_decode.py::test_single_irig_record_picks_irig`<br>`python/tests/test_decode.py::test_zero_score_ties_to_irig`<br>`python/tests/test_e2e.py::test_cli_detect_records_flag_accepts_valid_size`<br>`python/tests/test_e2e.py::test_cli_detect_records_flag_rejects_out_of_range`<br>`src/decode.rs::probe_eight_irig_records_aggregates_decisively`<br>`src/decode.rs::probe_max_records_one_still_works`<br>`src/decode.rs::probe_single_irig_record_picks_irig`<br>`src/decode.rs::probe_stops_at_eof_records_probed_reflects_truncation`<br>`src/decode.rs::probe_zero_score_ties_to_irig`<br>`tests/cli.rs::detect_records_flag_accepts_valid_size`<br>`tests/cli.rs::detect_records_flag_rejects_out_of_range` | Implemented |
 | L2-DEC-016 | _(none)_ | `src/decode.rs::probe_ambiguous_below_floor_classifies_ambiguous` | Implemented |
+| L2-DEC-017 | _(none)_ | `python/tests/test_config.py::test_standard_tick_rate_hz_default_is_none`<br>`python/tests/test_decode.py::test_to_microseconds_calibrated`<br>`python/tests/test_decode.py::test_to_microseconds_returns_none`<br>`python/tests/test_decode.py::test_to_microseconds_rounds_half_away_from_zero`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_enables_delta`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_flag_rejects_nonpositive`<br>`src/config.rs::standard_tick_rate_hz_default_is_none`<br>`src/models.rs::standard_to_microseconds_requires_calibration`<br>`src/models.rs::standard_to_microseconds_rounds_half_away_from_zero` | Implemented |
 | L2-MSG-001 | _(none)_ | `python/tests/test_decode.py::test_all_known_types`<br>`python/tests/test_decode.py::test_bc_to_rt`<br>`python/tests/test_decode.py::test_broadcast_bc_to_rt`<br>`python/tests/test_decode.py::test_broadcast_rt_to_rt`<br>`python/tests/test_decode.py::test_mode_code_bcast_data`<br>`python/tests/test_decode.py::test_mode_code_bcast_no_data`<br>`python/tests/test_decode.py::test_mode_code_no_data`<br>`python/tests/test_decode.py::test_mode_code_rx_data`<br>`python/tests/test_decode.py::test_mode_code_tx_data`<br>`python/tests/test_decode.py::test_rt_to_bc`<br>`python/tests/test_decode.py::test_rt_to_rt`<br>`python/tests/test_decode.py::test_spurious_data`<br>`python/tests/test_models.py::test_known_values`<br>`python/tests/test_models.py::test_message_format_field`<br>`python/tests/test_models.py::test_valid_message_types_set`<br>`src/decode.rs::classify_mode_code_broadcast_no_data`<br>`src/decode.rs::classify_mode_code_rx_vs_no_data`<br>`src/decode.rs::classify_mode_code_tx_data`<br>`src/decode.rs::classify_simple_types`<br>`src/models.rs::message_type_round_trip` | Implemented |
 | L2-MSG-002 | _(none)_ | `python/tests/test_e2e.py::test_bus_b_record`<br>`python/tests/test_models.py::test_bus_shortcut` | Implemented |
 | L2-MSG-003 | _(none)_ | `python/tests/test_models.py::test_msg_label_receive`<br>`python/tests/test_models.py::test_msg_label_transmit`<br>`python/tests/test_models.py::test_rt_shortcut`<br>`src/models.rs::msg_label_and_delta_key` | Implemented |
@@ -97,7 +98,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-RDR-016 | _(none)_ | `python/tests/test_e2e.py::test_errored_record_participates_in_delta` | Implemented |
 | L2-RDR-017 | _(none)_ | `python/tests/test_e2e.py::test_non_monotonic_timestamp_warns_once_per_key` | Implemented |
 | L2-RDR-018 | _(none)_ | `python/tests/test_e2e.py::test_spurious_data_empty_delta_and_continuation_code` | Implemented |
-| L2-RDR-019 | _(none)_ | `python/tests/test_decode.py::test_to_microseconds_returns_none` | Implemented |
+| L2-RDR-019 | _(none)_ | `python/tests/test_decode.py::test_to_microseconds_returns_none`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_enables_delta`<br>`src/models.rs::standard_to_microseconds_requires_calibration` | Implemented |
 
 ### L1-CLI: CLI capability surface
 
@@ -221,18 +222,20 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Status |
 |-------|-------------|--------|
-| L1-CFG-001 | L2-CFG-001, L2-CFG-003, L2-CFG-005, L2-CFG-008, L2-CFG-009, L2-CFG-010, L2-DEC-013 | Implemented |
+| L1-CFG-001 | L2-CFG-001, L2-CFG-003, L2-CFG-005, L2-CFG-008, L2-CFG-009, L2-CFG-010, L2-CFG-011, L2-CLI-012, L2-DEC-013 | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L2-CFG-001 | L3-PY-005 | `python/tests/test_config.py::test_default_is_separate`<br>`python/tests/test_config.py::test_load_valid_toml`<br>`python/tests/test_config.py::test_none_returns_defaults`<br>`python/tests/test_config.py::test_override_to_inline`<br>`src/config.rs::comments_are_stripped`<br>`src/config.rs::hash_in_string_not_a_comment`<br>`src/config.rs::missing_eq_returns_line_number`<br>`src/config.rs::parse_minimal_doc` | Implemented |
-| L2-CFG-003 | _(none)_ | `python/tests/test_config.py::test_defaults`<br>`python/tests/test_config.py::test_with_overrides`<br>`python/tests/test_e2e.py::test_cli_dump_honors_toml_logging_level`<br>`python/tests/test_e2e.py::test_cli_log_level_overrides_toml_logging_level`<br>`python/tests/test_e2e.py::test_cli_toml_logging_level_is_honored_when_no_cli_override`<br>`src/config.rs::defaults_when_no_path`<br>`src/config.rs::overrides_apply_and_filter_merge` | Implemented |
+| L2-CFG-001 | L3-PY-005 | `python/tests/test_config.py::test_default_is_separate`<br>`python/tests/test_config.py::test_load_valid_toml`<br>`python/tests/test_config.py::test_none_returns_defaults`<br>`python/tests/test_config.py::test_override_to_inline`<br>`src/config.rs::comments_are_stripped`<br>`src/config.rs::hash_in_string_not_a_comment`<br>`src/config.rs::missing_eq_returns_line_number`<br>`src/config.rs::parse_minimal_doc`<br>`src/config.rs::parses_float_value` | Implemented |
+| L2-CFG-003 | _(none)_ | `python/tests/test_config.py::test_defaults`<br>`python/tests/test_config.py::test_standard_tick_rate_hz_override_applies`<br>`python/tests/test_config.py::test_with_overrides`<br>`python/tests/test_e2e.py::test_cli_dump_honors_toml_logging_level`<br>`python/tests/test_e2e.py::test_cli_log_level_overrides_toml_logging_level`<br>`python/tests/test_e2e.py::test_cli_toml_logging_level_is_honored_when_no_cli_override`<br>`src/config.rs::defaults_when_no_path`<br>`src/config.rs::overrides_apply_and_filter_merge`<br>`src/config.rs::standard_tick_rate_hz_override_applies` | Implemented |
 | L2-CFG-005 | _(none)_ | `python/tests/test_config.py::test_missing_file_raises`<br>`src/cli.rs::run_count_propagates_missing_config_file` | Implemented |
 | L2-CFG-008 | _(none)_ | `src/config.rs::parses_default_toml_from_disk` | Implemented |
 | L2-CFG-009 | _(none)_ | `python/tests/test_config.py::test_unknown_filter_key_warned_not_rejected`<br>`python/tests/test_config.py::test_unknown_top_level_key_is_warned_not_rejected`<br>`src/config.rs::unknown_filter_key_is_warned_not_rejected`<br>`src/config.rs::unknown_top_level_key_is_warned_not_rejected` | Implemented |
-| L2-CFG-010 | _(none)_ | `python/tests/test_config.py::test_exclude_rts_boundary_values_accepted`<br>`python/tests/test_config.py::test_exclude_rts_out_of_range_rejected`<br>`python/tests/test_config.py::test_exclude_subaddresses_negative_rejected`<br>`python/tests/test_config.py::test_invalid_error_mode_raises`<br>`python/tests/test_config.py::test_invalid_time_format_raises`<br>`python/tests/test_config.py::test_known_log_levels_accepted_case_insensitively`<br>`python/tests/test_config.py::test_output_format_csv_accepted`<br>`python/tests/test_config.py::test_strict_must_be_bool`<br>`python/tests/test_config.py::test_unknown_log_level_rejected`<br>`python/tests/test_config.py::test_unknown_output_format_rejected`<br>`src/cli.rs::run_count_with_invalid_config_log_level_fails`<br>`src/config.rs::exclude_rts_out_of_range_rejected`<br>`src/config.rs::exclude_rts_zero_and_thirty_one_accepted`<br>`src/config.rs::exclude_subaddresses_negative_rejected`<br>`src/config.rs::known_log_levels_accepted_case_insensitively`<br>`src/config.rs::output_format_csv_still_accepted`<br>`src/config.rs::unknown_log_level_rejected_at_parse_time`<br>`src/config.rs::unknown_output_format_rejected`<br>`src/config.rs::unknown_time_format_rejected` | Implemented |
+| L2-CFG-010 | _(none)_ | `python/tests/test_config.py::test_exclude_rts_boundary_values_accepted`<br>`python/tests/test_config.py::test_exclude_rts_out_of_range_rejected`<br>`python/tests/test_config.py::test_exclude_subaddresses_negative_rejected`<br>`python/tests/test_config.py::test_invalid_error_mode_raises`<br>`python/tests/test_config.py::test_invalid_time_format_raises`<br>`python/tests/test_config.py::test_known_log_levels_accepted_case_insensitively`<br>`python/tests/test_config.py::test_output_format_csv_accepted`<br>`python/tests/test_config.py::test_standard_tick_rate_hz_rejects_nonpositive`<br>`python/tests/test_config.py::test_strict_must_be_bool`<br>`python/tests/test_config.py::test_unknown_log_level_rejected`<br>`python/tests/test_config.py::test_unknown_output_format_rejected`<br>`src/cli.rs::run_count_with_invalid_config_log_level_fails`<br>`src/config.rs::exclude_rts_out_of_range_rejected`<br>`src/config.rs::exclude_rts_zero_and_thirty_one_accepted`<br>`src/config.rs::exclude_subaddresses_negative_rejected`<br>`src/config.rs::known_log_levels_accepted_case_insensitively`<br>`src/config.rs::output_format_csv_still_accepted`<br>`src/config.rs::standard_tick_rate_hz_rejects_nonpositive`<br>`src/config.rs::unknown_log_level_rejected_at_parse_time`<br>`src/config.rs::unknown_output_format_rejected`<br>`src/config.rs::unknown_time_format_rejected` | Implemented |
+| L2-CFG-011 | _(none)_ | `python/tests/test_config.py::test_standard_tick_rate_hz_accepts_float_and_int`<br>`python/tests/test_config.py::test_standard_tick_rate_hz_default_is_none`<br>`python/tests/test_config.py::test_standard_tick_rate_hz_rejects_nonpositive`<br>`src/config.rs::standard_tick_rate_hz_accepts_float_and_int`<br>`src/config.rs::standard_tick_rate_hz_default_is_none`<br>`src/config.rs::standard_tick_rate_hz_rejects_nonpositive` | Implemented |
+| L2-CLI-012 | _(none)_ | `python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_enables_delta`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_flag_rejects_nonpositive`<br>`src/cli.rs::parse_decode_standard_tick_rate_hz_rejects_non_numeric`<br>`src/cli.rs::parse_decode_standard_tick_rate_hz_rejects_nonpositive`<br>`src/cli.rs::parse_decode_standard_tick_rate_hz_space_and_eq_forms` | Implemented |
 | L2-DEC-013 | _(none)_ | `python/tests/test_config.py::test_load_with_time_format`<br>`python/tests/test_decode.py::test_cli_time_format_irig`<br>`python/tests/test_decode.py::test_forced_irig` | Implemented |
 
 ### L1-CONF: Cross-implementation conformance
@@ -300,15 +303,15 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | Category | L1 | L2 | L3 | L2 tested | L3 tested | L2 verified | L3 verified |
 |----------|----|----|-----|-----------|-----------|-------------|-------------|
-| DEC | 5 | 14 | 0 | 13 | 0 | 14 | 0 |
+| DEC | 5 | 15 | 0 | 14 | 0 | 15 | 0 |
 | OUT | 2 | 0 | 0 | 0 | 0 | 0 | 0 |
 | DLT | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| CLI | 2 | 9 | 0 | 9 | 0 | 9 | 0 |
+| CLI | 2 | 10 | 0 | 10 | 0 | 10 | 0 |
 | LOG | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MODE | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | SYN | 2 | 26 | 0 | 25 | 0 | 26 | 0 |
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
-| CFG | 1 | 9 | 0 | 9 | 0 | 9 | 0 |
+| CFG | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CONF | 1 | 5 | 0 | 3 | 0 | 5 | 0 |
 | EXIT | 6 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -318,11 +321,11 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
-| **Total** | **24** | **106** | **25** | **101** | **14** | **106** | **25** |
+| **Total** | **24** | **109** | **25** | **104** | **14** | **109** | **25** |
 
-**Tested by at least one test marker**: 115 of 131 (87.8%).
+**Tested by at least one test marker**: 118 of 134 (88.1%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 131 of 131 (100.0%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 134 of 134 (100.0%).
 
 ### Orphan check
 

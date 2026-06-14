@@ -84,6 +84,29 @@
       ]
     },
     {
+      "name": "standard-tick-calibrated-cli",
+      "input": "inputs/standard-timestamps.hex",
+      "expected": "expected/standard-tick-calibrated.csv",
+      "rust_args": [
+        "--time-format",
+        "standard",
+        "--standard-tick-rate-hz",
+        "1000000"
+      ],
+      "python_args": [
+        "--time-format",
+        "standard",
+        "--standard-tick-rate-hz",
+        "1000000"
+      ]
+    },
+    {
+      "name": "standard-tick-calibrated-toml",
+      "input": "inputs/standard-timestamps.hex",
+      "expected": "expected/standard-tick-calibrated.csv",
+      "config": "configs/standard-tick-rate.toml"
+    },
+    {
       "name": "bus-b",
       "input": "inputs/bus-b.hex",
       "expected": "expected/bus-b.csv"

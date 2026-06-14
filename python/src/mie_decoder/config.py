@@ -22,6 +22,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,7 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset({
     ("decode", "allow_partial"),
     ("decode", "detect_records"),
     ("decode", "lookahead_records"),
+    ("decode", "standard_tick_rate_hz"),
     ("output", "format"),
     ("output", "no_clobber"),
     ("filter", "exclude_types"),
@@ -222,6 +224,11 @@ class DecoderConfig:
     #: [LOOKAHEAD_RECORDS_MIN, LOOKAHEAD_RECORDS_MAX]. Default 2,
     #: preserving the historical two-record look-ahead.
     lookahead_records: int = 2
+    #: L2-DEC-017: optional Standard-counter tick rate in Hz. None (the
+    #: default) keeps the historical empty-DELTA behavior for Standard
+    #: records; a finite, strictly-positive value enables tick->microsecond
+    #: conversion and DELTA participation. Validated at load time.
+    standard_tick_rate_hz: float | None = None
 
     def with_overrides(self, **kwargs: Any) -> DecoderConfig:
         """Return a new config with specified fields overridden.
@@ -261,6 +268,11 @@ class DecoderConfig:
             if kwargs.get("lookahead_records") is not None
             else self.lookahead_records
         )
+        new_sthz = (
+            kwargs["standard_tick_rate_hz"]
+            if kwargs.get("standard_tick_rate_hz") is not None
+            else self.standard_tick_rate_hz
+        )
 
         # Merge filter overrides — CLI adds to (not replaces) config file filters
         new_filters = FilterConfig(
@@ -281,6 +293,7 @@ class DecoderConfig:
             allow_partial=new_ap,
             detect_records=new_dr,
             lookahead_records=new_lr,
+            standard_tick_rate_hz=new_sthz,
         )
 
 
@@ -481,6 +494,25 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         )
     lookahead_records = lookahead_records_raw
 
+    # L2-DEC-017: optional Standard-counter tick rate. When present it must
+    # be a real, strictly-positive frequency. Accept int or float (but not
+    # bool); reject non-finite or non-positive values at load time per
+    # L2-CFG-010 so a bad rate can never silently produce garbage micros.
+    standard_tick_rate_hz: float | None = None
+    if "standard_tick_rate_hz" in decode_section:
+        raw_hz = decode_section["standard_tick_rate_hz"]
+        if isinstance(raw_hz, bool) or not isinstance(raw_hz, (int, float)):
+            raise ValueError(
+                f"Invalid decode.standard_tick_rate_hz: {raw_hz!r}; must be a number"
+            )
+        hz = float(raw_hz)
+        if not math.isfinite(hz) or hz <= 0.0:
+            raise ValueError(
+                f"Invalid decode.standard_tick_rate_hz: {hz}. "
+                f"Must be a finite value greater than 0"
+            )
+        standard_tick_rate_hz = hz
+
     # L2-CFG-009: WARN on unknown keys so typos surface to the operator
     # instead of being silently dropped. Non-fatal so forward-compatible
     # additions don't break older configs.
@@ -502,6 +534,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         allow_partial=allow_partial,
         detect_records=detect_records,
         lookahead_records=lookahead_records,
+        standard_tick_rate_hz=standard_tick_rate_hz,
     )
 
     logger.debug("Loaded config: %s", config)

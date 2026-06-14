@@ -154,7 +154,9 @@ A 32-bit free-running counter. Tick rate is card-dependent and **not** encoded i
 | 31–16 | 16 | Counter[31:16] | Upper 16 bits of the counter, in the first word. |
 | 15–0 | 16 | Counter[15:0] | Lower 16 bits, in the second word. |
 
-Standard timestamps render in CSV as `0x` + 8 uppercase hex characters (e.g., `0x000186A0`). DELTA is always empty for Standard records (L2-RDR-019) because there's no calibrated tick rate. A future tick-rate calibration config will re-enable DELTA when supplied.
+Standard timestamps render in CSV as `0x` + 8 uppercase hex characters (e.g., `0x000186A0`). By default DELTA is empty for Standard records (L2-RDR-019) because there's no calibrated tick rate.
+
+**Tick calibration (L2-DEC-017).** If you know the card's counter frequency, supply it via the `decode.standard_tick_rate_hz` config key or the `--standard-tick-rate-hz` CLI flag. The decoder then converts each counter value to microseconds as `round(raw_ticks × 1_000_000 / standard_tick_rate_hz)` (half-away-from-zero) and Standard records participate in DELTA exactly like IRIG records. The rate must be finite and `> 0`; without it, behavior is unchanged (empty DELTA). See `docs/CONFIG-REFERENCE.md` for details.
 
 ### 5.3 Auto-detection (L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016)
 
@@ -452,7 +454,7 @@ Single character `A` or `B`. Always populated.
 
 Inter-arrival time in seconds with microsecond resolution (`0.000000` format — exactly 6 decimal places), or empty.
 
-DELTA is the elapsed time between the current message and the most recent prior message sharing the **same** `<RT>:<MSG>` key. First-occurrence: `0.000000`. Errored records participate in DELTA tracking (L2-RDR-016). SPURIOUS_DATA records have empty DELTA (no key, L2-RDR-018). Standard-timestamp records have empty DELTA (no calibrated tick rate, L2-RDR-019). Non-monotonic timestamps produce empty DELTA + a single WARN per RT/MSG key per file (L2-RDR-017).
+DELTA is the elapsed time between the current message and the most recent prior message sharing the **same** `<RT>:<MSG>` key. First-occurrence: `0.000000`. Errored records participate in DELTA tracking (L2-RDR-016). SPURIOUS_DATA records have empty DELTA (no key, L2-RDR-018). Standard-timestamp records have empty DELTA unless a tick rate is configured via `standard_tick_rate_hz` / `--standard-tick-rate-hz`, in which case they participate like IRIG (L2-RDR-019, L2-DEC-017). Non-monotonic timestamps produce empty DELTA + a single WARN per RT/MSG key per file (L2-RDR-017).
 
 **Operational significance:** DELTA directly reveals the BC scheduling rate for each unique message type. ~0.016 s → 60 Hz minor frame; ~0.033 s → 30 Hz; ~0.001 s → adjacent messages in the same frame. Jitter or drift across a recording can indicate bus loading anomalies, missed scheduling cycles, BC priority changes, or intermittent RT response failures.
 

@@ -58,6 +58,12 @@ DECODE OPTIONS:
                                         validation per call (1 candidate
                                         + N-1 look-ahead, range 1..=32,
                                         default 2). L2-SYN-026.
+  --standard-tick-rate-hz HZ            Standard-counter frequency in Hz.
+                                        When set, Standard timestamps are
+                                        converted to microseconds and join
+                                        DELTA tracking. Must be > 0
+                                        (default: unset → empty DELTA for
+                                        Standard). L2-DEC-017.
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
   --exclude-types VAL                   Comma-separated names or 0xNN
@@ -106,6 +112,7 @@ struct DecodeArgs {
     time_format: Option<TimestampFormat>,
     detect_records: Option<usize>,
     lookahead_records: Option<usize>,
+    standard_tick_rate_hz: Option<f64>,
     strict: Option<bool>,
     output_format: Option<String>,
 
@@ -364,6 +371,15 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
                 args.lookahead_records =
                     Some(parse_lookahead_records(&s["--lookahead-records=".len()..])?);
             }
+            "--standard-tick-rate-hz" => {
+                let v = next_value("--standard-tick-rate-hz", iter)?;
+                args.standard_tick_rate_hz = Some(parse_standard_tick_rate_hz(&v)?);
+            }
+            s if s.starts_with("--standard-tick-rate-hz=") => {
+                args.standard_tick_rate_hz = Some(parse_standard_tick_rate_hz(
+                    &s["--standard-tick-rate-hz=".len()..],
+                )?);
+            }
             "--format" => {
                 args.output_format = Some(next_value("--format", iter)?);
             }
@@ -605,6 +621,24 @@ fn parse_lookahead_records(s: &str) -> Result<usize, String> {
     Ok(n)
 }
 
+/// L2-DEC-017 / L2-CLI-012: validate the `--standard-tick-rate-hz`
+/// argument. Mirrors the config-load validation in
+/// `config::parse_into_config` so the CLI and TOML paths reject the same
+/// inputs with the same shape of message: the rate must be a finite,
+/// strictly-positive frequency.
+fn parse_standard_tick_rate_hz(s: &str) -> Result<f64, String> {
+    let hz: f64 = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid --standard-tick-rate-hz: {s:?}; must be a number"))?;
+    if !hz.is_finite() || hz <= 0.0 {
+        return Err(format!(
+            "invalid --standard-tick-rate-hz: {hz}; must be a finite value greater than 0"
+        ));
+    }
+    Ok(hz)
+}
+
 // ── Subcommand runners ────────────────────────────────────────────────
 
 /// Apply a log-level string. Returns Err on an unrecognized name so the
@@ -658,6 +692,7 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, String
             time_format: cfg.time_format,
             detect_records: cfg.detect_records,
             lookahead_records: cfg.lookahead_records,
+            standard_tick_rate_hz: cfg.standard_tick_rate_hz,
         },
     )
     .map_err(format_mie_error)
@@ -682,6 +717,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, String>
         allow_partial: if args.allow_partial { Some(true) } else { None },
         detect_records: args.detect_records,
         lookahead_records: args.lookahead_records,
+        standard_tick_rate_hz: args.standard_tick_rate_hz,
         exclude_types: args.exclude_types,
         exclude_rts: args.exclude_rts,
         exclude_buses: args.exclude_buses,
@@ -1017,6 +1053,46 @@ mod tests {
                 assert!(msg.contains("unexpected positional"));
             }
             other => panic!("expected Other(unexpected positional...), got {other:?}"),
+        }
+    }
+
+    /// Requirements: L2-CLI-012
+    #[test]
+    fn parse_decode_standard_tick_rate_hz_space_and_eq_forms() {
+        let mut it = args(&["--standard-tick-rate-hz", "1000000", "rec.mie"]);
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("rec.mie"));
+        assert_eq!(parsed.standard_tick_rate_hz, Some(1_000_000.0));
+
+        let mut it = args(&["--standard-tick-rate-hz=2.5e6", "rec.mie"]);
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.standard_tick_rate_hz, Some(2_500_000.0));
+    }
+
+    /// Requirements: L2-CLI-012
+    #[test]
+    fn parse_decode_standard_tick_rate_hz_rejects_nonpositive() {
+        for bad in ["0", "-1", "0.0"] {
+            let mut it = args(&["--standard-tick-rate-hz", bad, "rec.mie"]);
+            match parse_decode(&mut it) {
+                Err(ParseError::Other(msg)) => {
+                    assert!(
+                        msg.contains("--standard-tick-rate-hz"),
+                        "error should name the flag for {bad:?}: {msg}"
+                    );
+                }
+                other => panic!("expected Other for {bad:?}, got {other:?}"),
+            }
+        }
+    }
+
+    /// Requirements: L2-CLI-012
+    #[test]
+    fn parse_decode_standard_tick_rate_hz_rejects_non_numeric() {
+        let mut it = args(&["--standard-tick-rate-hz", "fast", "rec.mie"]);
+        match parse_decode(&mut it) {
+            Err(ParseError::Other(msg)) => assert!(msg.contains("--standard-tick-rate-hz")),
+            other => panic!("expected Other, got {other:?}"),
         }
     }
 

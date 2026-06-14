@@ -350,12 +350,36 @@ class TestDecodeStandardTimestamp:
         assert ts.raw_ticks() == 100000
 
     @pytest.mark.requirement("L2-RDR-019")
+    @pytest.mark.requirement("L2-DEC-017")
     def test_to_microseconds_returns_none(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
         ts = decode_standard_timestamp(0x0001, 0x86A0)
-        # Standard timestamps have no known microsecond basis under the
-        # shared DELTA contract; callers must treat this as "no DELTA".
+        # Uncalibrated (no tick rate) Standard timestamps have no known
+        # microsecond basis under the shared DELTA contract; callers must
+        # treat this as "no DELTA". Invalid rates behave the same way.
         assert ts.to_microseconds() is None
+        assert ts.to_microseconds(None) is None
+        assert ts.to_microseconds(0.0) is None
+        assert ts.to_microseconds(-1.0) is None
+        assert ts.to_microseconds(float("nan")) is None
+        assert ts.to_microseconds(float("inf")) is None
+
+    @pytest.mark.requirement("L2-DEC-017")
+    def test_to_microseconds_calibrated(self) -> None:
+        from mie_decoder.decode import decode_standard_timestamp
+        ts = decode_standard_timestamp(0x0001, 0x86A0)  # 100000 ticks
+        # At 1 MHz, one tick == one microsecond.
+        assert ts.to_microseconds(1_000_000.0) == 100000
+
+    @pytest.mark.requirement("L2-DEC-017")
+    def test_to_microseconds_rounds_half_away_from_zero(self) -> None:
+        from mie_decoder.decode import decode_standard_timestamp
+        # 3 ticks at 2 MHz = 1.5 us -> rounds up to 2 (half-away-from-zero,
+        # matching the Rust f64::round). 1 tick = 0.5 us -> 1.
+        three = decode_standard_timestamp(0x0000, 0x0003)
+        assert three.to_microseconds(2_000_000.0) == 2
+        one = decode_standard_timestamp(0x0000, 0x0001)
+        assert one.to_microseconds(2_000_000.0) == 1
 
 
 class TestDetectTimestampFormat:

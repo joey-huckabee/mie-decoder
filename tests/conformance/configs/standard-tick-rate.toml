@@ -1,0 +1,11 @@
+# Conformance fixture: exercise L2-DEC-017 Standard-timestamp tick
+# calibration via the TOML config path (the matching CLI-flag path is
+# covered by the `standard-tick-calibrated-cli` case). Both cases share
+# the `expected/standard-tick-calibrated.csv` oracle, proving the config
+# and CLI paths produce byte-identical output.
+#
+# This also exercises the Rust hand-rolled TOML parser's float support
+# added for this key (`1000000.0` parses as a float, not an int).
+[decode]
+time_format = "standard"
+standard_tick_rate_hz = 1000000.0

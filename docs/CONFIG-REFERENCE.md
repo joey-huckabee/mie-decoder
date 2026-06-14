@@ -23,6 +23,7 @@ time_format    = "auto"          # auto | irig | standard
 strict         = false           # true | false
 error_mode     = "separate"      # separate | inline
 allow_partial  = false           # true | false
+# standard_tick_rate_hz = 1000000.0   # Standard counter Hz (unset = empty DELTA)
 
 [output]
 format     = "csv"               # csv (only value in v1)
@@ -44,6 +45,7 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `decode.allow_partial` | bool | `false` | `--allow-partial` | L2-CFG-001, L1-EXIT-004 |
 | `decode.detect_records` | int | `8` | `--detect-records` | L2-CFG-001, L2-DEC-015 |
 | `decode.lookahead_records` | int | `2` | `--lookahead-records` | L2-CFG-001, L2-SYN-026 |
+| `decode.standard_tick_rate_hz` | float | unset | `--standard-tick-rate-hz` | L2-CFG-011, L2-DEC-017 |
 | `output.format` | string | `"csv"` | (no CLI flag) | L2-CFG-001 |
 | `output.no_clobber` | bool | `false` | `--no-clobber` | L2-CFG-001, L2-WRT-017 |
 | `filter.exclude_types` | array | `[]` | `--exclude-types` (additive) | L2-CFG-006, L2-CFG-007 |
@@ -106,7 +108,7 @@ Selects the timestamp format used by the binary file. DDC recording cards suppor
 |-------|----------|
 | `"auto"` | Auto-detect on the first valid record. The decoder probes the Command Word at both candidate offsets and scores which produces a valid MIL-STD-1553 command. Recommended for most workflows. |
 | `"irig"` | Force the 48-bit IRIG-B format (3 × 16-bit words = day, hour, minute, second, microsecond, freerun flag). Provides absolute wall-clock time. |
-| `"standard"` | Force the 32-bit free-running counter format (2 × 16-bit words). Provides relative timing only; tick rate is card-dependent and not encoded in the file. `DELTA` is always empty for Standard records (L2-RDR-019). |
+| `"standard"` | Force the 32-bit free-running counter format (2 × 16-bit words). Provides relative timing only; tick rate is card-dependent and not encoded in the file. `DELTA` is empty for Standard records unless you supply [`standard_tick_rate_hz`](#standard_tick_rate_hz) (L2-RDR-019). |
 
 **Tie-break (L2-DEC-012):** When `"auto"` and both formats score equally, IRIG is selected. Flight-test recordings overwhelmingly use IRIG; this tie-break preserves the most common path.
 
@@ -156,6 +158,30 @@ Controls the behavior on unrecoverable mid-file sync loss (L1-EXIT-004 / L2-WRT-
 Use `true` when investigating a recording that's known to be corrupt and you want to inspect what was decodable. Use `false` (the default) in pipelines where any unrecoverable corruption should abort with a distinct exit code.
 
 **Validation:** TOML boolean only.
+
+### `standard_tick_rate_hz`
+
+**Type:** float · **Default:** unset · **CLI:** `--standard-tick-rate-hz <HZ>`
+
+Calibrates the Standard (free-running counter) timestamp format so its records can carry a `DELTA` (L2-DEC-017, L2-RDR-019). The Standard counter's tick rate is card-dependent and is *not* stored in the recording, so by default the decoder cannot express a Standard timestamp as elapsed time and leaves `DELTA` empty.
+
+When you set this key to your card's counter frequency in Hz, the decoder converts each raw counter value to microseconds —
+
+```
+microseconds = round(raw_ticks × 1_000_000 / standard_tick_rate_hz)
+```
+
+— and Standard records then participate in per-RT/MSG `DELTA` tracking on exactly the same terms as IRIG records (first occurrence `0.000000`, subsequent gaps in seconds, empty on a non-monotonic step). Rounding is half-away-from-zero and is identical across the Rust and Python implementations.
+
+This setting has no effect on IRIG recordings (IRIG already carries absolute time) and no effect when `time_format` resolves to anything other than `standard`.
+
+**Example.** Two consecutive records of the same RT/MSG 16 ticks apart, decoded with a 1 MHz rate, yield a `DELTA` of `0.000016`:
+
+```bash
+mie-decoder decode rec.mie -o out.csv --time-format standard --standard-tick-rate-hz 1000000
+```
+
+**Validation:** must be a finite number strictly greater than `0`. A non-positive or non-finite value is rejected — at load time for the TOML key (L2-CFG-011) and at parse time for the CLI flag (L2-CLI-012) — so a bad rate can never silently produce meaningless timing.
 
 ---
 

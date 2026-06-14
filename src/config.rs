@@ -65,6 +65,15 @@ pub struct DecoderConfig {
     /// `--lookahead-records N` on the CLI. Validated against
     /// `[LOOKAHEAD_RECORDS_MIN, LOOKAHEAD_RECORDS_MAX]` at load time.
     pub lookahead_records: usize,
+    /// L2-DEC-017: optional Standard-counter tick rate in Hz. `None`
+    /// (the default) keeps the historical empty-`DELTA` behavior for
+    /// Standard-timestamp records. When set to a finite, strictly-positive
+    /// value, Standard ticks are converted to microseconds and the records
+    /// participate in DELTA tracking like IRIG. Set via
+    /// `decode.standard_tick_rate_hz = <hz>` in TOML or
+    /// `--standard-tick-rate-hz <hz>` on the CLI. Validated as finite and
+    /// `> 0` at load time.
+    pub standard_tick_rate_hz: Option<f64>,
 }
 
 impl Default for DecoderConfig {
@@ -80,6 +89,7 @@ impl Default for DecoderConfig {
             allow_partial: false,
             detect_records: DEFAULT_DETECT_RECORDS,
             lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
+            standard_tick_rate_hz: None,
         }
     }
 }
@@ -98,6 +108,7 @@ pub struct ConfigOverrides {
     pub allow_partial: Option<bool>,
     pub detect_records: Option<usize>,
     pub lookahead_records: Option<usize>,
+    pub standard_tick_rate_hz: Option<f64>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -138,6 +149,9 @@ impl DecoderConfig {
         }
         if let Some(v) = ov.lookahead_records {
             self.lookahead_records = v;
+        }
+        if let Some(v) = ov.standard_tick_rate_hz {
+            self.standard_tick_rate_hz = Some(v);
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -261,6 +275,19 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
         }
         cfg.lookahead_records = n as usize;
     }
+    if let Some(hz) = toml.get_float("decode", "standard_tick_rate_hz")? {
+        // L2-DEC-017: the tick rate must be a real, strictly-positive
+        // frequency. Reject non-finite or non-positive values at load time
+        // per L2-CFG-010 so a bad rate can never silently produce garbage
+        // microseconds.
+        if !hz.is_finite() || hz <= 0.0 {
+            return Err(ConfigError(format!(
+                "Invalid decode.standard_tick_rate_hz: {hz}. \
+                 Must be a finite value greater than 0"
+            )));
+        }
+        cfg.standard_tick_rate_hz = Some(hz);
+    }
 
     if let Some(types) = toml.get_array("filter", "exclude_types")? {
         for v in types {
@@ -313,6 +340,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("decode", "allow_partial")
             | ("decode", "detect_records")
             | ("decode", "lookahead_records")
+            | ("decode", "standard_tick_rate_hz")
             | ("output", "format")
             | ("output", "no_clobber")
             | ("filter", "exclude_types")
@@ -424,6 +452,7 @@ fn parse_int_rt_sa(v: &TomlValue, field: &str) -> Result<u8, ConfigError> {
 pub enum TomlValue {
     String(String),
     Int(i64),
+    Float(f64),
     Bool(bool),
     Array(Vec<TomlValue>),
 }
@@ -467,6 +496,17 @@ impl TomlDoc {
             None => Ok(None),
             Some(TomlValue::Int(i)) => Ok(Some(*i)),
             Some(_) => Err(ConfigError(format!("[{section}] {key} must be an integer"))),
+        }
+    }
+    /// Read a float value. Accepts a TOML integer as well so operators can
+    /// write either `1000000` or `1000000.0` for a rate-style key.
+    pub fn get_float(&self, section: &str, key: &str) -> Result<Option<f64>, ConfigError> {
+        match self.get(section, key) {
+            None => Ok(None),
+            Some(TomlValue::Float(f)) => Ok(Some(*f)),
+            #[allow(clippy::cast_precision_loss)]
+            Some(TomlValue::Int(i)) => Ok(Some(*i as f64)),
+            Some(_) => Err(ConfigError(format!("[{section}] {key} must be a number"))),
         }
     }
 }
@@ -542,7 +582,16 @@ fn parse_value(s: &str, lineno: usize) -> Result<TomlValue, String> {
         b'"' => parse_string(s, lineno).map(TomlValue::String),
         b'[' => parse_array(s, lineno),
         b't' | b'f' => parse_bool(s, lineno).map(TomlValue::Bool),
-        b'-' | b'+' | b'0'..=b'9' => parse_int(s, lineno).map(TomlValue::Int),
+        // A numeric literal containing a decimal point or exponent is a
+        // float; otherwise an integer. (Hex literals like `0x02` are always
+        // quoted strings in our schema, so they never reach this branch.)
+        b'-' | b'+' | b'0'..=b'9' => {
+            if s.contains('.') || s.contains('e') || s.contains('E') {
+                parse_float(s, lineno).map(TomlValue::Float)
+            } else {
+                parse_int(s, lineno).map(TomlValue::Int)
+            }
+        }
         _ => Err(format!("line {lineno}: cannot parse value {s:?}")),
     }
 }
@@ -585,6 +634,11 @@ fn parse_bool(s: &str, lineno: usize) -> Result<bool, String> {
 fn parse_int(s: &str, lineno: usize) -> Result<i64, String> {
     s.parse::<i64>()
         .map_err(|_| format!("line {lineno}: invalid integer {s:?}"))
+}
+
+fn parse_float(s: &str, lineno: usize) -> Result<f64, String> {
+    s.parse::<f64>()
+        .map_err(|_| format!("line {lineno}: invalid float {s:?}"))
 }
 
 fn parse_array(s: &str, lineno: usize) -> Result<TomlValue, String> {
@@ -890,6 +944,57 @@ exclude_types = ["UNICORN"]
         if path.exists() {
             let cfg = load_config(Some(path)).unwrap();
             assert_eq!(cfg.output_format, "csv");
+        }
+    }
+
+    /// Requirements: L2-CFG-011, L2-DEC-017
+    #[test]
+    fn standard_tick_rate_hz_default_is_none() {
+        let cfg = parse_into_config("[decode]\ntime_format = \"standard\"\n").unwrap();
+        assert_eq!(cfg.standard_tick_rate_hz, None);
+    }
+
+    /// Requirements: L2-CFG-011
+    #[test]
+    fn standard_tick_rate_hz_accepts_float_and_int() {
+        let as_float = parse_into_config("[decode]\nstandard_tick_rate_hz = 1000000.0\n").unwrap();
+        assert_eq!(as_float.standard_tick_rate_hz, Some(1_000_000.0));
+        // An operator may write a bare integer; get_float coerces it.
+        let as_int = parse_into_config("[decode]\nstandard_tick_rate_hz = 1000000\n").unwrap();
+        assert_eq!(as_int.standard_tick_rate_hz, Some(1_000_000.0));
+    }
+
+    /// Requirements: L2-CFG-011, L2-CFG-010
+    #[test]
+    fn standard_tick_rate_hz_rejects_nonpositive() {
+        for bad in ["0", "0.0", "-1.0"] {
+            let text = format!("[decode]\nstandard_tick_rate_hz = {bad}\n");
+            let err = parse_into_config(&text).unwrap_err();
+            assert!(
+                err.0.contains("standard_tick_rate_hz"),
+                "error should name the field for {bad:?}: {}",
+                err.0
+            );
+        }
+    }
+
+    /// Requirements: L2-CFG-003
+    #[test]
+    fn standard_tick_rate_hz_override_applies() {
+        let merged = DecoderConfig::default().with_overrides(ConfigOverrides {
+            standard_tick_rate_hz: Some(2_000_000.0),
+            ..Default::default()
+        });
+        assert_eq!(merged.standard_tick_rate_hz, Some(2_000_000.0));
+    }
+
+    /// Requirements: L2-CFG-001
+    #[test]
+    fn parses_float_value() {
+        let doc = parse_toml("[decode]\nstandard_tick_rate_hz = 1.5e6\n").unwrap();
+        match doc.get("decode", "standard_tick_rate_hz") {
+            Some(TomlValue::Float(f)) => assert_eq!(*f, 1_500_000.0),
+            other => panic!("expected Float(1500000.0), got {other:?}"),
         }
     }
 }
