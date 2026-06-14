@@ -182,10 +182,40 @@ jobs:
         # platform- or interpreter-dependent, so running it across the
         # full python-job matrix would waste CI minutes. Mirrors how
         # cargo cov-ci is invoked only on the Linux cell of the Rust
-        # job. Floor (85% combined line+branch) is set in
-        # python/pyproject.toml's [tool.coverage.run] / [tool.coverage.report]
-        # config — see the comment block there for headroom rationale.
-        run: poetry -C python run pytest --cov --cov-report=term-missing --cov-fail-under=85
+        # job. The floor (88% combined line+branch) is `fail_under` in
+        # python/pyproject.toml's [tool.coverage.report] — see the comment
+        # block there for the ratchet rationale.
+        run: poetry -C python run pytest --cov --cov-report=term-missing
+
+  mypy:
+    name: Python type check (mypy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: pipx install poetry==2.3.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: poetry
+          cache-dependency-path: python/poetry.lock
+
+      - name: Synchronize locked dependencies
+        run: poetry -C python sync --no-interaction --no-ansi
+
+      - name: Run mypy (strict)
+        # mypy analyzes the package as python_version 3.10 (set in
+        # python/pyproject.toml [tool.mypy]) regardless of the running
+        # interpreter, so a single cell is sufficient — same rationale as
+        # the coverage gate. working-directory: python so mypy picks up the
+        # [tool.mypy] config and `src` resolves to the package source.
+        working-directory: python
+        run: poetry run mypy src
 
   conformance:
     name: Rust/Python conformance (${{ matrix.os }})

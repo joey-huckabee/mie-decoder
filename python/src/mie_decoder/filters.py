@@ -65,19 +65,25 @@ def apply_filters(
     )
 
     for msg in messages:
+        # SPURIOUS_DATA records carry no Command Word, so rt/subaddress are
+        # None and only type/bus filters can match them (mirrors the Rust
+        # filter). Guarding here also avoids an AttributeError on None.
+        cw = msg.command_word
+        rt = cw.rt if cw is not None else None
+        subaddress = cw.subaddress if cw is not None else None
         if filters.should_exclude(
             message_type=msg.type_word.message_type,
-            rt=msg.command_word.rt,
+            rt=rt,
             bus=msg.type_word.bus,
-            subaddress=msg.command_word.subaddress,
+            subaddress=subaddress,
         ):
             excluded_count += 1
             logger.debug(
-                "Filtered out: offset=0x%X type=0x%02X RT%d SA%d Bus %s",
+                "Filtered out: offset=0x%X type=0x%02X RT%s SA%s Bus %s",
                 msg.file_offset,
                 msg.type_word.message_type,
-                msg.command_word.rt,
-                msg.command_word.subaddress,
+                rt if rt is not None else "-",
+                subaddress if subaddress is not None else "-",
                 msg.type_word.bus.name,
             )
             continue

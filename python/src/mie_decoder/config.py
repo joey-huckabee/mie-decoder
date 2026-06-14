@@ -38,9 +38,9 @@ try:
     import tomllib  # type: ignore[import-not-found]
 except ModuleNotFoundError:
     try:
-        import tomli as tomllib  # type: ignore[no-redef]
+        import tomli as tomllib
     except ModuleNotFoundError:
-        tomllib = None  # type: ignore[assignment]
+        tomllib = None
 
 
 #: Map of message type names (case-insensitive) to MessageType enum values.
@@ -169,17 +169,24 @@ class FilterConfig:
             or self.exclude_subaddresses
         )
 
-    def should_exclude(self, message_type: int, rt: int, bus: Bus, subaddress: int) -> bool:
+    def should_exclude(
+        self, message_type: int, rt: int | None, bus: Bus, subaddress: int | None
+    ) -> bool:
         """Test whether a message should be excluded from output.
 
         Args:
             message_type: The message type code from the Type Word.
-            rt: The Remote Terminal address from the Command Word.
+            rt: The Remote Terminal address from the Command Word, or
+                ``None`` for records with no Command Word (SPURIOUS_DATA).
             bus: The bus identifier from the Type Word.
-            subaddress: The subaddress from the Command Word.
+            subaddress: The subaddress from the Command Word, or ``None``
+                for records with no Command Word (SPURIOUS_DATA).
 
         Returns:
-            True if the message matches any exclusion criterion.
+            True if the message matches any exclusion criterion. A ``None``
+            ``rt``/``subaddress`` never matches an RT/subaddress filter
+            (those records can only be excluded by type or bus), mirroring
+            the Rust ``FilterConfig::should_exclude`` behavior.
         """
         if self.exclude_types and message_type in self.exclude_types:
             return True
@@ -243,7 +250,8 @@ class DecoderConfig:
         """
         new_log = kwargs.get("log_level") or self.log_level
         new_tf = kwargs.get("time_format") or self.time_format
-        new_strict = kwargs.get("strict") if kwargs.get("strict") is not None else self.strict
+        strict_override = kwargs.get("strict")
+        new_strict = self.strict if strict_override is None else bool(strict_override)
         new_em = kwargs.get("error_mode") or self.error_mode
         new_fmt = kwargs.get("output_format") or self.output_format
         # bool overrides need an explicit None check; `or` would let a

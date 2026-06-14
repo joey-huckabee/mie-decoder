@@ -199,13 +199,17 @@ fn min_payload_words(fmt: MessageFormat, cmd: &CommandWord) -> u16 {
 /// (classify_message_format). Returns Err describing the first
 /// invariant the record violates; Ok if all hold.
 ///
-/// Current invariant set:
-/// - INV-001: Type 0x02 → Cmd direction = Receive
-/// - INV-002: Type 0x04 → Cmd direction = Transmit
-/// - INV-003: TW.word_count >= 1 + ts_words + 1 + min_payload_words(format, cmd)
+/// Reject-class invariants checkable before payload extraction:
+/// - INV-001 (L2-SYN-020): Type 0x02 → Cmd direction = Receive
+/// - INV-002 (L2-SYN-021): Type 0x04 → Cmd direction = Transmit
+/// - INV-003 (L2-SYN-022): TW.word_count >= 1 + ts_words + 1 + min_payload_words(format, cmd)
 ///
-/// Deferred (Phase 7b): cmd2 direction for RT-to-RT, Status RT vs
-/// Cmd RT match, reserved-bit zero check.
+/// The remaining structural invariants live in companion functions
+/// because they need data not available here: RT-to-RT Cmd2 direction
+/// (L2-SYN-023) in [`validate_post_extract_invariants`] (Cmd2 sits inside
+/// the payload), and the AnomalyWarn-class Status-RT-vs-Cmd-RT
+/// (L2-SYN-024) and Type-Word reserved-bit (L2-SYN-025) checks in
+/// [`detect_record_anomalies`].
 pub fn validate_structural_invariants(
     tw: &TypeWord,
     cmd: &CommandWord,

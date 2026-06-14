@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TextIO
 
 from mie_decoder.decode import (
     MIN_RECORD_BYTES,
@@ -46,7 +47,7 @@ def hex_dump_raw(
     path: str | Path,
     start_offset: int = 0,
     length: int | None = None,
-    stream: object | None = None,
+    stream: TextIO | None = None,
 ) -> None:
     """Print a raw hex dump of a binary file.
 
@@ -68,8 +69,8 @@ def hex_dump_raw(
     end = len(data) if length is None else min(start_offset + length, len(data))
     chunk = data[start_offset:end]
 
-    print(f"File: {fpath.name} ({len(data)} bytes)", file=out)  # type: ignore[arg-type]
-    print(f"Range: 0x{start_offset:08X}–0x{end:08X}\n", file=out)  # type: ignore[arg-type]
+    print(f"File: {fpath.name} ({len(data)} bytes)", file=out)
+    print(f"Range: 0x{start_offset:08X}–0x{end:08X}\n", file=out)
 
     for i in range(0, len(chunk), 16):
         addr = start_offset + i
@@ -77,7 +78,7 @@ def hex_dump_raw(
         ascii_part = "".join(
             chr(b) if 32 <= b < 127 else "." for b in chunk[i:i + 16]
         )
-        print(  # type: ignore[arg-type]
+        print(
             f"  {addr:08X}  {hex_part:<48s}  |{ascii_part}|",
             file=out,
         )
@@ -87,7 +88,7 @@ def hex_dump_records(
     path: str | Path,
     max_records: int | None = None,
     start_offset: int = 0,
-    stream: object | None = None,
+    stream: TextIO | None = None,
 ) -> None:
     """Print a record-aware hex dump of an MIE binary file.
 
@@ -113,11 +114,11 @@ def hex_dump_records(
     offset = start_offset
     record_num = 0
 
-    print(  # type: ignore[arg-type]
+    print(
         f"File: {fpath.name} ({file_len} bytes)",
         file=out,
     )
-    print(  # type: ignore[arg-type]
+    print(
         f"Record dump starting at offset 0x{start_offset:08X}\n",
         file=out,
     )
@@ -130,7 +131,7 @@ def hex_dump_records(
         tw = decode_type_word(type_raw)
 
         if tw.word_count < MIN_RECORD_WORDS:
-            print(  # type: ignore[arg-type]
+            print(
                 f"  !! Invalid word_count={tw.word_count} at 0x{offset:08X}, stopping",
                 file=out,
             )
@@ -138,7 +139,7 @@ def hex_dump_records(
 
         record_bytes = tw.word_count * 2
         if offset + record_bytes > file_len:
-            print(  # type: ignore[arg-type]
+            print(
                 f"  !! Truncated record at 0x{offset:08X} "
                 f"({record_bytes} bytes needed, {file_len - offset} available)",
                 file=out,
@@ -155,7 +156,7 @@ def hex_dump_records(
         cmd = decode_command_word(cmd_raw)
 
         # Record header
-        print(  # type: ignore[arg-type]
+        print(
             f"{'─'*72}\n"
             f"  Record #{record_num}  @  0x{offset:08X}  "
             f"({record_bytes} bytes, {tw.word_count} words)\n"
@@ -177,16 +178,16 @@ def hex_dump_records(
             ascii_part = "".join(
                 chr(b) if 32 <= b < 127 else "." for b in record_data[i:i + 16]
             )
-            print(  # type: ignore[arg-type]
+            print(
                 f"    {addr:08X}  {hex_part:<48s}  |{ascii_part}|",
                 file=out,
             )
 
-        print(file=out)  # type: ignore[arg-type]
+        print(file=out)
         offset += record_bytes
         record_num += 1
 
-    print(  # type: ignore[arg-type]
+    print(
         f"{'─'*72}\n{record_num} records dumped.",
         file=out,
     )

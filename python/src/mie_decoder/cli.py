@@ -315,7 +315,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     _apply_config_log_level(args, config.log_level)
 
     # Build CLI overrides dict (only non-None values)
-    overrides: dict = {}
+    overrides: dict[str, object] = {}
     if args.time_format is not None:
         tf_map = {"auto": TimestampFormat.AUTO, "irig": TimestampFormat.IRIG, "standard": TimestampFormat.STANDARD}
         overrides["time_format"] = tf_map[args.time_format]

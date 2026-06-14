@@ -2,6 +2,15 @@
 
 ## Release status
 
+**v1.4.1 — joint Rust + Python cut, 2026-06-14.** Maintenance release.
+Closed the CI dev-tool gap by wiring strict `mypy` into CI (it was
+configured but never run), which surfaced and fixed a latent Python
+filter crash on SPURIOUS_DATA records. Ratcheted both coverage gates to
+baseline-2pp (Rust 84/83, Python 88%) and cleared stale "deferred"
+comments now that the referenced invariants have shipped. No public API
+or decode-output changes. See [`CHANGELOG.md`](../CHANGELOG.md) section
+`[1.4.1]` for the full entry.
+
 **v1.4.0 — joint Rust + Python cut, 2026-06-14.** Feature release.
 Added opt-in Standard-timestamp tick calibration: the new
 `decode.standard_tick_rate_hz` TOML key and `--standard-tick-rate-hz`
@@ -1409,12 +1418,18 @@ here so they don't get dropped.
 ## Tooling
 
 - **~~Publish Rust coverage reports from CI.~~** *Resolved in v1.3.0.*
-  The Linux Rust CI cell runs `cargo cov-lcov` after the 70/70 gate and
+  The Linux Rust CI cell runs `cargo cov-lcov` after the coverage gate and
   uploads `lcov.info` as the `rust-lcov` workflow artifact.
-- **Ratchet thresholds upward as baseline stabilizes.** Initial
-  floors (70/70) sit ~5pp below the baseline (74.81% / 71.55%) to
-  absorb refactor drift. After a few weeks of stable readings,
-  consider tightening to baseline-2pp.
+- **~~Ratchet thresholds upward as baseline stabilizes.~~** *Resolved in
+  v1.4.1.* Coverage has held well above the original baseline-5pp floors,
+  so the gates are tightened to baseline-2pp: Rust `cov-ci` to 84 line /
+  83 region (from 70/70), Python `fail_under` to 88% combined line+branch
+  (from 85%).
+- **~~Wire mypy into CI.~~** *Resolved in v1.4.1.* `python/pyproject.toml`
+  declared `[tool.mypy] strict = true` but no CI job or dev dependency ran
+  it. Added `mypy` to the dev group and a `mypy` CI job (`poetry run mypy
+  src`); fixed the type errors strict mode surfaced, including a latent
+  `filters.py` crash on SPURIOUS_DATA records (no Command Word).
 - **~~Adopt `clippy::unwrap_used = "warn"` and
   `clippy::expect_used = "warn"`.~~** *Resolved in v1.3.0; see
   Lint policy above.*

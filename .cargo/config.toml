@@ -11,13 +11,15 @@
 #   cargo cov-ci      → enforces the gate; non-zero exit if below
 #                       --fail-under-lines or --fail-under-regions
 #
-# Thresholds match the agreed-upon floors. Baseline at integration
-# time was 74.81% lines / 71.55% regions, so the 70/70 gate gives
-# ~5 percentage points of headroom for refactor drift before the
-# build starts failing. Bump up after a few weeks of stable readings
-# if we want stricter.
+# Thresholds match the agreed-upon floors. The original 70/70 gate sat
+# ~5pp below the v1.0.0 baseline (74.81% lines / 71.55% regions) to
+# absorb refactor drift. Coverage has since stabilized well above that
+# (85.98% lines / 85.08% regions at the v1.4.1 measurement), so the gate
+# is ratcheted to baseline-2pp (84 lines / 83 regions). The crate has no
+# platform-gated (`cfg(windows/unix)`) code, so the Linux CI number
+# matches local runs — there is no cross-platform slack to budget for.
 
 [alias]
 cov      = 'llvm-cov --html --open --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
 cov-lcov = 'llvm-cov --lcov --output-path lcov.info --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
-cov-ci   = 'llvm-cov --fail-under-lines 70 --fail-under-regions 70 --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
+cov-ci   = 'llvm-cov --fail-under-lines 84 --fail-under-regions 83 --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'

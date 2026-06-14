@@ -1,6 +1,6 @@
 [project]
 name = "mie-decoder"
-version = "1.4.0"
+version = "1.4.1"
 description = "Decoder for DDC MIL-STD-1553 MIE binary recording files"
 authors = [
     { name = "Joey" },
@@ -22,6 +22,7 @@ packages = [{include = "mie_decoder", from = "src"}]
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
 pytest-cov = "^7.0"
+mypy = "^1.13"
 
 [build-system]
 requires = ["poetry-core"]
@@ -40,12 +41,20 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 
-# Coverage gate parallels the Rust crate's cargo-llvm-cov gate (70%
-# line + 70% region in .cargo/config.toml's `cov-ci` alias). Baseline
-# at integration time was ~89% combined line+branch across the 245
-# pytest cases, so the 85% combined floor gives ~4 percentage points
-# of headroom before CI starts failing. Bump up after a few weeks of
-# stable readings if we want stricter.
+# pandas ships no type information mypy accepts, and `tomli` (the 3.10
+# TOML backport, conditionally imported in config.py) is not installed
+# in the dev/type-check environment. Neither is part of our typed
+# surface, so treat their imports as untyped rather than vendoring stubs.
+[[tool.mypy.overrides]]
+module = ["pandas", "tomli"]
+ignore_missing_imports = true
+
+# Coverage gate parallels the Rust crate's cargo-llvm-cov gate
+# (.cargo/config.toml's `cov-ci` alias, 84 line / 83 region). The
+# combined line+branch coverage has held ~90% for several releases, so
+# the floor is ratcheted to baseline-2pp (88%), matching the Rust ratchet
+# rationale. `fail_under` below is the single source of truth — CI runs
+# `pytest --cov` and the gate fails the build automatically.
 #
 # __main__.py is the entry shim (python -m mie_decoder) — three-line
 # wrapper around cli.main(), uncoverable without spawning a child
@@ -58,3 +67,4 @@ omit = ["*/__main__.py"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+fail_under = 88

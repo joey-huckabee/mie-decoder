@@ -89,6 +89,7 @@ from mie_decoder.models import (
     Timestamp,
     TimestampFormat,
     TIMESTAMP_WORD_COUNTS,
+    TypeWord,
 )
 from mie_decoder.sync import (
     DEFAULT_LOOKAHEAD_RECORDS,

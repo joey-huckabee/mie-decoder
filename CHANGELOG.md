@@ -15,6 +15,45 @@ full release workflow.
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-06-14
+
+Joint Rust + Python maintenance release: close the CI dev-tool gap, tighten
+the coverage gates, and clear stale comments. No public API or decode-output
+changes. Both implementations ship together from the `v1.4.1` repository tag.
+
+### Added
+
+- A `mypy` CI job and dev dependency. `python/pyproject.toml` declared
+  `[tool.mypy] strict = true` but nothing installed or ran it; strict
+  type-checking is now gated in CI (`poetry run mypy src`).
+
+### Fixed
+
+- Latent crash in the Python filter: `apply_filters` dereferenced
+  `command_word.rt` / `.subaddress` on records with no Command Word
+  (SPURIOUS_DATA), raising `AttributeError` whenever such a record reached
+  the filter. RT/subaddress filters now treat a missing Command Word as
+  "no match" (excludable only by type or bus), matching the Rust filter.
+  Surfaced by the new strict mypy gate.
+
+### Changed
+
+- Coverage gates ratcheted from baseline-5pp to baseline-2pp: Rust
+  `cov-ci` to 84% line / 83% region (from 70/70), Python `fail_under` to
+  88% combined line+branch (from 85%, now config-driven in
+  `[tool.coverage.report]`).
+- mypy-strict cleanups across the Python package: a shared `ByteSource`
+  buffer alias for the `mmap`-backed decode/sync helpers, an explicit
+  `TextIO` stream type in `dump`, removal of stale `# type: ignore`
+  comments, and minor annotation fixes. No runtime behavior change.
+
+### Removed
+
+- Stale "Deferred (Phase 7b)" comments in `decode.rs` / `decode.py` (the
+  RT-to-RT Cmd2-direction and anomaly invariants shipped as
+  L2-SYN-023/024/025) and a stale SPURIOUS_DATA "raises ValueError"
+  docstring (0x20 classifies as `SPURIOUS_DATA`).
+
 ## [1.4.0] — 2026-06-14
 
 Joint Rust + Python feature release. Adds opt-in **Standard-timestamp

@@ -17,6 +17,7 @@ from typing import Final
 
 from mie_decoder.models import (
     Bus,
+    ByteSource,
     CommandWord,
     Direction,
     IrigTimestamp,
@@ -201,7 +202,7 @@ DEFAULT_DETECT_RECORDS: Final[int] = 8
 
 
 def probe_timestamp_format(
-    data: bytes | memoryview,
+    data: ByteSource,
     first_offset: int,
     max_records: int,
 ) -> DetectionOutcome:
@@ -290,7 +291,7 @@ def probe_timestamp_format(
 
 
 def _score_single_record(
-    data: bytes | memoryview,
+    data: ByteSource,
     offset: int,
     type_word: TypeWord,
 ) -> tuple[int, int]:
@@ -415,8 +416,8 @@ def classify_message_format(
        - MODE_CODE_TX_DATA:       WC = 7 (+ Status + DataWord)
        - MODE_CODE_RX_DATA:       WC = 7 (+ DataWord + Status)
 
-    3. For 0x20 (SPURIOUS_DATA), classification is deferred pending
-       error format documentation. Currently raises ValueError.
+    3. 0x20 (SPURIOUS_DATA) classifies as MessageFormat.SPURIOUS_DATA —
+       raw bus words captured with no command structure.
 
     Args:
         message_type: The type code from bits 0–6 of the Type Word.
@@ -427,8 +428,8 @@ def classify_message_format(
         The classified MessageFormat.
 
     Raises:
-        ValueError: If the message_type is 0x20 (SPURIOUS_DATA) or
-            cannot be classified.
+        ValueError: If the message_type is not one of the known MIE
+            message types and therefore cannot be classified.
 
     Examples:
         >>> cmd = decode_command_word(0x797E)  # RT15, Receive, SA11
@@ -600,14 +601,18 @@ def validate_structural_invariants(
     Returns ``None`` if all invariants hold; otherwise returns an
     :class:`InvariantViolation` describing the first failure.
 
-    Current invariant set:
+    Reject-class invariants checkable before payload extraction:
 
-    - INV-001: Type 0x02 (BC→RT) → Cmd direction = Receive
-    - INV-002: Type 0x04 (RT→BC) → Cmd direction = Transmit
-    - INV-003: ``TW.word_count >= 1 + ts_words + 1 + min_payload_words(format, cmd)``
+    - INV-001 (L2-SYN-020): Type 0x02 (BC→RT) → Cmd direction = Receive
+    - INV-002 (L2-SYN-021): Type 0x04 (RT→BC) → Cmd direction = Transmit
+    - INV-003 (L2-SYN-022): ``TW.word_count >= 1 + ts_words + 1 + min_payload_words(format, cmd)``
 
-    Deferred (Phase 7b): cmd2 direction for RT-to-RT, Status RT vs
-    Cmd RT match, reserved-bit zero check.
+    The remaining structural invariants live in companion functions
+    because they need data not available here: RT-to-RT Cmd2 direction
+    (L2-SYN-023) in :func:`validate_post_extract_invariants` (Cmd2 sits
+    inside the payload), and the AnomalyWarn-class Status-RT-vs-Cmd-RT
+    (L2-SYN-024) and Type-Word reserved-bit (L2-SYN-025) checks in
+    :func:`detect_record_anomalies`.
     """
     # INV-001 / INV-002: per-type direction.
     if (
@@ -737,7 +742,7 @@ def is_valid_message_type(message_type: int) -> bool:
     return message_type in VALID_MESSAGE_TYPES
 
 
-def read_u16(data: bytes | memoryview, offset: int) -> int:
+def read_u16(data: ByteSource, offset: int) -> int:
     """Read a single little-endian unsigned 16-bit integer.
 
     Args:
@@ -750,10 +755,10 @@ def read_u16(data: bytes | memoryview, offset: int) -> int:
     Raises:
         struct.error: If there are not enough bytes at the given offset.
     """
-    return struct.unpack_from(_LE_U16, data, offset)[0]
+    return int(struct.unpack_from(_LE_U16, data, offset)[0])
 
 
-def read_u16_array(data: bytes | memoryview, offset: int, count: int) -> tuple[int, ...]:
+def read_u16_array(data: ByteSource, offset: int, count: int) -> tuple[int, ...]:
     """Read an array of little-endian unsigned 16-bit integers.
 
     Args:

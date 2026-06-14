@@ -262,6 +262,36 @@ class TestApplyFilters:
         assert len(result) == 0
 
     @pytest.mark.requirement("L2-FLT-001")
+    def test_spurious_without_command_word_survives_rt_filter(self) -> None:
+        """SPURIOUS_DATA records have no Command Word (rt/subaddress are
+        None). An RT or subaddress filter must not match them — and must
+        not raise on the None Command Word — mirroring the Rust filter.
+        They remain excludable by type or bus.
+        """
+        spurious = MieMessage(
+            timestamp=IrigTimestamp(192, 15, 54, 50, 456225, False),
+            type_word=TypeWord(0x20, Bus.A, 12, False, 0x2420),
+            message_format=MessageFormat.SPURIOUS_DATA,
+            command_word=None,
+            command_word_2=None,
+            status_word=None,
+            status_word_2=None,
+            data_words=(0x1234,),
+            error_word=0x2001,
+            delta=None,
+            file_offset=0,
+        )
+        # RT/subaddress filters never match a None Command Word: the
+        # spurious record passes through (and does not raise).
+        assert list(apply_filters([spurious], FilterConfig(exclude_rts={15}))) == [spurious]
+        assert list(
+            apply_filters([spurious], FilterConfig(exclude_subaddresses={11}))
+        ) == [spurious]
+        # But type and bus filters still apply to it.
+        assert list(apply_filters([spurious], FilterConfig(exclude_types={0x20}))) == []
+        assert list(apply_filters([spurious], FilterConfig(exclude_buses={Bus.A}))) == []
+
+    @pytest.mark.requirement("L2-FLT-001")
     def test_end_to_end_with_reader(self, tmp_mie_file: Path) -> None:
         """Filter should work with actual MieFileReader output."""
         from mie_decoder.reader import MieFileReader

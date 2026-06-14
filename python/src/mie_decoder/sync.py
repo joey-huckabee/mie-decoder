@@ -88,7 +88,7 @@ from mie_decoder.decode import (
     is_valid_message_type,
     read_u16,
 )
-from mie_decoder.models import TimestampFormat, TIMESTAMP_WORD_COUNTS
+from mie_decoder.models import ByteSource, TimestampFormat, TIMESTAMP_WORD_COUNTS
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class ValidationFailure(Enum):
 
 
 def validate_record(
-    data: bytes | memoryview,
+    data: ByteSource,
     offset: int,
     file_len: int,
     ts_format: TimestampFormat | None = None,
@@ -144,7 +144,7 @@ def validate_record(
 
 
 def validate_record_detailed(
-    data: bytes | memoryview,
+    data: ByteSource,
     offset: int,
     file_len: int,
     ts_format: TimestampFormat | None = None,
@@ -249,7 +249,7 @@ def validate_record_detailed(
 
 
 def find_first_record(
-    data: bytes | memoryview,
+    data: ByteSource,
     file_len: int,
     ts_format: TimestampFormat | None = None,
     max_scan: int = MAX_SCAN_BYTES,
@@ -304,7 +304,7 @@ HOMOGENEITY_SAMPLE_RECORDS: Final[int] = 4
 
 
 def is_homogeneous_payload(
-    data: bytes | memoryview,
+    data: ByteSource,
     offset: int,
     record_bytes: int,
 ) -> bool:
@@ -341,7 +341,7 @@ def is_homogeneous_payload(
 
 
 def diagnose_header_scan_failure(
-    data: bytes | memoryview,
+    data: ByteSource,
     file_len: int,
     ts_format: TimestampFormat | None = None,
     max_scan: int = MAX_SCAN_BYTES,
@@ -391,7 +391,7 @@ def diagnose_header_scan_failure(
 
 
 def recover_sync(
-    data: bytes | memoryview,
+    data: ByteSource,
     offset: int,
     file_len: int,
     ts_format: TimestampFormat | None = None,
