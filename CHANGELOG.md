@@ -15,6 +15,19 @@ full release workflow.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Forcing the wrong `--time-format` no longer silently emits garbage
+  timestamps** (ROADMAP PRA-2, implements the previously-unimplemented
+  half of `L2-DEC-013`). When an explicit `--time-format` /
+  `decode.time_format` contradicts the recording — the detection probe is
+  *Decisive* for the other format — strict mode now raises a
+  timestamp-format mismatch (exit `2`) and lenient mode logs a WARN and
+  proceeds with the forced format. Marginal/ambiguous recordings are not
+  flagged, so an intentional override of a misdetection still works.
+  Verified by new forced-mismatch tests in both implementations and the
+  `forced-format-mismatch-strict` conformance case.
+
 ### Changed
 
 - **CLI exit codes are now a granular, cross-impl-identical taxonomy**

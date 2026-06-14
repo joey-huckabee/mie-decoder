@@ -243,6 +243,20 @@
       "input": "inputs/standard-timestamps.hex",
       "config": "configs/invalid-time-format.toml",
       "expected_exit": 5
+    },
+    {
+      "name": "forced-format-mismatch-strict",
+      "input": "inputs/basic-multi-record.hex",
+      "config": "configs/strict.toml",
+      "rust_args": [
+        "--time-format",
+        "standard"
+      ],
+      "python_args": [
+        "--time-format",
+        "standard"
+      ],
+      "expected_exit": 2
     }
   ]
 }

@@ -308,7 +308,59 @@ impl MieFileReader {
                         }
                     }
                 } else {
-                    None
+                    // L2-DEC-013: the format was forced via --time-format /
+                    // decode.time_format. Sanity-check it against the same
+                    // detection probe: if the probe is *Decisive* about the
+                    // OTHER format, the forced selection is obviously wrong
+                    // (e.g. --time-format standard on an IRIG file), which
+                    // would otherwise emit garbage timestamps for the whole
+                    // file. Marginal/Ambiguous probes are NOT flagged — those
+                    // are exactly the cases where forcing is the legitimate
+                    // override of a detection the heuristic can't make
+                    // confidently. resolved_format stays the forced format.
+                    let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
+                    if outcome.confidence == DetectionConfidence::Decisive
+                        && outcome.format != self.time_format
+                    {
+                        if self.strict {
+                            log_error!(
+                                "forced timestamp format {:?} contradicts the recording in {} \
+                                 at offset 0x{:X}: detection is decisive for {:?} (IRIG={} \
+                                 STD={} over {} record(s)) — strict mode rejects the mismatch; \
+                                 drop --time-format to auto-detect",
+                                self.time_format,
+                                self.path.display(),
+                                hit.offset,
+                                outcome.format,
+                                outcome.irig_score,
+                                outcome.std_score,
+                                outcome.records_probed,
+                            );
+                            Some(MieError::TimestampFormatMismatch {
+                                offset: hit.offset as u64,
+                                irig_score: outcome.irig_score,
+                                std_score: outcome.std_score,
+                                records_probed: outcome.records_probed as u32,
+                            })
+                        } else {
+                            log_warn!(
+                                "forced timestamp format {:?} contradicts the recording at \
+                                 offset 0x{:X}: detection is decisive for {:?} (IRIG={} STD={} \
+                                 over {} record(s)) — decoding with the forced format anyway; \
+                                 drop --time-format to auto-detect or pass --strict to reject \
+                                 the mismatch",
+                                self.time_format,
+                                hit.offset,
+                                outcome.format,
+                                outcome.irig_score,
+                                outcome.std_score,
+                                outcome.records_probed,
+                            );
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 }
             }
             None => {
@@ -1299,6 +1351,93 @@ mod tests {
         let reader = MieFileReader::new(f.path()).unwrap();
         let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
         assert!(msgs.is_empty(), "lenient mode SHALL yield zero records");
+    }
+
+    /// L2-DEC-013: forcing the wrong timestamp format on a recording the
+    /// detection probe is *decisive* about SHALL surface a mismatch in
+    /// strict mode rather than silently emit garbage timestamps.
+    /// Requirements: L2-DEC-013
+    #[test]
+    fn forced_format_mismatch_strict_errors() {
+        // Two valid IRIG records → the probe is decisive for IRIG.
+        let mut data = rt15_sa11_rcv();
+        data.extend(rt15_sa11_rcv());
+        let f = write_temp(&data);
+        let reader = MieFileReader::with_options(
+            f.path(),
+            ReaderOptions {
+                strict: true,
+                time_format: TimestampFormat::Standard,
+                detect_records: DEFAULT_DETECT_RECORDS,
+                lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
+                standard_tick_rate_hz: None,
+            },
+        )
+        .unwrap();
+        match reader.iter().next() {
+            Some(Err(e)) => assert_eq!(
+                e.kind(),
+                crate::error::MieErrorKind::TimestampFormatMismatch,
+                "expected TimestampFormatMismatch, got {:?}",
+                e.kind()
+            ),
+            other => panic!("expected Some(Err(TimestampFormatMismatch)), got {other:?}"),
+        }
+    }
+
+    /// L2-DEC-013: in lenient mode the same forced-format mismatch SHALL
+    /// log a WARN but proceed with the forced format rather than abort.
+    /// Requirements: L2-DEC-013
+    #[test]
+    fn forced_format_mismatch_lenient_proceeds() {
+        let mut data = rt15_sa11_rcv();
+        data.extend(rt15_sa11_rcv());
+        let f = write_temp(&data);
+        let reader = MieFileReader::with_options(
+            f.path(),
+            ReaderOptions {
+                strict: false,
+                time_format: TimestampFormat::Standard,
+                detect_records: DEFAULT_DETECT_RECORDS,
+                lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
+                standard_tick_rate_hz: None,
+            },
+        )
+        .unwrap();
+        // No terminal error: lenient mode decodes with the forced format
+        // (records may be skipped on invariant violations, but the stream
+        // does not abort).
+        let result: Result<Vec<_>, _> = reader.iter().collect();
+        assert!(
+            result.is_ok(),
+            "lenient forced-format mismatch must not abort the stream"
+        );
+    }
+
+    /// L2-DEC-013: forcing a format the probe agrees with (or is not
+    /// decisive against) SHALL NOT trip the mismatch check.
+    /// Requirements: L2-DEC-013
+    #[test]
+    fn forced_format_matching_is_not_flagged() {
+        let mut data = rt15_sa11_rcv();
+        data.extend(rt15_sa11_rcv());
+        let f = write_temp(&data);
+        let reader = MieFileReader::with_options(
+            f.path(),
+            ReaderOptions {
+                strict: true,
+                time_format: TimestampFormat::Irig,
+                detect_records: DEFAULT_DETECT_RECORDS,
+                lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
+                standard_tick_rate_hz: None,
+            },
+        )
+        .unwrap();
+        let msgs: Vec<_> = reader
+            .iter()
+            .collect::<Result<_, _>>()
+            .expect("forcing the correct format must decode cleanly");
+        assert_eq!(msgs.len(), 2);
     }
 
     /// L2-SYN-018: 0x20-fill parses as a SPURIOUS_DATA Type Word

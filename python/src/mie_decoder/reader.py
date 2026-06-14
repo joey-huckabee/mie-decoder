@@ -390,6 +390,58 @@ class MieFileReader:
                             outcome.std_score,
                             outcome.records_probed,
                         )
+                else:
+                    # L2-DEC-013: the format was forced via --time-format /
+                    # decode.time_format. Sanity-check it against the same
+                    # detection probe: if the probe is *Decisive* about the
+                    # OTHER format, the forced selection is obviously wrong
+                    # (e.g. --time-format standard on an IRIG file), which
+                    # would otherwise emit garbage timestamps for the whole
+                    # file. Marginal/Ambiguous probes are NOT flagged — those
+                    # are exactly the cases where forcing is the legitimate
+                    # override. resolved_format stays the forced format.
+                    outcome = probe_timestamp_format(
+                        mm, start_offset, self._detect_records,
+                    )
+                    if (
+                        outcome.confidence == DetectionConfidence.DECISIVE
+                        and outcome.format != resolved_format
+                    ):
+                        if self._strict:
+                            logger.error(
+                                "Forced timestamp format %s contradicts the "
+                                "recording in %s at offset 0x%X: detection is "
+                                "decisive for %s (IRIG=%d STD=%d over %d "
+                                "record(s)) — strict mode rejects the mismatch; "
+                                "drop --time-format to auto-detect",
+                                resolved_format.name,
+                                self._path.name,
+                                start_offset,
+                                outcome.format.name,
+                                outcome.irig_score,
+                                outcome.std_score,
+                                outcome.records_probed,
+                            )
+                            raise MieTimestampFormatMismatchError(
+                                start_offset,
+                                outcome.irig_score,
+                                outcome.std_score,
+                                outcome.records_probed,
+                            )
+                        logger.warning(
+                            "Forced timestamp format %s contradicts the "
+                            "recording at offset 0x%X: detection is decisive "
+                            "for %s (IRIG=%d STD=%d over %d record(s)) — "
+                            "decoding with the forced format anyway; drop "
+                            "--time-format to auto-detect or pass --strict to "
+                            "reject the mismatch",
+                            resolved_format.name,
+                            start_offset,
+                            outcome.format.name,
+                            outcome.irig_score,
+                            outcome.std_score,
+                            outcome.records_probed,
+                        )
 
                 offset = start_offset
                 loop_min = MIN_RECORD_BYTES_STANDARD

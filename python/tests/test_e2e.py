@@ -194,6 +194,45 @@ class TestMieFileReader:
         assert exc_info.value.record_bytes == 72
         assert exc_info.value.available_bytes == 20
 
+    @pytest.mark.requirement("L2-DEC-013")
+    def test_forced_format_mismatch_strict_raises(self, tmp_path: Path) -> None:
+        """L2-DEC-013: forcing the wrong timestamp format on a recording
+        the probe is decisive about SHALL raise in strict mode rather than
+        silently emit garbage timestamps."""
+        from tests.conftest import RECORD_RT15_SA11_RCV
+        from mie_decoder.exceptions import MieTimestampFormatMismatchError
+
+        # Two valid IRIG records → the probe is decisive for IRIG.
+        fpath = tmp_path / "forced_mismatch.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV * 2)
+        with pytest.raises(MieTimestampFormatMismatchError):
+            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.STANDARD))
+
+    @pytest.mark.requirement("L2-DEC-013")
+    def test_forced_format_mismatch_lenient_proceeds(self, tmp_path: Path) -> None:
+        """L2-DEC-013: in lenient mode the same forced-format mismatch
+        SHALL log a WARN but proceed with the forced format, not abort."""
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "forced_mismatch_lenient.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV * 2)
+        # Does not raise; records may be skipped on invariant violations,
+        # but the stream completes.
+        list(MieFileReader(fpath, time_format=TimestampFormat.STANDARD))
+
+    @pytest.mark.requirement("L2-DEC-013")
+    def test_forced_format_matching_is_not_flagged(self, tmp_path: Path) -> None:
+        """L2-DEC-013: forcing the format the probe agrees with SHALL NOT
+        trip the mismatch check — the records decode normally."""
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "forced_match.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV * 2)
+        messages = list(
+            MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG)
+        )
+        assert len(messages) == 2
+
     @pytest.mark.requirement("L2-RDR-004")
     def test_first_record_truncation_lenient_terminates_clean(
         self, tmp_path: Path

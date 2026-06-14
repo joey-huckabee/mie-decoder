@@ -131,27 +131,25 @@ for reference only (`PRA-N`).
   `usage-error-bad-flag-value` (exit `4`) and `config-error-invalid-value`
   (exit `5`). `count` / `dump` inherit `0/1/2/4/5` but never `3`.
 
-**PRA-2 — `L2-DEC-013` forced-format validation is unimplemented (spec drift).**
-*Severity: High.*
-- **Concern.** `L2-DEC-013` states that an explicit `--time-format` /
-  `decode.time_format` "SHALL still be validated against the first
-  record's word count to detect obviously-wrong selections, surfacing a
-  distinct error class in strict mode and a WARN in lenient mode." This
-  second sentence is not implemented, yet the trace matrix shows the
-  requirement "Implemented."
-- **Evidence.** The Rust forced path is `explicit => explicit`
-  (`src/reader.rs`) with no word-count check; the probe/validation block
-  runs only for `Auto`. No distinct error class exists for a
-  forced-format/word-count mismatch. Tests cover only the happy path. Net
-  effect: `mie-decoder decode --time-format standard` on an IRIG file (or
-  vice versa) silently emits garbage timestamps for the entire file —
-  exactly the failure the requirement was written to prevent.
-- **Proposed adjustment.** Implement the first-record word-count sanity
-  check on the forced path in both implementations (strict → distinct
-  error class; lenient → WARN), add a conformance case, and keep the
-  matrix honest — or, if the behavior is intentionally dropped, retract
-  the second sentence of `L2-DEC-013` rather than leaving it
-  "Implemented."
+**~~PRA-2 — `L2-DEC-013` forced-format validation is unimplemented (spec drift).~~**
+*Resolved.* *Severity: High.*
+- **Concern.** `L2-DEC-013`'s forced-format sanity-check sentence was not
+  implemented (the Rust forced path was `explicit => explicit` with no
+  check; tests covered only the happy path), so `--time-format standard`
+  on an IRIG file silently emitted garbage timestamps for the whole file.
+- **Resolution (implemented).** Both readers now sanity-check a forced
+  format against the existing L2-DEC-015 detection probe: when the probe
+  is **Decisive** (L2-DEC-016) for the *other* format, strict mode
+  surfaces the timestamp-format-mismatch class (`TimestampFormatMismatch`,
+  exit `2`) and lenient mode logs a single WARN then proceeds with the
+  forced format. **Marginal/Ambiguous** probes are deliberately not
+  flagged — those are exactly the cases where forcing is the legitimate
+  operator override, so an intentional override still works (lenient) or
+  is only blocked when the heuristic is *confident* it disagrees (strict).
+  `L2-DEC-013` was reworded to describe this probe-based check (rather than
+  a brand-new "distinct error class"), and now traces to real
+  forced-mismatch tests in both implementations plus the
+  `forced-format-mismatch-strict` conformance case (exit `2`).
 
 ### Specification & traceability
 
