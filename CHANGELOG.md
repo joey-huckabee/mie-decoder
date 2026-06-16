@@ -33,6 +33,16 @@ full release workflow.
 
 ### Fixed
 
+- **Completed the reference configuration `config/default.toml`.** The file
+  is advertised as a fully-commented starter config, but omitted four
+  documented, parsed keys: `decode.allow_partial`, `decode.detect_records`,
+  `decode.lookahead_records`, and `output.no_clobber`. Added all four with
+  commented descriptions, valid ranges (`[1, 32]` for the two record-count
+  knobs), CLI-override notes, and their default values, so the starter file
+  now covers every key in `CONFIG-REFERENCE.md`. Guarded by a new test in
+  each implementation: a completeness check that the file mentions every
+  documented key (Rust) and a parity check that the shared file loads with
+  the documented defaults (both Rust and Python).
 - **The Rust `dump` subcommand no longer reports success after an output
   write failure.** `hex_dump_raw` / `hex_dump_records` discarded every
   `writeln!` / hex-line result with `let _ =` and unconditionally returned

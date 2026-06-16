@@ -944,6 +944,54 @@ exclude_types = ["UNICORN"]
         if path.exists() {
             let cfg = load_config(Some(path)).unwrap();
             assert_eq!(cfg.output_format, "csv");
+            // The four keys added to keep the starter file complete must
+            // parse to their documented defaults (correct section + type).
+            assert!(!cfg.allow_partial);
+            assert!(!cfg.no_clobber);
+            assert_eq!(cfg.detect_records, 8);
+            assert_eq!(cfg.lookahead_records, 2);
+        }
+    }
+
+    /// The advertised "fully-commented starter file" must actually contain
+    /// every key documented in `docs/CONFIG-REFERENCE.md` (active or as a
+    /// commented example), so the reference config can't silently drift
+    /// incomplete again.
+    /// Requirements: L2-CFG-001
+    #[test]
+    fn default_toml_documents_every_schema_key() {
+        let path = Path::new("config/default.toml");
+        if !path.exists() {
+            return;
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        let documents = |key: &str| {
+            text.lines().any(|line| {
+                let line = line.trim_start_matches('#').trim_start();
+                line.starts_with(&format!("{key} ")) || line.starts_with(&format!("{key}="))
+            })
+        };
+        for key in [
+            "level",
+            "time_format",
+            "strict",
+            "error_mode",
+            "allow_partial",
+            "detect_records",
+            "lookahead_records",
+            "standard_tick_rate_hz",
+            "format",
+            "no_clobber",
+            "exclude_types",
+            "exclude_rts",
+            "exclude_buses",
+            "exclude_subaddresses",
+        ] {
+            assert!(
+                documents(key),
+                "config/default.toml is missing documented key `{key}` \
+                 (see docs/CONFIG-REFERENCE.md)"
+            );
         }
     }
 

@@ -530,3 +530,26 @@ class TestSchemaValidation:
         assert any(
             "exclude_subdresses" in rec.getMessage() for rec in caplog.records
         )
+
+
+class TestSharedDefaultConfig:
+    """The repo-root config/default.toml is a shared artifact; the Python
+    loader must accept it and resolve every documented key (L2-CFG-001).
+    Guards against the starter file drifting into something only one
+    implementation can parse."""
+
+    @pytest.mark.requirement("L2-CFG-001")
+    def test_loads_shared_default_toml(self) -> None:
+        default_toml = (
+            Path(__file__).resolve().parents[2] / "config" / "default.toml"
+        )
+        if not default_toml.exists():
+            pytest.skip("config/default.toml not present in this checkout")
+        cfg = load_config(default_toml)
+        # The four keys added to keep the starter file complete must parse to
+        # their documented defaults under the Python loader too.
+        assert cfg.allow_partial is False
+        assert cfg.no_clobber is False
+        assert cfg.detect_records == 8
+        assert cfg.lookahead_records == 2
+        assert cfg.output_format == "csv"

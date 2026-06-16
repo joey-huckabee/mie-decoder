@@ -89,6 +89,55 @@ strict = false
 error_mode = "separate"
 
 # ──────────────────────────────────────────────────────────────────────────
+# Partial-output mode on unrecoverable sync loss.
+#
+# Controls what happens when the decoder hits a mid-file corruption it
+# cannot resync past.
+#
+#   false — Abort. The temporary output is unlinked, the destination file
+#           is left untouched, and the CLI exits 3 (unrecoverable sync loss).
+#   true  — Keep what was decoded: the rows up to the corruption point are
+#           written to "<destination>.partial" (the real destination is not
+#           touched) and the CLI exits 0 with a WARN summary.
+#
+# Use true when investigating a recording known to be corrupt; use false in
+# pipelines where any unrecoverable corruption should fail the run.
+# Overridden by --allow-partial.
+#
+# Default: false
+# ──────────────────────────────────────────────────────────────────────────
+allow_partial = false
+
+# ──────────────────────────────────────────────────────────────────────────
+# Header-detection confirmation depth.
+#
+# When locating the first record, the decoder confirms a candidate header
+# by checking that this many consecutive records also validate. Higher
+# values make header detection more robust on noisy captures at a small
+# startup cost; the walk is bounded by the file's actual record count.
+#
+# Must be an integer in [1, 32]. Overridden by --detect-records.
+#
+# Default: 8
+# ──────────────────────────────────────────────────────────────────────────
+detect_records = 8
+
+# ──────────────────────────────────────────────────────────────────────────
+# Continuous-validation / sync-recovery look-ahead.
+#
+# A record is only accepted as valid if this many following records also
+# validate. The two-record default defends against false-positive resyncs
+# on data that coincidentally looks like a valid Type Word. Increase it for
+# recordings where corruption aligns on plausible-looking headers and
+# defeats the default.
+#
+# Must be an integer in [1, 32]. Overridden by --lookahead-records.
+#
+# Default: 2
+# ──────────────────────────────────────────────────────────────────────────
+lookahead_records = 2
+
+# ──────────────────────────────────────────────────────────────────────────
 # Standard-timestamp tick rate (Hz).
 #
 # The "standard" timestamp format is a free-running 32-bit counter. Its
@@ -188,3 +237,18 @@ exclude_subaddresses = []
 # Options: csv (more formats in future versions)
 # Default: "csv"
 format = "csv"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Overwrite protection.
+#
+#   false — Overwriting an existing output file succeeds (matches the usual
+#           batch-rerun expectation).
+#   true  — Refuse to overwrite an existing destination; the CLI surfaces a
+#           clobber-refused error and exits 1. In "separate" error mode the
+#           check covers BOTH the main output and the errors file.
+#
+# Overridden by --no-clobber.
+#
+# Default: false
+# ──────────────────────────────────────────────────────────────────────────
+no_clobber = false
