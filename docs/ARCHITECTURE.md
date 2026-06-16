@@ -471,6 +471,62 @@ The two implementations make different memory tradeoffs.
 
 For the Rust crate, decoding a 10 GB recording uses the same memory as decoding a 10 MB recording. The streaming property is load-bearing: changes to the writer that buffer rows (e.g., a `Vec<Row>` collection step) would break L3-RS-012 and must be rejected at review.
 
+### Planned: multi-file time-sorted merge (streaming k-way merge)
+
+> **Status: planned, not yet implemented** (ROADMAP "Multi-file input,
+> time-sorted merge", Rust v1.x). Described here so the streaming mechanism
+> is understood before it lands; the full design, constraints, and open
+> decisions live in [`ROADMAP.md`](ROADMAP.md). No `decode` flag accepts
+> multiple files today.
+
+The planned feature takes N input recordings and emits a single CSV in
+global time order **without** loading all records into memory — preserving
+the O(1)-in-record-count guarantee above, at the cost of O(k) where k is the
+number of input files.
+
+The mechanism is a **streaming k-way merge**, and it works because of one
+property each file already has: a `.mie` recording is written
+chronologically as bus traffic occurs, so **within a single file, capture
+order already is time order**. We therefore never sort the global record
+set — we *merge* k already-sorted streams. A binary min-heap holds exactly
+one record per open file (each file's current front record), keyed by
+timestamp:
+
+1. Open all k files as lazy `MieFileReader` iterators (with `mmap`, opening
+   is cheap — pages fault in on demand, nothing is bulk-read).
+2. Prime the heap with the first record from each file (k entries).
+3. Pop the minimum-timestamp record, write it to the CSV.
+4. Pull the *next* record from the file that record came from, push it.
+5. Repeat until every iterator is drained and the heap is empty.
+
+Each pop emits one record in global order; each file advances independently
+and only as far as the writer consumes. Resident memory is **O(k) records**
+— ~100 record structs (~8 KB) for 100 files — *independent of total record
+count*. A merge of 100 files × 10 M records each streams 1e9 records through
+a ~100-record heap. Time is O(N log k); for k = 100 that is ~7 comparisons
+per record. The intuition: 100 sorted decks fanned face-up — repeatedly take
+the lowest visible card and flip the next from that same deck; you only ever
+see k cards at once yet produce one fully sorted stream.
+
+The heap is the easy part; the constraints come from the MIE timestamp model
+(detailed with their resolutions in `ROADMAP.md`):
+
+- **Merge key** is `IrigTimestamp::to_total_microseconds()` — microseconds
+  from the start of the year.
+- **Absolute time only.** Standard-format counters (card-local, no shared
+  epoch) and freerun IRIG records are not comparable across files; mixed
+  formats likewise. These inputs are refused or given a non-time fallback,
+  not silently mis-ordered.
+- **Single year.** IRIG-B carries day-of-year but no year, so the key totally
+  orders only within one calendar year; cross-year / New-Year-boundary inputs
+  cannot be ordered from the timestamp alone. This intersects the IRIG
+  day-field decoding limitation (§/ROADMAP) on the affected card models.
+- **File-local error classification.** The `prev_was_error` state that tags
+  `SPURIOUS_DATA` as `0x2000` vs `0x2001` is per-file and is resolved inside
+  each file's reader *before* merge — never on the merged stream — so a
+  spurious record from one file is never mis-attributed to an error in
+  another that merely sorts just before it.
+
 ---
 
 ## 13. Data Words container
