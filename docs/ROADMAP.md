@@ -2,6 +2,22 @@
 
 ## Release status
 
+**v1.5.1 — joint Rust + Python cut, 2026-06-15.** Maintenance release from
+a team comment / documentation-hygiene sweep. Behavior: aligned the
+separate-mode commit order so both implementations commit the main CSV
+before the errors CSV (`L2-WRT-019`), making the primary `main.csv` the
+residue on a rare mid-commit failure rather than an orphan errors file.
+Fixes: the Rust `dump` subcommand now surfaces output write failures
+(disk full / broken pipe) instead of reporting success (`L2-WRT-018`); the
+reference `config/default.toml` regained four documented-but-omitted keys
+(`allow_partial`, `detect_records`, `lookahead_records`, `no_clobber`); and
+the Python `count` help / README now correctly say the count prints to
+stdout. Docs: corrected a false cross-file atomicity guarantee, a wrong
+mmap `SAFETY` comment, the stale "fixed two-record look-ahead" wording
+(configurable since `L2-SYN-026`), and stale hardcoded conformance-suite
+case counts. No decode-output changes. See [`CHANGELOG.md`](../CHANGELOG.md)
+section `[1.5.1]` for the full entry.
+
 **v1.5.0 — joint Rust + Python cut, 2026-06-15.** Production-readiness
 release closing the `PRA-1`–`PRA-9` audit backlog. Added a granular,
 cross-impl-identical CLI exit-code taxonomy (usage errors → `4`, config

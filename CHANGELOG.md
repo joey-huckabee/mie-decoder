@@ -15,6 +15,8 @@ full release workflow.
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-06-15
+
 ### Changed
 
 - **Separate-mode output now commits the main CSV before the errors CSV in
@@ -737,7 +739,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/joey-huckabee/mie-decoder/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/joey-huckabee/mie-decoder/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.3.0...v1.4.0
