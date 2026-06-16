@@ -25,6 +25,14 @@ full release workflow.
   card model), and the diff-and-solve method for when ground-truth data is
   available. No behavior change — the v1.5.0 advisory WARN remains the
   interim treatment.
+- Designed the **multi-file time-sorted merge** ROADMAP feature (Planned,
+  Rust v1.x): documented the streaming k-way (min-heap) merge that keeps
+  memory O(file-count) rather than O(record-count), the IRIG
+  microseconds-from-start-of-year merge key, the hard absolute-time and
+  single-year constraints (Standard counters / freerun IRIG / cross-year
+  inputs are not cross-file orderable), the file-local error-classification
+  requirement, deterministic tie-breaking, and the open CLI/failure-policy
+  decisions. No behavior change — design notes only.
 
 ## [1.5.0] — 2026-06-15
 

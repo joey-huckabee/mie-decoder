@@ -106,6 +106,106 @@ already streams in constant memory. Shared multi-file support should follow
 PY-streaming rather than multiply the Python memory cost across several
 recordings.
 
+#### Multi-file time-sorted merge — design notes
+
+Goal: accept N input recordings and emit a single CSV whose rows are in
+global time order, **without** buffering all records in memory (preserve the
+`L3-RS-012` streaming invariant). The mechanism is a **streaming k-way
+merge**; the constraints below come from the MIE timestamp model, not from
+the merge algorithm.
+
+**The merge (how 100 files sort while streaming).** Each input file is a
+lazily-evaluated `MieFileReader` that yields records in *capture order* —
+and because a single recording is written chronologically as bus traffic
+occurs, capture order **is** time order *within that file*. So we never sort
+the global set; we merge k already-sorted streams. A binary **min-heap holds
+exactly one record per open file** (the current front of each stream), keyed
+by timestamp:
+
+1. Prime: open all k files, pull the first record from each, push the k
+   front records onto the heap. (`mmap` makes "open" cheap — pages fault in
+   on demand; no bulk read.)
+2. Pop the heap's minimum-timestamp record, write it to the CSV.
+3. Pull the *next* record from the file that record came from, push it onto
+   the heap.
+4. Repeat until every iterator is exhausted and the heap is empty.
+
+Each pop emits one record in global order; each file advances independently
+and only as far as the writer has consumed. Resident memory is **O(k)
+records** (one per file in the heap) — for 100 files that is ~100 record
+structs (~8 KB), *independent of total record count*. A merge of 100 files ×
+10 M records each streams 1e9 records through a ~100-record heap. Time is
+O(N log k); log₂(100) ≈ 7 comparisons per record. This extends the streaming
+guarantee from O(1) to **O(k) in the file count, still O(1) in record
+count**, plus k open mmaps / file descriptors.
+
+**Merge key.** `IrigTimestamp::to_total_microseconds()` — a `u64` of
+microseconds since the start of the (unstated) year. This already exists and
+is exact.
+
+**Hard constraint — absolute time only.** The key is only a valid *cross-file*
+ordering for **calendar-locked IRIG** records. The merge MUST refuse, or
+fall back to a non-time ordering, when any input is:
+- **Standard format** — a card-local free-running counter with no shared
+  epoch; even calibrated via `--standard-tick-rate-hz` it is relative, not
+  comparable across files/cards.
+- **Freerun IRIG** — carries no calendar meaning.
+- **Mixed timestamp formats** across the input set.
+
+**Hard constraint — single year.** IRIG-B encodes day-of-year (1–366) but
+**no year**. So `to_total_microseconds()` is a total order only *within one
+calendar year*; files crossing a New-Year boundary (day 366 → day 001) or
+drawn from different years cannot be ordered from the timestamp alone. This
+also intersects the **IRIG day-field decoding** item (Decode correctness): on
+the card models where day-of-year is mis-decoded, a day-level sort would be
+wrong — so time-merge on those models is gated on that investigation.
+
+**Within-file monotonicity.** Correctness rests on each file being internally
+time-sorted. Generally true (chronological recording), but sync-loss recovery
+or a day/year rollover can break it. Contract: assume monotonic, detect a
+backward step against the previous key per file in O(1) and WARN; do **not**
+globally re-sort (that would defeat streaming).
+
+**Deterministic ties.** Equal keys are common at coarse resolution. The heap
+comparator orders on `(key, file_index_in_CLI_order, within_file_sequence)`
+so output is reproducible regardless of heap internals.
+
+**Error/spurious classification stays file-local.** The `prev_was_error`
+state that tags `SPURIOUS_DATA` as `0x2000` (continuation) vs `0x2001`
+(standalone) is per-file reader state and MUST be resolved *inside* each
+file's reader before merge — never on the merged stream — or a spurious
+record from file B could be misclassified as continuing an error in file A
+that merely sorts just before it. The heap moves already-classified records.
+
+**Output / DELTA.** The merged stream feeds the existing `write_csv` /
+`write_csv_split` unchanged (single `-o`, default separate `_errors.csv`,
+now spanning all inputs). DELTA: recommend computing the `delta_tracker` on
+the *merged* stream so deltas reflect one global timeline (the likely analyst
+intent), rather than per-file.
+
+**Open decisions (the design's actual fork points).**
+- *CLI surface.* Multiple positionals (`decode a.mie b.mie …`), a
+  `--manifest file.txt` (one path per line — better for 100 files and for
+  pinning order/year), and/or a directory + `--glob` (needed on Windows,
+  whose shell does not expand globs). Recommend positionals **and**
+  `--manifest`.
+- *Non-absolute / mixed inputs.* Hard-reject with a dedicated exit code, vs
+  skip-with-WARN, vs an explicit `--order file` fallback that concatenates in
+  CLI order without a time sort.
+- *Per-file failure.* One corrupt/unreadable/wrong-format file among many:
+  fail the batch vs a batch-level `--allow-partial` that skips it with a WARN
+  (recommended — mirrors the within-file semantics).
+- *Large k.* k open mmaps/FDs is trivial at 100 but can hit descriptor
+  limits in the thousands; note a chunked multi-pass merge as future work if
+  k is unbounded.
+
+**Sequencing.** Rust-first (writer already streams; the atomic-file
+substrate it needs has landed). The shared/Python merge follows
+**PY-streaming**, else Python pays O(record_count) per file × k. Estimated
+4–6 days for the Rust feature (heap merge + the format/year/freerun guards +
+conformance fixtures for a 2-file ordered merge, a tie, a rejected
+Standard/mixed set, and a backward-step WARN).
+
 Subsequent releases may diverge in version via impl-prefixed tags
 (`rust-vX.Y.Z`, `python-vX.Y.Z`); the cross-implementation conformance
 contract (CSV byte-for-byte equivalence on shared behavior) holds at any
