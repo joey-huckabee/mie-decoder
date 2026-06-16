@@ -71,6 +71,12 @@ full release workflow.
 
 ### Documentation
 
+- Flagged the CHANGELOG compare-URL footer (version-bump checklist step 2)
+  as the most-often-missed release step in `MAINTAINER-GUIDE.md` §11. It was
+  silently skipped on the `1.4.0` and `1.4.1` cuts — the footer's
+  `[Unreleased]` link kept pointing at `v1.3.0...HEAD` with no `1.4.0`/
+  `1.4.1` entries — and was repaired during this cut. Added a concrete
+  post-edit cross-check against `git tag --sort=-creatordate`.
 - Surfaced the Python large-file memory ceiling for operators (ROADMAP
   PRA-4). New `USER-GUIDE.md` §10 "Performance and large recordings" gives
   the per-implementation memory table, the "~5 GB RAM per ~10 M records"
