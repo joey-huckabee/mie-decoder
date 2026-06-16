@@ -586,9 +586,14 @@ where
 
     match partial_info {
         None => {
-            // Normal path. Commit errors first so a main-commit failure
-            // doesn't leave a dangling errors file. (If the error commit
-            // itself fails, the main temp is unlinked on Drop.)
+            // Normal path. Each file is committed atomically (temp +
+            // rename), but the two commits are sequential — there is no
+            // cross-file atomicity. Committing errors first means an
+            // errors-commit failure leaves main as an un-renamed temp
+            // (unlinked on Drop), so neither file appears. The unavoidable
+            // residual case is the reverse: if errors commits and then main
+            // fails, the errors file is left behind at its destination.
+            // See ARCHITECTURE.md §8 / writer.py for the same limitation.
             if let Some(ea) = errors_atomic {
                 ea.commit()?;
                 log_info!(

@@ -15,6 +15,20 @@ full release workflow.
 
 ## [Unreleased]
 
+### Fixed
+
+- Corrected a false atomicity guarantee in the docs and source comments for
+  separate-mode output. `ARCHITECTURE.md` §8 previously claimed the main and
+  errors CSVs "both either succeed atomically or neither appears" — implying
+  cross-file atomicity that does not exist. In reality each file is written
+  atomically on its own (temp + rename) but the two are committed
+  sequentially: if the second commit fails after the first is renamed into
+  place, the first file remains. The implementations also commit in opposite
+  orders (Rust errors-then-main, Python main-then-errors). Rewrote the §8
+  note and the misleading `src/writer.rs` commit-ordering comment to describe
+  the per-file (non-cross-file) guarantee honestly. No behavior change — the
+  commit logic is unchanged; only the documentation was wrong.
+
 ### Documentation
 
 - Scoped the "IRIG day-field decoding across DDC card models" ROADMAP item
