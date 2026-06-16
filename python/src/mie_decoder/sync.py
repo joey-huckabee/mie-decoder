@@ -32,10 +32,11 @@ Synchronization Strategy:
 
     4. **Look-Ahead Confirmation:**
        A single valid-looking Type Word is not sufficient — random data
-       can coincidentally match. :func:`validate_record` uses a
-       **two-record look-ahead**: a candidate is confirmed valid only
-       if the NEXT record (at offset + word_count * 2) also starts
-       with a valid Type Word. This dramatically reduces false positives.
+       can coincidentally match. :func:`validate_record` uses an
+       **N-record look-ahead** (configurable depth, default 2 per
+       L2-SYN-026): a candidate is confirmed valid only if the next
+       N-1 records (starting at offset + word_count * 2) also start with
+       a valid Type Word. This dramatically reduces false positives.
 
 Validation Heuristics (applied in order, fast checks first):
 
@@ -354,7 +355,7 @@ def diagnose_header_scan_failure(
     (L2-RDR-004 / MieFirstRecordTruncatedError).
 
     Walks the same 2-byte-aligned grid as :func:`find_first_record` but
-    omits the fits-in-file check and the two-record look-ahead — so it
+    omits the fits-in-file check and the look-ahead confirmation — so it
     matches a Type Word that *would have been valid* if the file were
     long enough.
 

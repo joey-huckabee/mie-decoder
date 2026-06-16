@@ -7,7 +7,7 @@ instances in file order. It handles:
 - **Header detection**: Automatically finds the first valid record,
   skipping any proprietary file headers.
 - **Continuous sync validation**: Each record boundary is verified
-  before decoding using a two-record look-ahead.
+  before decoding using a configurable N-record look-ahead (default 2).
 - **Sync recovery**: If a record fails validation mid-file, scans
   forward in word-aligned steps to find the next valid record.
 - **Timestamp format detection**: Auto-detects IRIG vs Standard.

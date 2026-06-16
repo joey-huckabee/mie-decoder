@@ -132,7 +132,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--count",
         action="store_true",
         default=False,
-        help="Print message count to stderr instead of CSV output.",
+        help="Print the message count to stdout (with a status summary on "
+        "stderr) instead of writing CSV.",
     )
     decode_parser.add_argument(
         "--time-format",

@@ -120,9 +120,14 @@ impl MieFileReader {
             return Err(MieError::FileEmpty { path });
         }
 
-        // SAFETY: we take a read-only mmap of an already-opened file. The
-        // file is moved into the closure; the mmap holds it alive for its
-        // lifetime. We don't expose the underlying bytes outside the reader.
+        // SAFETY: `Mmap::map` creates a read-only memory map of the
+        // already-opened file. memmap2's contract requires the underlying
+        // file not be mutated or truncated while mapped; we document that as
+        // a precondition (L1-EXIT-006 — modifying the input during decode is
+        // undefined). The returned `Mmap` owns the OS mapping and keeps it
+        // valid independently of `file`, which is dropped at the end of this
+        // function (closing the fd does not invalidate the mapping). The raw
+        // bytes are never exposed outside the reader.
         let mmap = unsafe { Mmap::map(&file) }.map_err(|source| MieError::FileIo {
             path: path.clone(),
             source,

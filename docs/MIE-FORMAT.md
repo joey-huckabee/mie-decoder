@@ -62,9 +62,9 @@ Every record (header detection, normal forward decode, and post-recovery) passes
 2. **Word count plausible** — at least `1 (TypeWord) + ts_words + 1 (CmdWord)`, at most 63 — L2-SYN-002.
 3. **Record fits in file** — `offset + word_count × 2 ≤ file_len` — L2-SYN-003.
 4. **IRIG timestamp fields in range** (when timestamp format is IRIG) — hour < 24, minute < 60, second < 60, day-of-year in [1, 366] (except when the freerun bit is set, per L2-SYN-019), microsecond < 1,000,000 — L2-SYN-004.
-5. **Two-record look-ahead** — at `offset + word_count × 2` (when ≥ 2 bytes remain), the following Type Word must also pass checks 1–4 — L2-SYN-005.
+5. **Look-ahead confirmation** — the following Type Word (at `offset + word_count × 2`, when ≥ 2 bytes remain) must also pass checks 1–4 — L2-SYN-005. The look-ahead depth is configurable (default 2, range `[1, 32]` via `decode.lookahead_records` / `--lookahead-records`, L2-SYN-026); a candidate is confirmed only if the next `N-1` records also validate.
 
-The two-record look-ahead is what makes the validator usable. Single-record validation produces too many false positives on plausible-looking junk bytes; the look-ahead drives the false-positive rate to near-zero on real inputs.
+The look-ahead is what makes the validator usable. Single-record validation produces too many false positives on plausible-looking junk bytes; confirming the following record(s) drives the false-positive rate to near-zero on real inputs.
 
 ---
 

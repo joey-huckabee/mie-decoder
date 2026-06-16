@@ -87,7 +87,7 @@ value.
 mie-decoder count <input>
 ```
 
-Streams the file and prints the message count to stderr.
+Streams the file and prints the message count to stdout (with a status summary on stderr).
 
 ### dump
 

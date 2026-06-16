@@ -305,7 +305,7 @@ pub fn is_homogeneous_payload(data: &[u8], offset: usize, record_bytes: usize) -
 /// (`MieError::FirstRecordTruncated`).
 ///
 /// Walks the same 2-byte-aligned grid as `find_first_record` but
-/// omits the fits-in-file check and the two-record look-ahead, so it
+/// omits the fits-in-file check and the look-ahead confirmation, so it
 /// matches a Type Word that *would have been valid* if the file were
 /// long enough. Returns `Some((offset, record_bytes, available))` for
 /// the first such candidate, or `None`.

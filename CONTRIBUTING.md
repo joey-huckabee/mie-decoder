@@ -288,8 +288,8 @@ These are codified in `CLAUDE.md`; the highlights:
   buffering in `writer.rs` — constant memory is the design point.
 - **`DataWords` is fixed-capacity.** MIL-STD-1553B caps a transaction
   at 32 data words. Don't switch to `Vec<u16>` "for flexibility."
-- **Two-record look-ahead in `sync.rs`.** Removing it reintroduces
-  false-positive resyncs.
+- **N-record look-ahead in `sync.rs`** (default 2, configurable per
+  L2-SYN-026). Removing it reintroduces false-positive resyncs.
 - **One validation path.** Header skip, normal forward decode, and
   recovery all share `sync::validate_record`. There is no weaker
   fast path.

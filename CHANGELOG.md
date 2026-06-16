@@ -33,6 +33,12 @@ full release workflow.
 
 ### Fixed
 
+- **Corrected the Python `count` help and README, which claimed the count is
+  printed to stderr.** Both implementations print the integer count to
+  **stdout** (the machine-readable datum) and only the human-readable status
+  summary to stderr (`L3-PY-010` / `L3-RS-008`); the Rust help and the
+  `count-one` conformance oracle were already correct. Fixed the
+  `--count` flag help string and the README `count` description to match.
 - **Completed the reference configuration `config/default.toml`.** The file
   is advertised as a fully-commented starter config, but omitted four
   documented, parsed keys: `decode.allow_partial`, `decode.detect_records`,
@@ -64,6 +70,17 @@ full release workflow.
 
 ### Documentation
 
+- Fixed two factually-wrong source comments / doc descriptions. (1) The
+  `src/reader.rs` mmap `SAFETY` comment claimed the file is "moved into the
+  closure" and that "the mmap holds it alive" — there is no closure, and
+  `Mmap::map(&file)` borrows the file rather than owning it; rewrote it to
+  state the real contract (the OS mapping outlives the dropped `File`; the
+  input must not be mutated while mapped, per `L1-EXIT-006`). (2) Several
+  reader/sync module docs and `MIE-FORMAT.md` still described a *fixed*
+  "two-record look-ahead" although the depth has been configurable
+  (`N`-record, default 2) since `L2-SYN-026`; reworded them (and the
+  `CLAUDE.md` / `CONTRIBUTING.md` preservation notes) to say "N-record
+  look-ahead (default 2)".
 - Removed stale hardcoded conformance-suite case counts from the reference
   docs, extending the `9b47121` "no drift-prone counts" policy to the docs
   that earlier cleanup missed. `ARCHITECTURE.md` (§1 and the conformance
