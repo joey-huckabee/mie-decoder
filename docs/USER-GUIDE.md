@@ -21,7 +21,7 @@ MIE-Decoder reads proprietary binary recording files produced by Data Device Cor
 - `diff` decoded output against vendor-generated CSV for validation.
 - Feed it into a downstream analysis pipeline.
 
-The decoder is shipped as two interoperable implementations — a Rust crate + CLI, and a Python package + CLI. Both produce byte-identical CSV for the same input (verified by 19 cross-implementation conformance fixtures). Pick whichever fits your platform.
+The decoder is shipped as two interoperable implementations — a Rust crate + CLI, and a Python package + CLI. Both produce byte-identical CSV for the same input (verified by a cross-implementation conformance suite). Pick whichever fits your platform.
 
 ---
 

@@ -11,7 +11,7 @@ Companion docs: [`MIE-FORMAT.md`](MIE-FORMAT.md) (binary format reference), [`ER
 
 ## 1. Two implementations, one architecture
 
-MIE-Decoder ships as a Rust crate (`src/`) and a Python package (`python/src/mie_decoder/`). They are independent implementations that satisfy the same shared specification and produce byte-identical CSV output (verified by 19 cross-implementation conformance fixtures). The module structure is intentionally aligned so the architecture description fits both.
+MIE-Decoder ships as a Rust crate (`src/`) and a Python package (`python/src/mie_decoder/`). They are independent implementations that satisfy the same shared specification and produce byte-identical CSV output (verified by the cross-implementation conformance suite under `tests/conformance/`). The module structure is intentionally aligned so the architecture description fits both.
 
 | Concern | Rust module | Python module |
 |---------|-------------|---------------|
@@ -567,7 +567,7 @@ The default-suite iteration count (256) is sized so the harness completes in a f
 
 ## 15. Cross-implementation conformance
 
-The 19-case suite under `tests/conformance/` materializes hex-text inputs into temporary `.mie` files, invokes both CLIs, and requires byte-identical CSV output (or matching exit code for negative cases). The suite runs in CI on every push and pull request (L1-CONF-001 / L2-CONF-005).
+The conformance suite under `tests/conformance/` materializes hex-text inputs into temporary `.mie` files, invokes both CLIs, and requires byte-identical CSV output (or matching exit code for negative cases). The suite runs in CI on every push and pull request (L1-CONF-001 / L2-CONF-005).
 
 Adding a new case is a four-step operation: hex fixture under `inputs/`, oracle CSV under `expected/` (or `expected_exit` for negative cases), entry in `manifest.json`, run locally to verify cross-impl agreement. See [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6 for the full procedure.
 

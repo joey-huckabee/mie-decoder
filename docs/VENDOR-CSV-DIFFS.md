@@ -6,7 +6,7 @@ Documented column-by-column alignment between MIE-Decoder's CSV output and DDC's
 - You ran `diff` against vendor output and found a mismatch.
 - You're integrating MIE-Decoder into a system that previously consumed vendor CSV.
 
-The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **column-name and column-order compatible** with the DDC vendor recorder's output. The 20-case cross-implementation conformance suite asserts byte-identical CSV between the Rust and Python implementations; that suite's oracles are derived from validated vendor output. In practice, except for the documented exceptions below, a single `diff` should produce zero lines of difference between MIE-Decoder output and a vendor CSV of the same recording.
+The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **column-name and column-order compatible** with the DDC vendor recorder's output. The cross-implementation conformance suite asserts byte-identical CSV between the Rust and Python implementations; that suite's oracles are derived from validated vendor output. In practice, except for the documented exceptions below, a single `diff` should produce zero lines of difference between MIE-Decoder output and a vendor CSV of the same recording.
 
 ---
 
@@ -148,7 +148,7 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
    - Empty `MUX` / `TERM_NAME` / gap columns on our side → expected (§3).
    - Anything else → bug. See §7.
 
-5. **For automated comparison** in a regression pipeline, MIE-Decoder ships a 19-case conformance suite under `tests/conformance/` that asserts byte-identical CSV between the Rust and Python implementations against checked-in oracles. The oracle generation method (manual validation against vendor output, then committed) is documented in [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6.
+5. **For automated comparison** in a regression pipeline, MIE-Decoder ships a cross-implementation conformance suite under `tests/conformance/` that asserts byte-identical CSV between the Rust and Python implementations against checked-in oracles. The oracle generation method (manual validation against vendor output, then committed) is documented in [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6.
 
 ---
 

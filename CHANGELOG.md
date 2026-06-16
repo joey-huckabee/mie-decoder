@@ -54,6 +54,17 @@ full release workflow.
 
 ### Documentation
 
+- Removed stale hardcoded conformance-suite case counts from the reference
+  docs, extending the `9b47121` "no drift-prone counts" policy to the docs
+  that earlier cleanup missed. `ARCHITECTURE.md` (§1 and the conformance
+  section), `USER-GUIDE.md`, and `VENDOR-CSV-DIFFS.md` cited "19-case" /
+  "20-case" suites — both wrong (the suite has grown) and guaranteed to
+  re-stale each release — so they now refer to the conformance suite
+  generically; the live count lives only in `tests/conformance/manifest.json`.
+  Also reworded a drift-prone "`[Unreleased]` is empty as of the v1.3.0 cut"
+  note in `ROADMAP.md` to be version-agnostic. (The `README.md` and
+  `MAINTAINER-GUIDE.md` locations flagged in review were already clean;
+  ROADMAP's historical per-release case counts are intentionally kept.)
 - Scoped the "IRIG day-field decoding across DDC card models" ROADMAP item
   (Decode correctness) as **blocked on external data**: recorded what is
   already known (the bits 13–5 binary slice is per-spec; only day-of-year

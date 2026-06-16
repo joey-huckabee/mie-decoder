@@ -81,9 +81,10 @@ for the full v1.0.0 entry.
 
 ### Queued for the next release (`[Unreleased]`)
 
-`[Unreleased]` is empty as of the v1.3.0 cut. Future work accumulates
-here; when ready to cut a release, follow the version-bump checklist in
-`docs/MAINTAINER-GUIDE.md` section 11.
+`[Unreleased]` is emptied at each release cut; whatever sits above the
+most recent dated section in `CHANGELOG.md` is the live queue. Future work
+accumulates here; when ready to cut a release, follow the version-bump
+checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 
 ## Planned
 
