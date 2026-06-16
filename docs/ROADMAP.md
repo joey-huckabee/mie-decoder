@@ -2,6 +2,22 @@
 
 ## Release status
 
+**v1.5.0 — joint Rust + Python cut, 2026-06-15.** Production-readiness
+release closing the `PRA-1`–`PRA-9` audit backlog. Added a granular,
+cross-impl-identical CLI exit-code taxonomy (usage errors → `4`, config
+errors → `5`; `L1-EXIT-007`/`008`, `L2-CLI-011`), implemented the
+previously-unbuilt half of `L2-DEC-013` so forcing the wrong
+`--time-format` against a decisive detection probe now fails strict
+(exit `2`) / WARNs lenient instead of emitting garbage timestamps, and
+added a one-time IRIG day-of-year advisory (`PRA-9`). Hardened test
+coverage with a targeted `L2-DEC-009` payload-bounding case, an
+`L1-SYN-002` cumulative-scan-bound test, and a daily fuzz burn-in
+(`fuzz.yml`, 25 000 iterations/impl). Docs surfaced the Python large-file
+memory ceiling (`PY-streaming` now the next Python work item) and the
+trace matrix now counts L1-level test markers (124/140 tested, 100%
+verified). No decode-output changes. See [`CHANGELOG.md`](../CHANGELOG.md)
+section `[1.5.0]` for the full entry.
+
 **v1.4.1 — joint Rust + Python cut, 2026-06-14.** Maintenance release.
 Closed the CI dev-tool gap by wiring strict `mypy` into CI (it was
 configured but never run), which surfaced and fixed a latent Python
