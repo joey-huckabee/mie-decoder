@@ -940,12 +940,26 @@ fn run_dump(globals: GlobalArgs, args: DumpArgs) -> Result<(), CliError> {
     // subcommands.
     let _cfg = resolve_config(&globals)?;
 
-    if args.raw {
+    let result = if args.raw {
         hex_dump_raw_to_stdout(&args.input, args.offset, args.length)
-            .map_err(|e| CliError::runtime(format_mie_error(e)))
     } else {
         hex_dump_records_to_stdout(&args.input, args.records, args.offset)
-            .map_err(|e| CliError::runtime(format_mie_error(e)))
+    };
+    finish_dump(result)
+}
+
+/// Map a dump result to the CLI contract. A broken pipe on stdout (e.g.
+/// `dump | head`) is a clean termination and exits `0` per L2-WRT-018; any
+/// other writer error (disk full, permission denied) — now that the dump
+/// propagates them instead of swallowing them — surfaces as a runtime error.
+fn finish_dump(result: crate::error::MieResult<()>) -> Result<(), CliError> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) if e.is_broken_pipe() => {
+            log_info!("dump: broken-pipe on stdout, exiting 0");
+            Ok(())
+        }
+        Err(e) => Err(CliError::runtime(format_mie_error(e))),
     }
 }
 
@@ -1218,6 +1232,30 @@ mod tests {
             }
             Ok(()) => panic!("expected config error, got Ok"),
         }
+    }
+
+    /// Requirements: L2-WRT-018
+    #[test]
+    fn finish_dump_maps_broken_pipe_to_ok() {
+        let broken = MieError::WriterError {
+            destination: "stdout".to_string(),
+            source: std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed"),
+        };
+        assert!(
+            finish_dump(Err(broken)).is_ok(),
+            "broken pipe on dump stdout should exit 0"
+        );
+    }
+
+    /// Requirements: L2-WRT-018
+    #[test]
+    fn finish_dump_propagates_real_write_error() {
+        let disk_full = MieError::WriterError {
+            destination: "stdout".to_string(),
+            source: std::io::Error::other("No space left on device"),
+        };
+        let err = finish_dump(Err(disk_full)).unwrap_err();
+        assert_eq!(err.code, exit_code::RUNTIME, "disk-full dump error exits 1");
     }
 
     /// Requirements: L2-CFG-005, L2-CLI-011, L1-EXIT-008

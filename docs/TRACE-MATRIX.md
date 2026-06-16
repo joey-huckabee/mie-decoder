@@ -282,7 +282,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-RDR-006 | _(none)_ | `python/tests/test_e2e.py::test_empty_file`<br>`python/tests/test_exceptions.py::test_file_empty_path`<br>`src/reader.rs::rejects_empty_file` | Implemented |
 | L2-RDR-020 | L3-PY-009, L3-RS-003 | `src/reader.rs::decodes_rt15_sa11_record` | Implemented |
 | L2-WRT-016 | L3-WRT-002 | `python/tests/test_e2e.py::test_write_csv_with_allow_partial_commits_dot_partial`<br>`src/writer.rs::atomic_commit_partial_writes_dot_partial_and_leaves_destination`<br>`src/writer.rs::atomic_drop_without_commit_unlinks_temp_and_leaves_destination`<br>`src/writer.rs::write_csv_with_allow_partial_commits_on_unrecoverable`<br>`src/writer.rs::write_csv_without_allow_partial_propagates_unrecoverable`<br>`tests/cli.rs::rejects_input_equal_to_output_path` | Implemented |
-| L2-WRT-018 | _(none)_ | `python/tests/test_exceptions.py::test_writer_error_fields`<br>`src/writer.rs::is_broken_pipe_predicate` | Implemented |
+| L2-WRT-018 | _(none)_ | `python/tests/test_exceptions.py::test_writer_error_fields`<br>`src/cli.rs::finish_dump_maps_broken_pipe_to_ok`<br>`src/cli.rs::finish_dump_propagates_real_write_error`<br>`src/dump.rs::dump_broken_pipe_is_classified_for_exit_zero`<br>`src/dump.rs::raw_dump_surfaces_write_failure`<br>`src/dump.rs::records_dump_surfaces_write_failure`<br>`src/writer.rs::is_broken_pipe_predicate` | Implemented |
 
 ### L1-ROB: Robustness against arbitrary input
 

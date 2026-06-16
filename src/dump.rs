@@ -53,6 +53,17 @@ fn read_file(path: &Path) -> MieResult<Vec<u8>> {
     Ok(buf)
 }
 
+/// Map an output `io::Error` to a `MieError::WriterError`. The dump always
+/// writes to stdout in production (the `*_to_stdout` wrappers), so the
+/// destination is labelled accordingly. The underlying error kind is
+/// preserved so the CLI can treat a broken pipe as a clean exit (L2-WRT-018).
+fn writer_error(source: std::io::Error) -> MieError {
+    MieError::WriterError {
+        destination: "stdout".to_string(),
+        source,
+    }
+}
+
 fn write_hex_line<W: Write>(
     out: &mut W,
     indent: &str,
@@ -91,6 +102,21 @@ pub fn hex_dump_raw(
     mut out: impl Write,
 ) -> MieResult<()> {
     let data = read_file(path)?;
+    write_hex_dump_raw(&data, path, start_offset, length, &mut out).map_err(writer_error)
+}
+
+/// Inner writer for `hex_dump_raw`. Returns `io::Result` so every write —
+/// including the final flush — propagates; the public wrapper maps the
+/// failure to `MieError::WriterError`. Previously these writes were
+/// discarded with `let _ =`, so an output failure (disk full, broken pipe)
+/// was silently reported as success (L2-WRT-018).
+fn write_hex_dump_raw<W: Write>(
+    data: &[u8],
+    path: &Path,
+    start_offset: usize,
+    length: Option<usize>,
+    out: &mut W,
+) -> std::io::Result<()> {
     let file_len = data.len();
 
     // Clamp start to [0, file_len] up-front; reads at start >= file_len
@@ -110,19 +136,19 @@ pub fn hex_dump_raw(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let _ = writeln!(out, "File: {name} ({} bytes)", file_len);
-    let _ = writeln!(out, "Range: 0x{:08X}-0x{:08X}", chunk_start, end);
-    let _ = writeln!(out);
+    writeln!(out, "File: {name} ({} bytes)", file_len)?;
+    writeln!(out, "Range: 0x{:08X}-0x{:08X}", chunk_start, end)?;
+    writeln!(out)?;
 
     let mut i = 0;
     while i < chunk.len() {
         let line = &chunk[i..(i + 16).min(chunk.len())];
         // chunk_start is bounded by file_len; i is bounded by chunk.len()
         // which is bounded by file_len - chunk_start. Sum can't overflow.
-        let _ = write_hex_line(&mut out, "  ", chunk_start.saturating_add(i), line);
+        write_hex_line(out, "  ", chunk_start.saturating_add(i), line)?;
         i += 16;
     }
-    Ok(())
+    out.flush()
 }
 
 /// Print a record-aware hex dump. Each record is preceded by a one-line
@@ -134,6 +160,19 @@ pub fn hex_dump_records(
     mut out: impl Write,
 ) -> MieResult<()> {
     let data = read_file(path)?;
+    write_hex_dump_records(&data, path, max_records, start_offset, &mut out).map_err(writer_error)
+}
+
+/// Inner writer for `hex_dump_records`; see `write_hex_dump_raw` for why
+/// this returns `io::Result` (every write, including the trailing flush,
+/// must propagate so an output failure is not silently swallowed).
+fn write_hex_dump_records<W: Write>(
+    data: &[u8],
+    path: &Path,
+    max_records: Option<u64>,
+    start_offset: usize,
+    out: &mut W,
+) -> std::io::Result<()> {
     let file_len = data.len();
     let mut offset = start_offset;
     let mut record_num: u64 = 0;
@@ -142,9 +181,9 @@ pub fn hex_dump_records(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let _ = writeln!(out, "File: {name} ({file_len} bytes)");
-    let _ = writeln!(out, "Record dump starting at offset 0x{:08X}", start_offset);
-    let _ = writeln!(out);
+    writeln!(out, "File: {name} ({file_len} bytes)")?;
+    writeln!(out, "Record dump starting at offset 0x{:08X}", start_offset)?;
+    writeln!(out)?;
 
     // Loop guard uses checked_add so a start_offset of usize::MAX (or a
     // file shorter than MIN_RECORD_BYTES) exits cleanly instead of
@@ -159,18 +198,18 @@ pub fn hex_dump_records(
             }
         }
 
-        let type_raw = match read_u16(&data, offset) {
+        let type_raw = match read_u16(data, offset) {
             Some(v) => v,
             None => break,
         };
         let tw = decode_type_word(type_raw);
 
         if tw.word_count < MIN_RECORD_WORDS {
-            let _ = writeln!(
+            writeln!(
                 out,
                 "  !! Invalid word_count={} at 0x{:08X}, stopping",
                 tw.word_count, offset
-            );
+            )?;
             break;
         }
         let record_bytes = usize::from(tw.word_count) * 2;
@@ -179,33 +218,33 @@ pub fn hex_dump_records(
         let record_end = match offset.checked_add(record_bytes) {
             Some(v) => v,
             None => {
-                let _ = writeln!(
+                writeln!(
                     out,
                     "  !! Offset overflow at 0x{:08X} (record_bytes={}), stopping",
                     offset, record_bytes
-                );
+                )?;
                 break;
             }
         };
         if record_end > file_len {
-            let _ = writeln!(
+            writeln!(
                 out,
                 "  !! Truncated record at 0x{:08X} ({} bytes needed, {} available)",
                 offset,
                 record_bytes,
                 file_len - offset
-            );
+            )?;
             break;
         }
 
         // Decode IRIG-shaped header for annotation. (For Standard timestamps
         // this is still useful to display the raw bytes; the IRIG decode is
         // a best-effort summary.)
-        let ts_upper = read_u16(&data, offset + 2).unwrap_or(0);
-        let ts_middle = read_u16(&data, offset + 4).unwrap_or(0);
-        let ts_lower = read_u16(&data, offset + 6).unwrap_or(0);
+        let ts_upper = read_u16(data, offset + 2).unwrap_or(0);
+        let ts_middle = read_u16(data, offset + 4).unwrap_or(0);
+        let ts_lower = read_u16(data, offset + 6).unwrap_or(0);
         let ts = decode_irig_timestamp(ts_upper, ts_middle, ts_lower);
-        let cmd_raw = read_u16(&data, offset + 8).unwrap_or(0);
+        let cmd_raw = read_u16(data, offset + 8).unwrap_or(0);
         let cmd = decode_command_word(cmd_raw);
 
         let bus_label = tw.bus.as_str();
@@ -216,31 +255,31 @@ pub fn hex_dump_records(
             'R'
         };
 
-        let _ = writeln!(out, "{}", "-".repeat(72));
-        let _ = writeln!(
+        writeln!(out, "{}", "-".repeat(72))?;
+        writeln!(
             out,
             "  Record #{record_num}  @  0x{offset:08X}  ({record_bytes} bytes, {wc} words)",
             wc = tw.word_count
-        );
-        let _ = writeln!(
+        )?;
+        writeln!(
             out,
             "  Type: 0x{:04X}  ->  {}  Bus {}  {}",
             tw.raw,
             type_name(tw.message_type),
             bus_label,
             err_label
-        );
-        let _ = writeln!(
+        )?;
+        writeln!(
             out,
             "  Time: {}{}",
             ts.format(),
             if ts.freerun { "  [FREERUN]" } else { "" }
-        );
-        let _ = writeln!(
+        )?;
+        writeln!(
             out,
             "  Cmd:  0x{:04X}  ->  RT{} SA{} {} WC={}",
             cmd.raw, cmd.rt, cmd.subaddress, dir_char, cmd.data_word_count
-        );
+        )?;
 
         // record_end was already checked above; reuse it.
         let record_data = &data[offset..record_end];
@@ -249,10 +288,10 @@ pub fn hex_dump_records(
             let line = &record_data[i..(i + 16).min(record_data.len())];
             // offset + i: offset is bounded by loop guard, i by
             // record_bytes (≤ 126). saturating_add as belt-and-suspenders.
-            let _ = write_hex_line(&mut out, "    ", offset.saturating_add(i), line);
+            write_hex_line(out, "    ", offset.saturating_add(i), line)?;
             i += 16;
         }
-        let _ = writeln!(out);
+        writeln!(out)?;
 
         // offset can advance to record_end; checked again at the top of
         // the next iteration.
@@ -260,9 +299,9 @@ pub fn hex_dump_records(
         record_num += 1;
     }
 
-    let _ = writeln!(out, "{}", "-".repeat(72));
-    let _ = writeln!(out, "{record_num} records dumped.");
-    Ok(())
+    writeln!(out, "{}", "-".repeat(72))?;
+    writeln!(out, "{record_num} records dumped.")?;
+    out.flush()
 }
 
 /// Convenience wrapper that writes to stdout (buffered).
@@ -402,5 +441,63 @@ mod tests {
         hex_dump_records(f.path(), Some(1), usize::MAX - 4, &mut out).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("0 records dumped"));
+    }
+
+    /// A `Write` that fails every write/flush with a configurable error
+    /// kind — used to prove the dump surfaces output I/O failures rather
+    /// than reporting success (L2-WRT-018).
+    struct FailingWriter(std::io::ErrorKind);
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(self.0, "injected write failure"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::new(self.0, "injected flush failure"))
+        }
+    }
+
+    /// Requirements: L2-WRT-018
+    #[test]
+    fn raw_dump_surfaces_write_failure() {
+        let f = TempFile::write(b"AB\x00\x01");
+        let err =
+            hex_dump_raw(f.path(), 0, None, FailingWriter(std::io::ErrorKind::Other)).unwrap_err();
+        assert_eq!(err.kind(), crate::error::MieErrorKind::WriterError);
+    }
+
+    /// Requirements: L2-WRT-018
+    #[test]
+    fn records_dump_surfaces_write_failure() {
+        let mut buf = Vec::with_capacity(72);
+        buf.extend_from_slice(&[0x02, 0x24]);
+        buf.extend_from_slice(&[0u8; 70]);
+        let f = TempFile::write(&buf);
+        let err = hex_dump_records(
+            f.path(),
+            Some(1),
+            0,
+            FailingWriter(std::io::ErrorKind::Other),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), crate::error::MieErrorKind::WriterError);
+    }
+
+    /// A broken pipe on the dump's stdout must be *classified* as such so
+    /// the CLI can exit 0 (L2-WRT-018) rather than fail.
+    /// Requirements: L2-WRT-018
+    #[test]
+    fn dump_broken_pipe_is_classified_for_exit_zero() {
+        let f = TempFile::write(b"AB\x00\x01");
+        let err = hex_dump_raw(
+            f.path(),
+            0,
+            None,
+            FailingWriter(std::io::ErrorKind::BrokenPipe),
+        )
+        .unwrap_err();
+        assert!(
+            err.is_broken_pipe(),
+            "broken pipe must be classified so run_dump can exit 0 (L2-WRT-018)"
+        );
     }
 }

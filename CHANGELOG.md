@@ -33,6 +33,18 @@ full release workflow.
 
 ### Fixed
 
+- **The Rust `dump` subcommand no longer reports success after an output
+  write failure.** `hex_dump_raw` / `hex_dump_records` discarded every
+  `writeln!` / hex-line result with `let _ =` and unconditionally returned
+  `Ok(())`, and the stdout `BufWriter` swallowed flush errors on drop — so a
+  dump whose output hit disk-full or a permission error (e.g.
+  `dump > out.txt`) exited `0` with truncated or empty output, violating
+  `L2-WRT-018`. The writers now propagate every write and an explicit final
+  flush as a `WriterError`; the CLI surfaces it as a runtime failure (exit
+  `1`) while still treating a broken pipe on stdout (`dump | head`) as a
+  clean exit `0`. The Python `dump` already propagated via `print`, so this
+  aligns Rust to the existing behavior. Covered by new write-failure and
+  broken-pipe tests in both `dump.rs` and `cli.rs`.
 - Corrected a false atomicity guarantee in the docs and source comments for
   separate-mode output. `ARCHITECTURE.md` §8 previously claimed the main and
   errors CSVs "both either succeed atomically or neither appears" — implying
