@@ -348,7 +348,7 @@ For per-variant cause / lenient-vs-strict behavior / exit-code mapping, see [`ER
   └──────────────────────┘
 ```
 
-In separate mode the errors file is **not created** if no error rows occur (lazy creation, per L2-ERR-008). Each file is written atomically *on its own* via temp + rename, but the two files are **committed sequentially, not as a single transaction** — there is no cross-file atomicity (the platforms provide no two-file atomic rename). If the second commit fails after the first has already been renamed into place, the first file remains at its destination. The implementations commit in opposite orders today — Rust commits errors then main; Python commits main then errors — so the file left behind on a mid-commit failure differs by implementation. This is a known limitation, acknowledged in both writers; do not describe it as all-or-nothing.
+In separate mode the errors file is **not created** if no error rows occur (lazy creation, per L2-ERR-008). Each file is written atomically *on its own* via temp + rename, but the two files are **committed sequentially, not as a single transaction** — there is no cross-file atomicity (the platforms provide no two-file atomic rename). Both implementations commit **main first, then errors**: if the first (main) commit fails the errors file is still an un-renamed temp and neither file appears, and if the second (errors) commit fails after main is in place the residual file is the primary `main.csv` rather than an orphan errors file. This is a known limitation — acknowledged in both writers — and is *not* all-or-nothing across the two files.
 
 Stdout output forces inline mode (you can't split stdout into two streams).
 

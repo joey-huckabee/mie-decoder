@@ -15,19 +15,27 @@ full release workflow.
 
 ## [Unreleased]
 
+### Changed
+
+- **Separate-mode output now commits the main CSV before the errors CSV in
+  both implementations.** Rust previously committed errors-then-main while
+  Python committed main-then-errors — a cross-impl divergence in the
+  mid-commit failure residue. Aligned Rust to Python's main-first order so
+  that, since the two files are committed sequentially (each is atomic on its
+  own, but there is no cross-file atomic rename), a failure of the second
+  commit leaves the **primary `main.csv`** behind rather than an orphan
+  errors file, and a failure of the first commit leaves neither file. This
+  only affects the rare partial-failure path; successful writes are
+  unchanged, as is all CSV content.
+
 ### Fixed
 
 - Corrected a false atomicity guarantee in the docs and source comments for
   separate-mode output. `ARCHITECTURE.md` §8 previously claimed the main and
   errors CSVs "both either succeed atomically or neither appears" — implying
-  cross-file atomicity that does not exist. In reality each file is written
-  atomically on its own (temp + rename) but the two are committed
-  sequentially: if the second commit fails after the first is renamed into
-  place, the first file remains. The implementations also commit in opposite
-  orders (Rust errors-then-main, Python main-then-errors). Rewrote the §8
-  note and the misleading `src/writer.rs` commit-ordering comment to describe
-  the per-file (non-cross-file) guarantee honestly. No behavior change — the
-  commit logic is unchanged; only the documentation was wrong.
+  cross-file atomicity that does not exist. Rewrote the §8 note and the
+  misleading `src/writer.rs` commit-ordering comment (whose stated rationale
+  was backwards) to describe the per-file, main-first guarantee honestly.
 
 ### Documentation
 

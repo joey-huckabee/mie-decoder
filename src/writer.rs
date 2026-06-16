@@ -588,12 +588,19 @@ where
         None => {
             // Normal path. Each file is committed atomically (temp +
             // rename), but the two commits are sequential — there is no
-            // cross-file atomicity. Committing errors first means an
-            // errors-commit failure leaves main as an un-renamed temp
-            // (unlinked on Drop), so neither file appears. The unavoidable
-            // residual case is the reverse: if errors commits and then main
-            // fails, the errors file is left behind at its destination.
-            // See ARCHITECTURE.md §8 / writer.py for the same limitation.
+            // cross-file atomicity. We commit MAIN first so that if the
+            // second (errors) commit fails, the file left behind is the
+            // primary artifact (main.csv), never an orphan errors file with
+            // no main. This matches the Python writer's order (writer.py).
+            // If the first (main) commit fails, the errors file is still an
+            // un-renamed temp (unlinked on Drop), so neither file appears.
+            // See ARCHITECTURE.md §8.
+            main_atomic.commit()?;
+            log_info!("wrote {} normal rows to {}", normal_count, output.display());
+            if normal_count == 0 {
+                log_warn!("main CSV is empty (header only)");
+            }
+
             if let Some(ea) = errors_atomic {
                 ea.commit()?;
                 log_info!(
@@ -603,12 +610,6 @@ where
                 );
             } else {
                 log_info!("no error/spurious records — error file not created");
-            }
-            main_atomic.commit()?;
-
-            log_info!("wrote {} normal rows to {}", normal_count, output.display());
-            if normal_count == 0 {
-                log_warn!("main CSV is empty (header only)");
             }
 
             Ok(WriteOutcome {
