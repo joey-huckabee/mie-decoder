@@ -15,6 +15,17 @@ full release workflow.
 
 ## [Unreleased]
 
+### Documentation
+
+- Scoped the "IRIG day-field decoding across DDC card models" ROADMAP item
+  (Decode correctness) as **blocked on external data**: recorded what is
+  already known (the bits 13–5 binary slice is per-spec; only day-of-year
+  diverges, only on some card models), the sample set required to make
+  progress (recording + vendor CSV + true date + model/firmware id per
+  card model), and the diff-and-solve method for when ground-truth data is
+  available. No behavior change — the v1.5.0 advisory WARN remains the
+  interim treatment.
+
 ## [1.5.0] — 2026-06-15
 
 ### Added

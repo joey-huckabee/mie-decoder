@@ -1569,6 +1569,33 @@ here so they don't get dropped.
   v1.0.0 (carried from Python). The bit layout for the day-of-year field
   appears to vary between firmware versions; needs reverse-engineering
   across a sample set with cross-references against vendor CSV.
+  - **Status: blocked on external data** — cannot proceed without real
+    sample recordings. The v1.5.0 PRA-9 work only made the discrepancy
+    *visible* (a one-time advisory WARN); the actual decode fix is deferred
+    until ground-truth data is available.
+  - **What's known.** The decoder extracts day-of-year as a 9-bit binary
+    integer from Upper-Word bits 13–5 (`(upper >> 5) & 0x1FF`), which is
+    correct per the DDC specification. Hour, minute, second, microsecond,
+    and the freerun bit all decode correctly and match vendor CSV on every
+    observed card model. Only the day-of-year field diverges, and only on
+    *some* models — suggesting the firmware encodes that field differently
+    (leading hypotheses: BCD rather than binary, or a different field width
+    / bit offset). Freerun recordings are unaffected (the field carries no
+    calendar meaning when the internal oscillator is running).
+  - **What we need to collect** (the external dependency): for each of
+    several DDC card models / firmware revisions — (1) a real `.mie`
+    recording, (2) the vendor-generated CSV for that *same* file (the
+    oracle), and (3) the known real calendar date the recording was made.
+    A model/firmware identifier per sample is needed to tell a per-model
+    encoding from a universal mis-slice.
+  - **What we're looking for / method.** For each sample, pull the raw
+    16-bit Upper Word and tabulate decoded-day vs vendor-day vs true-day.
+    Solve for the transform that maps our value to the vendor's
+    (BCD-decode of the bits? a shifted/widened bit window? an offset?), and
+    determine whether it correlates with card model/firmware. Outcome:
+    either a single corrected extraction or a model-keyed decode, landed as
+    a spec'd requirement with byte-exact conformance fixtures so output
+    matches vendor CSV. Until then the advisory WARN stays.
 - **~~Standard-timestamp tick calibration.~~** *Resolved in v1.4.0.*
   The Standard format is a free-running counter whose tick rate is
   card-dependent and not encoded in the file. The shared contract
