@@ -1271,3 +1271,49 @@ class TestFuzzHarness:
                     f"{type(exc).__name__}: {exc}\n"
                     f"First 32 bytes: {bytes(payload[:32]).hex()}"
                 ) from exc
+
+
+class TestSeparateModeCommitOrder:
+    """L2-WRT-019: separate mode commits the main CSV before the errors CSV.
+
+    The two files are committed sequentially (each atomic on its own, but
+    there is no cross-file atomic rename), so on a mid-commit failure the
+    residue must be the primary main CSV, never an orphan errors file.
+    """
+
+    @pytest.mark.requirement("L2-WRT-019")
+    def test_errors_commit_failure_leaves_main_not_orphan_errors(
+        self, tmp_path: Path
+    ) -> None:
+        """If the errors-file commit fails, the already-committed main CSV
+        remains and no orphan errors file (or temp) is left behind."""
+        import dataclasses
+
+        from mie_decoder.exceptions import MieWriterError
+        from mie_decoder.writer import write_csv_split
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "in.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV)
+        normal = next(iter(MieFileReader(fpath)))
+        errored = dataclasses.replace(
+            normal, type_word=dataclasses.replace(normal.type_word, error=True)
+        )
+        assert errored.error_label == "ERROR"
+
+        dest = tmp_path / "out.csv"
+        err_dest = tmp_path / "out_errors.csv"
+        # Force the SECOND (errors) commit's os.replace to fail by making
+        # the errors destination a directory.
+        err_dest.mkdir()
+
+        with pytest.raises(MieWriterError):
+            write_csv_split([normal, errored], dest)
+
+        # Main was committed first → present and complete.
+        assert dest.read_text().startswith("TIME_STAMP,RT,MSG,")
+        # No orphan errors *file*: the destination is still the directory.
+        assert err_dest.is_dir()
+        # No leftover temp files anywhere in the directory.
+        leftover = list(tmp_path.glob("*.mie-decoder.tmp.*"))
+        assert leftover == [], f"temp file leaked after failed commit: {leftover}"

@@ -26,7 +26,10 @@ full release workflow.
   commit leaves the **primary `main.csv`** behind rather than an orphan
   errors file, and a failure of the first commit leaves neither file. This
   only affects the rare partial-failure path; successful writes are
-  unchanged, as is all CSV content.
+  unchanged, as is all CSV content. The order is now pinned by a new
+  requirement (`L2-WRT-019`) and verified by mid-commit-failure tests in both
+  implementations (the failing commit is forced by making the destination a
+  directory).
 
 ### Fixed
 

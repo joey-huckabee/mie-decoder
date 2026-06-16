@@ -60,7 +60,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L1-OUT-001 | L2-DEC-014, L2-ERR-007, L2-ERR-010, L2-WRT-001, L2-WRT-002, L2-WRT-003, L2-WRT-004, L2-WRT-007, L2-WRT-011, L2-WRT-012, L2-WRT-013 | _(none)_ | Implemented |
-| L1-OUT-002 | L2-WRT-014, L2-WRT-015, L2-WRT-017 | _(none)_ | Implemented |
+| L1-OUT-002 | L2-WRT-014, L2-WRT-015, L2-WRT-017, L2-WRT-019 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -78,8 +78,9 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-WRT-012 | _(none)_ | `python/tests/test_e2e.py::test_csv_to_file` | Implemented |
 | L2-WRT-013 | _(none)_ | `python/tests/test_e2e.py::test_csv_first_row_fields`<br>`python/tests/test_e2e.py::test_csv_header` | Implemented |
 | L2-WRT-014 | _(none)_ | `python/tests/test_e2e.py::test_paths_refer_to_same_file_distinct`<br>`python/tests/test_e2e.py::test_paths_refer_to_same_file_existing`<br>`python/tests/test_e2e.py::test_write_csv_rejects_input_output_collision`<br>`python/tests/test_e2e.py::test_write_csv_split_rejects_input_output_collision`<br>`src/writer.rs::paths_refer_to_same_file_existing`<br>`src/writer.rs::paths_refer_to_same_file_nonexistent_output_under_same_parent`<br>`src/writer.rs::write_csv_rejects_input_output_collision`<br>`src/writer.rs::write_csv_split_rejects_input_output_collision`<br>`tests/cli.rs::no_clobber_refuses_to_overwrite_existing_output` | Implemented |
-| L2-WRT-015 | L3-WRT-001 | `python/tests/test_e2e.py::test_write_csv_to_file_cleans_up_temp`<br>`src/writer.rs::atomic_commit_renames_temp_over_destination`<br>`src/writer.rs::atomic_drop_without_commit_unlinks_temp_and_leaves_destination`<br>`src/writer.rs::make_temp_path_lives_next_to_destination` | Implemented |
+| L2-WRT-015 | L3-WRT-001 | `python/tests/test_e2e.py::test_write_csv_to_file_cleans_up_temp`<br>`src/writer.rs::atomic_commit_renames_temp_over_destination`<br>`src/writer.rs::atomic_drop_without_commit_unlinks_temp_and_leaves_destination`<br>`src/writer.rs::make_temp_path_lives_next_to_destination`<br>`src/writer.rs::split_errors_commit_failure_leaves_main_not_orphan_errors`<br>`src/writer.rs::split_main_commit_failure_leaves_neither_file` | Implemented |
 | L2-WRT-017 | _(none)_ | `python/tests/test_e2e.py::test_write_csv_overwrites_by_default`<br>`python/tests/test_e2e.py::test_write_csv_rejects_clobber_with_no_clobber`<br>`python/tests/test_e2e.py::test_write_csv_split_no_clobber_checks_errors_file`<br>`src/writer.rs::write_csv_overwrites_by_default`<br>`src/writer.rs::write_csv_rejects_clobber_when_no_clobber_set`<br>`src/writer.rs::write_csv_split_no_clobber_checks_errors_file_too` | Implemented |
+| L2-WRT-019 | _(none)_ | `python/tests/test_e2e.py::test_errors_commit_failure_leaves_main_not_orphan_errors`<br>`src/writer.rs::split_errors_commit_failure_leaves_main_not_orphan_errors`<br>`src/writer.rs::split_main_commit_failure_leaves_neither_file` | Implemented |
 
 ### L1-DLT: DELTA inter-arrival tracking
 
@@ -319,17 +320,17 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
-| WRT | 0 | 13 | 2 | 13 | 2 | 13 | 2 |
+| WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
 | RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
-| **Total** | **26** | **109** | **25** | **105** | **14** | **109** | **25** |
+| **Total** | **26** | **110** | **25** | **106** | **14** | **110** | **25** |
 
 The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 125 of 140 (89.3%).
+**Tested by at least one test marker**: 126 of 141 (89.4%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 140 of 140 (100.0%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 141 of 141 (100.0%).
 
 ### Orphan check
 

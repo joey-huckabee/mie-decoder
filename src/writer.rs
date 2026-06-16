@@ -718,6 +718,15 @@ mod tests {
         }
     }
 
+    /// A message that routes to the errors file (`error_label() == "ERROR"`).
+    fn error_msg() -> MieMessage {
+        let mut m = sample_msg();
+        m.type_word.error = true;
+        m.type_word.raw |= 1 << 14;
+        m.error_word = None;
+        m
+    }
+
     /// Requirements: L2-WRT-001
     #[test]
     fn header_present() {
@@ -971,6 +980,77 @@ mod tests {
         // Main dest must not have been created.
         assert!(!dest.exists());
         let _ = std::fs::remove_file(&err_dest);
+    }
+
+    /// Requirements: L2-WRT-019, L2-WRT-015
+    ///
+    /// Separate mode commits main before errors. We force the *second*
+    /// (errors) commit to fail by making the errors destination a
+    /// directory — renaming a file over a directory fails on both POSIX
+    /// (EISDIR) and Windows (MoveFileEx). The already-committed main CSV
+    /// must remain (the primary artifact is the residue), and the errors
+    /// temp must be unlinked — never an orphan errors file.
+    #[test]
+    fn split_errors_commit_failure_leaves_main_not_orphan_errors() {
+        let dest = unique_path(".csv");
+        let err_dest = error_path_for(&dest);
+        std::fs::create_dir(&err_dest).unwrap();
+
+        let messages: Vec<MieResult<MieMessage>> = vec![Ok(sample_msg()), Ok(error_msg())];
+        let result = write_csv_split(messages, &dest, WriteOptions::default());
+
+        // The errors commit fails, so the overall call surfaces the error.
+        assert!(
+            result.is_err(),
+            "errors-commit failure should surface as Err"
+        );
+        // ...but main was committed first, so the primary file is complete.
+        let main = std::fs::read_to_string(&dest).unwrap();
+        assert!(main.starts_with("TIME_STAMP,RT,MSG,"));
+        assert!(main.contains("10:15:54:50.456225,15,11R,"));
+        // No orphan errors *file*: the destination is still the directory.
+        assert!(
+            err_dest.is_dir(),
+            "errors destination should be untouched (still a dir)"
+        );
+        // The errors temp must have been unlinked on Drop.
+        assert!(
+            !make_temp_path(&err_dest).exists(),
+            "errors temp leaked after failed commit"
+        );
+
+        let _ = std::fs::remove_file(&dest);
+        let _ = std::fs::remove_dir(&err_dest);
+    }
+
+    /// Requirements: L2-WRT-019, L2-WRT-015
+    ///
+    /// When the *first* (main) commit fails, neither output file appears:
+    /// the errors commit is never reached, and both temps are unlinked on
+    /// Drop. We force the main commit to fail by making the main
+    /// destination a directory.
+    #[test]
+    fn split_main_commit_failure_leaves_neither_file() {
+        let dest = unique_path(".csv");
+        let err_dest = error_path_for(&dest);
+        std::fs::create_dir(&dest).unwrap();
+
+        let messages: Vec<MieResult<MieMessage>> = vec![Ok(sample_msg()), Ok(error_msg())];
+        let result = write_csv_split(messages, &dest, WriteOptions::default());
+
+        assert!(result.is_err(), "main-commit failure should surface as Err");
+        // No errors file is produced — main is committed first and failed.
+        assert!(
+            !err_dest.exists(),
+            "errors file must not appear when the main commit fails first"
+        );
+        // Both temps cleaned up on Drop.
+        assert!(!make_temp_path(&dest).exists(), "main temp leaked");
+        assert!(!make_temp_path(&err_dest).exists(), "errors temp leaked");
+        // The main destination is still just the directory we created.
+        assert!(dest.is_dir());
+
+        let _ = std::fs::remove_dir(&dest);
     }
 
     /// Requirements: L3-WRT-002
