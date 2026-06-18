@@ -310,7 +310,7 @@ Per L2-CFG-010, all schema validation (type checks, range checks, enum membershi
 
 This means a config file is either fully accepted (with optional WARN lines for unknown keys) or fully rejected at the very start of CLI invocation, before any file mmap or output write occurs. There is no class of "config error surfacing mid-decode."
 
-When a load-time validation fails, the CLI exits 1 with a stderr message naming the offending key and the rule it broke.
+When a load-time validation fails, the CLI exits `5` (the configuration-error class, L1-EXIT-008 / L2-CLI-011) with a stderr message naming the offending key and the rule it broke, and creates no output file.
 
 ---
 
