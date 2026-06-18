@@ -121,22 +121,28 @@ def _parse_u8_list(values: list[str], flag: str) -> list[int]:
     return out
 
 
-def _log_level_arg(value: str) -> str:
+def _normalize_log_level(value: str) -> str:
     """Validate ``--log-level`` case-insensitively against the shared level
-    set, returning the canonical uppercase name.
+    set, returning the canonical uppercase name; raises ``ValueError`` on an
+    invalid value.
 
     Uses the same vocabulary as the config-file ``logging.level`` key and
-    the Rust CLI (case-insensitive, accepting `WARN` and `OFF`) rather than
-    argparse ``choices`` (which is case-sensitive and would reject `warn` /
-    `off` and lowercase spellings). An invalid value raises, which argparse
-    maps to the usage-error exit code (4).
+    the Rust CLI (case-insensitive, accepting ``WARN`` and ``OFF``) rather
+    than argparse ``choices`` (which is case-sensitive and would reject
+    ``warn`` / ``off`` and lowercase spellings).
+
+    This is applied in ``main()`` *after* ``parse_args`` rather than as an
+    argparse ``type=`` so that ``--version`` / ``--help`` short-circuit
+    before the level is validated — matching the Rust CLI, which pulls those
+    flags before applying the log level (so ``--log-level bogus --version``
+    still prints the version instead of failing on the bad flag).
     """
     from mie_decoder.config import _VALID_LOG_LEVELS
 
     normalized = value.upper()
     if normalized not in _VALID_LOG_LEVELS:
-        raise argparse.ArgumentTypeError(
-            f"invalid log level {value!r}; valid: "
+        raise ValueError(
+            f"argument --log-level: invalid log level {value!r}; valid: "
             "DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, OFF (case-insensitive)"
         )
     return normalized
@@ -163,13 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--log-level",
-        type=_log_level_arg,
         metavar="LEVEL",
         default=None,
         help=(
             "Set logging verbosity: DEBUG, INFO, WARNING (alias WARN), ERROR, "
             "CRITICAL, or OFF (case-insensitive; CRITICAL/OFF silence all "
-            "output). Overrides config file."
+            "output). Overrides config file. Validated after --version/--help."
         ),
     )
     # Global option (before the subcommand), matching the Rust CLI:
@@ -765,6 +770,16 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # Validate --log-level here (not via an argparse `type=`) so --version
+    # and --help short-circuit during parse_args before the level is
+    # checked, matching the Rust CLI. An invalid value is a usage error (4).
+    if args.log_level is not None:
+        try:
+            args.log_level = _normalize_log_level(args.log_level)
+        except ValueError as exc:
+            print(f"{parser.prog}: error: {exc}", file=sys.stderr)
+            return EXIT_USAGE
 
     # Determine log level: CLI > TOML > default. main() configures
     # with the CLI value (or the "WARNING" default) so any logging

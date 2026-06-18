@@ -1011,9 +1011,25 @@ class TestCliEndToEnd:
             rc = main(["--log-level", lvl, "count", str(tmp_mie_file)])
             assert rc == 0, f"--log-level {lvl!r} should be accepted"
 
-        with pytest.raises(SystemExit) as exc_info:
-            main(["--log-level", "BOGUS", "count", str(tmp_mie_file)])
-        assert exc_info.value.code == 4  # usage error
+        # A bogus level is a usage error (exit 4). It is validated in main()
+        # after parse_args, so it returns rather than raising SystemExit.
+        assert main(["--log-level", "BOGUS", "count", str(tmp_mie_file)]) == 4
+
+    @pytest.mark.requirement("L2-CLI-004")
+    def test_cli_version_and_help_short_circuit_before_log_level_validation(
+        self,
+    ) -> None:
+        """--version / --help are honored even alongside an invalid
+        --log-level, matching the Rust CLI (which pulls those flags before
+        validating the level). Regression for the prior order-dependent
+        behavior where a bad --log-level before --version exited 4."""
+        from mie_decoder.cli import main
+
+        for tail in (["--version"], ["--help"]):
+            # argparse's version/help actions exit 0 via SystemExit.
+            with pytest.raises(SystemExit) as exc_info:
+                main(["--log-level", "BOGUS", *tail])
+            assert exc_info.value.code in (0, None), f"{tail} should exit 0"
 
     @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_records(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:

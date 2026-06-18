@@ -123,7 +123,10 @@ implementations ship from the single tag `v2.0.0`.
   help). Both CLIs now accept `DEBUG`/`INFO`/`WARNING`/`WARN`/`ERROR`/
   `CRITICAL`/`OFF` case-insensitively (matching `logging.level`), with help,
   invalid-value text, and the README aligned. The Python change is additive
-  (a superset of what it accepted before).
+  (a superset of what it accepted before). `--version` and `--help` are also
+  now honored even alongside an invalid `--log-level` in both CLIs (Python
+  previously failed on the bad flag before reaching `--version`/`--help`); the
+  level is validated after those flags short-circuit, matching Rust.
 
 ## [1.5.1] — 2026-06-15
 
