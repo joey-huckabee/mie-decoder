@@ -821,14 +821,16 @@ class TestCliEndToEnd:
         assert out.exists()
 
     @pytest.mark.requirement("L3-PY-010")
-    def test_cli_decode_count(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """CLI decode --count should print message count to stderr."""
+    def test_cli_count_subcommand(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """The `count` subcommand prints the integer count to stdout and a
+        human-readable status line to stderr."""
         from mie_decoder.cli import main
 
-        rc = main(["decode", str(tmp_mie_file), "--count"])
+        rc = main(["count", str(tmp_mie_file)])
         assert rc == 0
         captured = capsys.readouterr()
-        assert "3 messages" in captured.err
+        assert captured.out.strip() == "3"  # machine-readable datum on stdout
+        assert "counted 3 messages in" in captured.err
 
     @pytest.mark.requirement("L2-CLI-005")
     def test_cli_decode_missing_file(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -877,10 +879,10 @@ class TestCliEndToEnd:
 
         with caplog.at_level(logging.INFO, logger="mie_decoder"):
             rc = main([
+                "--config", str(config_path),  # global: before subcommand
                 "decode",
                 str(tmp_mie_file),
                 "-o", str(out),
-                "--config", str(config_path),
             ])
 
         assert rc == 0
@@ -918,10 +920,10 @@ class TestCliEndToEnd:
         with caplog.at_level(logging.DEBUG, logger="mie_decoder"):
             rc = main([
                 "--log-level", "ERROR",
+                "--config", str(config_path),  # both global: before subcommand
                 "decode",
                 str(tmp_mie_file),
                 "-o", str(out),
-                "--config", str(config_path),
             ])
 
         assert rc == 0
@@ -958,10 +960,10 @@ class TestCliEndToEnd:
         sys.stdout = buf
         try:
             rc = main([
+                "--config", str(config_path),  # global: before subcommand
                 "dump",
                 str(tmp_mie_file),
                 "--records", "1",
-                "--config", str(config_path),
             ])
         finally:
             sys.stdout = old_stdout
@@ -1045,7 +1047,7 @@ class TestCliEndToEnd:
         bad.write_text('[decode]\ntime_format = "potato"\n')
         # Config load fails before the input file is opened, so the input
         # path need not exist.
-        rc = main(["decode", str(tmp_path / "missing.mie"), "--config", str(bad)])
+        rc = main(["--config", str(bad), "decode", str(tmp_path / "missing.mie")])
         assert rc == 5
 
 

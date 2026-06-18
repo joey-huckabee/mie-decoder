@@ -45,9 +45,8 @@ array of case objects. Each case object accepts the following fields:
 | `expected` | string | when `expected_exit == 0` | Path to the checked-in oracle. For `mode == "decode"` (default) this is the expected CSV; for `mode == "count"` this is a text file containing the expected integer count plus a trailing newline. |
 | `expected_errors` | string | no | Path to the expected `<stem>_errors.csv` oracle for split-error-mode (`mode == "decode"` only). |
 | `config` | string | no | Optional path to a shared TOML config applied to both implementations. |
-| `mode` | string | no | Either `"decode"` (default — both impls run their decode pipeline; CSV output is compared) or `"count"` (Rust runs the `count` subcommand, Python runs `decode --count`; stdout is compared). |
-| `rust_args` | array of string | no | Additional CLI arguments appended to the Rust invocation only. |
-| `python_args` | array of string | no | Additional CLI arguments appended to the Python invocation only. |
+| `mode` | string | no | Either `"decode"` (default — both impls run their decode pipeline; CSV output is compared) or `"count"` (both impls run the `count` subcommand; stdout is compared). |
+| `args` | array of string | no | Additional CLI arguments appended to both invocations verbatim. The Rust and Python CLIs share one argument surface, so a single vector serves both — there is no per-impl argument translation. |
 | `expected_stderr_contains` | string | no | Substring assertion applied to each impl's captured stderr. Used by `mode == "count"` cases to pin the human-readable status line without byte-comparing a temp path. |
 | `expected_exit` | integer | no | Expected exit code for both implementations. Defaults to `0`. Negative cases (exit `1`/`2`/`3` per `L1-EXIT-002`..`L1-EXIT-004`) may omit `expected`; the exit code alone is the assertion. |
 

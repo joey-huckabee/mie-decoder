@@ -422,9 +422,9 @@ class TestCliFilters:
         cfg.write_text('[filter]\nexclude_types = ["RT_TO_BC"]\n')
         out = tmp_path / "cfg_filtered.csv"
         rc = main([
+            "--config", str(cfg),  # global: before the subcommand
             "decode", str(tmp_mie_file),
             "-o", str(out),
-            "--config", str(cfg),
         ])
         assert rc == 0
         lines = out.read_text().strip().split("\n")
@@ -534,20 +534,21 @@ class TestErrorModeConfig:
             load_config(cfg)
 
     @pytest.mark.requirement("L3-PY-011")
-    def test_cli_error_mode_inline(self, tmp_mie_file: Path, tmp_path: Path) -> None:
+    def test_cli_inline_errors_flag(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         from mie_decoder.cli import main
 
         out = tmp_path / "inline.csv"
-        rc = main(["decode", str(tmp_mie_file), "-o", str(out), "--error-mode", "inline"])
+        rc = main(["decode", str(tmp_mie_file), "-o", str(out), "--inline-errors"])
         assert rc == 0
         assert out.exists()
 
     @pytest.mark.requirement("L2-ERR-008")
-    def test_cli_error_mode_separate(self, tmp_mie_file: Path, tmp_path: Path) -> None:
+    def test_cli_separate_is_default(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         from mie_decoder.cli import main
 
         out = tmp_path / "main.csv"
-        rc = main(["decode", str(tmp_mie_file), "-o", str(out), "--error-mode", "separate"])
+        # Separate is the default — no flag needed (there is no --error-mode).
+        rc = main(["decode", str(tmp_mie_file), "-o", str(out)])
         assert rc == 0
         assert out.exists()
         # No errors in test data, so error file should not be created

@@ -14,23 +14,15 @@
       "name": "errors-inline",
       "input": "inputs/errors-inline.hex",
       "expected": "expected/errors-inline.csv",
-      "rust_args": [
+      "args": [
         "--inline-errors"
-      ],
-      "python_args": [
-        "--error-mode",
-        "inline"
       ]
     },
     {
       "name": "exclude-subaddress",
       "input": "inputs/basic-multi-record.hex",
       "expected": "expected/exclude-subaddress.csv",
-      "rust_args": [
-        "--exclude-subaddresses",
-        "22"
-      ],
-      "python_args": [
+      "args": [
         "--exclude-subaddresses",
         "22"
       ]
@@ -45,12 +37,8 @@
       "name": "delta-tracking-irig",
       "input": "inputs/delta-tracking-irig.hex",
       "expected": "expected/delta-tracking-irig.csv",
-      "rust_args": [
+      "args": [
         "--inline-errors"
-      ],
-      "python_args": [
-        "--error-mode",
-        "inline"
       ]
     },
     {
@@ -62,23 +50,15 @@
       "name": "partial-unrecoverable-default",
       "input": "inputs/partial-unrecoverable.hex",
       "expected_exit": 3,
-      "rust_args": [
+      "args": [
         "--inline-errors"
-      ],
-      "python_args": [
-        "--error-mode",
-        "inline"
       ]
     },
     {
       "name": "standard-timestamps",
       "input": "inputs/standard-timestamps.hex",
       "expected": "expected/standard-timestamps.csv",
-      "rust_args": [
-        "--time-format",
-        "standard"
-      ],
-      "python_args": [
+      "args": [
         "--time-format",
         "standard"
       ]
@@ -87,13 +67,7 @@
       "name": "standard-tick-calibrated-cli",
       "input": "inputs/standard-timestamps.hex",
       "expected": "expected/standard-tick-calibrated.csv",
-      "rust_args": [
-        "--time-format",
-        "standard",
-        "--standard-tick-rate-hz",
-        "1000000"
-      ],
-      "python_args": [
+      "args": [
         "--time-format",
         "standard",
         "--standard-tick-rate-hz",
@@ -125,11 +99,7 @@
       "name": "mode-code-no-data",
       "input": "inputs/mode-code-no-data.hex",
       "expected": "expected/mode-code-no-data.csv",
-      "rust_args": [
-        "--time-format",
-        "irig"
-      ],
-      "python_args": [
+      "args": [
         "--time-format",
         "irig"
       ]
@@ -199,24 +169,21 @@
       "name": "timestamp-format-borderline-n1",
       "input": "inputs/timestamp-format-borderline.hex",
       "expected": "expected/timestamp-format-borderline-n1.csv",
-      "rust_args": ["--detect-records", "1"],
-      "python_args": ["--detect-records", "1"],
+      "args": ["--detect-records", "1"],
       "expected_stderr_contains": "TW.word_count = 8 is too small for declared payload"
     },
     {
       "name": "lookahead-corruption-chain-n2",
       "input": "inputs/lookahead-corruption-chain.hex",
       "expected": "expected/lookahead-corruption-chain-n2.csv",
-      "rust_args": ["--lookahead-records", "2"],
-      "python_args": ["--lookahead-records", "2"],
+      "args": ["--lookahead-records", "2"],
       "expected_stderr_contains": "scanning forward"
     },
     {
       "name": "lookahead-corruption-chain-n4",
       "input": "inputs/lookahead-corruption-chain.hex",
       "expected": "expected/lookahead-corruption-chain-n4.csv",
-      "rust_args": ["--lookahead-records", "4"],
-      "python_args": ["--lookahead-records", "4"]
+      "args": ["--lookahead-records", "4"]
     },
     {
       "name": "log-level-from-toml-config",
@@ -228,11 +195,7 @@
     {
       "name": "usage-error-bad-flag-value",
       "input": "inputs/standard-timestamps.hex",
-      "rust_args": [
-        "--standard-tick-rate-hz",
-        "0"
-      ],
-      "python_args": [
+      "args": [
         "--standard-tick-rate-hz",
         "0"
       ],
@@ -248,11 +211,7 @@
       "name": "forced-format-mismatch-strict",
       "input": "inputs/basic-multi-record.hex",
       "config": "configs/strict.toml",
-      "rust_args": [
-        "--time-format",
-        "standard"
-      ],
-      "python_args": [
+      "args": [
         "--time-format",
         "standard"
       ],

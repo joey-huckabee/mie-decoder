@@ -20,10 +20,13 @@ MANIFEST = SUITE / "manifest.json"
 
 # Closed schema for case objects. ``tests/conformance/README.md``
 # specifies that unknown fields SHALL be rejected by the runner so a
-# typo (e.g. ``rust_arg`` instead of ``rust_args``) cannot silently
-# disable a per-case override. ``FIELD_TYPES`` doubles as the
-# allowed-field set; keep it in lockstep with the schema table in the
-# README.
+# typo (e.g. ``arg`` instead of ``args``) cannot silently disable a
+# per-case override. ``FIELD_TYPES`` doubles as the allowed-field set;
+# keep it in lockstep with the schema table in the README.
+#
+# The Rust and Python CLIs share one argument surface, so a single
+# ``args`` vector is passed verbatim to both — there is no per-impl
+# argument translation.
 FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "name": str,
     "input": str,
@@ -31,8 +34,7 @@ FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "expected_errors": str,
     "config": str,
     "mode": str,
-    "rust_args": list,
-    "python_args": list,
+    "args": list,
     "expected_stderr_contains": str,
     "expected_exit": int,
 }
@@ -45,10 +47,10 @@ def validate_case_schema(case: Any, index: int) -> None:
     Two failure classes are caught here so neither becomes a silent
     no-op at run time:
 
-    1. **Unknown field name** — a misspelled key (e.g. ``rust_arg``
-       for ``rust_args``) is otherwise ignored by ``case.get(...,
+    1. **Unknown field name** — a misspelled key (e.g. ``arg``
+       for ``args``) is otherwise ignored by ``case.get(...,
        default)`` and the case runs with default behavior.
-    2. **Wrong field type** — e.g. ``"rust_args": "single string"``
+    2. **Wrong field type** — e.g. ``"args": "single string"``
        (should be a list) would propagate downstream as a
        ``subprocess`` argument-list shape error far from the
        manifest entry that caused it.
@@ -89,9 +91,9 @@ def validate_case_schema(case: Any, index: int) -> None:
                 f"manifest case {label}: field {field!r} must be {type_name}, "
                 f"got {type(case[field]).__name__}"
             )
-        # list-typed fields must hold strings only — both ``rust_args``
-        # and ``python_args`` end up as CLI argument vectors, where a
-        # non-string element would raise far from the manifest entry.
+        # list-typed fields must hold strings only — ``args`` ends up as
+        # a CLI argument vector, where a non-string element would raise
+        # far from the manifest entry.
         if expected_type is list:
             for i, item in enumerate(case[field]):
                 if not isinstance(item, str):
@@ -215,15 +217,7 @@ def rust_command(
     no -o flag).
     """
     command = [str(args.rust_bin)]
-    if config := case.get("config"):
-        command += ["--config", str((SUITE / config).resolve())]
-    mode = case.get("mode", "decode")
-    if mode == "count":
-        command += ["count", str(source)]
-    else:
-        command += ["decode", str(source), "-o", str(output)]
-    command += case.get("rust_args", [])
-    return command
+    return _build_command(command, case, source, output)
 
 
 def python_command(
@@ -234,27 +228,36 @@ def python_command(
 ) -> list[str]:
     """Build the Python CLI invocation for a case.
 
-    Note on flag positioning: the Rust CLI accepts ``--config`` as a
-    global flag *before* the subcommand selector; the Python CLI
-    accepts it as a flag on the ``decode`` subcommand and so it must
-    appear *after* the subcommand token. The Python invocation below
-    therefore places ``--config`` after the source/output args, not
-    immediately after the ``-m mie_decoder`` entrypoint.
-
-    Python exposes message counting as a flag on the ``decode``
-    subcommand (``decode --count``) rather than as its own subcommand,
-    so ``mode == "count"`` translates to ``decode --count`` here, not
-    a hypothetical ``count`` subcommand.
+    The Python and Rust CLIs share one argument surface — global
+    ``--config`` before the subcommand, a ``count`` subcommand, and an
+    identical decode flag set — so this differs from ``rust_command``
+    only in the interpreter/entrypoint prefix. The per-case ``args`` are
+    passed verbatim to both.
     """
     command = [str(args.python_bin), "-m", "mie_decoder"]
-    mode = case.get("mode", "decode")
-    if mode == "count":
-        command += ["decode", str(source), "--count"]
-    else:
-        command += ["decode", str(source), "-o", str(output)]
+    return _build_command(command, case, source, output)
+
+
+def _build_command(
+    command: list[str],
+    case: dict[str, Any],
+    source: Path,
+    output: Path | None,
+) -> list[str]:
+    """Append the shared subcommand/flag tail to a CLI prefix.
+
+    ``output`` is the per-case scratch CSV path for ``mode == "decode"``,
+    or ``None`` for ``mode == "count"`` (stdout-comparison mode, no -o).
+    ``--config`` is global (before the subcommand) for both CLIs.
+    """
     if config := case.get("config"):
         command += ["--config", str((SUITE / config).resolve())]
-    command += case.get("python_args", [])
+    mode = case.get("mode", "decode")
+    if mode == "count":
+        command += ["count", str(source)]
+    else:
+        command += ["decode", str(source), "-o", str(output)]
+    command += case.get("args", [])
     return command
 
 

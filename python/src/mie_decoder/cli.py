@@ -12,8 +12,8 @@ Usage::
     # Decode to stdout
     mie-decoder decode recording.mie
 
-    # Decode with config file
-    mie-decoder decode recording.mie --config my-config.toml
+    # Decode with config file (--config is global: before the subcommand)
+    mie-decoder --config my-config.toml decode recording.mie
 
     # Decode excluding spurious data and mode codes
     mie-decoder decode recording.mie --exclude-types SPURIOUS_DATA,MODE_COMMAND
@@ -146,6 +146,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Set logging verbosity. Overrides config file.",
     )
+    # Global option (before the subcommand), matching the Rust CLI:
+    # `mie-decoder --config site.toml decode rec.mie`. Applies to every
+    # subcommand (decode/count use the full config; dump uses only
+    # [logging] level).
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Path to TOML configuration file. Global (place before the subcommand).",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -165,19 +176,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Output CSV file path. If omitted, writes to stdout.",
-    )
-    decode_parser.add_argument(
-        "--config",
-        type=Path,
-        default=None,
-        help="Path to TOML configuration file.",
-    )
-    decode_parser.add_argument(
-        "--count",
-        action="store_true",
-        default=False,
-        help="Print the message count to stdout (with a status summary on "
-        "stderr) instead of writing CSV.",
     )
     decode_parser.add_argument(
         "--time-format",
@@ -254,13 +252,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include only these subaddresses. Comma-separated, repeatable. CLI-only.",
     )
     decode_parser.add_argument(
-        "--error-mode",
-        choices=["separate", "inline"],
-        default=None,
+        "--inline-errors",
+        action="store_true",
+        default=False,
         help=(
-            "How to handle errored/spurious messages. "
-            "'separate' (default): errors go to <output>_errors.csv. "
-            "'inline': errors included in main CSV with ERROR/ERROR_CODE columns."
+            "Include errored/spurious messages inline in the main CSV with "
+            "the ERROR/ERROR_CODE columns populated. Default (omitted): "
+            "errors go to a separate <output>_errors.csv. Stdout output "
+            "always uses inline mode (you cannot split stdout)."
         ),
     )
     decode_parser.add_argument(
@@ -320,6 +319,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # ── count subcommand ───────────────────────────────────────────
+    # Its own subcommand, matching the Rust v2 CLI (`count <INPUT>`).
+    # Counts valid records after applying the config file's [filter]
+    # section; CLI filter flags are decode-only. Global --config applies.
+    count_parser = subparsers.add_parser(
+        "count",
+        help="Print the message count (no CSV).",
+    )
+    count_parser.add_argument(
+        "input",
+        type=Path,
+        help="Path to the MIE binary recording file.",
+    )
+
     # ── dump subcommand ────────────────────────────────────────────
     dump_parser = subparsers.add_parser(
         "dump",
@@ -354,16 +367,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Max number of records to dump (record mode). Default: all.",
     )
-    # dump only consumes [logging] level from the TOML — the other
-    # decode-time keys (time_format, filters, strict, etc.) don't
-    # apply to a hex dump. Mirrors Rust where --config is a global
-    # flag accepted by every subcommand.
-    dump_parser.add_argument(
-        "--config",
-        type=Path,
-        default=None,
-        help="Path to TOML configuration file (only [logging] level applies to dump).",
-    )
+    # dump only consumes [logging] level from the global --config; the
+    # other decode-time keys (time_format, filters, strict, etc.) don't
+    # apply to a hex dump.
 
     return parser
 
@@ -423,9 +429,11 @@ def _run_decode(args: argparse.Namespace) -> int:
     if args.time_format is not None:
         tf_map = {"auto": TimestampFormat.AUTO, "irig": TimestampFormat.IRIG, "standard": TimestampFormat.STANDARD}
         overrides["time_format"] = tf_map[args.time_format]
-    if args.error_mode is not None:
-        em_map = {"separate": ErrorMode.SEPARATE, "inline": ErrorMode.INLINE}
-        overrides["error_mode"] = em_map[args.error_mode]
+    # --inline-errors flips error_mode to INLINE; omitted leaves the
+    # config value (default SEPARATE) intact. A boolean flag has no
+    # "separate" form on the CLI — the default IS separate.
+    if args.inline_errors:
+        overrides["error_mode"] = ErrorMode.INLINE
     # Filter overrides. types/buses parse via name-or-hex; rts/subaddresses
     # via the u8 (0-255) parser mirroring the Rust CLI. Any bad value is a
     # usage error (exit 4). include_* are CLI-only (L3-PY-013).
@@ -516,20 +524,6 @@ def _run_decode(args: argparse.Namespace) -> int:
 
     # ── Apply filters ──────────────────────────────────────────────
     messages = apply_filters(reader, config.filters)
-
-    # ── Execute ────────────────────────────────────────────────────
-    if args.count:
-        t0 = time.perf_counter()
-        count = sum(1 for _ in messages)
-        elapsed = time.perf_counter() - t0
-        logger.info("Counted %d messages in %.3fs", count, elapsed)
-        # L3-PY-010: integer count to stdout (the machine-readable data),
-        # human-friendly status with path context to stderr (always
-        # emitted, not gated by --log-level so an interactive operator
-        # sees it without having to opt into INFO logging).
-        print(count)
-        print(f"counted {count} messages in {reader.path.name}", file=sys.stderr)
-        return EXIT_OK
 
     # WriteOptions populated once with all three file-output safety
     # checks (L2-WRT-014 collision, L2-WRT-017 no-clobber, L1-EXIT-004
@@ -631,6 +625,64 @@ def _run_decode(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _run_count(args: argparse.Namespace) -> int:
+    """Execute the count subcommand (L3-PY-010).
+
+    Counts valid records after applying the config file's ``[filter]``
+    section (CLI filter flags are decode-only), printing the integer
+    count to stdout and a human-readable status line to stderr. Mirrors
+    the Rust ``count`` subcommand.
+
+    Returns:
+        Exit code: 0 on success, 1 on a decode error, 5 on config error.
+    """
+    from mie_decoder.config import load_config
+    from mie_decoder.filters import apply_filters
+    from mie_decoder.reader import MieFileReader
+
+    try:
+        config = load_config(args.config)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+
+    _apply_config_log_level(args, config.log_level)
+
+    try:
+        reader = MieFileReader(
+            args.input,
+            time_format=config.time_format,
+            strict=config.strict,
+            detect_records=config.detect_records,
+            lookahead_records=config.lookahead_records,
+            standard_tick_rate_hz=config.standard_tick_rate_hz,
+        )
+    except MieFileError as exc:
+        logger.error("Failed to open input file: %s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+
+    messages = apply_filters(reader, config.filters)
+    try:
+        t0 = time.perf_counter()
+        count = sum(1 for _ in messages)
+        elapsed = time.perf_counter() - t0
+    except MieDecoderError as exc:
+        # Any decode error during the count maps to a runtime failure
+        # (exit 1), matching the Rust count subcommand.
+        logger.error("Count failed: %s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+
+    logger.info("Counted %d messages in %.3fs", count, elapsed)
+    # L3-PY-010: integer count to stdout (the machine-readable datum),
+    # human-friendly status with path context to stderr (always emitted,
+    # not gated by --log-level so an interactive operator sees context).
+    print(count)
+    print(f"counted {count} messages in {reader.path.name}", file=sys.stderr)
+    return EXIT_OK
+
+
 def _run_dump(args: argparse.Namespace) -> int:
     """Execute the dump subcommand.
 
@@ -701,6 +753,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "decode":
         return _run_decode(args)
+    elif args.command == "count":
+        return _run_count(args)
     elif args.command == "dump":
         return _run_dump(args)
     else:

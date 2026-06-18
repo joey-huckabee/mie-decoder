@@ -335,7 +335,7 @@ Cross-implementation conformance fixtures verify byte-identical CSV output (or m
    }
    ```
 
-5. For cases that require flag differences between Rust and Python CLI syntax, add `rust_args` and `python_args` arrays. Don't add a fixture for an implementation-specific behavior (those go in each impl's own test suite per L1-CONF-001).
+5. For cases that need extra CLI flags, add a single `args` array — it is passed verbatim to both CLIs, which share one argument surface. Don't add a fixture for an implementation-specific behavior (those go in each impl's own test suite per L1-CONF-001).
 
 6. Run the suite locally to confirm:
 
