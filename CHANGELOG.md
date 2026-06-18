@@ -39,6 +39,16 @@ implementations ship from the single tag `v2.0.0`.
   matching the Rust `count` subcommand. Counts valid records after the config
   file's `[filter]` section, printing the integer to stdout and a status line
   to stderr (`L3-PY-010`).
+- **The Python package root now exposes its decoder entry point** —
+  `from mie_decoder import MieFileReader` (and `MieMessage`) now works without
+  reaching into submodules, advertised via `__all__`. Previously the package
+  root exposed only `__version__`, so `L3-PY-007` ("expose the decoder entry
+  point as a typed callable importable from the package root") was unsatisfied
+  in code and traced only through the conformance-runner requirement rather
+  than a real root-API check. The re-export is additive (submodule paths are
+  unchanged), and `L3-PY-007` now traces to a dedicated root-API test
+  (`tests/test_package_api.py`); its verification method moved from Inspection
+  to Test + Inspection.
 
 ### Changed
 

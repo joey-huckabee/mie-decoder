@@ -12,11 +12,14 @@ status word, and data words captured from the bus.
 
 Typical usage::
 
-    from mie_decoder.reader import MieFileReader
+    from mie_decoder import MieFileReader
 
     reader = MieFileReader("recording.mie")
     for message in reader:
         print(message.timestamp, message.rt, message.subaddress)
+
+The decoder entry point ``MieFileReader`` and the ``MieMessage`` records it
+yields are importable directly from the package root (``mie_decoder``).
 
 Version history:
     1.0.0 - Joint Rust + Python initial release. See CHANGELOG.md.
@@ -36,3 +39,14 @@ except PackageNotFoundError:
     __version__ = "0.0.0+source"
 
 del PackageNotFoundError, _pkg_version
+
+# Public package-root API (L3-PY-007). The decoder entry point —
+# ``MieFileReader``, a typed callable: ``MieFileReader(path)`` constructs a
+# reader that decodes the file lazily into ``MieMessage`` records — and that
+# record type are re-exported here so library consumers can write
+# ``from mie_decoder import MieFileReader`` without reaching into submodules.
+# (The submodule paths remain importable and unchanged.)
+from mie_decoder.models import MieMessage
+from mie_decoder.reader import MieFileReader
+
+__all__ = ["MieFileReader", "MieMessage", "__version__"]

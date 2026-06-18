@@ -67,8 +67,8 @@ Python TOML parsing SHALL use the standard-library `tomllib` module on Python 3.
 **L3-PY-006** · Parent: L2-CLI-011 · Verification: T
 Python errors SHALL inherit from a base `MieDecoderError` class, with `MieFileError` and `MieRecordError` subclasses retaining typed detail attributes. The CLI entry point SHALL map these subclasses to the non-zero exit codes pinned by L2-CLI-011 without exposing tracebacks to stderr.
 
-**L3-PY-007** · Parent: L2-CONF-002 · Verification: I
-Public Python APIs SHALL carry type annotations and SHALL be documented in module docstrings. The `mie_decoder` package SHALL expose its decoder entry point as a typed callable importable from the package root.
+**L3-PY-007** · Parent: L2-CONF-002 · Verification: T, I
+Public Python APIs SHALL carry type annotations and SHALL be documented in module docstrings. The `mie_decoder` package SHALL expose its decoder entry point (`MieFileReader`) as a typed callable importable from the package root, advertised in `__all__`. The root-export and typed-callable obligations are verified by test (`tests/test_package_api.py`); the package-wide type-annotation obligation is verified by the CI-gated strict `mypy src` run, and module-docstring documentation by inspection.
 
 **L3-PY-008** · Parent: L2-CONF-005 · Verification: I
 The Python CI workflow SHALL run pytest under Python 3.10, 3.11, 3.12, 3.13, and 3.14 as a matrix. A failure in any matrix cell SHALL fail the workflow.

@@ -252,7 +252,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L2-CONF-001 | _(none)_ | _(TBD)_ | Implemented (I) |
-| L2-CONF-002 | L3-PY-007 | `python/tests/test_conformance_wiring.py::test_conformance_runner_invokes_both_clis_and_compares_outputs` | Implemented |
+| L2-CONF-002 | L3-PY-007 | `python/tests/test_conformance_wiring.py::test_conformance_runner_invokes_both_clis_and_compares_outputs`<br>`python/tests/test_package_api.py::test_decoder_entry_point_importable_from_package_root`<br>`python/tests/test_package_api.py::test_decoder_entry_point_is_a_typed_callable`<br>`python/tests/test_package_api.py::test_message_type_importable_from_package_root`<br>`python/tests/test_package_api.py::test_public_surface_is_documented` | Implemented |
 | L2-CONF-003 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_manifest_has_cases_with_oracles`<br>`python/tests/test_conformance_wiring.py::test_conformance_runner_exists` | Implemented |
 | L2-CONF-004 | _(none)_ | _(TBD)_ | Implemented (I) |
 | L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci` | Implemented |
@@ -322,13 +322,13 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
 | WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
-| PY | 0 | 0 | 13 | 0 | 7 | 0 | 13 |
+| PY | 0 | 0 | 13 | 0 | 8 | 0 | 13 |
 | RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
-| **Total** | **26** | **110** | **26** | **106** | **15** | **110** | **26** |
+| **Total** | **26** | **110** | **26** | **106** | **16** | **110** | **26** |
 
 The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 127 of 142 (89.4%).
+**Tested by at least one test marker**: 128 of 142 (90.1%).
 
 **Verified (Test or declared Inspection/Analysis/Demonstration)**: 142 of 142 (100.0%).
 
