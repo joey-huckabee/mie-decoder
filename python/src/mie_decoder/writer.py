@@ -561,51 +561,70 @@ def write_csv(
     """
     if opts is None:
         opts = WriteOptions()
-    if isinstance(output, (str, Path)):
-        _preflight_output(Path(output), opts)
 
-    # Collect rows in one pass so we can detect UnrecoverableSyncLoss
-    # mid-stream and commit the rows-so-far as .partial when
-    # allow_partial is set. (Python's writer materialises the full
-    # DataFrame regardless; the streaming variant is tracked as
-    # PY-streaming.)
-    rows: list[dict[str, str]] = []
-    partial_info: tuple[int, int] | None = None
+    # File-path destination: stream rows straight into an atomic temp
+    # file (constant memory), then commit() over the destination, or
+    # commit_partial() to <dest>.partial on an allow_partial sync loss.
+    if isinstance(output, (str, Path)):
+        dest = Path(output)
+        _preflight_output(dest, opts)
+        partial_info: tuple[int, int] | None = None
+        with _AtomicCsvFile(dest) as atomic:
+            writer = _StreamingCsvRowWriter(atomic.stream, str(dest))
+            try:
+                for msg in messages:
+                    writer.write_message(msg)
+            except MieUnrecoverableSyncLossError as exc:
+                if not opts.allow_partial:
+                    raise
+                partial_info = (exc.offset, exc.sync_losses)
+
+            count = writer.rows_written
+            if partial_info is None:
+                atomic.commit()
+                logger.info("Wrote %d rows to %s", count, dest)
+                return WriteOutcome(normal_count=count, error_count=0, partial=None)
+
+            partial_path = atomic.commit_partial()
+            offset, sync_losses = partial_info
+            logger.warning(
+                "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
+                "wrote %d rows to %s (--allow-partial)",
+                offset, sync_losses, count, partial_path,
+            )
+            return WriteOutcome(
+                normal_count=count,
+                error_count=0,
+                partial=PartialCommit(
+                    main_path=partial_path,
+                    errors_path=None,
+                    offset=offset,
+                    sync_losses=sync_losses,
+                ),
+            )
+
+    # Text-stream destination (TextIO or None → stdout). No on-disk
+    # identity, so no preflight, no atomic temp, and no .partial commit —
+    # rows already streamed to the consumer are what it has seen.
+    stream: TextIO = output if output is not None else sys.stdout
+    dest_name = "stdout" if output is None else "<stream>"
+    writer = _StreamingCsvRowWriter(stream, dest_name)
     try:
-        for i, msg in enumerate(messages):
-            rows.append(message_to_row(msg))
-            if (i + 1) % 10_000 == 0:
-                logger.debug("Converted %d messages to rows", i + 1)
-    except MieUnrecoverableSyncLossError as exc:
+        for msg in messages:
+            writer.write_message(msg)
+    except BrokenPipeError:
+        # L2-WRT-018: downstream consumer closed early. Treat as success.
+        logger.info("Stdout consumer closed early (broken pipe) — exit 0")
+        return WriteOutcome(normal_count=writer.rows_written, error_count=0, partial=None)
+    except MieUnrecoverableSyncLossError:
         if not opts.allow_partial:
             raise
-        partial_info = (exc.offset, exc.sync_losses)
+        # Rows decoded so far are already in the stream; nothing to roll
+        # back. Mirror the prior behavior: succeed with no PartialCommit.
+        logger.debug("Unrecoverable sync loss on stream output (--allow-partial)")
 
-    df = pd.DataFrame(rows, columns=CSV_HEADER)
-
-    if partial_info is not None and isinstance(output, (str, Path)):
-        dest = Path(output)
-        partial_path = dest.with_name(f"{dest.name}.partial")
-        _write_dataframe_atomic(df, partial_path)
-        offset, sync_losses = partial_info
-        logger.warning(
-            "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
-            "wrote %d rows to %s (--allow-partial)",
-            offset, sync_losses, len(df), partial_path,
-        )
-        return WriteOutcome(
-            normal_count=len(df),
-            error_count=0,
-            partial=PartialCommit(
-                main_path=partial_path,
-                errors_path=None,
-                offset=offset,
-                sync_losses=sync_losses,
-            ),
-        )
-
-    dataframe_to_csv(df, output=output)
-    return WriteOutcome(normal_count=len(df), error_count=0, partial=None)
+    logger.info("Wrote %d rows to %s", writer.rows_written, dest_name)
+    return WriteOutcome(normal_count=writer.rows_written, error_count=0, partial=None)
 
 
 def write_csv_split(
