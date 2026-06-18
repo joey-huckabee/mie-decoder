@@ -68,7 +68,7 @@ exclude_types = ["SPURIOUS_DATA"]
 ```
 
 ```bash
-mie-decoder decode rec.mie --config my-config.toml --exclude-types BC_TO_RT
+mie-decoder --config my-config.toml decode rec.mie --exclude-types BC_TO_RT
 # Effective filter: exclude_types = ["SPURIOUS_DATA", "BC_TO_RT"]
 ```
 
@@ -380,9 +380,9 @@ level = "INFO"
 ```
 
 ```bash
-mie-decoder decode flight.mie --config /etc/mie-decoder/site.toml \
-                              --exclude-rts 31 \
-                              --log-level WARNING
+mie-decoder --config /etc/mie-decoder/site.toml --log-level WARNING \
+            decode flight.mie \
+            --exclude-rts 31
 # Effective: SPURIOUS_DATA filtered (config), RT 31 filtered (CLI merge),
 # log level WARNING (CLI override of INFO).
 ```

@@ -258,7 +258,7 @@ exclude_rts   = [31]
 ```
 
 ```bash
-mie-decoder decode flight.mie --config /etc/mie-decoder/site.toml -o flight.csv
+mie-decoder --config /etc/mie-decoder/site.toml decode flight.mie -o flight.csv
 ```
 
 CLI arguments still take precedence over config-file values per L2-CFG-003. For the full TOML schema with every key documented, see [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md). Copy [`config/default.toml`](../config/default.toml) as a fully-commented starting point.
@@ -343,7 +343,7 @@ level = "INFO"            # see the exit-class summary in stderr
 ```
 
 ```bash
-mie-decoder decode flight.mie --config my.toml -o flight.csv
+mie-decoder --config my.toml decode flight.mie -o flight.csv
 ```
 
 CLI arguments override matching config keys (L2-CFG-003). Filter arrays are the one exception — CLI values **add to** config values rather than replacing them (L2-CFG-004), so a site-wide `exclude_types = ["SPURIOUS_DATA"]` plus a CLI `--exclude-rts 31` yields both filters active.

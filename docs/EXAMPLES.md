@@ -141,7 +141,7 @@ standard_tick_rate_hz = 1000000.0
 ```
 
 ```bash
-mie-decoder decode counter.mie --config counter-card.toml -o out.csv
+mie-decoder --config counter-card.toml decode counter.mie -o out.csv
 ```
 
 The flag overrides the config value if both are present (CLI > config > default). The setting is a no-op on IRIG recordings. See [`USER-GUIDE.md` → Calibrating Standard timestamps](USER-GUIDE.md#calibrating-standard-timestamps) for background on where the rate comes from.
@@ -240,7 +240,7 @@ exclude_rts   = [31]                # we never look at broadcast
 Daily use:
 
 ```bash
-mie-decoder decode flight.mie --config /etc/mie-decoder/site.toml -o flight.csv
+mie-decoder --config /etc/mie-decoder/site.toml decode flight.mie -o flight.csv
 ```
 
 Override for a specific investigation that needs the broadcast traffic:
