@@ -15,7 +15,7 @@ full release workflow.
 
 ## [Unreleased]
 
-## [2.0.0] — 2026-06-17
+## [2.0.0] — 2026-06-18
 
 A joint Rust + Python major release whose theme is **parity**: the two
 tools now function the same way. The Python CLI gained the capabilities and

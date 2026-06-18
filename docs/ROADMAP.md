@@ -2,7 +2,7 @@
 
 ## Release status
 
-**v2.0.0 — joint Rust + Python cut, 2026-06-17.** Major release whose theme
+**v2.0.0 — joint Rust + Python cut, 2026-06-18.** Major release whose theme
 is **parity**: the two tools now function the same way. The Python CLI was
 brought to the Rust v2 argument surface — a `count` subcommand (replacing
 `decode --count`), `--inline-errors` (replacing `--error-mode`), a global
