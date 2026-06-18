@@ -95,6 +95,7 @@ Output Column Definitions:
 
 from __future__ import annotations
 
+import csv
 import logging
 import os
 import sys
@@ -326,6 +327,139 @@ def message_to_row(msg: MieMessage) -> dict[str, str]:
             row[col] = ""
 
     return row
+
+
+# ── Streaming primitives (PY-streaming, L3-PY-012) ─────────────────────
+#
+# These mirror the Rust writer's `AtomicCsvFile` and `CsvWriter` so both
+# implementations stream rows straight to the output handle with no
+# per-record buffering — memory is O(1) in the record count. The
+# byte image they produce is pinned against the pandas output by the
+# golden characterization tests (tests/test_writer_streaming_golden.py).
+
+
+class _AtomicCsvFile:
+    """Temp-file + ``os.replace`` atomic writer (L2-WRT-015/016).
+
+    Mirrors the Rust ``AtomicCsvFile``. Opens a temp file beside the
+    destination (same directory → ``os.replace`` is atomic on one
+    filesystem). Callers write through :attr:`stream`. :meth:`commit`
+    renames the temp over the destination; :meth:`commit_partial`
+    renames it to ``<destination>.partial``. If the writer is closed
+    without committing (decode failed or was interrupted), the temp
+    file is unlinked and a pre-existing destination is left untouched.
+
+    Usable as a context manager: an uncommitted writer is cleaned up on
+    ``__exit__`` so the failure path leaves no temp behind.
+    """
+
+    def __init__(self, final_path: Path) -> None:
+        self._final = final_path
+        self._temp = _make_temp_path(final_path)
+        try:
+            # newline="" stops the csv module's terminator being
+            # re-translated by the text layer, so output is LF-only.
+            self._stream: TextIO = open(
+                self._temp, "w", newline="", encoding="utf-8"
+            )
+        except OSError as exc:
+            raise MieWriterError(str(final_path), exc) from exc
+        self._committed = False
+
+    @property
+    def stream(self) -> TextIO:
+        return self._stream
+
+    def commit(self) -> None:
+        """Flush, close, and atomically rename the temp over the destination."""
+        self._close_stream()
+        try:
+            os.replace(self._temp, self._final)
+        except OSError as exc:
+            self._cleanup_temp()
+            raise MieWriterError(str(self._final), exc) from exc
+        self._committed = True
+
+    def commit_partial(self) -> Path:
+        """Rename the temp to ``<destination>.partial`` instead of over the
+        destination (L2-WRT-016 ``--allow-partial`` branch). The original
+        destination, if any, is left untouched. Returns the path written."""
+        self._close_stream()
+        partial = self._final.with_name(f"{self._final.name}.partial")
+        try:
+            os.replace(self._temp, partial)
+        except OSError as exc:
+            self._cleanup_temp()
+            raise MieWriterError(str(partial), exc) from exc
+        self._committed = True
+        return partial
+
+    def _close_stream(self) -> None:
+        if not self._stream.closed:
+            self._stream.flush()
+            self._stream.close()
+
+    def _cleanup_temp(self) -> None:
+        try:
+            if self._temp.exists():
+                self._temp.unlink()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        """Close the stream; unlink the temp if it was never committed."""
+        if not self._stream.closed:
+            self._stream.close()
+        if not self._committed:
+            self._cleanup_temp()
+
+    def __enter__(self) -> _AtomicCsvFile:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
+class _StreamingCsvRowWriter:
+    """Streaming CSV row writer (mirrors the Rust ``CsvWriter``).
+
+    Writes the header row on construction, then one CSV row per message
+    via ``csv.DictWriter``. Retains no per-record buffer beyond the
+    underlying stream's, so memory is O(1) in the record count
+    (L3-PY-012 / L3-RS-012). ``lineterminator="\\n"`` keeps output
+    byte-stable across platforms and aligned with the Rust writer.
+
+    ``BrokenPipeError`` is allowed to propagate (the stdout consumer
+    closed early); callers map it to a clean exit per L2-WRT-018. Other
+    ``OSError``\\ s (disk full, permission) are wrapped as
+    :class:`MieWriterError`.
+    """
+
+    def __init__(self, stream: TextIO, destination: str) -> None:
+        self._destination = destination
+        self._writer = csv.DictWriter(
+            stream, fieldnames=CSV_HEADER, lineterminator="\n"
+        )
+        self._rows_written = 0
+        try:
+            self._writer.writeheader()
+        except BrokenPipeError:
+            raise
+        except OSError as exc:
+            raise MieWriterError(destination, exc) from exc
+
+    def write_message(self, msg: MieMessage) -> None:
+        try:
+            self._writer.writerow(message_to_row(msg))
+        except BrokenPipeError:
+            raise
+        except OSError as exc:
+            raise MieWriterError(self._destination, exc) from exc
+        self._rows_written += 1
+
+    @property
+    def rows_written(self) -> int:
+        return self._rows_written
 
 
 def messages_to_dataframe(messages: Iterable[MieMessage]) -> pd.DataFrame:
