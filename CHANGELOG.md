@@ -99,6 +99,22 @@ implementations ship from the single tag `v2.0.0`.
   `dataframe_to_csv`.** Build a DataFrame from the public message stream
   instead: `pandas.DataFrame(map(message_to_row, MieFileReader(path)))`.
 
+### Fixed
+
+- **`logging.level = "OFF"` no longer crashes the Python CLI; it now silences
+  all output, matching Rust.** Both implementations accepted `OFF` at config
+  load, but Python then raised an uncaught `ValueError` when applying it
+  (stdlib `logging` has no `OFF` level), while Rust correctly mapped it to
+  "silence all" (`Level::Off`). Python now maps `OFF` to a level above
+  `CRITICAL`, so a config with `logging.level = "OFF"` decodes cleanly and
+  silently in both implementations. `OFF` was also added to the normative
+  L2-CFG schema table, `CONFIG-REFERENCE.md`, `config/default.toml`, and both
+  implementations' "invalid level" error messages (which under-reported the
+  accepted set — Rust's also omitted `WARN`). Corrected the docs that claimed
+  `CRITICAL` "behaves the same as `ERROR`": the decoder emits no
+  `CRITICAL`-level messages, so `CRITICAL` (like `OFF`) suppresses all output.
+  A new `log-level-off` conformance case pins the cross-impl behavior.
+
 ## [1.5.1] — 2026-06-15
 
 ### Changed

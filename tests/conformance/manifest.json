@@ -193,6 +193,12 @@
       "expected_stderr_contains": "decode exit class"
     },
     {
+      "name": "log-level-off",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/basic-multi-record.csv",
+      "config": "configs/log-level-off.toml"
+    },
+    {
       "name": "usage-error-bad-flag-value",
       "input": "inputs/standard-timestamps.hex",
       "args": [

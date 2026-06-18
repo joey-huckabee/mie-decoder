@@ -1,0 +1,11 @@
+# Conformance fixture: exercise [logging] level = "OFF" cross-impl.
+# Used by manifest case `log-level-off`.
+#
+# Regression: Python accepted logging.level = "OFF" at config-load but
+# crashed with an uncaught ValueError when applying it (stdlib logging
+# has no OFF level), while Rust silenced all output. This config makes
+# the runner assert both impls now decode identically and silently with
+# OFF (same CSV, clean exit) — the cross-impl proof of the fix.
+
+[logging]
+level = "OFF"

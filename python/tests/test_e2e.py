@@ -974,6 +974,30 @@ class TestCliEndToEnd:
         assert rc == 0
         assert logging.getLogger("mie_decoder").getEffectiveLevel() == logging.DEBUG
 
+    @pytest.mark.requirement("L2-CFG-001")
+    @pytest.mark.requirement("L2-CLI-004")
+    def test_cli_logging_level_off_does_not_crash(
+        self, tmp_mie_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A config with `logging.level = "OFF"` decodes cleanly and silently.
+
+        Regression: OFF was accepted at config-load but crashed with an
+        uncaught ValueError when applied (stdlib has no logging.OFF). It
+        now silences all output, matching Rust.
+        """
+        import logging
+
+        from mie_decoder.cli import main
+
+        config_path = tmp_path / "off.toml"
+        config_path.write_text('[logging]\nlevel = "OFF"\n', encoding="utf-8")
+        out = tmp_path / "decoded.csv"
+        rc = main(["--config", str(config_path), "decode", str(tmp_mie_file), "-o", str(out)])
+        assert rc == 0  # not a crash, not exit 5
+        assert out.exists()
+        # OFF silences logging — no records on the mie_decoder logger stream.
+        assert logging.getLogger("mie_decoder").getEffectiveLevel() > logging.CRITICAL
+
     @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_records(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """CLI dump should print record-aware hex dump to stdout."""

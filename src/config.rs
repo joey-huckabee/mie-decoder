@@ -220,7 +220,7 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
         if crate::log::Level::parse(&upper).is_none() {
             return Err(ConfigError(format!(
                 "Invalid logging.level: {level:?}. \
-                 Valid: DEBUG, INFO, WARNING, ERROR, CRITICAL"
+                 Valid: DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, OFF"
             )));
         }
         cfg.log_level = upper;
@@ -807,7 +807,9 @@ exclude_types = ["UNICORN"]
     /// Requirements: L2-CFG-010
     #[test]
     fn known_log_levels_accepted_case_insensitively() {
-        for level in ["DEBUG", "info", "Warning", "WARN", "error"] {
+        for level in [
+            "DEBUG", "info", "Warning", "WARN", "error", "CRITICAL", "OFF", "off",
+        ] {
             let text = format!("[logging]\nlevel = \"{level}\"\n");
             parse_into_config(&text)
                 .unwrap_or_else(|e| panic!("expected {level:?} to parse, got: {}", e.0));

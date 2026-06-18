@@ -447,7 +447,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     if log_level not in _VALID_LOG_LEVELS:
         raise ValueError(
             f"Invalid [logging] level: {log_level_raw!r}. "
-            f"Valid: DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL"
+            f"Valid: DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, OFF"
         )
 
     # Timestamp format

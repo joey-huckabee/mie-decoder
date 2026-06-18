@@ -178,6 +178,28 @@ class TestConfigureLogging:
             configure_logging("BOGUS")
 
     @pytest.mark.requirement("L2-CLI-004")
+    def test_off_level_silences_all_output(self) -> None:
+        """OFF is accepted (no crash) and suppresses all output, including
+        ERROR — matching the Rust logger's Level::Off. stdlib has no
+        logging.OFF, so this is the regression guard for the prior
+        ValueError crash on `configure_logging("OFF")`."""
+        import io
+
+        buf = io.StringIO()
+        configure_logging("OFF", stream=buf)
+        log = logging.getLogger(LOGGER_NAME)
+        assert log.level > logging.CRITICAL  # nothing passes the filter
+        log.error("this must not be emitted")
+        log.critical("nor this")
+        assert buf.getvalue() == ""
+
+    @pytest.mark.requirement("L2-CLI-004")
+    def test_off_level_case_insensitive(self) -> None:
+        configure_logging("off")
+        log = logging.getLogger(LOGGER_NAME)
+        assert log.level > logging.CRITICAL
+
+    @pytest.mark.requirement("L2-CLI-004")
     def test_no_duplicate_handlers(self) -> None:
         """Calling configure_logging twice should not add duplicate handlers."""
         configure_logging("INFO")

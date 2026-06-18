@@ -720,7 +720,7 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 
 | Key | Type | Range / Enum | Unknown-value handling |
 |-----|------|--------------|------------------------|
-| `logging.level` | string | one of `DEBUG`/`INFO`/`WARNING`/`WARN`/`ERROR`/`CRITICAL` (case-insensitive) | reject at load time |
+| `logging.level` | string | one of `DEBUG`/`INFO`/`WARNING`/`WARN`/`ERROR`/`CRITICAL`/`OFF` (case-insensitive); `CRITICAL`/`OFF` silence all output | reject at load time |
 | `decode.time_format` | string | one of `auto`/`irig`/`standard` | reject at load time |
 | `decode.strict` | bool | TOML boolean only (not coerced from strings) | reject non-bool |
 | `decode.error_mode` | string | one of `separate`/`inline` | reject at load time |

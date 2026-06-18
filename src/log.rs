@@ -110,6 +110,10 @@ mod tests {
         assert_eq!(Level::parse("DEBUG"), Some(Level::Debug));
         assert_eq!(Level::parse("warning"), Some(Level::Warn));
         assert_eq!(Level::parse("warn"), Some(Level::Warn));
+        // CRITICAL and OFF both map to Off (silence all output).
+        assert_eq!(Level::parse("CRITICAL"), Some(Level::Off));
+        assert_eq!(Level::parse("OFF"), Some(Level::Off));
+        assert_eq!(Level::parse("off"), Some(Level::Off));
         assert_eq!(Level::parse("nope"), None);
     }
 

@@ -16,7 +16,7 @@ For the underlying requirement IDs (`L2-CFG-*`), see [`docs/L2-REQ.md`](L2-REQ.m
 
 ```toml
 [logging]
-level = "WARNING"                # DEBUG | INFO | WARNING | WARN | ERROR | CRITICAL
+level = "WARNING"                # DEBUG | INFO | WARNING | WARN | ERROR | CRITICAL | OFF
 
 [decode]
 time_format    = "auto"          # auto | irig | standard
@@ -90,7 +90,8 @@ Diagnostic logging verbosity. Accepted values (case-insensitive):
 | `INFO` | File open/close, decode start/complete with counts, auto-detected timestamp format, exit-class summary (L1-EXIT-005), header detection size (L2-SYN-012), sync-recovery successes (L2-SYN-013). |
 | `WARNING` / `WARN` | Invalid records (lenient skip), freerun timestamps, unknown DDC error codes (lenient), non-monotonic timestamps (L2-RDR-017), sync loss (L2-SYN-013), structural-invariant violations (lenient), L2-SYN anomalies (L2-SYN-024/025). The two spellings are equivalent. |
 | `ERROR` | File not found, empty file, write failures, NoValidRecords, HomogeneousPayload, UnrecoverableSyncLoss. |
-| `CRITICAL` | Reserved for future use. Currently behaves the same as `ERROR`. |
+| `CRITICAL` | Nothing — the decoder emits no CRITICAL-level messages, so selecting `CRITICAL` suppresses all output (it does **not** behave like `ERROR`). |
+| `OFF` | Nothing — explicit "silence all output". Equivalent to `CRITICAL` for this decoder; both map to the Rust logger's `Level::Off`. |
 
 **Validation:** rejected at load time if not one of the above. Case is normalized internally to the canonical uppercase form.
 

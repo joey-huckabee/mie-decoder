@@ -163,9 +163,9 @@ Out-of-scope items are listed separately under **Non-Requirements** (1 item).
 
 ### L1-LOG-001
 
-**Statement**: Each implementation SHALL provide configurable diagnostic logging and SHALL accept the level names `DEBUG`, `INFO`, `WARNING`, `ERROR`, and `CRITICAL`.
+**Statement**: Each implementation SHALL provide configurable diagnostic logging and SHALL accept the level names `DEBUG`, `INFO`, `WARNING` (alias `WARN`), `ERROR`, `CRITICAL`, and `OFF`. `CRITICAL` and `OFF` SHALL suppress all output (the decoder emits no `CRITICAL`-level messages).
 
-**Rationale**: Operators routinely escalate from default `INFO` to `DEBUG` when investigating an anomalous file and de-escalate to `ERROR` for batch runs where stderr is being captured. The accepted level vocabulary follows Python's `logging` module to avoid an implementation-specific glossary.
+**Rationale**: Operators routinely escalate from default `INFO` to `DEBUG` when investigating an anomalous file and de-escalate to `ERROR` for batch runs where stderr is being captured; `OFF` silences logging entirely for fully-quiet pipelines. The accepted level vocabulary follows Python's `logging` module (hence the `WARN`/`WARNING` alias) to avoid an implementation-specific glossary.
 
 **Verification Method**: Test (T)
 

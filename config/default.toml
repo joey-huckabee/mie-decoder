@@ -27,9 +27,11 @@
 #              elapsed time, auto-detected timestamp format, CSV row counts,
 #              progress checkpoints every 100,000 messages.
 #   WARNING  — Invalid records (non-fatal), freerun timestamps, unknown
-#              message types encountered.
+#              message types encountered. ("WARN" is an accepted alias.)
 #   ERROR    — File not found, empty file, write failures.
-#   CRITICAL — Reserved for future use.
+#   CRITICAL — Suppresses all output (the decoder emits no CRITICAL-level
+#              messages), same effect as OFF.
+#   OFF      — Silence all output.
 #
 # Default: "WARNING"
 # ──────────────────────────────────────────────────────────────────────────

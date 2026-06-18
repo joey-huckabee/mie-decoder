@@ -19,8 +19,13 @@ Log Levels:
     ERROR:
         File not found, empty file, write failures, unrecoverable
         record corruption.
-    CRITICAL:
-        Reserved for future use.
+    CRITICAL / OFF:
+        Suppress all decoder output. The decoder emits no CRITICAL-level
+        messages, so selecting ``CRITICAL`` is effectively silent;
+        ``OFF`` is the explicit "silence everything" spelling. Both match
+        the Rust logger's ``Level::Off``.
+
+``WARN`` is accepted as a case-insensitive alias for ``WARNING``.
 
 Usage::
 
@@ -29,6 +34,7 @@ Usage::
     configure_logging("DEBUG")  # Enable all log output
     configure_logging("INFO")   # Standard operational logging
     configure_logging("WARNING") # Only warnings and errors (default)
+    configure_logging("OFF")     # Silence all output
 """
 
 from __future__ import annotations
@@ -58,17 +64,27 @@ def configure_logging(
     calls replace the existing handler.
 
     Args:
-        level: Log level name. One of ``DEBUG``, ``INFO``, ``WARNING``,
-            ``ERROR``, ``CRITICAL``. Case-insensitive.
+        level: Log level name. One of ``DEBUG``, ``INFO``, ``WARNING``
+            (alias ``WARN``), ``ERROR``, ``CRITICAL``, or ``OFF``
+            (silence all output). Case-insensitive.
         stream: Output stream for log messages. Defaults to
             ``sys.stderr`` if ``None``.
 
     Raises:
         ValueError: If ``level`` is not a recognized log level name.
     """
-    numeric_level = getattr(logging, level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError(f"Invalid log level: {level!r}")
+    level_name = level.upper()
+    if level_name == "OFF":
+        # "OFF" silences all output. stdlib `logging` has no OFF level, so
+        # map it to a numeric level above CRITICAL — no decoder message is
+        # emitted at CRITICAL, so nothing passes the filter. Matches the
+        # Rust logger's `Level::Off`.
+        numeric_level: int = logging.CRITICAL + 1
+    else:
+        resolved = getattr(logging, level_name, None)
+        if not isinstance(resolved, int):
+            raise ValueError(f"Invalid log level: {level!r}")
+        numeric_level = resolved
 
     target_stream = stream if stream is not None else sys.stderr
 
