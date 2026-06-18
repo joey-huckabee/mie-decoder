@@ -106,22 +106,21 @@ checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 
 | Version | Feature |
 |---------|---------|
-| Python (next) | **PY-streaming**: a constant-memory, chunked CSV writer to replace the full-`DataFrame` buffering, bringing Python decode memory from `O(record_count)` to `O(1)` to match Rust (`L3-PY-012`). The current next Python work item. |
 | Rust v1.x | Multi-file input, time-sorted merge to single CSV. |
 | Rust v2.0 | Data word decoders, additional per-message-type CSVs. |
 | Rust v3.0 | Apache Parquet output. |
 
-**PY-streaming is the next Python work item.** Today the Python writer
-materializes the full record stream into a `pandas.DataFrame` before flushing,
-so decoding a very large recording consumes memory proportional to the record
-count (budget ~5 GB RSS per ~10 M records; see `docs/USER-GUIDE.md` §10 and
-`docs/ARCHITECTURE.md` §12). Until PY-streaming lands, the Rust CLI is the
-recommended path for multi-GB recordings — its output is byte-identical.
+**PY-streaming has landed** (in `[Unreleased]`; see `CHANGELOG.md`). The Python
+writer now streams each row straight to the output via the standard-library
+`csv` module — no DataFrame buffering — so Python decode memory is `O(1)` in the
+record count, matching Rust (`L3-PY-012` / `L3-RS-012`). The pandas dependency
+was dropped as part of the change. Both CLIs now decode multi-GB / 10M+-record
+recordings in constant memory with byte-identical output.
 
-Multi-file input is Rust-only in the current roadmap because the Rust writer
-already streams in constant memory. Shared multi-file support should follow
-PY-streaming rather than multiply the Python memory cost across several
-recordings.
+Multi-file input remains Rust-first because the multi-file design (the streaming
+k-way merge below) is specified against the Rust writer. With PY-streaming
+landed, a shared/Python multi-file capability is no longer blocked on Python's
+memory cost — it can follow once the Rust feature stabilizes.
 
 #### Multi-file time-sorted merge — design notes
 
@@ -217,11 +216,12 @@ intent), rather than per-file.
   k is unbounded.
 
 **Sequencing.** Rust-first (writer already streams; the atomic-file
-substrate it needs has landed). The shared/Python merge follows
-**PY-streaming**, else Python pays O(record_count) per file × k. Estimated
-4–6 days for the Rust feature (heap merge + the format/year/freerun guards +
-conformance fixtures for a 2-file ordered merge, a tie, a rejected
-Standard/mixed set, and a backward-step WARN).
+substrate it needs has landed). A shared/Python merge can follow once the
+Rust feature stabilizes — with PY-streaming landed, Python also streams in
+constant memory, so it no longer pays O(record_count) per file × k.
+Estimated 4–6 days for the Rust feature (heap merge + the
+format/year/freerun guards + conformance fixtures for a 2-file ordered
+merge, a tie, a rejected Standard/mixed set, and a backward-step WARN).
 
 Subsequent releases may diverge in version via impl-prefixed tags
 (`rust-vX.Y.Z`, `python-vX.Y.Z`); the cross-implementation conformance

@@ -29,8 +29,10 @@ The decoder is shipped as two interoperable implementations — a Rust crate + C
 
 | Implementation | Use when |
 |----------------|----------|
-| **Rust** | You want a native compiled binary, constant-memory streaming decode of multi-GB recordings, or the fastest decode throughput. |
-| **Python** | You want to drop into an existing Python analysis pipeline, you're on Windows / macOS for ad-hoc work, or you'd rather `pip install` than build from source. Memory usage is O(record_count) so very large files (10M+ records) may not fit in RAM (see [§10 Performance and large recordings](#10-performance-and-large-recordings)); otherwise the Python implementation is functionally identical. |
+| **Rust** | You want a native compiled binary, a dependency-free static install, or the fastest decode throughput. |
+| **Python** | You want to drop into an existing Python analysis pipeline, you're on Windows / macOS for ad-hoc work, or you'd rather `pip install` than build from source. |
+
+Both decode in constant memory and handle multi-GB / 10M+-record recordings — the choice is about ecosystem, not file size (see [§10 Performance and large recordings](#10-performance-and-large-recordings)).
 
 CSV output is byte-identical between the two — your choice doesn't change the result.
 
@@ -373,16 +375,16 @@ For every accepted key, its type, default, validation behavior, and CLI override
 
 ## 10. Performance and large recordings
 
-Both implementations produce byte-identical CSV and decode at broadly similar speed. They differ in **memory**, and on a large enough recording that difference decides whether the decode completes at all.
+Both implementations produce byte-identical CSV, decode at broadly similar speed, and decode in **constant memory** — rows stream straight to the output, so a 10 GB recording uses the same memory as a 10 MB one.
 
 | Implementation | Memory while decoding | Practical ceiling |
 |----------------|-----------------------|-------------------|
-| **Rust** | Constant — `O(1)` in the record count. A 10 GB recording uses the same memory as a 10 MB one (rows stream straight to the output). | Bounded by disk, not RAM. |
-| **Python** | Grows with the file — `O(record_count)`. The writer builds the entire table in memory (a `pandas.DataFrame`) before writing it out. | Bounded by RAM. As a planning rule, budget on the order of **~5 GB of RAM per ~10 million records** (roughly half a kilobyte per record). A recording large enough to exceed available memory fails with an out-of-memory error. |
+| **Rust** | Constant — `O(1)` in the record count. | Bounded by disk, not RAM. |
+| **Python** | Constant — `O(1)` in the record count. Each row streams to the output through the standard-library `csv` module; nothing accumulates across records. | Bounded by disk, not RAM. |
 
-**Rule of thumb:** for multi-GB recordings, files with **10M+ records**, or memory-constrained machines, use the **Rust** CLI — the output is identical, and memory stops being a concern. Reach for Python when the recording comfortably fits in RAM and you want to stay inside a Python pipeline.
+**Rule of thumb:** either CLI handles multi-GB recordings and **10M+ record** files without memory becoming a concern — the output is identical. Choose by ecosystem: the Rust CLI for a dependency-free static binary, the Python CLI to stay inside a Python pipeline.
 
-This is the one functional difference between the implementations and is tracked as `L3-PY-012` (Python) / `L3-RS-012` (Rust). A future **PY-streaming** change will give the Python writer the same constant-memory behavior; until then, the table above is the guidance. See [`ARCHITECTURE.md`](ARCHITECTURE.md) §12 (memory profile) and §14 (operational limits) for the underlying detail.
+The constant-memory guarantee is tracked as `L3-PY-012` (Python) / `L3-RS-012` (Rust) and is load-bearing: a change that buffers rows would regress it. See [`ARCHITECTURE.md`](ARCHITECTURE.md) §12 (memory profile) and §14 (operational limits) for the underlying detail.
 
 ---
 

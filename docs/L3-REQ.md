@@ -82,8 +82,8 @@ Python message counting SHALL be available through the `decode --count` flag. Th
 **L3-PY-011** · Parent: L2-ERR-011 · Verification: T
 Python inline error output SHALL be available through the `--error-mode inline` CLI flag. When this flag is set, error and SPURIOUS_DATA records SHALL appear in the same CSV as clean records, with the `ERROR` and `ERROR_CODE` columns populated per L2-ERR-010.
 
-**L3-PY-012** · Parent: L2-WRT-001 · Verification: A
-Python decode memory usage SHALL be O(record_count) — the writer materializes a `pandas.DataFrame` for the full record stream before writing. A future PY-streaming feature will replace this with a chunked writer; until that lands, the operator SHALL be aware that decoding very large recordings consumes proportional memory. This non-functional constraint is verified by inspection of the writer implementation.
+**L3-PY-012** · Parent: L2-WRT-001 · Verification: T
+Python memory usage during decode SHALL be O(1) in the number of records: the writer streams each row straight to the output handle via the standard-library `csv` module with no DataFrame or full-file buffering. Constant overhead is bounded by the output stream's buffer plus the `delta` tracker, whose keys are bounded by `RT × SA × direction`. This matches the Rust guarantee (`L3-RS-012`) and is verified by a memory test asserting the write-side peak stays within a small constant factor as the record count grows ~33x.
 
 ---
 

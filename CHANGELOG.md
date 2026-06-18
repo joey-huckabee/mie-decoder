@@ -15,6 +15,35 @@ full release workflow.
 
 ## [Unreleased]
 
+### Changed
+
+- **PY-streaming: the Python writer now streams in constant memory, and the
+  pandas dependency is dropped.** Both `write_csv` and `write_csv_split`
+  previously collected every row into a list and materialized a full
+  `pandas.DataFrame` before flushing, making Python decode memory
+  `O(record_count)` — a multi-GB recording could exhaust RAM while the Rust
+  CLI streamed the same input in constant memory. The writer now streams each
+  row straight to the output handle through the standard-library `csv` module
+  via two new primitives — `_AtomicCsvFile` (temp-file + `os.replace`, with
+  `commit()` / `commit_partial()` / cleanup-on-failure) and
+  `_StreamingCsvRowWriter` — ported from the Rust `AtomicCsvFile` / `CsvWriter`
+  shapes. Python decode memory is now `O(1)` in the record count, matching
+  Rust (`L3-PY-012` reworded from `O(record_count)`; verification raised from
+  Inspection to a `tracemalloc` memory test). CSV output is unchanged: a new
+  byte-exact golden characterization suite and all cross-impl conformance
+  cases pass byte-for-byte. The pandas dependency was removed entirely
+  (`pyproject.toml` + lockfile), leaving `tomli` (Python 3.10 only) as the
+  package's sole runtime dependency — the same dependency-light story as the
+  Rust crate. `L3-PY-004` was re-pointed from `pandas.DataFrame.to_csv()` to
+  the stdlib `csv` streaming path.
+
+  **Breaking (Python library API):** the public helpers
+  `mie_decoder.writer.messages_to_dataframe` and `dataframe_to_csv` are
+  removed. Consumers that want a `DataFrame` can build one from the public
+  message stream, e.g.
+  `pandas.DataFrame(map(message_to_row, MieFileReader(path)))`. The CLI is
+  unaffected.
+
 ## [1.5.1] — 2026-06-15
 
 ### Changed

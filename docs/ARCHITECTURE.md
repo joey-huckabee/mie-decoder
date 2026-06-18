@@ -462,14 +462,15 @@ Per L2-CLI-006, all diagnostics go to stderr — never mixed into CSV stdout.
 
 ## 12. Streaming CSV (memory profile)
 
-The two implementations make different memory tradeoffs.
+Both implementations stream rows directly to the output and decode in
+constant memory.
 
 | Implementation | Per-record cost | Total memory | Notes |
 |----------------|-----------------|--------------|-------|
 | **Rust** | ~0 bytes (inline `DataWords` + bounded log buffers) | O(1) in record count | Streams rows directly to a `BufWriter<File>`. The only growable per-decode allocation is `delta_tracker: HashMap<u32, u64>` whose keys are bounded by `RT × SA × direction ≤ 32 × 32 × 2 = 2048`. Tracked as `L3-RS-012`. |
-| **Python** | One `dict` per row (~1–2 KB) | O(record_count) | The writer materializes the entire `pandas.DataFrame` before flushing. Decoding a recording with 10 M records consumes ~5 GB RSS. Tracked as `L3-PY-012`. A future `PY-streaming` change will replace this with a chunked writer. |
+| **Python** | One transient `dict` per row (freed after the row is written) | O(1) in record count | Streams each row to the output handle via the stdlib `csv` module (no DataFrame, no row buffering). The only growable per-decode allocation is the `delta` tracker, keyed identically to Rust. Tracked as `L3-PY-012`. |
 
-For the Rust crate, decoding a 10 GB recording uses the same memory as decoding a 10 MB recording. The streaming property is load-bearing: changes to the writer that buffer rows (e.g., a `Vec<Row>` collection step) would break L3-RS-012 and must be rejected at review.
+For either implementation, decoding a 10 GB recording uses the same memory as decoding a 10 MB recording. The streaming property is load-bearing in **both**: changes to a writer that buffer rows (e.g., a `Vec<Row>` collection step in Rust, or re-materializing a DataFrame in Python) would break `L3-RS-012` / `L3-PY-012` and must be rejected at review.
 
 ### Planned: multi-file time-sorted merge (streaming k-way merge)
 
