@@ -320,7 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # ── count subcommand ───────────────────────────────────────────
-    # Its own subcommand, matching the Rust v2 CLI (`count <INPUT>`).
+    # Its own subcommand, matching the Rust CLI (`count <INPUT>`).
     # Counts valid records after applying the config file's [filter]
     # section; CLI filter flags are decode-only. Global --config applies.
     count_parser = subparsers.add_parser(

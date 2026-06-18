@@ -810,7 +810,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
     // Stdout is `output == None`; the spec's path-safety checks are
     // file-only so they are bypassed here. Separate mode requires a
     // file path; stdout in that case forces inline behavior with a
-    // WARN, matching the v1 behavior.
+    // WARN (you cannot split stdout into two streams) per L3-RS-009.
     let write_result = if cfg.error_mode == ErrorMode::Separate {
         match args.output.as_ref() {
             None => {

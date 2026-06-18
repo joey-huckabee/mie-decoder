@@ -534,13 +534,35 @@ class TestErrorModeConfig:
             load_config(cfg)
 
     @pytest.mark.requirement("L3-PY-011")
-    def test_cli_inline_errors_flag(self, tmp_mie_file: Path, tmp_path: Path) -> None:
-        from mie_decoder.cli import main
+    def test_cli_inline_errors_flag(self, tmp_path: Path) -> None:
+        """--inline-errors puts errored/spurious records in the SAME CSV
+        with ERROR/ERROR_CODE populated, and creates no separate errors
+        file (L3-PY-011 / L2-ERR-010)."""
+        import csv
 
+        from mie_decoder.cli import main
+        from tests.conftest import (
+            errored_record_rt15_sa11_us,
+            normal_record_rt15_sa11_us,
+        )
+
+        mie = tmp_path / "with_error.mie"
+        mie.write_bytes(
+            normal_record_rt15_sa11_us(100) + errored_record_rt15_sa11_us(16100)
+        )
         out = tmp_path / "inline.csv"
-        rc = main(["decode", str(tmp_mie_file), "-o", str(out), "--inline-errors"])
+        rc = main(["decode", str(mie), "-o", str(out), "--inline-errors"])
         assert rc == 0
+
+        # Inline mode: a single file, no <stem>_errors.csv sibling.
         assert out.exists()
+        assert not (tmp_path / "inline_errors.csv").exists()
+
+        rows = list(csv.DictReader(out.read_text().splitlines()))
+        assert len(rows) == 2  # normal + errored, both inline
+        error_rows = [r for r in rows if r["ERROR"] == "ERROR"]
+        assert len(error_rows) == 1
+        assert error_rows[0]["ERROR_CODE"] == "011E"  # the errored record's code
 
     @pytest.mark.requirement("L2-ERR-008")
     def test_cli_separate_is_default(self, tmp_mie_file: Path, tmp_path: Path) -> None:

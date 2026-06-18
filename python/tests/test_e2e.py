@@ -829,7 +829,10 @@ class TestCliEndToEnd:
         rc = main(["count", str(tmp_mie_file)])
         assert rc == 0
         captured = capsys.readouterr()
-        assert captured.out.strip() == "3"  # machine-readable datum on stdout
+        # L3-PY-010: stdout is ONLY the integer + a single newline — no
+        # prose, no path, no leading/trailing whitespace (byte-exact so a
+        # regression that prints extra whitespace is caught).
+        assert captured.out == "3\n"
         assert "counted 3 messages in" in captured.err
 
     @pytest.mark.requirement("L2-CLI-005")

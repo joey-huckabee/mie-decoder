@@ -6,7 +6,7 @@ Each case provides:
 - a text-based hexadecimal MIE input under `inputs/`;
 - optional shared TOML configuration under `configs/`;
 - expected vendor-compatible CSV output under `expected/`; and
-- per-implementation CLI arguments in `manifest.json` where syntax differs.
+- optional extra CLI arguments in `manifest.json` (the `args` field), passed verbatim to both CLIs — they share one identical argument surface.
 
 The runner materializes temporary `.mie` files, invokes both CLIs, and requires
 both outputs to match the checked-in CSV oracle byte-for-byte.
