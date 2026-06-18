@@ -2,7 +2,7 @@
 
 Operational reference for anyone modifying the MIE-Decoder codebase. Covers the workflows you'll repeat: adding requirements, tests, conformance fixtures, error variants, and CLI flags; running the trace matrix; bumping coverage; releasing.
 
-This guide is for **maintainers**. End-user CLI usage belongs in `docs/USER-GUIDE.md` (not yet written); error/exit-code reference for operators lives in [`docs/ERROR-CATALOG.md`](ERROR-CATALOG.md); LLM-session project conventions live in [`CLAUDE.md`](../CLAUDE.md).
+This guide is for **maintainers**. End-user CLI usage belongs in [`docs/USER-GUIDE.md`](USER-GUIDE.md); error/exit-code reference for operators lives in [`docs/ERROR-CATALOG.md`](ERROR-CATALOG.md); LLM-session project conventions live in [`CLAUDE.md`](../CLAUDE.md).
 
 ---
 
