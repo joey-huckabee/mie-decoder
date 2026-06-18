@@ -26,12 +26,17 @@ All other L3 categories mirror the L2 category they refine (e.g., `L3-WRT-*` dec
 
 ## Table of categories
 
-| Code      | Title                                       | L2 Coverage | L3 Count |
-|-----------|---------------------------------------------|-------------|----------|
-| `WRT`     | CSV output and destination integrity        | partial     | 2        |
-| `PY`      | Python implementation technology            | cross-cutting | 12     |
-| `RS`      | Rust implementation technology              | cross-cutting | 11 (12 IDs allocated; L3-RS-007 withdrawn) |
-| **Total** |                                             |             | **25 active (26 IDs allocated)** |
+| Code      | Title                                       | L2 Coverage   |
+|-----------|---------------------------------------------|---------------|
+| `WRT`     | CSV output and destination integrity        | partial       |
+| `PY`      | Python implementation technology            | cross-cutting |
+| `RS`      | Rust implementation technology              | cross-cutting |
+
+(Per-category and total requirement counts are intentionally omitted — they
+drift as requirements are added. The requirement entries below, and the
+auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.
+`L3-RS-007` is withdrawn; its ID is reserved and not reused — see its entry
+below.)
 
 Most L2 requirements are sufficiently testable at the L2 level (the statement names the exact behavior the test asserts) and do not require an L3 decomposition. L3 entries are added only where there is genuine implementation detail that cannot be inferred from the L2 statement — chiefly the per-implementation technology constraints (`L3-PY-*`, `L3-RS-*`) and a small set of cross-implementation naming patterns (`L3-WRT-*`).
 

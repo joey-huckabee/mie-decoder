@@ -43,23 +43,26 @@ Each requirement carries the following fields:
 
 ## Table of categories
 
-| Code     | Title                                       | L1 Count |
-|----------|---------------------------------------------|----------|
-| `DEC`    | Binary decoding                             | 5        |
-| `OUT`    | CSV output and output destination integrity | 2        |
-| `DLT`    | DELTA inter-arrival tracking                | 1        |
-| `CLI`    | CLI capability surface                      | 2        |
-| `LOG`    | Diagnostic logging                          | 1        |
-| `MODE`   | Strict and lenient handling                 | 1        |
-| `SYN`    | Synchronization and sync recovery           | 2        |
-| `ERR`    | DDC error records and SPURIOUS_DATA         | 1        |
-| `CFG`    | Configuration                               | 1        |
-| `CONF`   | Cross-implementation conformance            | 1        |
-| `EXIT`   | Exit-code semantics and operational contract| 6        |
-| `ROB`    | Robustness against arbitrary input          | 1        |
-| **Total**|                                             | **24**   |
+| Code     | Title                                       |
+|----------|---------------------------------------------|
+| `DEC`    | Binary decoding                             |
+| `OUT`    | CSV output and output destination integrity |
+| `DLT`    | DELTA inter-arrival tracking                |
+| `CLI`    | CLI capability surface                      |
+| `LOG`    | Diagnostic logging                          |
+| `MODE`   | Strict and lenient handling                 |
+| `SYN`    | Synchronization and sync recovery           |
+| `ERR`    | DDC error records and SPURIOUS_DATA         |
+| `CFG`    | Configuration                               |
+| `CONF`   | Cross-implementation conformance            |
+| `EXIT`   | Exit-code semantics and operational contract|
+| `ROB`    | Robustness against arbitrary input          |
 
-Out-of-scope items are listed separately under **Non-Requirements** (1 item).
+(Per-category and total requirement counts are intentionally omitted — they
+drift as requirements are added. The requirement entries below, and the
+auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
+
+Out-of-scope items are listed separately under **Non-Requirements**.
 
 ---
 

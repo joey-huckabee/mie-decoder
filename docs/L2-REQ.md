@@ -16,19 +16,22 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 
 ## Table of categories
 
-| Code      | Title                                       | L2 Count |
-|-----------|---------------------------------------------|----------|
-| `DEC`     | Binary decoding                             | 14       |
-| `SYN`     | Synchronization, validation, invariants     | 26       |
-| `RDR`     | Reader behavior                             | 15       |
-| `MSG`     | Message semantics                           | 3        |
-| `ERR`     | Error record handling                       | 10       |
-| `WRT`     | CSV output and output destination integrity | 13       |
-| `CFG`     | Configuration                               | 9        |
-| `FLT`     | Filtering                                   | 2        |
-| `CLI`     | Shared CLI capabilities                     | 9        |
-| `CONF`    | Cross-implementation conformance            | 5        |
-| **Total** |                                             | **103**  |
+| Code      | Title                                       |
+|-----------|---------------------------------------------|
+| `DEC`     | Binary decoding                             |
+| `SYN`     | Synchronization, validation, invariants     |
+| `RDR`     | Reader behavior                             |
+| `MSG`     | Message semantics                           |
+| `ERR`     | Error record handling                       |
+| `WRT`     | CSV output and output destination integrity |
+| `CFG`     | Configuration                               |
+| `FLT`     | Filtering                                   |
+| `CLI`     | Shared CLI capabilities                     |
+| `CONF`    | Cross-implementation conformance            |
+
+(Per-category and total requirement counts are intentionally omitted — they
+drift as requirements are added. The requirement entries below, and the
+auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 
 ---
 
