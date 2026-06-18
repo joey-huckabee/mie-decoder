@@ -114,6 +114,16 @@ implementations ship from the single tag `v2.0.0`.
   `CRITICAL` "behaves the same as `ERROR`": the decoder emits no
   `CRITICAL`-level messages, so `CRITICAL` (like `OFF`) suppresses all output.
   A new `log-level-off` conformance case pins the cross-impl behavior.
+- **The `--log-level` CLI flag now accepts the same level set as the config
+  file in both implementations.** The Python CLI previously accepted only
+  `DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL` and was case-sensitive (rejecting
+  `WARN`, `OFF`, and lowercase like `debug`), while the Rust CLI already
+  accepted all seven case-insensitively but its `--help` and invalid-value
+  message under-reported the set (omitting `WARN`/`OFF`, and `CRITICAL` in the
+  help). Both CLIs now accept `DEBUG`/`INFO`/`WARNING`/`WARN`/`ERROR`/
+  `CRITICAL`/`OFF` case-insensitively (matching `logging.level`), with help,
+  invalid-value text, and the README aligned. The Python change is additive
+  (a superset of what it accepted before).
 
 ## [1.5.1] — 2026-06-15
 

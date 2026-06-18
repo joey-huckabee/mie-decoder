@@ -121,6 +121,27 @@ def _parse_u8_list(values: list[str], flag: str) -> list[int]:
     return out
 
 
+def _log_level_arg(value: str) -> str:
+    """Validate ``--log-level`` case-insensitively against the shared level
+    set, returning the canonical uppercase name.
+
+    Uses the same vocabulary as the config-file ``logging.level`` key and
+    the Rust CLI (case-insensitive, accepting `WARN` and `OFF`) rather than
+    argparse ``choices`` (which is case-sensitive and would reject `warn` /
+    `off` and lowercase spellings). An invalid value raises, which argparse
+    maps to the usage-error exit code (4).
+    """
+    from mie_decoder.config import _VALID_LOG_LEVELS
+
+    normalized = value.upper()
+    if normalized not in _VALID_LOG_LEVELS:
+        raise argparse.ArgumentTypeError(
+            f"invalid log level {value!r}; valid: "
+            "DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, OFF (case-insensitive)"
+        )
+    return normalized
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser for the CLI.
 
@@ -142,9 +163,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        type=_log_level_arg,
+        metavar="LEVEL",
         default=None,
-        help="Set logging verbosity. Overrides config file.",
+        help=(
+            "Set logging verbosity: DEBUG, INFO, WARNING (alias WARN), ERROR, "
+            "CRITICAL, or OFF (case-insensitive; CRITICAL/OFF silence all "
+            "output). Overrides config file."
+        ),
     )
     # Global option (before the subcommand), matching the Rust CLI:
     # `mie-decoder --config site.toml decode rec.mie`. Applies to every

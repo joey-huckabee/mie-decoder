@@ -103,7 +103,8 @@ mie-decoder dump <input> [options]
 ### Global options
 
 ```
---log-level DEBUG|INFO|WARNING|ERROR  Default WARNING
+--log-level LEVEL                     DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|OFF
+                                      (default WARNING; case-insensitive)
 --config PATH                         TOML configuration file
 -V, --version
 -h, --help

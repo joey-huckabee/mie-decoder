@@ -35,7 +35,9 @@ COMMANDS:
   dump   <INPUT>   Hex dump (raw or record-aware)
 
 GLOBAL OPTIONS:
-  --log-level DEBUG|INFO|WARNING|ERROR  (default WARNING)
+  --log-level LEVEL                     DEBUG|INFO|WARNING|WARN|ERROR|
+                                        CRITICAL|OFF (default WARNING;
+                                        case-insensitive; CRITICAL/OFF silence)
   --config PATH                         TOML configuration file
   -V, --version                         Print version and exit
   -h, --help                            Print this help and exit
@@ -704,7 +706,7 @@ fn apply_log_level(source: &str, value: &str) -> Result<(), String> {
             Ok(())
         }
         None => Err(format!(
-            "invalid {source}: {value:?}; valid: DEBUG, INFO, WARNING, ERROR, CRITICAL"
+            "invalid {source}: {value:?}; valid: DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, OFF"
         )),
     }
 }

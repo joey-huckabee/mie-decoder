@@ -998,6 +998,23 @@ class TestCliEndToEnd:
         # OFF silences logging — no records on the mie_decoder logger stream.
         assert logging.getLogger("mie_decoder").getEffectiveLevel() > logging.CRITICAL
 
+    @pytest.mark.requirement("L2-CLI-004")
+    def test_cli_log_level_accepts_full_set_case_insensitively(
+        self, tmp_mie_file: Path
+    ) -> None:
+        """--log-level accepts the same 7 levels as the config file, in any
+        case (parity with the Rust CLI) — WARN, OFF, and lowercase spellings
+        included. A bogus level is a usage error (exit 4)."""
+        from mie_decoder.cli import main
+
+        for lvl in ["OFF", "WARN", "off", "warn", "Critical", "DEBUG"]:
+            rc = main(["--log-level", lvl, "count", str(tmp_mie_file)])
+            assert rc == 0, f"--log-level {lvl!r} should be accepted"
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--log-level", "BOGUS", "count", str(tmp_mie_file)])
+        assert exc_info.value.code == 4  # usage error
+
     @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_records(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """CLI dump should print record-aware hex dump to stdout."""
