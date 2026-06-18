@@ -57,11 +57,17 @@ def apply_filters(
 
     logger.info(
         "Filtering active: exclude_types=%s exclude_rts=%s "
-        "exclude_buses=%s exclude_subaddresses=%s",
+        "exclude_buses=%s exclude_subaddresses=%s "
+        "include_types=%s include_rts=%s "
+        "include_buses=%s include_subaddresses=%s",
         filters.exclude_types or "none",
         filters.exclude_rts or "none",
         filters.exclude_buses or "none",
         filters.exclude_subaddresses or "none",
+        filters.include_types or "none",
+        filters.include_rts or "none",
+        filters.include_buses or "none",
+        filters.include_subaddresses or "none",
     )
 
     for msg in messages:

@@ -85,6 +85,9 @@ Python inline error output SHALL be available through the `--error-mode inline` 
 **L3-PY-012** · Parent: L2-WRT-001 · Verification: T
 Python memory usage during decode SHALL be O(1) in the number of records: the writer streams each row straight to the output handle via the standard-library `csv` module with no DataFrame or full-file buffering. Constant overhead is bounded by the output stream's buffer plus the `delta` tracker, whose keys are bounded by `RT × SA × direction`. This matches the Rust guarantee (`L3-RS-012`) and is verified by a memory test asserting the write-side peak stays within a small constant factor as the record count grows ~33x.
 
+**L3-PY-013** · Parent: L2-FLT-001 · Verification: T
+The Python package SHALL provide include filters equivalent to the Rust crate (`L3-RS-010`): `--include-types`, `--include-rts`, `--include-buses`, `--include-subaddresses` on the `decode` subcommand, with the same "passes only if contained in every active include set" semantics and the same comma-separated, repeatable argument syntax. Include filters are CLI-only overrides (no config-file key), matching Rust.
+
 ---
 
 ## L3-RS: Rust implementation technology
@@ -116,7 +119,7 @@ Rust message counting SHALL be available through the `count` subcommand. Stdout 
 Rust inline error output SHALL be available through the `--inline-errors` flag on the `decode` subcommand. Stdout output SHALL force inline mode automatically (you cannot split stdout into two streams).
 
 **L3-RS-010** · Parent: L2-FLT-001 · Verification: T
-The Rust crate MAY additionally provide include filters (the complement of exclude filters). When provided, the include set is the v2 redesign axis and SHALL be supported alongside exclude filters. Python is not required to expose equivalent CLI syntax.
+The Rust crate SHALL provide include filters (the complement of exclude filters) alongside exclude filters: `--include-types`, `--include-rts`, `--include-buses`, `--include-subaddresses`. A message passes only if it matches no active exclude set and is contained in every active include set. Include filters are CLI-only overrides (no config-file key). The Python package SHALL expose equivalent CLI syntax (`L3-PY-013`).
 
 **L3-RS-011** · Parent: L2-CONF-005 · Verification: I
 The Rust CI workflow SHALL enforce: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, and the configured `cargo-llvm-cov` line and region coverage floors. A failure of any of these SHALL fail the workflow.

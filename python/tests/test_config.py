@@ -303,6 +303,83 @@ class TestApplyFilters:
         assert len(result) == 1
         assert result[0].msg_label == "11R"
 
+    # ── Include filters (L3-PY-013, parity with Rust L3-RS-010) ──────────
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_include_by_rt_drops_non_matches(self) -> None:
+        msgs = [_make_msg(rt=15), _make_msg(rt=30), _make_msg(rt=31)]
+        result = list(apply_filters(msgs, FilterConfig(include_rts={15})))
+        assert len(result) == 1
+        assert result[0].command_word is not None
+        assert result[0].command_word.rt == 15
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_include_by_type(self) -> None:
+        msgs = [_make_msg(msg_type=0x02), _make_msg(msg_type=0x04)]
+        result = list(apply_filters(msgs, FilterConfig(include_types={0x02})))
+        assert len(result) == 1
+        assert result[0].type_word.message_type == 0x02
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_include_by_bus(self) -> None:
+        msgs = [_make_msg(bus=Bus.A), _make_msg(bus=Bus.B)]
+        result = list(apply_filters(msgs, FilterConfig(include_buses={Bus.B})))
+        assert len(result) == 1
+        assert result[0].bus == Bus.B
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_include_subaddress_drops_spurious_without_command_word(self) -> None:
+        """An active RT/subaddress include filter drops SPURIOUS_DATA (no
+        Command Word), mirroring the Rust filter — the complement of how
+        exclude filters leave such records untouched."""
+        spurious = MieMessage(
+            timestamp=IrigTimestamp(192, 15, 54, 50, 456225, False),
+            type_word=TypeWord(0x20, Bus.A, 12, False, 0x2420),
+            message_format=MessageFormat.SPURIOUS_DATA,
+            command_word=None,
+            command_word_2=None,
+            status_word=None,
+            status_word_2=None,
+            data_words=(0x1234,),
+            error_word=0x2001,
+            delta=None,
+            file_offset=0,
+        )
+        normal = _make_msg(rt=15, sa=11)
+        result = list(
+            apply_filters([spurious, normal], FilterConfig(include_rts={15}))
+        )
+        assert result == [normal]
+        result = list(
+            apply_filters([spurious, normal], FilterConfig(include_subaddresses={11}))
+        )
+        assert result == [normal]
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_exclude_takes_precedence_over_include(self) -> None:
+        """Excludes are checked first: a value in both sets is dropped."""
+        msgs = [_make_msg(rt=15), _make_msg(rt=30)]
+        fc = FilterConfig(include_rts={15, 30}, exclude_rts={15})
+        result = list(apply_filters(msgs, fc))
+        assert len(result) == 1
+        assert result[0].command_word is not None
+        assert result[0].command_word.rt == 30
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_multiple_include_sets_all_must_match(self) -> None:
+        """Every active include set must contain the message's value."""
+        msgs = [
+            _make_msg(rt=15, bus=Bus.A),
+            _make_msg(rt=15, bus=Bus.B),
+            _make_msg(rt=30, bus=Bus.A),
+        ]
+        fc = FilterConfig(include_rts={15}, include_buses={Bus.A})
+        result = list(apply_filters(msgs, fc))
+        assert len(result) == 1
+        assert result[0].command_word is not None
+        assert result[0].command_word.rt == 15
+        assert result[0].bus == Bus.A
+
 
 class TestCliFilters:
     """CLI integration tests for filtering."""
@@ -352,6 +429,77 @@ class TestCliFilters:
         assert rc == 0
         lines = out.read_text().strip().split("\n")
         assert len(lines) == 3  # header + 2 (RT_TO_BC excluded)
+
+    # ── Include filters + comma syntax (L3-PY-013, parity with Rust) ─────
+    # The multi-record fixture is RT15: record 1 SA11, records 2/3 SA22.
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_include_subaddresses_cli(self, tmp_mie_file: Path, tmp_path: Path) -> None:
+        from mie_decoder.cli import main
+
+        out = tmp_path / "inc.csv"
+        rc = main([
+            "decode", str(tmp_mie_file), "-o", str(out),
+            "--include-subaddresses", "11",
+        ])
+        assert rc == 0
+        lines = out.read_text().strip().split("\n")
+        assert len(lines) == 2  # header + the single SA11 record
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_include_comma_separated_values(self, tmp_mie_file: Path, tmp_path: Path) -> None:
+        from mie_decoder.cli import main
+
+        out = tmp_path / "inc_comma.csv"
+        rc = main([
+            "decode", str(tmp_mie_file), "-o", str(out),
+            "--include-subaddresses", "11,22",
+        ])
+        assert rc == 0
+        lines = out.read_text().strip().split("\n")
+        assert len(lines) == 4  # header + all 3 records (SA11 + SA22 x2)
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_include_repeated_flag_accumulates(self, tmp_mie_file: Path, tmp_path: Path) -> None:
+        from mie_decoder.cli import main
+
+        out = tmp_path / "inc_rep.csv"
+        # Equivalent to the comma form above.
+        rc = main([
+            "decode", str(tmp_mie_file), "-o", str(out),
+            "--include-subaddresses", "11",
+            "--include-subaddresses", "22",
+        ])
+        assert rc == 0
+        lines = out.read_text().strip().split("\n")
+        assert len(lines) == 4
+
+    @pytest.mark.requirement("L3-PY-013")
+    def test_include_rts_no_match_yields_header_only(
+        self, tmp_mie_file: Path, tmp_path: Path
+    ) -> None:
+        from mie_decoder.cli import main
+
+        out = tmp_path / "inc_none.csv"
+        rc = main([
+            "decode", str(tmp_mie_file), "-o", str(out),
+            "--include-rts", "30",  # fixture is all RT15
+        ])
+        assert rc == 0
+        lines = out.read_text().strip().split("\n")
+        assert len(lines) == 1  # header only
+
+    @pytest.mark.requirement("L2-CLI-010")
+    def test_bad_rt_value_is_usage_error(self, tmp_mie_file: Path, tmp_path: Path) -> None:
+        from mie_decoder.cli import main
+
+        out = tmp_path / "bad.csv"
+        rc = main([
+            "decode", str(tmp_mie_file), "-o", str(out),
+            "--exclude-rts", "notanumber",
+        ])
+        assert rc == 4  # EXIT_USAGE
+        assert not out.exists()
 
 
 class TestErrorModeConfig:

@@ -16,10 +16,10 @@ Usage::
     mie-decoder decode recording.mie --config my-config.toml
 
     # Decode excluding spurious data and mode codes
-    mie-decoder decode recording.mie --exclude-types SPURIOUS_DATA MODE_COMMAND
+    mie-decoder decode recording.mie --exclude-types SPURIOUS_DATA,MODE_COMMAND
 
-    # Decode only Bus A, excluding RT 31 (broadcast)
-    mie-decoder decode recording.mie --exclude-buses B --exclude-rts 31
+    # Decode only RT 15 (include filter), excluding Bus B
+    mie-decoder decode recording.mie --include-rts 15 --exclude-buses B
 
     # Hex dump
     mie-decoder dump recording.mie --records 10
@@ -75,6 +75,50 @@ class _UsageErrorParser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         self.print_usage(sys.stderr)
         self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
+
+
+class _CommaSeparatedAppend(argparse.Action):
+    """Collect comma-separated, repeatable filter values into a flat list.
+
+    Mirrors the Rust filter syntax (``split_csv``): each occurrence takes
+    ONE value, split on commas with each token trimmed and empties
+    dropped. ``--include-rts 15,31`` and
+    ``--include-rts 15 --include-rts 31`` are equivalent. Tokens are
+    collected as raw strings; per-filter conversion/validation happens in
+    the override-building step.
+    """
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        current = getattr(namespace, self.dest, None) or []
+        tokens = [t.strip() for t in str(values).split(",") if t.strip()]
+        setattr(namespace, self.dest, list(current) + tokens)
+
+
+def _parse_u8_list(values: list[str], flag: str) -> list[int]:
+    """Parse RT/subaddress filter tokens to ints, mirroring the Rust CLI.
+
+    Each token is decimal or ``0x``-prefixed hex and must fit in a u8
+    (0–255) — the same bound the Rust CLI applies (``parse_u8_value``).
+    The tighter MIL-STD-1553 [0, 31] range is enforced only on the
+    config-file path, not here, so the two CLIs accept the same inputs.
+    """
+    out: list[int] = []
+    for tok in values:
+        s = tok.strip()
+        try:
+            n = int(s, 16) if s[:2].lower() == "0x" else int(s)
+        except ValueError:
+            raise ValueError(f"{flag} expected integer, got {tok!r}")
+        if not (0 <= n <= 255):
+            raise ValueError(f"{flag} value out of range (0-255): {n}")
+        out.append(n)
+    return out
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -141,40 +185,73 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Timestamp format. Overrides config file. Default: auto.",
     )
+    # Filter flags take ONE value each, comma-separable and repeatable
+    # (`--exclude-rts 15,31` == `--exclude-rts 15 --exclude-rts 31`),
+    # matching the Rust CLI exactly. exclude_* merge with the config file;
+    # include_* are CLI-only (L3-PY-013 / L3-RS-010).
     decode_parser.add_argument(
         "--exclude-types",
-        nargs="+",
-        metavar="TYPE",
+        action=_CommaSeparatedAppend,
+        metavar="VAL",
         default=None,
         help=(
-            "Exclude message types from output. Accepts names "
-            "(MODE_COMMAND, BC_TO_RT, RT_TO_BC, RT_TO_RT, "
+            "Exclude message types from output. Comma-separated, repeatable. "
+            "Accepts names (MODE_COMMAND, BC_TO_RT, RT_TO_BC, RT_TO_RT, "
             "BROADCAST_BC_TO_RT, BROADCAST_RT_TO_RT, SPURIOUS_DATA) "
             "or hex codes (0x01, 0x02, etc.). Merges with config file."
         ),
     )
     decode_parser.add_argument(
         "--exclude-rts",
-        nargs="+",
-        type=int,
-        metavar="RT",
+        action=_CommaSeparatedAppend,
+        metavar="VAL",
         default=None,
-        help="Exclude messages by RT address (0-31). Merges with config file.",
+        help="Exclude messages by RT address. Comma-separated, repeatable. Merges with config file.",
     )
     decode_parser.add_argument(
         "--exclude-buses",
-        nargs="+",
-        metavar="BUS",
+        action=_CommaSeparatedAppend,
+        metavar="VAL",
         default=None,
-        help="Exclude messages by bus (A, B). Merges with config file.",
+        help="Exclude messages by bus (A, B). Comma-separated, repeatable. Merges with config file.",
     )
     decode_parser.add_argument(
         "--exclude-subaddresses",
-        nargs="+",
-        type=int,
-        metavar="SA",
+        action=_CommaSeparatedAppend,
+        metavar="VAL",
         default=None,
-        help="Exclude messages by subaddress (0-31). Merges with config file.",
+        help="Exclude messages by subaddress. Comma-separated, repeatable. Merges with config file.",
+    )
+    decode_parser.add_argument(
+        "--include-types",
+        action=_CommaSeparatedAppend,
+        metavar="VAL",
+        default=None,
+        help=(
+            "Include only these message types (same syntax as --exclude-types). "
+            "Comma-separated, repeatable. CLI-only (no config-file key)."
+        ),
+    )
+    decode_parser.add_argument(
+        "--include-rts",
+        action=_CommaSeparatedAppend,
+        metavar="VAL",
+        default=None,
+        help="Include only these RT addresses. Comma-separated, repeatable. CLI-only.",
+    )
+    decode_parser.add_argument(
+        "--include-buses",
+        action=_CommaSeparatedAppend,
+        metavar="VAL",
+        default=None,
+        help="Include only these buses (A, B). Comma-separated, repeatable. CLI-only.",
+    )
+    decode_parser.add_argument(
+        "--include-subaddresses",
+        action=_CommaSeparatedAppend,
+        metavar="VAL",
+        default=None,
+        help="Include only these subaddresses. Comma-separated, repeatable. CLI-only.",
     )
     decode_parser.add_argument(
         "--error-mode",
@@ -349,22 +426,33 @@ def _run_decode(args: argparse.Namespace) -> int:
     if args.error_mode is not None:
         em_map = {"separate": ErrorMode.SEPARATE, "inline": ErrorMode.INLINE}
         overrides["error_mode"] = em_map[args.error_mode]
-    if args.exclude_types is not None:
-        try:
+    # Filter overrides. types/buses parse via name-or-hex; rts/subaddresses
+    # via the u8 (0-255) parser mirroring the Rust CLI. Any bad value is a
+    # usage error (exit 4). include_* are CLI-only (L3-PY-013).
+    try:
+        if args.exclude_types is not None:
             overrides["exclude_types"] = _parse_type_names(args.exclude_types)
-        except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return EXIT_USAGE
-    if args.exclude_rts is not None:
-        overrides["exclude_rts"] = args.exclude_rts
-    if args.exclude_buses is not None:
-        try:
+        if args.exclude_rts is not None:
+            overrides["exclude_rts"] = _parse_u8_list(args.exclude_rts, "--exclude-rts")
+        if args.exclude_buses is not None:
             overrides["exclude_buses"] = _parse_bus_names(args.exclude_buses)
-        except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return EXIT_USAGE
-    if args.exclude_subaddresses is not None:
-        overrides["exclude_subaddresses"] = args.exclude_subaddresses
+        if args.exclude_subaddresses is not None:
+            overrides["exclude_subaddresses"] = _parse_u8_list(
+                args.exclude_subaddresses, "--exclude-subaddresses"
+            )
+        if args.include_types is not None:
+            overrides["include_types"] = _parse_type_names(args.include_types)
+        if args.include_rts is not None:
+            overrides["include_rts"] = _parse_u8_list(args.include_rts, "--include-rts")
+        if args.include_buses is not None:
+            overrides["include_buses"] = _parse_bus_names(args.include_buses)
+        if args.include_subaddresses is not None:
+            overrides["include_subaddresses"] = _parse_u8_list(
+                args.include_subaddresses, "--include-subaddresses"
+            )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
     # CLI flag flips no_clobber on; absence leaves config value intact.
     if args.no_clobber:
         overrides["no_clobber"] = True

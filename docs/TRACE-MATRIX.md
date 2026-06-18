@@ -121,8 +121,8 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CLI-002 | L3-PY-003 | `python/tests/test_e2e.py::test_cli_decode_output_file`<br>`src/cli.rs::parse_decode_minimal_ok`<br>`tests/cli.rs::decode_happy_path_writes_csv_with_header_and_one_row` | Implemented |
 | L2-CLI-008 | L3-PY-010, L3-RS-008 | `python/tests/test_e2e.py::test_cli_decode_count`<br>`src/cli.rs::parse_count_help_returns_help_requested`<br>`tests/cli.rs::count_subcommand_emits_integer_to_stdout_and_status_to_stderr`<br>`tests/cli.rs::help_exits_zero_and_lists_all_subcommands` | Implemented |
 | L2-CLI-009 | _(none)_ | `python/tests/test_e2e.py::test_cli_dump_missing_file`<br>`python/tests/test_e2e.py::test_cli_dump_raw`<br>`python/tests/test_e2e.py::test_cli_dump_records`<br>`src/cli.rs::parse_dump_help_returns_help_requested`<br>`src/dump.rs::raw_dump_format`<br>`src/dump.rs::raw_dump_offset_beyond_eof_yields_empty`<br>`src/dump.rs::record_dump_handles_one_record`<br>`tests/cli.rs::dump_records_outputs_hex_to_stdout`<br>`tests/cli.rs::help_exits_zero_and_lists_all_subcommands` | Implemented |
-| L2-CLI-010 | _(none)_ | `python/tests/test_config.py::test_exclude_rts_cli`<br>`python/tests/test_config.py::test_exclude_types_cli`<br>`src/cli.rs::all_filter_flags_take_single_value`<br>`src/cli.rs::filter_flag_accepts_comma_separated_values`<br>`src/cli.rs::filter_flag_accepts_eq_form`<br>`src/cli.rs::filter_flag_does_not_eat_positional_input`<br>`src/cli.rs::filter_flag_old_greedy_form_fails_loudly`<br>`src/cli.rs::filter_flag_repeats_accumulate` | Implemented |
-| L2-FLT-001 | L3-RS-010 | `python/tests/test_config.py::test_end_to_end_with_reader`<br>`python/tests/test_config.py::test_exclude_all`<br>`python/tests/test_config.py::test_exclude_by_bus`<br>`python/tests/test_config.py::test_exclude_by_rt`<br>`python/tests/test_config.py::test_exclude_by_type`<br>`python/tests/test_config.py::test_no_filters_active`<br>`python/tests/test_config.py::test_no_filters_passes_all`<br>`python/tests/test_config.py::test_spurious_without_command_word_survives_rt_filter`<br>`src/filter.rs::empty_config_is_inactive`<br>`src/filter.rs::include_filters_drop_non_matches`<br>`src/filter.rs::iterator_adapter`<br>`tests/cli.rs::exclude_rts_filter_drops_matching_records`<br>`tests/cli.rs::include_rts_filter_keeps_only_matching_records`<br>`tests/integration.rs::filtering_drops_excluded_rts` | Implemented |
+| L2-CLI-010 | _(none)_ | `python/tests/test_config.py::test_bad_rt_value_is_usage_error`<br>`python/tests/test_config.py::test_exclude_rts_cli`<br>`python/tests/test_config.py::test_exclude_types_cli`<br>`src/cli.rs::all_filter_flags_take_single_value`<br>`src/cli.rs::filter_flag_accepts_comma_separated_values`<br>`src/cli.rs::filter_flag_accepts_eq_form`<br>`src/cli.rs::filter_flag_does_not_eat_positional_input`<br>`src/cli.rs::filter_flag_old_greedy_form_fails_loudly`<br>`src/cli.rs::filter_flag_repeats_accumulate` | Implemented |
+| L2-FLT-001 | L3-PY-013, L3-RS-010 | `python/tests/test_config.py::test_end_to_end_with_reader`<br>`python/tests/test_config.py::test_exclude_all`<br>`python/tests/test_config.py::test_exclude_by_bus`<br>`python/tests/test_config.py::test_exclude_by_rt`<br>`python/tests/test_config.py::test_exclude_by_type`<br>`python/tests/test_config.py::test_exclude_takes_precedence_over_include`<br>`python/tests/test_config.py::test_include_by_bus`<br>`python/tests/test_config.py::test_include_by_rt_drops_non_matches`<br>`python/tests/test_config.py::test_include_by_type`<br>`python/tests/test_config.py::test_include_comma_separated_values`<br>`python/tests/test_config.py::test_include_repeated_flag_accumulates`<br>`python/tests/test_config.py::test_include_rts_no_match_yields_header_only`<br>`python/tests/test_config.py::test_include_subaddress_drops_spurious_without_command_word`<br>`python/tests/test_config.py::test_include_subaddresses_cli`<br>`python/tests/test_config.py::test_multiple_include_sets_all_must_match`<br>`python/tests/test_config.py::test_no_filters_active`<br>`python/tests/test_config.py::test_no_filters_passes_all`<br>`python/tests/test_config.py::test_spurious_without_command_word_survives_rt_filter`<br>`src/filter.rs::empty_config_is_inactive`<br>`src/filter.rs::include_filters_drop_non_matches`<br>`src/filter.rs::iterator_adapter`<br>`tests/cli.rs::exclude_rts_filter_drops_matching_records`<br>`tests/cli.rs::include_rts_filter_keeps_only_matching_records`<br>`tests/integration.rs::filtering_drops_excluded_rts` | Implemented |
 | L2-FLT-002 | _(none)_ | `python/tests/test_config.py::test_or_logic` | Implemented |
 
 ### L1-LOG: Diagnostic logging
@@ -322,15 +322,15 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
 | WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
-| PY | 0 | 0 | 12 | 0 | 6 | 0 | 12 |
+| PY | 0 | 0 | 13 | 0 | 7 | 0 | 13 |
 | RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
-| **Total** | **26** | **110** | **25** | **106** | **14** | **110** | **25** |
+| **Total** | **26** | **110** | **26** | **106** | **15** | **110** | **26** |
 
 The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 126 of 141 (89.4%).
+**Tested by at least one test marker**: 127 of 142 (89.4%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 141 of 141 (100.0%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 142 of 142 (100.0%).
 
 ### Orphan check
 

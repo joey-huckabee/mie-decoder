@@ -140,24 +140,34 @@ _ERROR_MODE_MAP: dict[str, ErrorMode] = {
 class FilterConfig:
     """Message filtering configuration.
 
-    All filter lists use OR logic: a message is excluded if it matches
-    ANY criterion.
+    Both ``exclude_*`` (negative) and ``include_*`` (positive) filters
+    are supported, mirroring the Rust ``FilterConfig``. A message passes
+    if it matches no active ``exclude_*`` set AND every active
+    ``include_*`` set contains its value. Empty (inactive) sets are
+    ignored on both sides; excludes are checked first and take
+    precedence.
 
     Attributes:
-        exclude_types: Set of MessageType values to exclude from output.
-            Empty set means no type filtering.
-        exclude_rts: Set of RT addresses (0–31) to exclude from output.
-            Empty set means no RT filtering.
-        exclude_buses: Set of Bus values to exclude from output.
-            Empty set means no bus filtering.
-        exclude_subaddresses: Set of subaddresses (0–31) to exclude.
-            Empty set means no subaddress filtering.
+        exclude_types: MessageType values to exclude. Empty = no filter.
+        exclude_rts: RT addresses (0–31) to exclude. Empty = no filter.
+        exclude_buses: Bus values to exclude. Empty = no filter.
+        exclude_subaddresses: subaddresses (0–31) to exclude. Empty = no
+            filter.
+        include_types: when non-empty, only these MessageType values pass.
+        include_rts: when non-empty, only these RT addresses pass.
+        include_buses: when non-empty, only these Bus values pass.
+        include_subaddresses: when non-empty, only these subaddresses pass.
     """
 
     exclude_types: set[int] = field(default_factory=set)
     exclude_rts: set[int] = field(default_factory=set)
     exclude_buses: set[Bus] = field(default_factory=set)
     exclude_subaddresses: set[int] = field(default_factory=set)
+
+    include_types: set[int] = field(default_factory=set)
+    include_rts: set[int] = field(default_factory=set)
+    include_buses: set[Bus] = field(default_factory=set)
+    include_subaddresses: set[int] = field(default_factory=set)
 
     @property
     def is_active(self) -> bool:
@@ -167,6 +177,10 @@ class FilterConfig:
             or self.exclude_rts
             or self.exclude_buses
             or self.exclude_subaddresses
+            or self.include_types
+            or self.include_rts
+            or self.include_buses
+            or self.include_subaddresses
         )
 
     def should_exclude(
@@ -183,11 +197,14 @@ class FilterConfig:
                 for records with no Command Word (SPURIOUS_DATA).
 
         Returns:
-            True if the message matches any exclusion criterion. A ``None``
-            ``rt``/``subaddress`` never matches an RT/subaddress filter
-            (those records can only be excluded by type or bus), mirroring
-            the Rust ``FilterConfig::should_exclude`` behavior.
+            True if the message matches any ``exclude_*`` criterion, or
+            fails any active ``include_*`` criterion. A ``None``
+            ``rt``/``subaddress`` never matches an RT/subaddress exclude
+            filter, and is always dropped when an RT/subaddress include
+            filter is active (SPURIOUS_DATA has no RT/SA). Mirrors the
+            Rust ``FilterConfig::should_exclude`` behavior.
         """
+        # Negative filters (checked first; they take precedence).
         if self.exclude_types and message_type in self.exclude_types:
             return True
         if self.exclude_rts and rt in self.exclude_rts:
@@ -196,6 +213,19 @@ class FilterConfig:
             return True
         if self.exclude_subaddresses and subaddress in self.exclude_subaddresses:
             return True
+
+        # Positive filters: if a set is active, the value must be present.
+        if self.include_types and message_type not in self.include_types:
+            return True
+        if self.include_buses and bus not in self.include_buses:
+            return True
+        if self.include_rts and (rt is None or rt not in self.include_rts):
+            return True
+        if self.include_subaddresses and (
+            subaddress is None or subaddress not in self.include_subaddresses
+        ):
+            return True
+
         return False
 
 
@@ -282,12 +312,18 @@ class DecoderConfig:
             else self.standard_tick_rate_hz
         )
 
-        # Merge filter overrides — CLI adds to (not replaces) config file filters
+        # Merge filter overrides — CLI adds to (not replaces) config file
+        # filters. include_* are CLI-only (no config-file key), matching
+        # Rust, but merge the same way for symmetry.
         new_filters = FilterConfig(
             exclude_types=self.filters.exclude_types | set(kwargs.get("exclude_types") or []),
             exclude_rts=self.filters.exclude_rts | set(kwargs.get("exclude_rts") or []),
             exclude_buses=self.filters.exclude_buses | set(kwargs.get("exclude_buses") or []),
             exclude_subaddresses=self.filters.exclude_subaddresses | set(kwargs.get("exclude_subaddresses") or []),
+            include_types=self.filters.include_types | set(kwargs.get("include_types") or []),
+            include_rts=self.filters.include_rts | set(kwargs.get("include_rts") or []),
+            include_buses=self.filters.include_buses | set(kwargs.get("include_buses") or []),
+            include_subaddresses=self.filters.include_subaddresses | set(kwargs.get("include_subaddresses") or []),
         )
 
         return DecoderConfig(
