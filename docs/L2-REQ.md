@@ -725,6 +725,8 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 | `decode.strict` | bool | TOML boolean only (not coerced from strings) | reject non-bool |
 | `decode.error_mode` | string | one of `separate`/`inline` | reject at load time |
 | `decode.allow_partial` | bool | TOML boolean only (see L1-EXIT-004) | reject non-bool |
+| `decode.detect_records` | int | `[1, 32]` (see L2-DEC-015); default `8` | reject out-of-range at load time |
+| `decode.lookahead_records` | int | `[1, 32]` (see L2-SYN-026); default `2` | reject out-of-range at load time |
 | `decode.standard_tick_rate_hz` | float (int coerced) | finite and `> 0` (see L2-DEC-017); unset = no calibration | reject non-finite/non-positive at load time |
 | `output.format` | string | `csv` is the only valid value in v1 | reject at load time |
 | `output.no_clobber` | bool | TOML boolean only (see L2-WRT-017) | reject non-bool |
