@@ -674,42 +674,67 @@ def write_csv_split(
     if opts.no_clobber and error_path.exists():
         raise MieClobberRefusedError(str(error_path))
 
-    normal_rows: list[dict[str, str]] = []
-    error_rows: list[dict[str, str]] = []
+    # Stream into the main temp file eagerly; the errors temp is created
+    # lazily on the first error row so a clean decode never leaves an
+    # empty errors CSV behind. Both stay O(1) in the record count.
+    main_atomic = _AtomicCsvFile(output_path)
+    errors_atomic: _AtomicCsvFile | None = None
     partial_info: tuple[int, int] | None = None
-
     try:
-        for msg in messages:
-            row = message_to_row(msg)
-            if msg.error_label:
-                error_rows.append(row)
+        main_writer = _StreamingCsvRowWriter(main_atomic.stream, str(output_path))
+        error_writer: _StreamingCsvRowWriter | None = None
+
+        try:
+            for msg in messages:
+                if msg.error_label:
+                    if error_writer is None:
+                        errors_atomic = _AtomicCsvFile(error_path)
+                        error_writer = _StreamingCsvRowWriter(
+                            errors_atomic.stream, str(error_path)
+                        )
+                    error_writer.write_message(msg)
+                else:
+                    main_writer.write_message(msg)
+        except MieUnrecoverableSyncLossError as exc:
+            if not opts.allow_partial:
+                raise
+            partial_info = (exc.offset, exc.sync_losses)
+
+        normal_count = main_writer.rows_written
+        error_count = error_writer.rows_written if error_writer is not None else 0
+
+        if partial_info is None:
+            # Commit MAIN first (L2-WRT-019): the two commits are not
+            # cross-file atomic, so if the errors commit fails the residue
+            # is the primary main.csv, never an orphan errors file.
+            main_atomic.commit()
+            logger.info("Wrote %d normal messages to %s", normal_count, output_path)
+            if errors_atomic is not None:
+                errors_atomic.commit()
+                logger.info(
+                    "Wrote %d error/spurious messages to %s", error_count, error_path
+                )
             else:
-                normal_rows.append(row)
-    except MieUnrecoverableSyncLossError as exc:
-        if not opts.allow_partial:
-            raise
-        partial_info = (exc.offset, exc.sync_losses)
+                logger.info("No error/spurious messages — error file not created")
+            return WriteOutcome(
+                normal_count=normal_count, error_count=error_count, partial=None
+            )
 
-    normal_df = pd.DataFrame(normal_rows, columns=CSV_HEADER)
-
-    if partial_info is not None:
-        # Commit both files as .partial.
-        main_partial = output_path.with_name(f"{output_path.name}.partial")
-        _write_dataframe_atomic(normal_df, main_partial)
+        # Partial path: commit each file as .partial (errors first, then
+        # main, mirroring the Rust writer).
         errors_partial: Path | None = None
-        if error_rows:
-            error_df = pd.DataFrame(error_rows, columns=CSV_HEADER)
-            errors_partial = error_path.with_name(f"{error_path.name}.partial")
-            _write_dataframe_atomic(error_df, errors_partial)
+        if errors_atomic is not None:
+            errors_partial = errors_atomic.commit_partial()
+        main_partial = main_atomic.commit_partial()
         offset, sync_losses = partial_info
         logger.warning(
             "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
             "wrote %d normal + %d error rows as partial to %s (--allow-partial)",
-            offset, sync_losses, len(normal_df), len(error_rows), main_partial,
+            offset, sync_losses, normal_count, error_count, main_partial,
         )
         return WriteOutcome(
-            normal_count=len(normal_df),
-            error_count=len(error_rows),
+            normal_count=normal_count,
+            error_count=error_count,
             partial=PartialCommit(
                 main_path=main_partial,
                 errors_path=errors_partial,
@@ -717,19 +742,9 @@ def write_csv_split(
                 sync_losses=sync_losses,
             ),
         )
-
-    dataframe_to_csv(normal_df, output=output_path)
-    logger.info("Wrote %d normal messages to %s", len(normal_df), output_path)
-
-    if error_rows:
-        error_df = pd.DataFrame(error_rows, columns=CSV_HEADER)
-        dataframe_to_csv(error_df, output=error_path)
-        logger.info("Wrote %d error/spurious messages to %s", len(error_df), error_path)
-    else:
-        logger.info("No error/spurious messages — error file not created")
-
-    return WriteOutcome(
-        normal_count=len(normal_df),
-        error_count=len(error_rows),
-        partial=None,
-    )
+    finally:
+        # Unlink any temp that was never committed (failure path). After a
+        # successful commit/commit_partial these are no-ops.
+        main_atomic.close()
+        if errors_atomic is not None:
+            errors_atomic.close()

@@ -20,6 +20,7 @@ from mie_decoder.writer import (
     _AtomicCsvFile,
     _StreamingCsvRowWriter,
     _make_temp_path,
+    write_csv,
 )
 
 from tests.conftest import normal_record_rt15_sa11_us
@@ -131,3 +132,36 @@ def test_streaming_writer_streams_rows_incrementally(tmp_path: Path) -> None:
     assert buf.getvalue().count("\n") == 3  # header + 2 rows
     # LF-only, no CR.
     assert "\r" not in buf.getvalue()
+
+
+class _PipeBreaker(io.StringIO):
+    """A text stream that raises BrokenPipeError after ``break_after``
+    successful writes — simulates a downstream consumer closing the pipe
+    mid-stream (e.g. ``mie-decoder decode ... | head``)."""
+
+    def __init__(self, break_after: int) -> None:
+        super().__init__()
+        self._writes = 0
+        self._break_after = break_after
+
+    def write(self, s: str) -> int:
+        self._writes += 1
+        if self._writes > self._break_after:
+            raise BrokenPipeError("consumer closed")
+        return super().write(s)
+
+
+@pytest.mark.requirement("L2-WRT-018")
+def test_write_csv_to_stream_swallows_broken_pipe(tmp_path: Path) -> None:
+    """A broken pipe mid-stream is treated as a clean success (exit 0),
+    not propagated."""
+    data = normal_record_rt15_sa11_us(100) + normal_record_rt15_sa11_us(16100)
+    mie = tmp_path / "two.mie"
+    mie.write_bytes(data)
+
+    # Allow the header write through, break on the first data row.
+    breaker = _PipeBreaker(break_after=1)
+    outcome = write_csv(MieFileReader(mie), output=breaker)
+
+    # No exception escaped; the run reports success.
+    assert outcome.partial is None
