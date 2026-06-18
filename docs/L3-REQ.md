@@ -55,8 +55,8 @@ The Python implementation SHALL support Python `>=3.10,<3.15`. The supported ver
 **L3-PY-002** · Parent: L2-CONF-005 · Verification: I
 Python dependencies and packaging SHALL be managed by Poetry. The committed lockfile SHALL be `python/poetry.lock`. CI builds SHALL use `poetry sync` or `poetry install --no-root` with the committed lockfile to ensure reproducible dependency resolution.
 
-**L3-PY-003** · Parent: L2-CLI-002 · Verification: I
-The Python package SHALL use the `src/mie_decoder` layout and SHALL expose the `mie-decoder` console script via `[tool.poetry.scripts]` in `python/pyproject.toml`.
+**L3-PY-003** · Parent: L2-CONF-005 · Verification: T, I
+The Python package SHALL use the `src/mie_decoder` layout and SHALL expose the `mie-decoder` console script via `[project.scripts]` (PEP 621) in `python/pyproject.toml`. (The package is a Poetry + PEP 621 hybrid: project metadata and the console-script entry point live in the standard `[project]` table, while `poetry-core` is the build backend and `[tool.poetry] packages` points at the `src/` layout.) The console-script registration is verified by test (`tests/test_package_api.py`, via `importlib.metadata`); the `src/` layout by inspection.
 
 **L3-PY-004** · Parent: L2-WRT-001 · Verification: T
 Python CSV generation SHALL stream rows directly to the output handle via the standard-library `csv` module with `lineterminator="\n"` (and file destinations opened with `newline=""`), satisfying L2-WRT-012 regardless of host operating system. No DataFrame or full-file buffering SHALL be used (see L3-PY-012).

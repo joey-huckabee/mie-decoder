@@ -1,18 +1,21 @@
-"""Package-root public API contract (L3-PY-007).
+"""Installed-package public surface (L3-PY-007 and L3-PY-003).
 
 L3-PY-007 requires the ``mie_decoder`` package to expose its decoder entry
-point as a typed callable importable from the package root. These tests
-assert exactly that — the root re-export, that the entry point is a typed
-callable, and that the public surface is documented — so the requirement
-traces to a real root-API check rather than borrowing its parent's
-conformance-wiring test. (The broader "all public APIs carry type
-annotations" clause is enforced separately by the CI-gated ``mypy src``
-strict run.)
+point as a typed callable importable from the package root; L3-PY-003
+requires the ``mie-decoder`` console script to be registered via
+``[project.scripts]``. These tests assert both directly — the root
+re-export, that the entry point is a typed callable, that the public
+surface is documented, and that the console-script entry point is
+installed — so each requirement traces to a real package-surface check
+rather than borrowing an unrelated parent's test. (The broader "all
+public APIs carry type annotations" clause is enforced separately by the
+CI-gated ``mypy src`` strict run.)
 """
 
 from __future__ import annotations
 
 import inspect
+from importlib.metadata import entry_points
 
 import pytest
 
@@ -66,3 +69,19 @@ def test_public_surface_is_documented() -> None:
 
     assert mie_decoder.__doc__ and mie_decoder.__doc__.strip()
     assert MieFileReader.__doc__ and MieFileReader.__doc__.strip()
+
+
+@pytest.mark.requirement("L3-PY-003")
+def test_console_script_entry_point_registered() -> None:
+    """The `mie-decoder` console script is registered (L3-PY-003).
+
+    The conformance suite drives the CLI via ``python -m mie_decoder`` (the
+    ``__main__`` shim), so the ``[project.scripts]`` console-script entry
+    point is otherwise only exercised manually. This pins that it is
+    installed and points at ``cli:main`` — catching a packaging regression
+    that the rest of the suite would miss.
+    """
+    scripts = entry_points(group="console_scripts")
+    mie = [e for e in scripts if e.name == "mie-decoder"]
+    assert mie, "mie-decoder console script is not registered"
+    assert mie[0].value == "mie_decoder.cli:main"

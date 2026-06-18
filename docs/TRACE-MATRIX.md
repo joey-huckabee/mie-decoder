@@ -118,7 +118,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CFG-006 | _(none)_ | `python/tests/test_config.py::test_case_insensitive`<br>`python/tests/test_config.py::test_invalid_raises`<br>`python/tests/test_config.py::test_should_exclude_by_bus`<br>`python/tests/test_config.py::test_should_exclude_by_rt`<br>`python/tests/test_config.py::test_should_exclude_by_subaddress`<br>`python/tests/test_config.py::test_should_exclude_by_type`<br>`python/tests/test_config.py::test_type_filter_active`<br>`python/tests/test_config.py::test_valid`<br>`src/filter.rs::exclude_by_rt`<br>`src/filter.rs::exclude_by_type_and_bus` | Implemented |
 | L2-CFG-007 | _(none)_ | `python/tests/test_config.py::test_by_hex`<br>`python/tests/test_config.py::test_by_name`<br>`python/tests/test_config.py::test_case_insensitive`<br>`python/tests/test_config.py::test_invalid_hex_raises`<br>`python/tests/test_config.py::test_invalid_name_raises`<br>`src/config.rs::type_name_parsing`<br>`src/config.rs::unknown_type_name_rejected` | Implemented |
 | L2-CLI-001 | _(none)_ | `src/cli.rs::parse_decode_help_returns_help_requested`<br>`src/cli.rs::parse_decode_missing_input_returns_other`<br>`tests/cli.rs::decode_happy_path_writes_csv_with_header_and_one_row`<br>`tests/cli.rs::help_exits_zero_and_lists_all_subcommands` | Implemented |
-| L2-CLI-002 | L3-PY-003 | `python/tests/test_e2e.py::test_cli_decode_output_file`<br>`src/cli.rs::parse_decode_minimal_ok`<br>`tests/cli.rs::decode_happy_path_writes_csv_with_header_and_one_row` | Implemented |
+| L2-CLI-002 | _(none)_ | `python/tests/test_e2e.py::test_cli_decode_output_file`<br>`src/cli.rs::parse_decode_minimal_ok`<br>`tests/cli.rs::decode_happy_path_writes_csv_with_header_and_one_row` | Implemented |
 | L2-CLI-008 | L3-PY-010, L3-RS-008 | `python/tests/test_e2e.py::test_cli_count_subcommand`<br>`src/cli.rs::parse_count_help_returns_help_requested`<br>`tests/cli.rs::count_subcommand_emits_integer_to_stdout_and_status_to_stderr`<br>`tests/cli.rs::help_exits_zero_and_lists_all_subcommands` | Implemented |
 | L2-CLI-009 | _(none)_ | `python/tests/test_e2e.py::test_cli_dump_missing_file`<br>`python/tests/test_e2e.py::test_cli_dump_raw`<br>`python/tests/test_e2e.py::test_cli_dump_records`<br>`src/cli.rs::parse_dump_help_returns_help_requested`<br>`src/dump.rs::raw_dump_format`<br>`src/dump.rs::raw_dump_offset_beyond_eof_yields_empty`<br>`src/dump.rs::record_dump_handles_one_record`<br>`tests/cli.rs::dump_records_outputs_hex_to_stdout`<br>`tests/cli.rs::help_exits_zero_and_lists_all_subcommands` | Implemented |
 | L2-CLI-010 | _(none)_ | `python/tests/test_config.py::test_bad_rt_value_is_usage_error`<br>`python/tests/test_config.py::test_exclude_rts_cli`<br>`python/tests/test_config.py::test_exclude_types_cli`<br>`src/cli.rs::all_filter_flags_take_single_value`<br>`src/cli.rs::filter_flag_accepts_comma_separated_values`<br>`src/cli.rs::filter_flag_accepts_eq_form`<br>`src/cli.rs::filter_flag_does_not_eat_positional_input`<br>`src/cli.rs::filter_flag_old_greedy_form_fails_loudly`<br>`src/cli.rs::filter_flag_repeats_accumulate` | Implemented |
@@ -255,7 +255,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CONF-002 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_runner_invokes_both_clis_and_compares_outputs` | Implemented |
 | L2-CONF-003 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_manifest_has_cases_with_oracles`<br>`python/tests/test_conformance_wiring.py::test_conformance_runner_exists` | Implemented |
 | L2-CONF-004 | _(none)_ | _(TBD)_ | Implemented (I) |
-| L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci` | Implemented |
+| L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-003, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci`<br>`python/tests/test_package_api.py::test_console_script_entry_point_registered` | Implemented |
 | L2-CONF-006 | L3-PY-007, L3-RS-013 | `python/tests/test_package_api.py::test_decoder_entry_point_importable_from_package_root`<br>`python/tests/test_package_api.py::test_decoder_entry_point_is_a_typed_callable`<br>`python/tests/test_package_api.py::test_message_type_importable_from_package_root`<br>`python/tests/test_package_api.py::test_public_surface_is_documented`<br>`tests/integration.rs::crate_root_reexports_public_decode_api` | Implemented |
 
 ### L1-EXIT: Exit-code semantics and operational contract
@@ -323,13 +323,13 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
 | WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
-| PY | 0 | 0 | 13 | 0 | 8 | 0 | 13 |
+| PY | 0 | 0 | 13 | 0 | 9 | 0 | 13 |
 | RS | 0 | 0 | 12 | 0 | 7 | 0 | 12 |
-| **Total** | **26** | **111** | **27** | **106** | **17** | **110** | **27** |
+| **Total** | **26** | **111** | **27** | **106** | **18** | **110** | **27** |
 
 The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 129 of 144 (89.6%).
+**Tested by at least one test marker**: 130 of 144 (90.3%).
 
 **Verified (Test or declared Inspection/Analysis/Demonstration)**: 143 of 144 (99.3%).
 
