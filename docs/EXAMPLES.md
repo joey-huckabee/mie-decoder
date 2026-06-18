@@ -16,7 +16,7 @@ You have `flight.mie` from a DDC recording card. You want CSV.
 mie-decoder decode flight.mie -o flight.csv
 ```
 
-That's the whole command. Auto-detect picks the timestamp format from the first record; the header (if any) is skipped automatically; output is written atomically (no half-written file on crash).
+That's the whole command. Auto-detect picks the timestamp format from the first few records; the header (if any) is skipped automatically; output is written atomically (no half-written file on crash).
 
 Add `--log-level INFO` to see what happened:
 

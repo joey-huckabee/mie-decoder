@@ -130,7 +130,7 @@ class TimestampFormat(IntEnum):
     """Timestamp encoding format used in the MIE binary file.
 
     Values:
-        AUTO: Auto-detect from the first record.
+        AUTO: Auto-detect from the first records (bounded multi-record probe).
         IRIG: 48-bit IRIG-B timestamp (3 × 16-bit words).
         STANDARD: 32-bit free-running counter (2 × 16-bit words).
     """

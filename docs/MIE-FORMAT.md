@@ -79,7 +79,7 @@ Every record has the same three-section shape:
 ```
 
 - **Type Word** — 1 word (2 bytes). Always present. Bit fields below.
-- **Timestamp** — 2 words (Standard, 4 bytes) or 3 words (IRIG, 6 bytes). Format is file-level (L2-DEC-011) — the decoder auto-detects on the first record and uses the chosen format for every subsequent record.
+- **Timestamp** — 2 words (Standard, 4 bytes) or 3 words (IRIG, 6 bytes). Format is file-level (L2-DEC-011) — the decoder auto-detects across the first records (the L2-DEC-015 probe) and uses the chosen format for every subsequent record.
 - **Message payload** — variable length, format depends on Type Word's message type. Detailed in §6 below.
 
 The Type Word's `word_count` field gives the **total** record length including the Type Word and timestamp. To compute payload length: `payload_words = word_count - 1 - ts_words`.
@@ -116,7 +116,7 @@ The full enumeration of 11 supported transaction shapes (10 message formats plus
 
 ## 5. Timestamps
 
-The MIE format supports two timestamp encodings. Which one a file uses is set at recording time and is the same for every record in the file (L2-DEC-011). The decoder auto-detects on the first record; the `--time-format` CLI flag or `decode.time_format` config key can force a specific format.
+The MIE format supports two timestamp encodings. Which one a file uses is set at recording time and is the same for every record in the file (L2-DEC-011). The decoder auto-detects across the first records (L2-DEC-015); the `--time-format` CLI flag or `decode.time_format` config key can force a specific format.
 
 ### 5.1 IRIG (48-bit, 3 words)
 

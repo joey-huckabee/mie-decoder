@@ -45,10 +45,10 @@ level = "WARNING"
 # DDC recording cards support two timestamp formats, configured at
 # recording time. All records in a single file use the same format.
 #
-#   auto     — Auto-detect from the first record by probing the Command
-#              Word at both possible offsets and scoring which produces
-#              a valid MIL-STD-1553 command. This is the recommended
-#              setting for most workflows.
+#   auto     — Auto-detect by probing the Command Word at both possible
+#              offsets across the first records and scoring which produces
+#              a valid MIL-STD-1553 command (bounded multi-record probe;
+#              see decode.detect_records). Recommended for most workflows.
 #   irig     — 48-bit IRIG-B timestamp (3 × 16-bit words). Provides
 #              absolute wall-clock time: day-of-year, hour, minute,
 #              second, microsecond. Requires an external IRIG time source.

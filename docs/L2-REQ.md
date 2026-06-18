@@ -93,7 +93,7 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 #### L2-DEC-011
 
 **Parent**: L1-DEC-002
-**Statement**: Timestamp-format detection SHALL be file-level: the format is resolved on the first valid record and used unchanged for every subsequent record in the same decode invocation. Per-record re-detection is not permitted.
+**Statement**: Timestamp-format detection SHALL be file-level: the format is resolved once at the start of the decode invocation (by the bounded multi-record probe of L2-DEC-015) and used unchanged for every subsequent record in the same decode invocation. Per-record re-detection is not permitted.
 **Rationale**: Mid-file re-detection would silently produce mixed time bases in one CSV, defeating the time-series semantics of `DELTA` (see L1-DLT-001). File-level resolution makes the contract simple to reason about.
 **Verification Method**: Test (T)
 

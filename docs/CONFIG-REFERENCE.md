@@ -107,13 +107,13 @@ Selects the timestamp format used by the binary file. DDC recording cards suppor
 
 | Value | Behavior |
 |-------|----------|
-| `"auto"` | Auto-detect on the first valid record. The decoder probes the Command Word at both candidate offsets and scores which produces a valid MIL-STD-1553 command. Recommended for most workflows. |
+| `"auto"` | Auto-detect by probing up to the first `decode.detect_records` records (default 8; L2-DEC-015). The decoder probes the Command Word at both candidate offsets and scores which produces a valid MIL-STD-1553 command, aggregating the scores across the probe set. Recommended for most workflows. |
 | `"irig"` | Force the 48-bit IRIG-B format (3 × 16-bit words = day, hour, minute, second, microsecond, freerun flag). Provides absolute wall-clock time. |
 | `"standard"` | Force the 32-bit free-running counter format (2 × 16-bit words). Provides relative timing only; tick rate is card-dependent and not encoded in the file. `DELTA` is empty for Standard records unless you supply [`standard_tick_rate_hz`](#standard_tick_rate_hz) (L2-RDR-019). |
 
 **Tie-break (L2-DEC-012):** When `"auto"` and both formats score equally, IRIG is selected. Flight-test recordings overwhelmingly use IRIG; this tie-break preserves the most common path.
 
-**Validation:** rejected at load time if not one of the three values. An explicit `irig` or `standard` is still validated against the first record's word count — pointing the decoder at an IRIG file with `--time-format standard` surfaces a distinct error class in strict mode (L2-DEC-013).
+**Validation:** rejected at load time if not one of the three values. An explicit `irig` or `standard` is still sanity-checked against the L2-DEC-015 detection probe — pointing the decoder at an IRIG file with `--time-format standard` surfaces a distinct error class in strict mode when the probe is decisive for the other format (L2-DEC-013).
 
 ### `strict`
 

@@ -77,7 +77,7 @@ Out-of-scope items are listed separately under **Non-Requirements** (1 item).
 
 **Statement**: Each implementation SHALL decode IRIG timestamps with microsecond resolution and SHALL support Standard free-running timestamps.
 
-**Rationale**: Real flight-test recordings overwhelmingly use IRIG timestamps; some bench and replay captures use the Standard 32-bit free-running counter format. The decoder must auto-detect the format on the first valid record of each file and apply the chosen format consistently for the remainder of the decode invocation.
+**Rationale**: Real flight-test recordings overwhelmingly use IRIG timestamps; some bench and replay captures use the Standard 32-bit free-running counter format. The decoder must auto-detect the format from the first valid records of each file (a bounded multi-record probe; see L2-DEC-015) and apply the chosen format consistently for the remainder of the decode invocation.
 
 **Verification Method**: Test (T)
 

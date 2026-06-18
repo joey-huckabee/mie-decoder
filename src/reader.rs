@@ -1,8 +1,9 @@
 //! mmap-backed sequential reader.
 //!
 //! `MieFileReader` opens an MIE binary file with `memmap2`, finds the first
-//! valid record (skipping any header), auto-detects the timestamp format on
-//! first record if requested, and yields decoded `MieMessage`s in file order.
+//! valid record (skipping any header), auto-detects the timestamp format from
+//! the first records if requested (bounded multi-record probe, L2-DEC-015),
+//! and yields decoded `MieMessage`s in file order.
 //!
 //! Sync recovery happens internally — only unrecoverable errors (or strict
 //! mode opt-ins) surface as `Err` items from the iterator.
