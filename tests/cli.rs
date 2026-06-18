@@ -274,14 +274,17 @@ fn count_subcommand_emits_integer_to_stdout_and_status_to_stderr() {
     );
 }
 
-/// Requirements: L2-CLI-005, L1-EXIT-002
+/// Requirements: L2-CLI-005, L1-EXIT-007
 #[test]
-fn no_args_invocation_exits_non_zero() {
+fn no_args_invocation_is_usage_error_exit_4() {
+    // No subcommand is a usage error (L1-EXIT-007), not a no-valid-records
+    // condition (L1-EXIT-002) — it must exit with the usage code 4, not
+    // merely some non-zero code.
     let out = run(Vec::<&str>::new());
-    assert_ne!(
+    assert_eq!(
         exit_code(&out),
-        0,
-        "invoking the binary with no arguments must fail with a non-zero exit"
+        4,
+        "invoking the binary with no subcommand must be a usage error (exit 4)"
     );
 }
 
