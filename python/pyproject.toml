@@ -9,7 +9,6 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10,<3.15"
 dependencies = [
-    "pandas>=2.0,<3.0",
     "tomli>=2.0,<3.0; python_version < '3.11'",
 ]
 
@@ -41,12 +40,12 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 
-# pandas ships no type information mypy accepts, and `tomli` (the 3.10
-# TOML backport, conditionally imported in config.py) is not installed
-# in the dev/type-check environment. Neither is part of our typed
-# surface, so treat their imports as untyped rather than vendoring stubs.
+# `tomli` (the 3.10 TOML backport, conditionally imported in config.py)
+# is not installed in the dev/type-check environment and is not part of
+# our typed surface, so treat its import as untyped rather than vendoring
+# stubs.
 [[tool.mypy.overrides]]
-module = ["pandas", "tomli"]
+module = ["tomli"]
 ignore_missing_imports = true
 
 # Coverage gate parallels the Rust crate's cargo-llvm-cov gate

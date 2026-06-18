@@ -8,8 +8,7 @@ hierarchy. All modules in the package obtain their loggers via
 Log Levels:
     DEBUG:
         Per-record decode details (type word, RT, SA, direction, word
-        count), truncation events, DataFrame construction progress,
-        parsed CLI arguments.
+        count), truncation events, parsed CLI arguments.
     INFO:
         File open/close with sizes, decode start/complete with counts
         and elapsed time, CSV write row counts, progress checkpoints

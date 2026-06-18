@@ -23,11 +23,11 @@ MIE-Decoder ships as a Rust crate (`src/`) and a Python package (`python/src/mie
 | Sync helpers (validate, find first, recover) | `src/sync.rs` | `python/src/mie_decoder/sync.py` |
 | Domain models + error code constants | `src/models.rs` | `python/src/mie_decoder/models.py` |
 | Error types | `src/error.rs` (single enum) | `python/src/mie_decoder/exceptions.py` (class hierarchy) |
-| CSV writer | `src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (pandas) |
+| CSV writer | `src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (streaming, stdlib `csv`) |
 | Logging | `src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) |
 | Hex dump | `src/dump.rs` | `python/src/mie_decoder/dump.py` |
 
-Per L1-CONF-001 the two implementations must remain aligned on shared format and CSV semantics. Per-implementation requirements (`L3-PY-*` / `L3-RS-*`) cover the technology-specific obligations (pandas / tomllib for Python; memmap2 / streaming `BufWriter` for Rust). See [`L3-REQ.md`](L3-REQ.md) for the per-impl details.
+Per L1-CONF-001 the two implementations must remain aligned on shared format and CSV semantics. Per-implementation requirements (`L3-PY-*` / `L3-RS-*`) cover the technology-specific obligations (stdlib `csv` / tomllib for Python; memmap2 / streaming `BufWriter` for Rust). See [`L3-REQ.md`](L3-REQ.md) for the per-impl details.
 
 ---
 
@@ -89,7 +89,7 @@ Per L1-CONF-001 the two implementations must remain aligned on shared format and
   └───────────────────────────────┘    └───────────┘
 ```
 
-The only external Rust runtime dependency is `memmap2` (per `L3-RS-002`). Argument parsing, CSV emission, TOML parsing, logging, and error types are all hand-rolled. The Python package depends on `pandas` for the CSV writer (`L3-PY-004`) and `tomllib` / `tomli` for config loading (`L3-PY-005`).
+The only external Rust runtime dependency is `memmap2` (per `L3-RS-002`). Argument parsing, CSV emission, TOML parsing, logging, and error types are all hand-rolled. The Python package's CSV writer streams through the standard-library `csv` module (`L3-PY-004`); its only runtime dependency is `tomli` for config loading on Python 3.10 (`tomllib` is used on 3.11+, per `L3-PY-005`).
 
 ---
 

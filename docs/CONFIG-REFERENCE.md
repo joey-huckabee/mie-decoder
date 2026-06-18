@@ -86,7 +86,7 @@ Diagnostic logging verbosity. Accepted values (case-insensitive):
 
 | Value | What it emits |
 |-------|---------------|
-| `DEBUG` | Per-record decode details, DataFrame construction progress (Python), CLI parsed arguments, truncation events. Verbose. |
+| `DEBUG` | Per-record decode details, CLI parsed arguments, truncation events. Verbose. |
 | `INFO` | File open/close, decode start/complete with counts, auto-detected timestamp format, exit-class summary (L1-EXIT-005), header detection size (L2-SYN-012), sync-recovery successes (L2-SYN-013). |
 | `WARNING` / `WARN` | Invalid records (lenient skip), freerun timestamps, unknown DDC error codes (lenient), non-monotonic timestamps (L2-RDR-017), sync loss (L2-SYN-013), structural-invariant violations (lenient), L2-SYN anomalies (L2-SYN-024/025). The two spellings are equivalent. |
 | `ERROR` | File not found, empty file, write failures, NoValidRecords, HomogeneousPayload, UnrecoverableSyncLoss. |

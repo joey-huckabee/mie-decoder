@@ -59,7 +59,7 @@ Python dependencies and packaging SHALL be managed by Poetry. The committed lock
 The Python package SHALL use the `src/mie_decoder` layout and SHALL expose the `mie-decoder` console script via `[tool.poetry.scripts]` in `python/pyproject.toml`.
 
 **L3-PY-004** · Parent: L2-WRT-001 · Verification: T
-Python CSV generation SHALL use `pandas.DataFrame.to_csv()` and SHALL explicitly request `line_terminator="\n"` (or `lineterminator="\n"` on the pandas version in use) to satisfy L2-WRT-012 regardless of host operating system.
+Python CSV generation SHALL stream rows directly to the output handle via the standard-library `csv` module with `lineterminator="\n"` (and file destinations opened with `newline=""`), satisfying L2-WRT-012 regardless of host operating system. No DataFrame or full-file buffering SHALL be used (see L3-PY-012).
 
 **L3-PY-005** · Parent: L2-CFG-001 · Verification: I
 Python TOML parsing SHALL use the standard-library `tomllib` module on Python 3.11 and newer, and SHALL fall back to the `tomli` package on Python 3.10. No other TOML parser SHALL be used.

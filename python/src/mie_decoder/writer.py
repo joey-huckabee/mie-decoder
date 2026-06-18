@@ -1,8 +1,10 @@
-"""CSV output writer for decoded MIE messages using pandas.
+"""CSV output writer for decoded MIE messages.
 
-Produces CSV output matching the column layout used by DDC's recording
-software, enabling direct comparison between MIE-Decoder output and
-vendor-generated CSV files.
+Streams rows straight to the output handle through the standard-library
+``csv`` module — no DataFrame or full-file buffering, so decode memory is
+O(1) in the record count (L3-PY-012). Produces CSV output matching the
+column layout used by DDC's recording software, enabling direct
+comparison between MIE-Decoder output and vendor-generated CSV files.
 
 Output Column Definitions:
 
@@ -102,8 +104,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, TextIO
-
-import pandas as pd
 
 from mie_decoder.exceptions import (
     MieClobberRefusedError,
@@ -237,32 +237,6 @@ def _make_temp_path(final_path: Path) -> Path:
     return final_path.with_name(f"{final_path.name}.mie-decoder.tmp.{os.getpid()}")
 
 
-def _write_dataframe_atomic(df: pd.DataFrame, dest: Path) -> None:
-    """Write ``df`` to a temp file beside ``dest``, then ``os.replace``.
-
-    On any failure during the write, the temp file is unlinked and the
-    original ``dest`` (if it existed) is left untouched.
-    """
-    temp = _make_temp_path(dest)
-    try:
-        df.to_csv(temp, index=False, lineterminator="\n")
-    except OSError as exc:
-        if temp.exists():
-            try:
-                temp.unlink()
-            except OSError:
-                pass
-        raise MieWriterError(str(dest), exc) from exc
-    try:
-        os.replace(temp, dest)
-    except OSError as exc:
-        if temp.exists():
-            try:
-                temp.unlink()
-            except OSError:
-                pass
-        raise MieWriterError(str(dest), exc) from exc
-
 #: Maximum number of data word columns in the CSV output.
 MAX_DATA_WORDS: int = 32
 
@@ -334,8 +308,8 @@ def message_to_row(msg: MieMessage) -> dict[str, str]:
 # These mirror the Rust writer's `AtomicCsvFile` and `CsvWriter` so both
 # implementations stream rows straight to the output handle with no
 # per-record buffering — memory is O(1) in the record count. The
-# byte image they produce is pinned against the pandas output by the
-# golden characterization tests (tests/test_writer_streaming_golden.py).
+# byte image they produce is pinned by the golden characterization
+# tests (tests/test_writer_streaming_golden.py).
 
 
 class _AtomicCsvFile:
@@ -460,75 +434,6 @@ class _StreamingCsvRowWriter:
     @property
     def rows_written(self) -> int:
         return self._rows_written
-
-
-def messages_to_dataframe(messages: Iterable[MieMessage]) -> pd.DataFrame:
-    """Convert an iterable of decoded messages to a pandas DataFrame.
-
-    Builds a DataFrame with columns matching :data:`CSV_HEADER` and
-    one row per message. All values are strings to preserve hex
-    formatting on output.
-
-    Args:
-        messages: Iterable of decoded MieMessage instances.
-
-    Returns:
-        A DataFrame with string-typed columns in CSV_HEADER order.
-    """
-    rows: list[dict[str, str]] = []
-    for i, msg in enumerate(messages):
-        rows.append(message_to_row(msg))
-        if (i + 1) % 10_000 == 0:
-            logger.debug("Converted %d messages to rows", i + 1)
-
-    logger.debug("Building DataFrame from %d rows", len(rows))
-    df = pd.DataFrame(rows, columns=CSV_HEADER)
-    return df
-
-
-def dataframe_to_csv(
-    df: pd.DataFrame,
-    output: str | Path | TextIO | None = None,
-) -> None:
-    """Write a DataFrame to CSV format.
-
-    Low-level CSV writing. File-path destinations go through the
-    atomic temp-file + ``os.replace`` pattern (L2-WRT-015). Text-stream
-    destinations (including ``sys.stdout``) bypass the atomic path
-    because they have no on-disk identity; a broken-pipe condition on
-    such a destination is silently swallowed (L2-WRT-018).
-
-    Args:
-        df: DataFrame with columns matching :data:`CSV_HEADER`.
-        output: Destination for CSV output. Accepts:
-            - A file path (``str`` or ``Path``) — atomic write.
-            - A text stream (e.g., ``sys.stdout``) — direct write.
-            - ``None`` — writes to ``sys.stdout``.
-
-    Raises:
-        MieWriterError: If an I/O error occurs during writing.
-    """
-    if isinstance(output, (str, Path)):
-        dest = Path(output)
-        _write_dataframe_atomic(df, dest)
-        logger.info("Wrote %d rows to %s", len(df), dest)
-        return
-
-    # Text-stream destination (TextIO or None → stdout).
-    stream: TextIO = output if output is not None else sys.stdout
-    dest_name = "stdout" if output is None else "<stream>"
-    try:
-        # Keep output byte-stable across platforms and aligned with the Rust
-        # implementation. Pandas otherwise emits CRLF when writing on Windows.
-        df.to_csv(stream, index=False, lineterminator="\n")
-    except BrokenPipeError:
-        # L2-WRT-018: downstream consumer closed early. Treat as success.
-        logger.info("Stdout consumer closed early (broken pipe) — exit 0")
-        return
-    except OSError as exc:
-        raise MieWriterError(dest_name, exc) from exc
-
-    logger.info("Wrote %d rows to %s", len(df), dest_name)
 
 
 def write_csv(

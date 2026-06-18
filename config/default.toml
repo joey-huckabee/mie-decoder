@@ -21,8 +21,8 @@
 # Controls how much diagnostic output is written to stderr. Higher levels
 # produce less output.
 #
-#   DEBUG    — Per-record decode details, DataFrame construction progress,
-#              CLI parsed arguments, truncation events.
+#   DEBUG    — Per-record decode details, CLI parsed arguments,
+#              truncation events.
 #   INFO     — File open/close, decode start/complete with counts and
 #              elapsed time, auto-detected timestamp format, CSV row counts,
 #              progress checkpoints every 100,000 messages.

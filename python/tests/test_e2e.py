@@ -394,15 +394,6 @@ class TestCsvWriter:
         assert outcome.normal_count == 3
         assert outcome.partial is None
 
-    @pytest.mark.requirement("L3-PY-004")
-    def test_messages_to_dataframe(self, tmp_mie_file: Path) -> None:
-        """messages_to_dataframe should produce a DataFrame with correct shape."""
-        from mie_decoder.writer import messages_to_dataframe, CSV_HEADER
-
-        df = messages_to_dataframe(MieFileReader(tmp_mie_file))
-        assert len(df) == 3
-        assert list(df.columns) == CSV_HEADER
-
 
 class TestAtomicWriteSafety:
     """L2-WRT-014 through L2-WRT-018 enforcement tests for the Python writer."""

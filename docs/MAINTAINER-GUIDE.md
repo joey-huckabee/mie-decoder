@@ -534,7 +534,7 @@ These are the operating rules that keep the two crates from drifting:
 
 1. **Spec first.** New behavior lands as an L2 / L3 requirement before code. Both implementations then satisfy it.
 2. **Conformance fixtures for cross-impl behavior.** Anything that affects CSV output or exit codes belongs in `tests/conformance/`.
-3. **Per-impl detail goes in L3.** Python-specific constraints (pandas, tomllib, Poetry) live as `L3-PY-*`. Rust-specific constraints (memmap2, BufWriter) live as `L3-RS-*`. The shared L2 stays implementation-agnostic.
+3. **Per-impl detail goes in L3.** Python-specific constraints (stdlib `csv`, tomllib, Poetry) live as `L3-PY-*`. Rust-specific constraints (memmap2, BufWriter) live as `L3-RS-*`. The shared L2 stays implementation-agnostic.
 4. **Error variants ship together.** When you add a new variant in one language, add it in the other in the same PR.
 5. **Log message wording can drift.** Operators read CSV output and exit codes; log message text isn't part of the contract. Don't over-coordinate it.
 6. **CLI syntax can drift** (per L1-CLI-001) — capability parity matters, exact spelling doesn't. Rust uses `count` subcommand and `--inline-errors`; Python uses `decode --count` and `--error-mode inline`. Both reach the same outcomes.

@@ -110,6 +110,7 @@ def test_streaming_writer_emits_header_on_construction() -> None:
 
 
 @pytest.mark.requirement("L2-WRT-001")
+@pytest.mark.requirement("L3-PY-004")
 def test_streaming_writer_streams_rows_incrementally(tmp_path: Path) -> None:
     """Rows must reach the stream as they are written, not buffered."""
     data = normal_record_rt15_sa11_us(100) + normal_record_rt15_sa11_us(16100)

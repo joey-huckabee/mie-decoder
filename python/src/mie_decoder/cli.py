@@ -516,8 +516,8 @@ def _run_decode(args: argparse.Namespace) -> int:
         )
         return EXIT_SYNC_LOSS
     except BrokenPipeError:
-        # L2-WRT-018 — already handled inside dataframe_to_csv for
-        # streams, but cover the edge case where it escapes.
+        # L2-WRT-018 — already handled inside the streaming writer for
+        # stream destinations, but cover the edge case where it escapes.
         logger.info("decode exit class: complete (broken-pipe on stdout)")
         return EXIT_OK
     except MieWriterError as exc:
