@@ -875,3 +875,10 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 **Statement**: CI SHALL run the conformance suite on every push and pull request.
 **Rationale**: The whole point of having a conformance suite is to catch drift before merge. Running it post-merge would let drift land in `main`.
 **Verification Method**: Inspection (I)
+
+#### L2-CONF-006
+
+**Parent**: L1-CONF-001
+**Statement**: Each maintained implementation SHALL expose a documented public library API for programmatic (non-CLI) use, with its primary decode entry point importable from the package/crate root.
+**Rationale**: Both implementations are maintained as embeddable libraries, not only as CLIs; downstream code SHALL be able to depend on either implementation's decode entry point from the root without reaching into internal modules. A typed, root-level public surface kept intentional — rather than incidental to module layout — is what keeps the two implementations interchangeable for embedders, the same way the conformance suite (L2-CONF-002..005) keeps their CSV output interchangeable. The per-implementation realizations are pinned by L3-PY-007 (Python) and L3-RS-013 (Rust).
+**Verification Method**: Test (T)

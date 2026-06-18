@@ -67,7 +67,7 @@ Python TOML parsing SHALL use the standard-library `tomllib` module on Python 3.
 **L3-PY-006** · Parent: L2-CLI-011 · Verification: T
 Python errors SHALL inherit from a base `MieDecoderError` class, with `MieFileError` and `MieRecordError` subclasses retaining typed detail attributes. The CLI entry point SHALL map these subclasses to the non-zero exit codes pinned by L2-CLI-011 without exposing tracebacks to stderr.
 
-**L3-PY-007** · Parent: L2-CONF-002 · Verification: T, I
+**L3-PY-007** · Parent: L2-CONF-006 · Verification: T, I
 Public Python APIs SHALL carry type annotations and SHALL be documented in module docstrings. The `mie_decoder` package SHALL expose its decoder entry point (`MieFileReader`) as a typed callable importable from the package root, advertised in `__all__`. The root-export and typed-callable obligations are verified by test (`tests/test_package_api.py`); the package-wide type-annotation obligation is verified by the CI-gated strict `mypy src` run, and module-docstring documentation by inspection.
 
 **L3-PY-008** · Parent: L2-CONF-005 · Verification: I
@@ -126,3 +126,6 @@ The Rust CI workflow SHALL enforce: `cargo fmt --check`, `cargo clippy --all-tar
 
 **L3-RS-012** · Parent: L2-WRT-001 · Verification: A
 Rust decode memory usage SHALL be O(1) in the record count. The writer streams rows directly to a `BufWriter` (per L3-RS-004) and the `DataWords` payload buffer is inline-fixed (per L3-RS-005); the only per-record allocation is `String` for log messages and the per-key `HashMap` entry in the DELTA tracker, which is bounded by the count of distinct RT/MSG keys (at most 32 × 32 × 2). Verified by inspection of the writer and DELTA tracker.
+
+**L3-RS-013** · Parent: L2-CONF-006 · Verification: T
+The Rust crate SHALL re-export its public decode entry point (`MieFileReader`) and core public types (`MieMessage`, plus the error and timestamp/model types) from the crate root via `pub use` (in `src/lib.rs`), so downstream crates can write `use mie_decoder::MieFileReader` without naming internal modules. Verified by a test that imports these symbols from the crate root and asserts the root paths are the same types as their module-path definitions.

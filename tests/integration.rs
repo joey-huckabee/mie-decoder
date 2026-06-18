@@ -12,6 +12,26 @@ use mie_decoder::models::{Bus, Direction, MessageFormat};
 use mie_decoder::reader::MieFileReader;
 use mie_decoder::writer::write_csv;
 
+/// Requirements: L3-RS-013
+///
+/// The crate root re-exports the public decode entry point and core types
+/// via `pub use` (src/lib.rs), so downstream crates can name them without
+/// the internal module path. Each helper accepts a *module-path* type but
+/// is bound to a function pointer over the *crate-root* path; that binding
+/// compiles only if the root path resolves AND is the same type as the
+/// module path (a genuine re-export, not a coincidental name).
+#[test]
+fn crate_root_reexports_public_decode_api() {
+    fn takes_reader(_: mie_decoder::reader::MieFileReader) {}
+    let _: fn(mie_decoder::MieFileReader) = takes_reader;
+
+    fn takes_message(_: mie_decoder::models::MieMessage) {}
+    let _: fn(mie_decoder::MieMessage) = takes_message;
+
+    fn takes_error(_: mie_decoder::error::MieError) {}
+    let _: fn(mie_decoder::MieError) = takes_error;
+}
+
 // ── Fixtures (byte-exact from python/tests/conftest.py) ───────────────
 
 fn record_rt15_sa11_rcv() -> Vec<u8> {

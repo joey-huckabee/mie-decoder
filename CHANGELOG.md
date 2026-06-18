@@ -48,7 +48,13 @@ implementations ship from the single tag `v2.0.0`.
   than a real root-API check. The re-export is additive (submodule paths are
   unchanged), and `L3-PY-007` now traces to a dedicated root-API test
   (`tests/test_package_api.py`); its verification method moved from Inspection
-  to Test + Inspection.
+  to Test + Inspection. The requirement was also re-parented off the
+  conformance-wiring requirement (`L2-CONF-002`) onto a new public-API-surface
+  requirement, `L2-CONF-006` ("each maintained implementation SHALL expose a
+  documented public library API with its decode entry point importable from
+  the package/crate root", under `L1-CONF-001`), with a Rust counterpart
+  `L3-RS-013` verifying the crate-root `pub use` re-exports — so both
+  implementations' library surfaces are now pinned and tested.
 
 ### Changed
 

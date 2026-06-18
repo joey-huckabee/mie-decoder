@@ -245,17 +245,18 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L1-CONF-001 | L2-CONF-001, L2-CONF-002, L2-CONF-003, L2-CONF-004, L2-CONF-005 | _(none)_ | Implemented |
+| L1-CONF-001 | L2-CONF-001, L2-CONF-002, L2-CONF-003, L2-CONF-004, L2-CONF-005, L2-CONF-006 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 | L2-CONF-001 | _(none)_ | _(TBD)_ | Implemented (I) |
-| L2-CONF-002 | L3-PY-007 | `python/tests/test_conformance_wiring.py::test_conformance_runner_invokes_both_clis_and_compares_outputs`<br>`python/tests/test_package_api.py::test_decoder_entry_point_importable_from_package_root`<br>`python/tests/test_package_api.py::test_decoder_entry_point_is_a_typed_callable`<br>`python/tests/test_package_api.py::test_message_type_importable_from_package_root`<br>`python/tests/test_package_api.py::test_public_surface_is_documented` | Implemented |
+| L2-CONF-002 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_runner_invokes_both_clis_and_compares_outputs` | Implemented |
 | L2-CONF-003 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_manifest_has_cases_with_oracles`<br>`python/tests/test_conformance_wiring.py::test_conformance_runner_exists` | Implemented |
 | L2-CONF-004 | _(none)_ | _(TBD)_ | Implemented (I) |
 | L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci` | Implemented |
+| L2-CONF-006 | L3-PY-007, L3-RS-013 | `python/tests/test_package_api.py::test_decoder_entry_point_importable_from_package_root`<br>`python/tests/test_package_api.py::test_decoder_entry_point_is_a_typed_callable`<br>`python/tests/test_package_api.py::test_message_type_importable_from_package_root`<br>`python/tests/test_package_api.py::test_public_surface_is_documented`<br>`tests/integration.rs::crate_root_reexports_public_decode_api` | Implemented |
 
 ### L1-EXIT: Exit-code semantics and operational contract
 
@@ -315,7 +316,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | SYN | 2 | 26 | 0 | 25 | 0 | 26 | 0 |
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
-| CONF | 1 | 5 | 0 | 3 | 0 | 5 | 0 |
+| CONF | 1 | 6 | 0 | 3 | 0 | 5 | 0 |
 | EXIT | 8 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
@@ -323,14 +324,14 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 13 | 0 | 8 | 0 | 13 |
-| RS | 0 | 0 | 11 | 0 | 6 | 0 | 11 |
-| **Total** | **26** | **110** | **26** | **106** | **16** | **110** | **26** |
+| RS | 0 | 0 | 12 | 0 | 7 | 0 | 12 |
+| **Total** | **26** | **111** | **27** | **106** | **17** | **110** | **27** |
 
 The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 128 of 142 (90.1%).
+**Tested by at least one test marker**: 129 of 144 (89.6%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 142 of 142 (100.0%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 143 of 144 (99.3%).
 
 ### Orphan check
 
