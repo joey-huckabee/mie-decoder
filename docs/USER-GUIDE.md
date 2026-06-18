@@ -101,20 +101,11 @@ The `decode exit class:` line is always emitted at INFO; it names one of `comple
 
 Reads an MIE file and writes CSV. The command you'll use most.
 
-**Rust:**
 ```bash
 mie-decoder decode flight.mie -o flight.csv
 mie-decoder decode flight.mie > flight.csv    # stdout
 mie-decoder decode flight.mie --inline-errors -o everything.csv
-mie-decoder decode flight.mie -o flight.csv --config site.toml
-```
-
-**Python:**
-```bash
-mie-decoder decode flight.mie -o flight.csv
-mie-decoder decode flight.mie > flight.csv
-mie-decoder decode flight.mie --error-mode inline -o everything.csv
-mie-decoder decode flight.mie -o flight.csv --config site.toml
+mie-decoder --config site.toml decode flight.mie -o flight.csv
 ```
 
 ### `count` — message count, no CSV output
@@ -123,7 +114,6 @@ Counts decodable records without producing CSV. Useful for sanity-checking a fil
 
 Both implementations follow a two-channel output contract (L3-RS-008 / L3-PY-010): **stdout** contains only the integer count followed by a newline (so it pipes cleanly), and **stderr** carries a human-readable status line with the input path so an interactive operator still sees context.
 
-**Rust:**
 ```bash
 $ mie-decoder count flight.mie
 14523
@@ -133,14 +123,7 @@ $ n=$(mie-decoder count flight.mie); echo "got $n"
 got 14523
 ```
 
-**Python** (uses `decode --count` instead of a separate subcommand, but the output contract is the same):
-```bash
-$ mie-decoder decode flight.mie --count
-14523
-# (stderr, always emitted: "counted 14523 messages in flight.mie")
-```
-
-The two CLI shapes differ but both meet the L1-CLI-001 message-counting capability and produce identical stdout output.
+Both CLIs share the `count` subcommand, meet the L1-CLI-001 message-counting capability, and produce identical stdout output.
 
 ### `dump` — diagnostic hex dump
 
@@ -182,11 +165,7 @@ flight.csv flight_errors.csv      # errors file only created if error rows exist
 For diffing against vendor-generated CSV (which is always inline), or for any analysis pipeline that wants every row in one file, use inline mode:
 
 ```bash
-# Rust
 mie-decoder decode flight.mie --inline-errors -o flight.csv
-
-# Python
-mie-decoder decode flight.mie --error-mode inline -o flight.csv
 ```
 
 In inline mode the `ERROR` column contains `ERROR` / `SPURIOUS` / empty and `ERROR_CODE` contains the hardware code (`011E`, `0120`, etc.) or the decoder-assigned code (`2000` continuation, `2001` standalone). See `ERROR-CATALOG.md` sections 6 and 7 for the full code reference.
@@ -216,17 +195,17 @@ All four filter axes use exclude lists and OR logic — a message is dropped if 
 mie-decoder decode flight.mie --exclude-types SPURIOUS_DATA -o cleaned.csv
 
 # Drop broadcast (RT 31) and the unused RT 0:
-mie-decoder decode flight.mie --exclude-rts 0 31 -o cleaned.csv
+mie-decoder decode flight.mie --exclude-rts 0,31 -o cleaned.csv
 
 # Only Bus A (exclude Bus B):
 mie-decoder decode flight.mie --exclude-buses B -o busa.csv
 
 # Drop mode-code subaddresses (SA 0 and SA 31):
-mie-decoder decode flight.mie --exclude-subaddresses 0 31 -o nomodes.csv
+mie-decoder decode flight.mie --exclude-subaddresses 0,31 -o nomodes.csv
 
 # Combine — drop anything matching ANY criterion:
 mie-decoder decode flight.mie \
-    --exclude-types SPURIOUS_DATA MODE_COMMAND \
+    --exclude-types SPURIOUS_DATA,MODE_COMMAND \
     --exclude-rts 31 \
     -o filtered.csv
 ```

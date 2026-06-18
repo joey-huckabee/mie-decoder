@@ -4,7 +4,7 @@ Runnable cookbook for the common operator tasks. Each example is a self-containe
 
 If you're new, read [`USER-GUIDE.md`](USER-GUIDE.md) first — it explains how each piece works. This doc shows the pieces composed for real workflows. For the full reference of every TOML key, see [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md); for every exit code and error class, see [`ERROR-CATALOG.md`](ERROR-CATALOG.md).
 
-All examples work identically with the Rust and Python CLIs except where noted (the `count` capability and `--error-mode` flag spelling differ; everything else is shared).
+All examples work identically with the Rust and Python CLIs — both ship the same argument surface (same subcommands, same `--inline-errors`, same global `--config`, same comma-separated filter syntax).
 
 ---
 
@@ -49,16 +49,8 @@ See [`USER-GUIDE.md`](USER-GUIDE.md) §7 or [`MIE-FORMAT.md`](MIE-FORMAT.md) for
 
 For multi-GB recordings, you may want to know the message count before committing to a full decode.
 
-**Rust:**
 ```bash
 $ mie-decoder count flight.mie
-14523
-# (stderr, always emitted: "counted 14523 messages in flight.mie")
-```
-
-**Python** (uses `decode --count`):
-```bash
-$ mie-decoder decode flight.mie --count
 14523
 # (stderr, always emitted: "counted 14523 messages in flight.mie")
 ```
@@ -73,14 +65,8 @@ The count walks the entire file but doesn't write CSV — much faster than a ful
 
 DDC vendor CSV mixes errored, SPURIOUS, and clean records into one file. The default mode in MIE-Decoder writes errors to a separate `_errors.csv` file. For a direct diff against vendor output, use inline mode:
 
-**Rust:**
 ```bash
 mie-decoder decode flight.mie --inline-errors -o flight.csv
-```
-
-**Python:**
-```bash
-mie-decoder decode flight.mie --error-mode inline -o flight.csv
 ```
 
 Errored records now appear in `flight.csv` with the `ERROR` column set to `ERROR` and `ERROR_CODE` carrying the DDC hardware code:
@@ -102,27 +88,16 @@ For a full vendor-CSV diff workflow, see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFF
 You're investigating a specific Remote Terminal. Drop everything else:
 
 ```bash
-# Keep only RT 15 by excluding all other RTs (one per integer):
+# Keep only RT 15 by excluding all other RTs (comma-separated list):
 mie-decoder decode flight.mie \
-    --exclude-rts 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 \
+    --exclude-rts 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 \
     -o rt15.csv
 ```
 
-Awkward. The Rust crate provides `--include-rts` (Rust-only per `L3-RS-010`) for the positive form:
+Awkward. Both CLIs provide `--include-rts` for the positive form:
 
 ```bash
-# Rust only:
 mie-decoder decode flight.mie --include-rts 15 -o rt15.csv
-```
-
-For Python, post-filter with awk or pandas:
-
-```bash
-mie-decoder decode flight.mie -o all.csv
-awk -F, 'NR==1 || $2=="15"' all.csv > rt15.csv
-
-# Or pipe directly:
-mie-decoder decode flight.mie | awk -F, 'NR==1 || $2=="15"' > rt15.csv
 ```
 
 For drop-by-type / drop-by-bus / drop-by-subaddress, both CLIs share the same exclusion flags:
@@ -130,7 +105,7 @@ For drop-by-type / drop-by-bus / drop-by-subaddress, both CLIs share the same ex
 ```bash
 # Drop spurious noise, drop mode codes, keep only Bus A:
 mie-decoder decode flight.mie \
-    --exclude-types SPURIOUS_DATA MODE_COMMAND \
+    --exclude-types SPURIOUS_DATA,MODE_COMMAND \
     --exclude-buses B \
     -o focused.csv
 ```
@@ -418,8 +393,7 @@ You want to validate that MIE-Decoder reproduces vendor output for a known-good 
 
 ```bash
 # 1. Generate both CSVs from the same input file.
-mie-decoder decode flight.mie --inline-errors -o mie.csv     # Rust
-# (or `--error-mode inline` for Python)
+mie-decoder decode flight.mie --inline-errors -o mie.csv
 # Vendor tool produces flight-vendor.csv via whatever process you normally use.
 
 # 2. Normalize line endings if your platforms differ.

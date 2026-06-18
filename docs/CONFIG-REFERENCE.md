@@ -41,7 +41,7 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `logging.level` | string | `"WARNING"` | `--log-level` | L2-CFG-001, L1-LOG-001 |
 | `decode.time_format` | string | `"auto"` | `--time-format` | L2-CFG-001, L2-DEC-013 |
 | `decode.strict` | bool | `false` | (no CLI flag in current versions) | L2-CFG-001, L1-MODE-001 |
-| `decode.error_mode` | string | `"separate"` | Python: `--error-mode`; Rust: `--inline-errors` (sets `inline`) | L2-CFG-001, L1-ERR-001 |
+| `decode.error_mode` | string | `"separate"` | `--inline-errors` (sets `inline`) | L2-CFG-001, L1-ERR-001 |
 | `decode.allow_partial` | bool | `false` | `--allow-partial` | L2-CFG-001, L1-EXIT-004 |
 | `decode.detect_records` | int | `8` | `--detect-records` | L2-CFG-001, L2-DEC-015 |
 | `decode.lookahead_records` | int | `2` | `--lookahead-records` | L2-CFG-001, L2-SYN-026 |
@@ -131,7 +131,7 @@ Lenient mode (the default) preserves the maximum number of valid records by logg
 
 ### `error_mode`
 
-**Type:** string · **Default:** `"separate"` · **CLI:** Python `--error-mode <separate|inline>`; Rust `--inline-errors` (sets `inline`)
+**Type:** string · **Default:** `"separate"` · **CLI:** `--inline-errors` (sets `inline`)
 
 Controls how errored records (Type Word bit 14 set) and SPURIOUS_DATA records appear in CSV output (L1-ERR-001, L2-ERR-008, L2-ERR-011).
 
@@ -140,7 +140,7 @@ Controls how errored records (Type Word bit 14 set) and SPURIOUS_DATA records ap
 | `"separate"` | Errored and spurious messages are written to a separate file named `<output_stem>_errors<output_suffix>`. The main CSV contains only clean messages. Stem/suffix rules per L2-ERR-008: `out.csv` → `out_errors.csv`; `out` → `out_errors`; `data.bar.csv` → `data.bar_errors.csv`. The errors file is not created if there are no error rows. |
 | `"inline"` | Errored, spurious, and normal messages all go to one CSV. The `ERROR` column contains `ERROR` or `SPURIOUS` (or empty for clean); `ERROR_CODE` contains the 4-character uppercase hex code. |
 
-**Stdout output forces `inline` mode** in Rust (you can't split stdout into two streams); Python's behavior is symmetric.
+**Stdout output forces `inline` mode** in both implementations (you can't split stdout into two streams).
 
 **Validation:** rejected at load time if not one of the two values.
 

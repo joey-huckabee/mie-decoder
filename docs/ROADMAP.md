@@ -2,6 +2,26 @@
 
 ## Release status
 
+**v2.0.0 — joint Rust + Python cut, 2026-06-17.** Major release whose theme
+is **parity**: the two tools now function the same way. The Python CLI was
+brought to the Rust v2 argument surface — a `count` subcommand (replacing
+`decode --count`), `--inline-errors` (replacing `--error-mode`), a global
+`--config` placed before the subcommand, comma-separable/repeatable filter
+flags, and the previously-missing `--include-types/rts/buses/subaddresses`
+include filters (`L3-PY-013`; `L3-RS-010` reworded to require equivalent
+syntax). With the surfaces identical, the conformance suite dropped its
+per-impl argument translation: a single `args` vector now drives both CLIs,
+so the byte-for-byte cases directly prove the tools accept the same
+arguments. The Python writer also became constant-memory (PY-streaming):
+it streams each row through the standard-library `csv` module, so decode
+memory is `O(1)` like Rust (`L3-PY-012`), and the `pandas` dependency was
+dropped, leaving `tomli` (3.10 only) as the package's sole runtime
+dependency. **Breaking:** the Python CLI changes above; Python filter flags
+no longer accept space-separated values; and the public Python helpers
+`messages_to_dataframe` / `dataframe_to_csv` were removed. CSV and count
+output are byte-for-byte unchanged and the Rust CLI is unchanged. See
+[`CHANGELOG.md`](../CHANGELOG.md) section `[2.0.0]` for the full entry.
+
 **v1.5.1 — joint Rust + Python cut, 2026-06-15.** Maintenance release from
 a team comment / documentation-hygiene sweep. Behavior: aligned the
 separate-mode commit order so both implementations commit the main CSV
@@ -106,11 +126,14 @@ checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 
 | Version | Feature |
 |---------|---------|
-| Rust v1.x | Multi-file input, time-sorted merge to single CSV. |
-| Rust v2.0 | Data word decoders, additional per-message-type CSVs. |
-| Rust v3.0 | Apache Parquet output. |
+| Rust 2.x | Multi-file input, time-sorted merge to single CSV. |
+| 3.0 | Data word decoders, additional per-message-type CSVs. |
+| 4.0 | Apache Parquet output. |
 
-**PY-streaming has landed** (in `[Unreleased]`; see `CHANGELOG.md`). The Python
+(Version labels renumbered after the `v2.0.0` cut consumed the prior "v2.0"
+slot. The data-word-decoder and Parquet items moved to `3.0` / `4.0`.)
+
+**PY-streaming landed in `v2.0.0`** (see `CHANGELOG.md`). The Python
 writer now streams each row straight to the output via the standard-library
 `csv` module — no DataFrame buffering — so Python decode memory is `O(1)` in the
 record count, matching Rust (`L3-PY-012` / `L3-RS-012`). The pandas dependency

@@ -15,34 +15,73 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-06-17
+
+A joint Rust + Python major release whose theme is **parity**: the two
+tools now function the same way. The Python CLI gained the capabilities and
+the exact argument surface of the Rust v2 CLI, and the Python writer now
+streams in constant memory like Rust. Breaking changes are confined to the
+Python CLI and the Python library API (see **Removed**); CSV and count output
+are byte-for-byte unchanged, and the Rust CLI is unchanged. Both
+implementations ship from the single tag `v2.0.0`.
+
+### Added
+
+- **Include filters in the Python CLI** — `--include-types`, `--include-rts`,
+  `--include-buses`, `--include-subaddresses`, the positive complement of the
+  exclude filters and the last filtering capability Python lacked. A message
+  passes only if it matches no active exclude set and is contained in every
+  active include set; SPURIOUS_DATA (no RT/SA) is dropped when an RT/SA include
+  filter is active. Include filters are CLI-only overrides (no config-file
+  key), matching Rust. Pinned by the new `L3-PY-013`; `L3-RS-010` was reworded
+  from "Python is not required to expose equivalent CLI syntax" to require it.
+- **A `count` subcommand in the Python CLI** (`mie-decoder count rec.mie`),
+  matching the Rust `count` subcommand. Counts valid records after the config
+  file's `[filter]` section, printing the integer to stdout and a status line
+  to stderr (`L3-PY-010`).
+
 ### Changed
 
-- **PY-streaming: the Python writer now streams in constant memory, and the
-  pandas dependency is dropped.** Both `write_csv` and `write_csv_split`
-  previously collected every row into a list and materialized a full
-  `pandas.DataFrame` before flushing, making Python decode memory
-  `O(record_count)` — a multi-GB recording could exhaust RAM while the Rust
-  CLI streamed the same input in constant memory. The writer now streams each
-  row straight to the output handle through the standard-library `csv` module
-  via two new primitives — `_AtomicCsvFile` (temp-file + `os.replace`, with
-  `commit()` / `commit_partial()` / cleanup-on-failure) and
-  `_StreamingCsvRowWriter` — ported from the Rust `AtomicCsvFile` / `CsvWriter`
-  shapes. Python decode memory is now `O(1)` in the record count, matching
-  Rust (`L3-PY-012` reworded from `O(record_count)`; verification raised from
-  Inspection to a `tracemalloc` memory test). CSV output is unchanged: a new
-  byte-exact golden characterization suite and all cross-impl conformance
-  cases pass byte-for-byte. The pandas dependency was removed entirely
-  (`pyproject.toml` + lockfile), leaving `tomli` (Python 3.10 only) as the
-  package's sole runtime dependency — the same dependency-light story as the
-  Rust crate. `L3-PY-004` was re-pointed from `pandas.DataFrame.to_csv()` to
-  the stdlib `csv` streaming path.
+- **The Python CLI now shares one identical argument surface with the Rust
+  CLI.** `--inline-errors` (a boolean flag; separate is the default) replaces
+  `--error-mode {separate,inline}` (`L3-PY-011`); `--config` is now a global
+  option placed *before* the subcommand
+  (`mie-decoder --config site.toml decode rec.mie`) rather than a
+  per-subcommand flag; and every filter flag takes one comma-separable,
+  repeatable value (`--exclude-rts 15,31` ≡ `--exclude-rts 15 --exclude-rts 31`)
+  instead of space-separated `nargs`, with RT/SA values bounded to u8 (0–255)
+  exactly like Rust. The cross-implementation conformance suite dropped its
+  per-impl argument translation: a single `args` vector now drives both CLIs,
+  so the byte-for-byte conformance cases are a direct proof that the two tools
+  accept the same arguments.
+- **PY-streaming: the Python writer now streams in constant memory.** Both
+  `write_csv` and `write_csv_split` previously collected every row into a list
+  and materialized a full `pandas.DataFrame` before flushing, making Python
+  decode memory `O(record_count)` — a multi-GB recording could exhaust RAM
+  while the Rust CLI streamed the same input in constant memory. The writer
+  now streams each row straight to the output handle through the
+  standard-library `csv` module via two new primitives — `_AtomicCsvFile`
+  (temp-file + `os.replace`, with `commit()` / `commit_partial()` /
+  cleanup-on-failure) and `_StreamingCsvRowWriter` — ported from the Rust
+  `AtomicCsvFile` / `CsvWriter` shapes. Python decode memory is now `O(1)` in
+  the record count, matching Rust (`L3-PY-012` reworded from `O(record_count)`;
+  verification raised from Inspection to a `tracemalloc` memory test). CSV
+  output is unchanged, pinned by a new byte-exact golden characterization suite
+  and the full conformance suite.
 
-  **Breaking (Python library API):** the public helpers
-  `mie_decoder.writer.messages_to_dataframe` and `dataframe_to_csv` are
-  removed. Consumers that want a `DataFrame` can build one from the public
-  message stream, e.g.
-  `pandas.DataFrame(map(message_to_row, MieFileReader(path)))`. The CLI is
-  unaffected.
+### Removed
+
+- **The Python `decode --count` flag** (use the `count` subcommand) and the
+  **`--error-mode` flag** (use `--inline-errors`; separate is the default).
+  Python filter flags no longer accept space-separated values
+  (`--exclude-rts 15 31`) — use commas or repeat the flag — and `--config` is
+  no longer accepted after the subcommand.
+- **The `pandas` runtime dependency**, leaving `tomli` (Python 3.10 only) as
+  the Python package's sole runtime dependency — the same dependency-light
+  story as the Rust crate.
+- **The public Python helpers `mie_decoder.writer.messages_to_dataframe` and
+  `dataframe_to_csv`.** Build a DataFrame from the public message stream
+  instead: `pandas.DataFrame(map(message_to_row, MieFileReader(path)))`.
 
 ## [1.5.1] — 2026-06-15
 
@@ -768,7 +807,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.5.1...v2.0.0
 [1.5.1]: https://github.com/joey-huckabee/mie-decoder/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/joey-huckabee/mie-decoder/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/joey-huckabee/mie-decoder/compare/v1.4.0...v1.4.1

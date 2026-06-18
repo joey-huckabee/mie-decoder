@@ -537,7 +537,7 @@ These are the operating rules that keep the two crates from drifting:
 3. **Per-impl detail goes in L3.** Python-specific constraints (stdlib `csv`, tomllib, Poetry) live as `L3-PY-*`. Rust-specific constraints (memmap2, BufWriter) live as `L3-RS-*`. The shared L2 stays implementation-agnostic.
 4. **Error variants ship together.** When you add a new variant in one language, add it in the other in the same PR.
 5. **Log message wording can drift.** Operators read CSV output and exit codes; log message text isn't part of the contract. Don't over-coordinate it.
-6. **CLI syntax can drift** (per L1-CLI-001) — capability parity matters, exact spelling doesn't. Rust uses `count` subcommand and `--inline-errors`; Python uses `decode --count` and `--error-mode inline`. Both reach the same outcomes.
+6. **CLI capability parity is the contract** (per L1-CLI-001) — capability parity matters, exact spelling doesn't. Today the two CLIs share one identical argument surface: the same subcommands (`decode` / `count` / `dump`), the same `--inline-errors` flag, the same global `--config`, and the same comma-separated filter syntax. They are free to diverge in spelling so long as capability parity holds.
 7. **`memmap2` is the only Rust runtime dep.** Argument parsing, CSV writing, TOML loading, logging, and error types are all hand-rolled. Adding a crate requires explicit justification — see `docs/ROADMAP.md` and `CLAUDE.md` "Conventions worth preserving".
 
 ---
