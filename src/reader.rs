@@ -885,10 +885,12 @@ impl<'a> Iterator for RecordIter<'a> {
             let (cmd2, status, status2, data_words) =
                 extract_payload(record_data, payload_offset, msg_fmt, &cmd);
 
-            // L2-SYN-023: post-extract Reject-class check (Cmd2
-            // direction for RT-to-RT formats). Same strict/lenient
-            // policy as the pre-extract invariants.
-            if let Err(v) = crate::decode::validate_post_extract_invariants(msg_fmt, cmd2.as_ref())
+            // L2-SYN-023 / L2-SYN-027: post-extract Reject-class checks
+            // (Cmd2 direction and Cmd1/Cmd2 data_word_count agreement for
+            // RT-to-RT formats). Same strict/lenient policy as the
+            // pre-extract invariants.
+            if let Err(v) =
+                crate::decode::validate_post_extract_invariants(msg_fmt, &cmd, cmd2.as_ref())
             {
                 if self.strict {
                     self.done = true;

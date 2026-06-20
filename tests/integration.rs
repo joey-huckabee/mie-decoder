@@ -373,22 +373,24 @@ fn payload_extraction_does_not_overrun_into_next_record() {
     assert_eq!(msgs[0].command_word.unwrap().rt, 15);
 }
 
-/// L2-DEC-009 / L1-ROB-001: an RT-to-RT record whose *second* Command Word
-/// over-declares `data_word_count` must not read past the Type Word's
-/// declared extent. The L2-SYN-022 capacity invariant is computed from Cmd1,
-/// but RT-to-RT extraction takes its count from Cmd2 (the transmit command);
-/// fuzzed bytes can keep Cmd1's count small (so the capacity check passes and
-/// the record fits the file) while Cmd2 claims 30 words. Because extraction
-/// reads from the record-bounded slice (`&self.data[..record_end]`), the
-/// over-claim yields empty data words instead of overrunning into the next
-/// record. Mirrors the Python
+/// L2-DEC-009 / L1-ROB-001 / L2-SYN-027: an RT-to-RT record whose *second*
+/// Command Word over-declares `data_word_count` must not read past the Type
+/// Word's declared extent. The L2-SYN-022 capacity invariant is computed from
+/// Cmd1, but RT-to-RT extraction takes its count from Cmd2 (the transmit
+/// command); fuzzed bytes can keep Cmd1's count small (so the capacity check
+/// passes and the record fits the file) while Cmd2 claims 30 words. Extraction
+/// reads from the record-bounded slice (`&self.data[..record_end]`) so it
+/// completes safely (L2-DEC-009); the over-claim is then a Cmd1/Cmd2
+/// `data_word_count` disagreement, which the post-extract L2-SYN-027 invariant
+/// rejects (strict errors, lenient skips). Mirrors the Python
 /// `test_rt_to_rt_cmd2_overclaim_does_not_overrun`; complements
-/// `payload_extraction_does_not_overrun_into_next_record` (which exercises the
-/// Cmd1 path the capacity invariant *does* catch).
-/// Requirements: L2-DEC-009, L1-ROB-001
+/// `payload_extraction_does_not_overrun_into_next_record` (the Cmd1 path the
+/// capacity invariant catches pre-extract).
+/// Requirements: L2-DEC-009, L1-ROB-001, L2-SYN-027
 #[test]
 fn rt_to_rt_cmd2_overclaim_does_not_overrun() {
-    use mie_decoder::models::{MessageFormat, TimestampFormat};
+    use mie_decoder::error::MieErrorKind;
+    use mie_decoder::models::TimestampFormat;
     use mie_decoder::reader::ReaderOptions;
 
     // R1: Type Word word_count = 10 (20 bytes), type 0x08 (RT-to-RT). Cmd1
@@ -407,35 +409,97 @@ fn rt_to_rt_cmd2_overclaim_does_not_overrun() {
     bytes.extend_from_slice(&record_rt15_sa11_rcv());
     let f = TempFile::new(&bytes);
 
-    // Both modes: extraction is bounded, so R1 decodes with empty (truncated)
-    // data words and R2 decodes intact at its true offset — proving R1's Cmd2
-    // over-claim consumed nothing beyond R1's 20-byte declared extent.
-    for strict in [false, true] {
-        let reader = MieFileReader::with_options(
-            f.path(),
-            ReaderOptions {
-                strict,
-                time_format: TimestampFormat::Irig,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let msgs: Vec<_> = reader
-            .iter()
-            .collect::<Result<_, _>>()
-            .unwrap_or_else(|e| panic!("strict={strict}: unexpected error {e:?}"));
-        assert_eq!(msgs.len(), 2, "strict={strict}");
-        assert_eq!(msgs[0].file_offset, 0);
-        assert_eq!(msgs[0].message_format, MessageFormat::RtToRt);
-        // Cmd2 claimed 30 words but none fit the record extent → empty.
-        assert!(msgs[0].data_words.is_empty(), "strict={strict}");
-        assert_eq!(msgs[0].command_word_2.unwrap().data_word_count, 30);
-        assert_eq!(
-            msgs[1].file_offset, 20,
-            "R2 begins exactly after R1's 20-byte declared extent"
-        );
-        assert_eq!(msgs[1].command_word.unwrap().rt, 15);
+    // Strict: extraction completes without a panic/overrun (bounded reads),
+    // then L2-SYN-027 rejects the Cmd1/Cmd2 mismatch.
+    let reader = MieFileReader::with_options(
+        f.path(),
+        ReaderOptions {
+            strict: true,
+            time_format: TimestampFormat::Irig,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    match reader.iter().next() {
+        Some(Err(e)) => assert_eq!(e.kind(), MieErrorKind::PayloadError),
+        other => panic!("expected Some(Err(PayloadError)), got {other:?}"),
     }
+
+    // Lenient: R1 is skipped; R2 decodes intact at its true offset — proving
+    // R1's Cmd2 over-claim consumed nothing beyond its 20-byte declared extent.
+    let reader = MieFileReader::with_options(
+        f.path(),
+        ReaderOptions {
+            time_format: TimestampFormat::Irig,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+    assert_eq!(msgs.len(), 1, "only the valid R2 survives");
+    assert_eq!(msgs[0].file_offset, 20);
+    assert_eq!(msgs[0].command_word.unwrap().rt, 15);
+}
+
+/// L2-SYN-027: an RT-to-RT record whose Cmd1 and Cmd2 disagree on
+/// `data_word_count` is rejected end-to-end — even when the record is large
+/// enough that neither the L2-SYN-022 capacity check nor the record-bounded
+/// reads would fire. Isolates the new invariant from the over-claim/bounds
+/// path. Mirrors the Python `test_rt_to_rt_cmd_word_count_mismatch_rejected`.
+/// Requirements: L2-SYN-027
+#[test]
+fn rt_to_rt_cmd_word_count_mismatch_rejected() {
+    use mie_decoder::error::MieErrorKind;
+    use mie_decoder::models::TimestampFormat;
+    use mie_decoder::reader::ReaderOptions;
+
+    // R1: word_count = 13 (26 bytes), type 0x08. Cmd1 0x7963 (RT15 R SA11
+    // dwc=3); Cmd2 0x7965 (RT15 R SA11 dwc=5, direction Receive so L2-SYN-023
+    // passes). word_count=13 clears the Cmd1-based capacity minimum
+    // (1+3+1+(3+3)=11) and holds Cmd2's full 5-word payload + rx_status, so
+    // only the Cmd1/Cmd2 mismatch is at fault.
+    let mut r1 = Vec::new();
+    r1.extend_from_slice(&0x0D08u16.to_le_bytes()); // Type: wc=13, type=0x08 (RT_TO_RT)
+    r1.extend_from_slice(&[0x0F, 0x18, 0x26, 0xDB, 0x21, 0xF6]); // IRIG ts (3 words)
+    r1.extend_from_slice(&0x7963u16.to_le_bytes()); // Cmd1: RT15 R SA11 dwc=3
+    r1.extend_from_slice(&0x7965u16.to_le_bytes()); // Cmd2: RT15 R SA11 dwc=5
+    r1.extend_from_slice(&[0u8; 2]); // tx_status
+    r1.extend_from_slice(&[0u8; 10]); // 5 data words
+    r1.extend_from_slice(&[0u8; 2]); // rx_status → total 13 words = 26 bytes
+    assert_eq!(r1.len(), 26);
+
+    let mut bytes = r1.clone();
+    bytes.extend_from_slice(&record_rt15_sa11_rcv());
+    let f = TempFile::new(&bytes);
+
+    // Strict rejects the mismatch.
+    let reader = MieFileReader::with_options(
+        f.path(),
+        ReaderOptions {
+            strict: true,
+            time_format: TimestampFormat::Irig,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    match reader.iter().next() {
+        Some(Err(e)) => assert_eq!(e.kind(), MieErrorKind::PayloadError),
+        other => panic!("expected Some(Err(PayloadError)), got {other:?}"),
+    }
+
+    // Lenient skips R1; only the valid R2 survives, at offset 26.
+    let reader = MieFileReader::with_options(
+        f.path(),
+        ReaderOptions {
+            time_format: TimestampFormat::Irig,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+    assert_eq!(msgs.len(), 1, "only the valid R2 survives");
+    assert_eq!(msgs[0].file_offset, 26);
+    assert_eq!(msgs[0].command_word.unwrap().rt, 15);
 }
 
 /// Requirements: L2-RDR-009

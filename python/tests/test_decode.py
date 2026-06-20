@@ -568,8 +568,12 @@ class TestPostExtractInvariants:
     def test_rt_to_rt_cmd2_receive_passes(self) -> None:
         from mie_decoder.decode import validate_post_extract_invariants
         from mie_decoder.models import Direction, MessageFormat
+        # Cmd1 and Cmd2 agree on data_word_count (both 3, L2-SYN-027) and
+        # Cmd2 is Receive (L2-SYN-023) → no violation.
         result = validate_post_extract_invariants(
-            MessageFormat.RT_TO_RT, self._cmd(Direction.RECEIVE),
+            MessageFormat.RT_TO_RT,
+            self._cmd(Direction.TRANSMIT),
+            self._cmd(Direction.RECEIVE),
         )
         assert result is None
 
@@ -581,6 +585,7 @@ class TestPostExtractInvariants:
         from mie_decoder.models import Direction, MessageFormat
         result = validate_post_extract_invariants(
             MessageFormat.RT_TO_RT,
+            self._cmd(Direction.TRANSMIT),
             self._cmd(Direction.TRANSMIT, raw=0xABCD),
         )
         assert result is not None
@@ -596,6 +601,7 @@ class TestPostExtractInvariants:
         result = validate_post_extract_invariants(
             MessageFormat.RT_TO_RT_BROADCAST,
             self._cmd(Direction.TRANSMIT),
+            self._cmd(Direction.TRANSMIT),
         )
         assert result is not None
         assert result.kind == WhichInvariant.DIRECTION_RT_TO_RT_CMD2
@@ -605,11 +611,39 @@ class TestPostExtractInvariants:
         from mie_decoder.decode import validate_post_extract_invariants
         from mie_decoder.models import Direction, MessageFormat
         # No cmd2 for non-RT-to-RT
-        assert validate_post_extract_invariants(MessageFormat.RECEIVE, None) is None
+        assert validate_post_extract_invariants(
+            MessageFormat.RECEIVE, self._cmd(Direction.TRANSMIT), None,
+        ) is None
         # Even with stray Cmd2 (shouldn't happen), no enforcement
         assert validate_post_extract_invariants(
-            MessageFormat.RECEIVE, self._cmd(Direction.TRANSMIT),
+            MessageFormat.RECEIVE,
+            self._cmd(Direction.TRANSMIT),
+            self._cmd(Direction.TRANSMIT),
         ) is None
+
+    @pytest.mark.requirement("L2-SYN-027")
+    def test_rt_to_rt_cmd_word_count_mismatch_rejected(self) -> None:
+        from mie_decoder.decode import (
+            InvariantSeverity, WhichInvariant, validate_post_extract_invariants,
+        )
+        from mie_decoder.models import (
+            CommandWord, Direction, MessageFormat,
+        )
+        # Cmd2 direction is valid (Receive) so L2-SYN-023 passes, but Cmd1
+        # and Cmd2 disagree on data_word_count → L2-SYN-027 rejects.
+        cmd1 = CommandWord(
+            rt=5, direction=Direction.TRANSMIT, subaddress=10,
+            data_word_count=3, raw=0x2961,
+        )
+        cmd2 = CommandWord(
+            rt=7, direction=Direction.RECEIVE, subaddress=10,
+            data_word_count=5, raw=0x3945,
+        )
+        for fmt in (MessageFormat.RT_TO_RT, MessageFormat.RT_TO_RT_BROADCAST):
+            result = validate_post_extract_invariants(fmt, cmd1, cmd2)
+            assert result is not None
+            assert result.kind == WhichInvariant.DATA_WORD_COUNT_MISMATCH
+            assert result.severity == InvariantSeverity.REJECT
 
 
 class TestRecordAnomalies:

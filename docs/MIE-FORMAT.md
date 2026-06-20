@@ -226,7 +226,7 @@ The BC commands one RT to transmit and another to receive. Two Command Words: th
 └──────┴─────┴─────┴──────┴───────────┴─────────┴───────────┘
 ```
 
-`N` is `Cmd2.data_word_count` (the count from the receiving side; both Cmd Words should agree). `Status_tx` is the transmitting RT's status; `Status_rx` is the receiving RT's status.
+`N` is `Cmd2.data_word_count` (the count from the receiving side). Both Command Words encode the count and MUST agree; a mismatch is rejected as corruption (L2-SYN-027). `Status_tx` is the transmitting RT's status; `Status_rx` is the receiving RT's status.
 
 ### 6.4 Receive Broadcast — BC→RT broadcast (`0x10`)
 

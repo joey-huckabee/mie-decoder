@@ -203,26 +203,30 @@ class TestMieFileReader:
 
     @pytest.mark.requirement("L2-DEC-009")
     @pytest.mark.requirement("L1-ROB-001")
+    @pytest.mark.requirement("L2-SYN-027")
     def test_rt_to_rt_cmd2_overclaim_does_not_overrun(
         self, tmp_path: Path
     ) -> None:
-        """L2-DEC-009 / L1-ROB-001: an RT-to-RT record whose *second* Command
-        Word over-declares ``data_word_count`` must not read past the Type
-        Word's declared extent — the regression behind the fuzz-harness
-        ``struct.error``.
+        """L2-DEC-009 / L1-ROB-001 / L2-SYN-027: an RT-to-RT record whose
+        *second* Command Word over-declares ``data_word_count`` must not read
+        past the Type Word's declared extent — the regression behind the
+        fuzz-harness ``struct.error``.
 
         The L2-SYN-022 capacity invariant is computed from Cmd1, but RT-to-RT
         extraction takes its data-word count from Cmd2 (the transmit command).
         Fuzzed bytes can keep Cmd1's count small (so the capacity check passes
         and the record fits the file) while Cmd2 claims 30 words — which, on
         the full mmap, would overrun into the next record / past EOF and raise
-        ``struct.error``. The reader now bounds payload reads to the record
-        extent, so the over-claim yields empty data words and no raw exception
-        escapes. Mirrors the Rust ``rt_to_rt_cmd2_overclaim_does_not_overrun``
-        test; complements ``test_payload_extraction_does_not_overrun_into_next_record``
-        (which exercises the Cmd1 path the capacity invariant *does* catch).
+        ``struct.error``. The reader bounds payload reads to the record extent
+        (L2-DEC-009), so extraction completes safely with no raw exception;
+        the over-claim is then a Cmd1/Cmd2 ``data_word_count`` disagreement, so
+        the post-extract L2-SYN-027 invariant rejects the record (strict
+        raises, lenient skips). Mirrors the Rust
+        ``rt_to_rt_cmd2_overclaim_does_not_overrun``; complements
+        ``test_payload_extraction_does_not_overrun_into_next_record`` (the Cmd1
+        path the capacity invariant catches pre-extract).
         """
-        from mie_decoder.models import MessageFormat
+        from mie_decoder.exceptions import MiePayloadError
         from tests.conftest import RECORD_RT15_SA11_RCV
 
         # R1: Type Word word_count=10 (20 bytes), type 0x08 (RT-to-RT). Cmd1
@@ -241,26 +245,61 @@ class TestMieFileReader:
         fpath = tmp_path / "rt_to_rt_overclaim.mie"
         fpath.write_bytes(data)
 
-        # Both modes: extraction is bounded, so iteration completes without a
-        # raw struct.error. R1 decodes with empty (truncated) data words and
-        # R2 decodes intact at its true offset — proving R1's Cmd2 over-claim
-        # consumed nothing beyond R1's 20-byte declared extent.
-        for strict in (False, True):
-            messages = list(
-                MieFileReader(
-                    fpath, strict=strict, time_format=TimestampFormat.IRIG
-                )
-            )
-            assert len(messages) == 2, f"strict={strict}"
-            assert messages[0].file_offset == 0
-            assert messages[0].message_format == MessageFormat.RT_TO_RT
-            # Cmd2 claimed 30 words but none fit the record extent → empty.
-            assert messages[0].data_words == ()
-            assert messages[0].command_word_2 is not None
-            assert messages[0].command_word_2.data_word_count == 30
-            assert messages[1].file_offset == 20
-            assert messages[1].command_word is not None
-            assert messages[1].command_word.rt == 15
+        # Strict: extraction completes without a raw struct.error (bounded
+        # reads), then L2-SYN-027 rejects the Cmd1/Cmd2 mismatch.
+        with pytest.raises(MiePayloadError):
+            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+
+        # Lenient: R1 is skipped; R2 decodes intact at its true offset, proving
+        # R1's Cmd2 over-claim consumed nothing beyond its 20-byte extent.
+        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        assert len(messages) == 1
+        assert messages[0].file_offset == 20
+        assert messages[0].command_word is not None
+        assert messages[0].command_word.rt == 15
+
+    @pytest.mark.requirement("L2-SYN-027")
+    def test_rt_to_rt_cmd_word_count_mismatch_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """L2-SYN-027: an RT-to-RT record whose Cmd1 and Cmd2 disagree on
+        ``data_word_count`` is rejected end-to-end — even when the record is
+        large enough that neither the L2-SYN-022 capacity check nor the
+        record-bounded reads would fire. This isolates the new invariant from
+        the over-claim/bounds path. Mirrors the Rust
+        ``rt_to_rt_cmd_word_count_mismatch_rejected``.
+        """
+        from mie_decoder.exceptions import MiePayloadError
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        # R1: word_count=13 (26 bytes), type 0x08 (RT-to-RT). Cmd1 0x7963
+        # (RT15 R SA11 dwc=3); Cmd2 0x7965 (RT15 R SA11 dwc=5, direction
+        # Receive so L2-SYN-023 passes). word_count=13 clears the Cmd1-based
+        # capacity minimum (1+3+1+(3+3)=11) and holds Cmd2's full 5-word
+        # payload + rx_status, so neither the capacity check nor the
+        # record-bounded reads fire — only the Cmd1/Cmd2 mismatch is at fault.
+        r1 = (
+            b"\x08\x0d"                      # Type: wc=13, type=0x08 (RT_TO_RT)
+            + b"\x0f\x18\x26\xdb\x21\xf6"    # IRIG timestamp (3 words)
+            + b"\x63\x79"                    # Cmd1 0x7963 (RT15 R SA11 dwc=3)
+            + b"\x65\x79"                    # Cmd2 0x7965 (RT15 R SA11 dwc=5)
+            + b"\x00\x00"                    # tx_status
+            + bytes(10)                      # 5 data words
+            + b"\x00\x00"                    # rx_status → total 13 words = 26 B
+        )
+        assert len(r1) == 26
+        data = r1 + RECORD_RT15_SA11_RCV
+        fpath = tmp_path / "rt_to_rt_mismatch.mie"
+        fpath.write_bytes(data)
+
+        with pytest.raises(MiePayloadError):
+            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+
+        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        assert len(messages) == 1
+        assert messages[0].file_offset == 26
+        assert messages[0].command_word is not None
+        assert messages[0].command_word.rt == 15
 
     @pytest.mark.requirement("L2-DEC-002")
     def test_irig_day_of_year_warns_once_per_decode(

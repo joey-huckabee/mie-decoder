@@ -694,9 +694,9 @@ class MieFileReader:
                         mm, payload_byte_offset, record_end, msg_fmt, cmd,
                     )
 
-                    # L2-SYN-023: post-extract Reject-class check.
+                    # L2-SYN-023 / L2-SYN-027: post-extract Reject-class checks.
                     # Same strict/lenient policy as the pre-extract checks.
-                    post_inv = validate_post_extract_invariants(msg_fmt, cmd2)
+                    post_inv = validate_post_extract_invariants(msg_fmt, cmd, cmd2)
                     if post_inv is not None:
                         if self._strict:
                             raise MiePayloadError(

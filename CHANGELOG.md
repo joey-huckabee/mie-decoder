@@ -15,19 +15,33 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **L2-SYN-027: RT-to-RT Command-Word `data_word_count` agreement check (both
+  implementations).** An RT-to-RT or RT-to-RT-broadcast record whose two
+  Command Words declare different `data_word_count` values is now rejected as
+  corruption: strict mode surfaces a record error, lenient mode logs a WARN and
+  skips the record. The bus protocol carries a single count for the transfer
+  (`docs/MIE-FORMAT.md` §6.3), so a mismatch is internally inconsistent. This is
+  a post-extract check mirroring the sibling L2-SYN-023 (Cmd2 direction).
+  **Behavior change:** 2.0.0 silently accepted such records (emitting truncated
+  data); they are now rejected. Valid DDC recordings always agree, so
+  conformance is unaffected.
+
 ### Fixed
 
-- **Python reader: RT-to-RT payload extraction could read past the record
-  extent.** For RT-to-RT and RT-to-RT-broadcast records, the data-word count
+- **Reader: RT-to-RT payload extraction could read past the record extent
+  (Python).** For RT-to-RT and RT-to-RT-broadcast records, the data-word count
   comes from the second Command Word (Cmd2), but the L2-SYN-022 capacity
   invariant is computed from Cmd1. A malformed record with a small Cmd1 count
   (passing the capacity check) and an over-claiming Cmd2 caused
   `_extract_payload` to read beyond the Type Word's declared extent — into the
   following record, or past EOF as a `struct.error` (caught by the L1-ROB-001
-  fuzz harness). Payload reads are now bounded to the record extent and yield
-  empty/partial data on an over-claim, matching the Rust reader's behavior
-  (L2-DEC-009). The Rust implementation was already correct; this brings Python
-  to parity. New regression tests in both implementations
+  fuzz harness). Payload reads are now bounded to the record extent so an
+  over-claim can no longer overrun, matching the Rust reader (L2-DEC-009); the
+  record is then rejected by the new L2-SYN-027 invariant. The Rust
+  implementation was already bounded; this brings Python to parity. New
+  regression tests in both implementations
   (`rt_to_rt_cmd2_overclaim_does_not_overrun`) plus an arbitrary-bytes
   robustness test for the `dump` subcommand in both implementations
   (`dump_arbitrary_bytes_never_panics`).

@@ -511,7 +511,7 @@ def _classify_mode_code(cmd: CommandWord, word_count: int) -> MessageFormat:
 
 
 class WhichInvariant(IntEnum):
-    """Which structural invariant a record violated (L2-SYN-020 through L2-SYN-025).
+    """Which structural invariant a record violated (L2-SYN-020 through L2-SYN-027).
 
     Used by callers (the reader) to phrase a precise diagnostic; the
     strict-mode path otherwise maps every violation to a single
@@ -537,6 +537,9 @@ class WhichInvariant(IntEnum):
     TYPE_WORD_RESERVED_BIT = 6
     """L2-SYN-025: Type Word bit 15 (reserved) is set.
     AnomalyWarn-class — possible vendor extension."""
+
+    DATA_WORD_COUNT_MISMATCH = 7
+    """L2-SYN-027: RT-to-RT Cmd1 and Cmd2 disagree on data_word_count."""
 
 
 class InvariantSeverity(IntEnum):
@@ -658,12 +661,20 @@ def validate_structural_invariants(
 
 def validate_post_extract_invariants(
     msg_fmt: MessageFormat,
+    command_word: CommandWord,
     cmd2: CommandWord | None,
 ) -> InvariantViolation | None:
-    """L2-SYN-023: Cmd2 direction check for RT-to-RT formats.
+    """L2-SYN-023 / L2-SYN-027: post-extract checks for RT-to-RT formats.
 
     Called post-extract because Cmd2 lives inside the payload. For
     non-RT-to-RT formats (or when cmd2 is None) this is a no-op.
+
+    - L2-SYN-023: Cmd2 direction must be Receive.
+    - L2-SYN-027: Cmd1 and Cmd2 must agree on ``data_word_count``. The bus
+      protocol carries one data-word count for the transaction; the
+      capacity invariant (L2-SYN-022) only sees Cmd1, so a Cmd2 that
+      disagrees — including the over-claim that the record-bounded reads of
+      L2-DEC-009 defend against — is caught here.
     """
     if msg_fmt not in (MessageFormat.RT_TO_RT, MessageFormat.RT_TO_RT_BROADCAST):
         return None
@@ -676,6 +687,18 @@ def validate_post_extract_invariants(
             detail=(
                 f"RT-to-RT Cmd2 requires direction = Receive; got "
                 f"Transmit (raw Cmd2 = 0x{cmd2.raw:04X})"
+            ),
+        )
+    if command_word.data_word_count != cmd2.data_word_count:
+        return InvariantViolation(
+            kind=WhichInvariant.DATA_WORD_COUNT_MISMATCH,
+            severity=InvariantSeverity.REJECT,
+            detail=(
+                f"RT-to-RT Cmd1/Cmd2 data_word_count mismatch: "
+                f"Cmd1 = {command_word.data_word_count}, "
+                f"Cmd2 = {cmd2.data_word_count} "
+                f"(raw Cmd1 = 0x{command_word.raw:04X}, "
+                f"Cmd2 = 0x{cmd2.raw:04X})"
             ),
         )
     return None

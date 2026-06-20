@@ -149,6 +149,8 @@ pub enum WhichInvariant {
     /// L2-SYN-025: Type Word bit 15 (reserved) is set.
     /// AnomalyWarn-class — possible vendor extension.
     TypeWordReservedBit,
+    /// L2-SYN-027: RT-to-RT Cmd1 and Cmd2 disagree on data_word_count.
+    DataWordCountMismatch,
 }
 
 /// Policy class for a structural invariant violation, per the locked
@@ -257,13 +259,21 @@ pub fn validate_structural_invariants(
     Ok(())
 }
 
-/// L2-SYN-023: Cmd2 direction check for RT-to-RT formats.
+/// L2-SYN-023 / L2-SYN-027: post-extract checks for RT-to-RT formats.
 ///
 /// Called post-extract because Cmd2 lives inside the payload and is
 /// only available after `extract_payload`. For non-RT-to-RT formats
 /// (or when cmd2 is None) this is a no-op.
+///
+/// - L2-SYN-023: Cmd2 direction must be Receive.
+/// - L2-SYN-027: Cmd1 and Cmd2 must agree on `data_word_count`. The bus
+///   carries one data-word count for the transaction; the capacity
+///   invariant (L2-SYN-022) only sees Cmd1, so a Cmd2 that disagrees —
+///   including the over-claim the record-bounded reads of L2-DEC-009
+///   defend against — is caught here.
 pub fn validate_post_extract_invariants(
     msg_fmt: MessageFormat,
+    cmd: &CommandWord,
     cmd2: Option<&CommandWord>,
 ) -> Result<(), InvariantViolation> {
     let is_rt_to_rt = matches!(
@@ -284,6 +294,17 @@ pub fn validate_post_extract_invariants(
                 "RT-to-RT Cmd2 requires direction = Receive; got Transmit \
                  (raw Cmd2 = 0x{:04X})",
                 c2.raw
+            ),
+        });
+    }
+    if cmd.data_word_count != c2.data_word_count {
+        return Err(InvariantViolation {
+            kind: WhichInvariant::DataWordCountMismatch,
+            severity: InvariantSeverity::Reject,
+            detail: format!(
+                "RT-to-RT Cmd1/Cmd2 data_word_count mismatch: Cmd1 = {}, Cmd2 = {} \
+                 (raw Cmd1 = 0x{:04X}, Cmd2 = 0x{:04X})",
+                cmd.data_word_count, c2.data_word_count, cmd.raw, c2.raw
             ),
         });
     }
@@ -842,6 +863,9 @@ mod tests {
     /// Requirements: L2-SYN-023
     #[test]
     fn post_extract_invariant_rt_to_rt_cmd2_receive_passes() {
+        // Cmd1 and Cmd2 agree on data_word_count (L2-SYN-027) and Cmd2 is
+        // Receive (L2-SYN-023) → no violation.
+        let c1 = cmd_with(Direction::Transmit, 3);
         let c2 = CommandWord {
             rt: 5,
             direction: Direction::Receive,
@@ -849,12 +873,13 @@ mod tests {
             data_word_count: 3,
             raw: 0,
         };
-        validate_post_extract_invariants(MessageFormat::RtToRt, Some(&c2)).unwrap();
+        validate_post_extract_invariants(MessageFormat::RtToRt, &c1, Some(&c2)).unwrap();
     }
 
     /// Requirements: L2-SYN-023
     #[test]
     fn post_extract_invariant_rt_to_rt_cmd2_transmit_rejected() {
+        let c1 = cmd_with(Direction::Transmit, 3);
         let c2 = CommandWord {
             rt: 5,
             direction: Direction::Transmit, // WRONG: should be Receive
@@ -862,7 +887,8 @@ mod tests {
             data_word_count: 3,
             raw: 0xABCD,
         };
-        let err = validate_post_extract_invariants(MessageFormat::RtToRt, Some(&c2)).unwrap_err();
+        let err =
+            validate_post_extract_invariants(MessageFormat::RtToRt, &c1, Some(&c2)).unwrap_err();
         assert_eq!(err.kind, WhichInvariant::DirectionRtToRtCmd2);
         assert_eq!(err.severity, InvariantSeverity::Reject);
     }
@@ -870,6 +896,7 @@ mod tests {
     /// Requirements: L2-SYN-023
     #[test]
     fn post_extract_invariant_rt_to_rt_broadcast_also_checked() {
+        let c1 = cmd_with(Direction::Transmit, 3);
         let c2 = CommandWord {
             rt: 5,
             direction: Direction::Transmit,
@@ -877,7 +904,7 @@ mod tests {
             data_word_count: 3,
             raw: 0,
         };
-        let err = validate_post_extract_invariants(MessageFormat::RtToRtBroadcast, Some(&c2))
+        let err = validate_post_extract_invariants(MessageFormat::RtToRtBroadcast, &c1, Some(&c2))
             .unwrap_err();
         assert_eq!(err.kind, WhichInvariant::DirectionRtToRtCmd2);
     }
@@ -885,10 +912,11 @@ mod tests {
     /// Requirements: L2-SYN-023
     #[test]
     fn post_extract_invariant_non_rt_to_rt_is_noop() {
+        let c1 = cmd_with(Direction::Transmit, 3);
         // No cmd2 for non-RT-to-RT formats; function returns Ok.
-        validate_post_extract_invariants(MessageFormat::Receive, None).unwrap();
+        validate_post_extract_invariants(MessageFormat::Receive, &c1, None).unwrap();
         // Even if a stray Cmd2 is passed in (shouldn't happen), other
-        // formats don't enforce the direction invariant.
+        // formats don't enforce the post-extract invariants.
         let c2 = CommandWord {
             rt: 5,
             direction: Direction::Transmit,
@@ -896,7 +924,29 @@ mod tests {
             data_word_count: 3,
             raw: 0,
         };
-        validate_post_extract_invariants(MessageFormat::Receive, Some(&c2)).unwrap();
+        validate_post_extract_invariants(MessageFormat::Receive, &c1, Some(&c2)).unwrap();
+    }
+
+    // ── L2-SYN-027 (post-extract Cmd1/Cmd2 data_word_count agreement) ─
+
+    /// Requirements: L2-SYN-027
+    #[test]
+    fn post_extract_invariant_rt_to_rt_cmd_word_count_mismatch_rejected() {
+        // Cmd2 direction is valid (Receive) so L2-SYN-023 passes, but Cmd1
+        // and Cmd2 disagree on data_word_count → L2-SYN-027 rejects.
+        let c1 = cmd_with(Direction::Transmit, 3);
+        let c2 = CommandWord {
+            rt: 5,
+            direction: Direction::Receive,
+            subaddress: 10,
+            data_word_count: 5, // disagrees with Cmd1's 3
+            raw: 0x1234,
+        };
+        for fmt in [MessageFormat::RtToRt, MessageFormat::RtToRtBroadcast] {
+            let err = validate_post_extract_invariants(fmt, &c1, Some(&c2)).unwrap_err();
+            assert_eq!(err.kind, WhichInvariant::DataWordCountMismatch);
+            assert_eq!(err.severity, InvariantSeverity::Reject);
+        }
     }
 
     // ── L2-SYN-024 / L2-SYN-025 (anomaly detectors) ─────────────────

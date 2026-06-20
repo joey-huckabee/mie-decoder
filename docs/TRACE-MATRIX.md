@@ -166,7 +166,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025, L2-SYN-026 | _(none)_ | Implemented |
+| L1-SYN-001 | L2-RDR-015, L2-SYN-001, L2-SYN-002, L2-SYN-003, L2-SYN-004, L2-SYN-005, L2-SYN-006, L2-SYN-008, L2-SYN-009, L2-SYN-011, L2-SYN-014, L2-SYN-018, L2-SYN-019, L2-SYN-020, L2-SYN-021, L2-SYN-022, L2-SYN-023, L2-SYN-025, L2-SYN-026, L2-SYN-027 | _(none)_ | Implemented |
 | L1-SYN-002 | L2-SYN-007, L2-SYN-010 | `python/tests/test_sync.py::test_recovery_scan_forward_only_and_bounded`<br>`src/sync.rs::recover_sync_capped_at_max_scan`<br>`tests/integration.rs::recovery_scan_is_forward_only_and_bounded` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
@@ -194,6 +194,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-SYN-023 | _(none)_ | `python/tests/test_decode.py::test_non_rt_to_rt_is_noop`<br>`python/tests/test_decode.py::test_rt_to_rt_broadcast_also_checked`<br>`python/tests/test_decode.py::test_rt_to_rt_cmd2_receive_passes`<br>`python/tests/test_decode.py::test_rt_to_rt_cmd2_transmit_rejected`<br>`src/decode.rs::post_extract_invariant_non_rt_to_rt_is_noop`<br>`src/decode.rs::post_extract_invariant_rt_to_rt_broadcast_also_checked`<br>`src/decode.rs::post_extract_invariant_rt_to_rt_cmd2_receive_passes`<br>`src/decode.rs::post_extract_invariant_rt_to_rt_cmd2_transmit_rejected` | Implemented |
 | L2-SYN-025 | _(none)_ | `python/tests/test_decode.py::test_multiple_anomalies_can_fire_on_one_record`<br>`python/tests/test_decode.py::test_type_word_reserved_bit_anomaly`<br>`src/decode.rs::anomaly_multiple_can_fire_on_one_record`<br>`src/decode.rs::anomaly_type_word_reserved_bit_set_logged` | Implemented |
 | L2-SYN-026 | _(none)_ | `python/tests/test_sync.py::test_eof_terminates_gracefully`<br>`python/tests/test_sync.py::test_n1_skips_lookahead`<br>`python/tests/test_sync.py::test_n4_catches_second_corruption`<br>`src/sync.rs::validate_lookahead_eof_terminates_gracefully`<br>`src/sync.rs::validate_lookahead_n1_skips_lookahead`<br>`src/sync.rs::validate_lookahead_n4_catches_second_corruption`<br>`tests/cli.rs::lookahead_records_flag_accepts_valid_size`<br>`tests/cli.rs::lookahead_records_flag_rejects_out_of_range` | Implemented |
+| L2-SYN-027 | _(none)_ | `python/tests/test_decode.py::test_rt_to_rt_cmd_word_count_mismatch_rejected`<br>`python/tests/test_e2e.py::test_rt_to_rt_cmd2_overclaim_does_not_overrun`<br>`python/tests/test_e2e.py::test_rt_to_rt_cmd_word_count_mismatch_rejected`<br>`src/decode.rs::post_extract_invariant_rt_to_rt_cmd_word_count_mismatch_rejected`<br>`tests/integration.rs::rt_to_rt_cmd2_overclaim_does_not_overrun`<br>`tests/integration.rs::rt_to_rt_cmd_word_count_mismatch_rejected` | Implemented |
 
 ### L1-ERR: DDC error records and SPURIOUS_DATA
 
@@ -313,7 +314,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | CLI | 2 | 10 | 0 | 10 | 0 | 10 | 0 |
 | LOG | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MODE | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| SYN | 2 | 26 | 0 | 25 | 0 | 26 | 0 |
+| SYN | 2 | 27 | 0 | 26 | 0 | 27 | 0 |
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CONF | 1 | 6 | 0 | 3 | 0 | 5 | 0 |
@@ -325,13 +326,13 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 13 | 0 | 9 | 0 | 13 |
 | RS | 0 | 0 | 12 | 0 | 7 | 0 | 12 |
-| **Total** | **26** | **111** | **27** | **106** | **18** | **110** | **27** |
+| **Total** | **26** | **112** | **27** | **107** | **18** | **111** | **27** |
 
 The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 130 of 144 (90.3%).
+**Tested by at least one test marker**: 131 of 145 (90.3%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 143 of 144 (99.3%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 144 of 145 (99.3%).
 
 ### Orphan check
 
