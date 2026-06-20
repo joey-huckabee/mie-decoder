@@ -681,9 +681,17 @@ class MieFileReader:
                         cmd.rt, cmd.subaddress, cmd.direction.name,
                     )
 
+                    # Bound payload reads to this record's byte range so a
+                    # Command Word that *claims* a larger data_word_count than
+                    # the record can hold cannot read into the following record
+                    # or past EOF. The Type Word's word_count defines the record
+                    # length (already validated to fit the file); over-claims
+                    # yield empty/partial data instead of raising. Mirrors the
+                    # Rust reader's record-bounded extract_payload.
+                    record_end = offset + record_bytes
                     payload_byte_offset = cmd_byte_offset + 2
                     cmd2, status, status2, data_words = _extract_payload(
-                        mm, payload_byte_offset, tw.word_count, msg_fmt, cmd,
+                        mm, payload_byte_offset, record_end, msg_fmt, cmd,
                     )
 
                     # L2-SYN-023: post-extract Reject-class check.
@@ -859,65 +867,85 @@ def _compute_delta(
 def _extract_payload(
     mm: mmap.mmap,
     p: int,
-    word_count: int,
+    record_end: int,
     fmt: MessageFormat,
     cmd: CommandWord,
 ) -> tuple[CommandWord | None, int | None, int | None, tuple[int, ...]]:
-    """Extract command words, status words, and data words per format."""
+    """Extract command words, status words, and data words per format.
+
+    All reads are bounded to ``record_end`` (the byte just past this
+    record, ``offset + word_count * 2``, already validated to fit the
+    file). RT-to-RT formats take their data-word count from Cmd2, which
+    the L2-SYN-022 capacity check — computed from Cmd1 — does not bound;
+    a Cmd2 that over-claims must yield empty/partial data rather than
+    reading into the following record or raising ``struct.error``. The
+    local ``_r16``/``_read_n`` helpers return ``None``/``()`` on an
+    out-of-bounds read, mirroring the Rust reader's record-bounded
+    ``extract_payload`` (``read_u16`` → ``Option``, ``read_n`` → empty).
+    """
+
+    def _r16(off: int) -> int | None:
+        if off + 2 > record_end:
+            return None
+        return read_u16(mm, off)
+
+    def _read_n(start: int, n: int) -> tuple[int, ...]:
+        if start + n * 2 > record_end:
+            return ()
+        return read_u16_array(mm, start, n)
+
     if fmt == MessageFormat.RECEIVE:
         n = cmd.data_word_count
-        data_words = read_u16_array(mm, p, n)
-        status = read_u16(mm, p + n * 2)
+        data_words = _read_n(p, n)
+        status = _r16(p + n * 2)
         return None, status, None, data_words
 
     if fmt == MessageFormat.TRANSMIT:
-        status = read_u16(mm, p)
+        status = _r16(p)
         n = cmd.data_word_count
-        data_words = read_u16_array(mm, p + 2, n)
+        data_words = _read_n(p + 2, n)
         return None, status, None, data_words
 
     if fmt == MessageFormat.RT_TO_RT:
-        cmd2_raw = read_u16(mm, p)
-        cmd2 = decode_command_word(cmd2_raw)
-        tx_status = read_u16(mm, p + 2)
+        cmd2 = decode_command_word(_r16(p) or 0)
+        tx_status = _r16(p + 2)
         n = cmd2.data_word_count
-        data_words = read_u16_array(mm, p + 4, n)
-        rx_status = read_u16(mm, p + 4 + n * 2)
+        data_words = _read_n(p + 4, n)
+        rx_status = _r16(p + 4 + n * 2)
         return cmd2, tx_status, rx_status, data_words
 
     if fmt == MessageFormat.RECEIVE_BROADCAST:
         n = cmd.data_word_count
-        data_words = read_u16_array(mm, p, n)
+        data_words = _read_n(p, n)
         return None, None, None, data_words
 
     if fmt == MessageFormat.RT_TO_RT_BROADCAST:
-        cmd2_raw = read_u16(mm, p)
-        cmd2 = decode_command_word(cmd2_raw)
-        tx_status = read_u16(mm, p + 2)
+        cmd2 = decode_command_word(_r16(p) or 0)
+        tx_status = _r16(p + 2)
         n = cmd2.data_word_count
-        data_words = read_u16_array(mm, p + 4, n)
+        data_words = _read_n(p + 4, n)
         return cmd2, tx_status, None, data_words
 
     if fmt == MessageFormat.MODE_CODE_TX_DATA:
-        status = read_u16(mm, p)
-        data_words = (read_u16(mm, p + 2),)
-        return None, status, None, data_words
+        status = _r16(p)
+        w = _r16(p + 2)
+        return None, status, None, () if w is None else (w,)
 
     if fmt == MessageFormat.MODE_CODE_RX_DATA:
-        data_words = (read_u16(mm, p),)
-        status = read_u16(mm, p + 2)
-        return None, status, None, data_words
+        w = _r16(p)
+        status = _r16(p + 2)
+        return None, status, None, () if w is None else (w,)
 
     if fmt == MessageFormat.MODE_CODE_NO_DATA:
-        status = read_u16(mm, p)
+        status = _r16(p)
         return None, status, None, ()
 
     if fmt == MessageFormat.MODE_CODE_BCAST_NO_DATA:
         return None, None, None, ()
 
     if fmt == MessageFormat.MODE_CODE_BCAST_DATA:
-        data_words = (read_u16(mm, p),)
-        return None, None, None, data_words
+        w = _r16(p)
+        return None, None, None, () if w is None else (w,)
 
     raise ValueError(f"Unhandled message format: {fmt}")
 

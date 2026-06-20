@@ -201,6 +201,67 @@ class TestMieFileReader:
         assert messages[0].command_word is not None
         assert messages[0].command_word.rt == 15
 
+    @pytest.mark.requirement("L2-DEC-009")
+    @pytest.mark.requirement("L1-ROB-001")
+    def test_rt_to_rt_cmd2_overclaim_does_not_overrun(
+        self, tmp_path: Path
+    ) -> None:
+        """L2-DEC-009 / L1-ROB-001: an RT-to-RT record whose *second* Command
+        Word over-declares ``data_word_count`` must not read past the Type
+        Word's declared extent — the regression behind the fuzz-harness
+        ``struct.error``.
+
+        The L2-SYN-022 capacity invariant is computed from Cmd1, but RT-to-RT
+        extraction takes its data-word count from Cmd2 (the transmit command).
+        Fuzzed bytes can keep Cmd1's count small (so the capacity check passes
+        and the record fits the file) while Cmd2 claims 30 words — which, on
+        the full mmap, would overrun into the next record / past EOF and raise
+        ``struct.error``. The reader now bounds payload reads to the record
+        extent, so the over-claim yields empty data words and no raw exception
+        escapes. Mirrors the Rust ``rt_to_rt_cmd2_overclaim_does_not_overrun``
+        test; complements ``test_payload_extraction_does_not_overrun_into_next_record``
+        (which exercises the Cmd1 path the capacity invariant *does* catch).
+        """
+        from mie_decoder.models import MessageFormat
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        # R1: Type Word word_count=10 (20 bytes), type 0x08 (RT-to-RT). Cmd1
+        # 0x7961 declares dwc=1 (small → passes the Cmd1-based capacity check);
+        # Cmd2 0x797E declares dwc=30 (the over-claim). R2: a valid record.
+        r1 = (
+            b"\x08\x0a"                      # Type: wc=10, type=0x08 (RT_TO_RT)
+            + b"\x0f\x18\x26\xdb\x21\xf6"    # IRIG timestamp (3 words)
+            + b"\x61\x79"                    # Cmd1 0x7961 (RT15 R SA11 dwc=1)
+            + b"\x7e\x79"                    # Cmd2 0x797E (RT15 R SA11 dwc=30)
+            + b"\x00\x00"                    # tx_status
+            + bytes(6)                       # 3 padding words → total 10 words
+        )
+        assert len(r1) == 20
+        data = r1 + RECORD_RT15_SA11_RCV
+        fpath = tmp_path / "rt_to_rt_overclaim.mie"
+        fpath.write_bytes(data)
+
+        # Both modes: extraction is bounded, so iteration completes without a
+        # raw struct.error. R1 decodes with empty (truncated) data words and
+        # R2 decodes intact at its true offset — proving R1's Cmd2 over-claim
+        # consumed nothing beyond R1's 20-byte declared extent.
+        for strict in (False, True):
+            messages = list(
+                MieFileReader(
+                    fpath, strict=strict, time_format=TimestampFormat.IRIG
+                )
+            )
+            assert len(messages) == 2, f"strict={strict}"
+            assert messages[0].file_offset == 0
+            assert messages[0].message_format == MessageFormat.RT_TO_RT
+            # Cmd2 claimed 30 words but none fit the record extent → empty.
+            assert messages[0].data_words == ()
+            assert messages[0].command_word_2 is not None
+            assert messages[0].command_word_2.data_word_count == 30
+            assert messages[1].file_offset == 20
+            assert messages[1].command_word is not None
+            assert messages[1].command_word.rt == 15
+
     @pytest.mark.requirement("L2-DEC-002")
     def test_irig_day_of_year_warns_once_per_decode(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -1322,6 +1383,71 @@ class TestFuzzHarness:
                     f"Unexpected non-MieDecoderError during iteration "
                     f"(seed=0x{seed:X}, iter={i}, size={size}): "
                     f"{type(exc).__name__}: {exc}\n"
+                    f"First 32 bytes: {bytes(payload[:32]).hex()}"
+                ) from exc
+
+    @pytest.mark.requirement("L1-ROB-001")
+    @pytest.mark.requirement("L2-CLI-009")
+    def test_dump_arbitrary_bytes_never_raise_unexpected_exceptions(
+        self, tmp_path,
+    ) -> None:
+        """L1-ROB-001 for the ``dump`` subcommand: the record-aware and raw
+        hex dumps must tolerate arbitrary bytes — only a documented
+        MieDecoderError (e.g. MieFileEmptyError) may escape.
+
+        The record dump's header reads are bounded by its
+        ``offset + MIN_RECORD_BYTES <= file_len`` loop guard (the deepest
+        read is the Command Word at ``offset + 8``, needing ``offset + 10``),
+        and it slices to ``data[offset:offset + record_bytes]`` for the body —
+        it never reads payload by a Command Word's ``data_word_count``, so it
+        has no over-claim/overrun class like the reader's ``_extract_payload``
+        had. This test guards that property against regression. Sizes are
+        skewed small to exercise the truncation/guard paths densely. Mirrors
+        the Rust ``dump_arbitrary_bytes_never_panics``.
+        """
+        import io
+        import os
+
+        from mie_decoder.dump import hex_dump_raw, hex_dump_records
+        from mie_decoder.exceptions import MieDecoderError
+
+        # Honor MIE_FUZZ_ITERATIONS for the scheduled burn-in, same as the
+        # reader harness (deterministic PRNG, so a burn-in is a superset of
+        # the default run).
+        iterations = 256
+        override = os.environ.get("MIE_FUZZ_ITERATIONS")
+        if override and override.isdigit() and int(override) > 0:
+            iterations = int(override)
+
+        state = 0x0DDCD1ECDDC0DEC0  # same seed family as the reader harness
+        for i in range(iterations):
+            state, r = self._xorshift64(state)
+            size = r % 512  # small band → dense coverage of guard/truncation
+            payload = bytearray(size)
+            j = 0
+            while j + 8 <= size:
+                state, r = self._xorshift64(state)
+                payload[j:j + 8] = r.to_bytes(8, "little")
+                j += 8
+            while j < size:
+                state, r = self._xorshift64(state)
+                payload[j] = r & 0xFF
+                j += 1
+
+            fpath = tmp_path / f"dumpfuzz-{i}.bin"
+            fpath.write_bytes(bytes(payload))
+
+            buf = io.StringIO()
+            try:
+                hex_dump_records(fpath, max_records=64, stream=buf)
+                hex_dump_raw(fpath, start_offset=0, length=None, stream=buf)
+            except MieDecoderError:
+                # Empty-file / not-found are documented and acceptable.
+                pass
+            except Exception as exc:
+                raise AssertionError(
+                    f"Unexpected non-MieDecoderError from dump "
+                    f"(iter={i}, size={size}): {type(exc).__name__}: {exc}\n"
                     f"First 32 bytes: {bytes(payload[:32]).hex()}"
                 ) from exc
 

@@ -373,6 +373,71 @@ fn payload_extraction_does_not_overrun_into_next_record() {
     assert_eq!(msgs[0].command_word.unwrap().rt, 15);
 }
 
+/// L2-DEC-009 / L1-ROB-001: an RT-to-RT record whose *second* Command Word
+/// over-declares `data_word_count` must not read past the Type Word's
+/// declared extent. The L2-SYN-022 capacity invariant is computed from Cmd1,
+/// but RT-to-RT extraction takes its count from Cmd2 (the transmit command);
+/// fuzzed bytes can keep Cmd1's count small (so the capacity check passes and
+/// the record fits the file) while Cmd2 claims 30 words. Because extraction
+/// reads from the record-bounded slice (`&self.data[..record_end]`), the
+/// over-claim yields empty data words instead of overrunning into the next
+/// record. Mirrors the Python
+/// `test_rt_to_rt_cmd2_overclaim_does_not_overrun`; complements
+/// `payload_extraction_does_not_overrun_into_next_record` (which exercises the
+/// Cmd1 path the capacity invariant *does* catch).
+/// Requirements: L2-DEC-009, L1-ROB-001
+#[test]
+fn rt_to_rt_cmd2_overclaim_does_not_overrun() {
+    use mie_decoder::models::{MessageFormat, TimestampFormat};
+    use mie_decoder::reader::ReaderOptions;
+
+    // R1: Type Word word_count = 10 (20 bytes), type 0x08 (RT-to-RT). Cmd1
+    // 0x7961 declares dwc = 1 (small → passes the Cmd1-based capacity check);
+    // Cmd2 0x797E declares dwc = 30 (the over-claim). R2: a valid record.
+    let mut r1 = Vec::new();
+    r1.extend_from_slice(&0x0A08u16.to_le_bytes()); // Type: wc=10, type=0x08 (RT_TO_RT)
+    r1.extend_from_slice(&[0x0F, 0x18, 0x26, 0xDB, 0x21, 0xF6]); // IRIG ts (3 words)
+    r1.extend_from_slice(&0x7961u16.to_le_bytes()); // Cmd1: RT15 R SA11 dwc=1
+    r1.extend_from_slice(&0x797Eu16.to_le_bytes()); // Cmd2: RT15 R SA11 dwc=30 (over-claim)
+    r1.extend_from_slice(&[0u8; 2]); // tx_status
+    r1.extend_from_slice(&[0u8; 6]); // 3 padding words → total 10 words = 20 bytes
+    assert_eq!(r1.len(), 20);
+
+    let mut bytes = r1.clone();
+    bytes.extend_from_slice(&record_rt15_sa11_rcv());
+    let f = TempFile::new(&bytes);
+
+    // Both modes: extraction is bounded, so R1 decodes with empty (truncated)
+    // data words and R2 decodes intact at its true offset — proving R1's Cmd2
+    // over-claim consumed nothing beyond R1's 20-byte declared extent.
+    for strict in [false, true] {
+        let reader = MieFileReader::with_options(
+            f.path(),
+            ReaderOptions {
+                strict,
+                time_format: TimestampFormat::Irig,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let msgs: Vec<_> = reader
+            .iter()
+            .collect::<Result<_, _>>()
+            .unwrap_or_else(|e| panic!("strict={strict}: unexpected error {e:?}"));
+        assert_eq!(msgs.len(), 2, "strict={strict}");
+        assert_eq!(msgs[0].file_offset, 0);
+        assert_eq!(msgs[0].message_format, MessageFormat::RtToRt);
+        // Cmd2 claimed 30 words but none fit the record extent → empty.
+        assert!(msgs[0].data_words.is_empty(), "strict={strict}");
+        assert_eq!(msgs[0].command_word_2.unwrap().data_word_count, 30);
+        assert_eq!(
+            msgs[1].file_offset, 20,
+            "R2 begins exactly after R1's 20-byte declared extent"
+        );
+        assert_eq!(msgs[1].command_word.unwrap().rt, 15);
+    }
+}
+
 /// Requirements: L2-RDR-009
 #[test]
 fn delta_tracker_per_rt_msg_key() {
@@ -656,6 +721,72 @@ fn fuzz_arbitrary_bytes_never_panic() {
             panic!(
                 "MieFileReader panicked on random input (seed=0x{seed:X}, iter={i}, \
                  size={size}). First 32 bytes: {:02X?}",
+                &bytes[..bytes.len().min(32)]
+            );
+        }
+    }
+}
+
+/// L1-ROB-001 for the `dump` subcommand: the record-aware and raw hex dumps
+/// must tolerate arbitrary bytes without panicking. The record dump's header
+/// reads use `read_u16(...).unwrap_or(0)`, a `checked_add` loop guard, and
+/// slice to the record extent for the body — it never reads payload by a
+/// Command Word's `data_word_count`, so it has no over-claim/overrun class
+/// like the reader's `extract_payload`. This test guards that property
+/// against regression. Sizes are skewed small to exercise the truncation /
+/// loop-guard paths densely. Mirrors the Python
+/// `test_dump_arbitrary_bytes_never_raise_unexpected_exceptions`.
+/// Requirements: L1-ROB-001, L2-CLI-009
+#[test]
+fn dump_arbitrary_bytes_never_panics() {
+    fn xorshift64(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *state = x;
+        x
+    }
+
+    let seed: u64 = 0x0DDCD1ECDDC0DEC0; // same seed family as the reader harness
+    let mut state = seed;
+
+    // Honor MIE_FUZZ_ITERATIONS for the scheduled burn-in, same as the reader
+    // harness (deterministic PRNG, so a burn-in is a superset of the default).
+    let iterations: usize = std::env::var("MIE_FUZZ_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(256);
+
+    for i in 0..iterations {
+        let size = xorshift64(&mut state) as usize % 512; // small band → dense guard coverage
+        let mut bytes = vec![0u8; size];
+        let mut j = 0;
+        while j + 8 <= size {
+            let r = xorshift64(&mut state);
+            bytes[j..j + 8].copy_from_slice(&r.to_le_bytes());
+            j += 8;
+        }
+        while j < size {
+            bytes[j] = (xorshift64(&mut state) & 0xFF) as u8;
+            j += 1;
+        }
+
+        let f = TempFile::new(&bytes);
+        let result = std::panic::catch_unwind(|| {
+            // Both dumps may return Err (e.g. FileEmpty) — a documented error
+            // path, not a panic. We sink output into a Vec and discard it.
+            let mut sink = Vec::new();
+            let _ = mie_decoder::dump::hex_dump_records(f.path(), Some(64), 0, &mut sink);
+            sink.clear();
+            let _ = mie_decoder::dump::hex_dump_raw(f.path(), 0, None, &mut sink);
+        });
+
+        if result.is_err() {
+            panic!(
+                "dump panicked on random input (seed=0x{seed:X}, iter={i}, size={size}). \
+                 First 32 bytes: {:02X?}",
                 &bytes[..bytes.len().min(32)]
             );
         }
