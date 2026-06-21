@@ -14,6 +14,7 @@ use crate::decode::{
     decode_type_word, read_u16,
 };
 use crate::error::{MieError, MieResult};
+use crate::log_warn;
 use crate::models::{Direction, MessageType};
 
 fn type_name(code: u8) -> String {
@@ -210,6 +211,13 @@ fn write_hex_dump_records<W: Write>(
                 "  !! Invalid word_count={} at 0x{:08X}, stopping",
                 tw.word_count, offset
             )?;
+            // L2-CLI-013: surface the scan-stop anomaly through the logger
+            // (subject to the global level), in addition to the inline note.
+            log_warn!(
+                "dump: invalid word_count={} at 0x{:X}; stopping record scan",
+                tw.word_count,
+                offset
+            );
             break;
         }
         let record_bytes = usize::from(tw.word_count) * 2;
@@ -223,6 +231,11 @@ fn write_hex_dump_records<W: Write>(
                     "  !! Offset overflow at 0x{:08X} (record_bytes={}), stopping",
                     offset, record_bytes
                 )?;
+                log_warn!(
+                    "dump: offset overflow at 0x{:X} (record_bytes={}); stopping record scan",
+                    offset,
+                    record_bytes
+                );
                 break;
             }
         };
@@ -234,6 +247,13 @@ fn write_hex_dump_records<W: Write>(
                 record_bytes,
                 file_len - offset
             )?;
+            log_warn!(
+                "dump: truncated record at 0x{:X} ({} bytes needed, {} available); \
+                 stopping record scan",
+                offset,
+                record_bytes,
+                file_len - offset
+            );
             break;
         }
 
@@ -372,6 +392,28 @@ mod tests {
         assert!(s.contains("Record #0"));
         assert!(s.contains("BC->RT (Receive)"));
         assert!(s.contains("1 records dumped"));
+    }
+
+    /// L2-CLI-013: a scan-stop anomaly emits a logger WARN in addition to the
+    /// inline report note. The crate logger writes to process stderr and is
+    /// not capturable in-process, so this asserts the inline note (the same
+    /// branch that emits `log_warn!`); the WARN emission is verified by
+    /// inspection and exercised live by `dump_arbitrary_bytes_never_panics`
+    /// under `--nocapture`. Mirrors the Python `test_dump_logs_warning_on_truncated_record`.
+    /// Requirements: L2-CLI-013
+    #[test]
+    fn record_dump_notes_and_warns_truncated_record() {
+        // Type 0x2402 declares word_count=36 (72 bytes) but only 20 bytes
+        // exist → the record-aware scan hits the truncated-record branch.
+        let mut buf = Vec::with_capacity(20);
+        buf.extend_from_slice(&[0x02, 0x24]);
+        buf.extend_from_slice(&[0u8; 18]);
+        let f = TempFile::write(&buf);
+        let mut out = Vec::new();
+        hex_dump_records(f.path(), Some(1), 0, &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("!! Truncated record"));
+        assert!(s.contains("72 bytes needed, 20 available"));
     }
 
     /// Requirements: L2-RDR-005

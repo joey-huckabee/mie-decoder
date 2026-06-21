@@ -7,6 +7,7 @@ from DDC vendor output.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 from pathlib import Path
@@ -1349,6 +1350,39 @@ class TestFuzzHarness:
         x &= 0xFFFFFFFFFFFFFFFF
         return x, x  # new state, output
 
+    @staticmethod
+    @contextlib.contextmanager
+    def _surface_logs():
+        """Route ``mie_decoder`` logs to stderr for the duration of the block.
+
+        The reader and dump both log through the ``mie_decoder`` logger; with
+        no handler configured (the fuzz tests call the library directly, not
+        the CLI) pytest's log capture swallows the records, so even ``-s``
+        shows nothing. Installing the package's own stderr handler makes the
+        diagnostics stream under ``pytest -s`` just as the Rust harness shows
+        them under ``cargo test -- --nocapture``. The package logger is
+        restored afterward so no handler is left bound to this test's
+        soon-stale captured stream.
+        """
+        import logging
+
+        from mie_decoder.logger import configure_logging
+
+        mie_log = logging.getLogger("mie_decoder")
+        saved_handlers = mie_log.handlers[:]
+        saved_level = mie_log.level
+        saved_propagate = mie_log.propagate
+        configure_logging("WARNING")  # matches the Rust default WARN level
+        try:
+            yield
+        finally:
+            for h in mie_log.handlers[:]:
+                mie_log.removeHandler(h)
+            for h in saved_handlers:
+                mie_log.addHandler(h)
+            mie_log.setLevel(saved_level)
+            mie_log.propagate = saved_propagate
+
     @pytest.mark.requirement("L1-ROB-001")
     def test_arbitrary_bytes_never_raise_unexpected_exceptions(
         self, tmp_path,
@@ -1370,23 +1404,7 @@ class TestFuzzHarness:
         if override and override.isdigit() and int(override) > 0:
             iterations = int(override)
 
-        # Surface the reader's WARN/ERROR diagnostics on stderr for the
-        # duration of the fuzz run, so `pytest -s` shows them just as the Rust
-        # reader harness does under `cargo test -- --nocapture` (the reader
-        # logs through the `mie_decoder` logger; without a handler configured
-        # the records would be swallowed by pytest's log capture). Restore the
-        # package logger afterward so we don't leave a handler bound to this
-        # test's soon-stale captured stream.
-        import logging
-
-        from mie_decoder.logger import configure_logging
-
-        mie_log = logging.getLogger("mie_decoder")
-        saved_handlers = mie_log.handlers[:]
-        saved_level = mie_log.level
-        saved_propagate = mie_log.propagate
-        configure_logging("WARNING")  # matches the Rust default WARN level
-        try:
+        with self._surface_logs():
             for i in range(iterations):
                 state, r = self._xorshift64(state)
                 size = 32 + (r % 8192)
@@ -1441,13 +1459,6 @@ class TestFuzzHarness:
                         f"{type(exc).__name__}: {exc}\n"
                         f"First 32 bytes: {bytes(payload[:32]).hex()}"
                     ) from exc
-        finally:
-            for h in mie_log.handlers[:]:
-                mie_log.removeHandler(h)
-            for h in saved_handlers:
-                mie_log.addHandler(h)
-            mie_log.setLevel(saved_level)
-            mie_log.propagate = saved_propagate
 
     @pytest.mark.requirement("L1-ROB-001")
     @pytest.mark.requirement("L2-CLI-009")
@@ -1465,8 +1476,12 @@ class TestFuzzHarness:
         it never reads payload by a Command Word's ``data_word_count``, so it
         has no over-claim/overrun class like the reader's ``_extract_payload``
         had. This test guards that property against regression. Sizes are
-        skewed small to exercise the truncation/guard paths densely. Mirrors
-        the Rust ``dump_arbitrary_bytes_never_panics``.
+        skewed small to exercise the truncation/guard paths densely.
+
+        Like the reader harness, it runs under ``_surface_logs`` so the dump's
+        scan-stop anomaly WARNs (L2-CLI-013) stream under ``pytest -s`` — the
+        report itself still goes to a throwaway sink. Mirrors the Rust
+        ``dump_arbitrary_bytes_never_panics``.
         """
         import io
         import os
@@ -1483,36 +1498,72 @@ class TestFuzzHarness:
             iterations = int(override)
 
         state = 0x0DDCD1ECDDC0DEC0  # same seed family as the reader harness
-        for i in range(iterations):
-            state, r = self._xorshift64(state)
-            size = r % 512  # small band → dense coverage of guard/truncation
-            payload = bytearray(size)
-            j = 0
-            while j + 8 <= size:
+        with self._surface_logs():
+            for i in range(iterations):
                 state, r = self._xorshift64(state)
-                payload[j:j + 8] = r.to_bytes(8, "little")
-                j += 8
-            while j < size:
-                state, r = self._xorshift64(state)
-                payload[j] = r & 0xFF
-                j += 1
+                size = r % 512  # small band → dense coverage of guard/truncation
+                payload = bytearray(size)
+                j = 0
+                while j + 8 <= size:
+                    state, r = self._xorshift64(state)
+                    payload[j:j + 8] = r.to_bytes(8, "little")
+                    j += 8
+                while j < size:
+                    state, r = self._xorshift64(state)
+                    payload[j] = r & 0xFF
+                    j += 1
 
-            fpath = tmp_path / f"dumpfuzz-{i}.bin"
-            fpath.write_bytes(bytes(payload))
+                fpath = tmp_path / f"dumpfuzz-{i}.bin"
+                fpath.write_bytes(bytes(payload))
 
-            buf = io.StringIO()
-            try:
-                hex_dump_records(fpath, max_records=64, stream=buf)
-                hex_dump_raw(fpath, start_offset=0, length=None, stream=buf)
-            except MieDecoderError:
-                # Empty-file / not-found are documented and acceptable.
-                pass
-            except Exception as exc:
-                raise AssertionError(
-                    f"Unexpected non-MieDecoderError from dump "
-                    f"(iter={i}, size={size}): {type(exc).__name__}: {exc}\n"
-                    f"First 32 bytes: {bytes(payload[:32]).hex()}"
-                ) from exc
+                buf = io.StringIO()
+                try:
+                    hex_dump_records(fpath, max_records=64, stream=buf)
+                    hex_dump_raw(fpath, start_offset=0, length=None, stream=buf)
+                except MieDecoderError:
+                    # Empty-file / not-found are documented and acceptable.
+                    pass
+                except Exception as exc:
+                    raise AssertionError(
+                        f"Unexpected non-MieDecoderError from dump "
+                        f"(iter={i}, size={size}): {type(exc).__name__}: {exc}\n"
+                        f"First 32 bytes: {bytes(payload[:32]).hex()}"
+                    ) from exc
+
+
+class TestDumpDiagnostics:
+    """L2-CLI-013: logger diagnostics emitted by the record-aware dump."""
+
+    @pytest.mark.requirement("L2-CLI-013")
+    def test_dump_logs_warning_on_truncated_record(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """L2-CLI-013: a scan-stop anomaly is emitted through the logger at
+        WARNING, in addition to the inline report note — so dump diagnostics
+        are visible on stderr at the configured level. Mirrors the Rust
+        ``record_dump_notes_and_warns_truncated_record``.
+        """
+        import logging
+
+        from mie_decoder.dump import hex_dump_records
+
+        # Type 0x2402 declares word_count=36 (72 bytes) but only 20 bytes
+        # exist → the record-aware scan hits the truncated-record branch.
+        fpath = tmp_path / "truncated.mie"
+        fpath.write_bytes(b"\x02\x24" + bytes(18))
+
+        out = io.StringIO()
+        with caplog.at_level(logging.WARNING, logger="mie_decoder.dump"):
+            hex_dump_records(fpath, max_records=1, stream=out)
+
+        # Inline report note still present (unchanged report format)...
+        assert "!! Truncated record" in out.getvalue()
+        # ...and the same anomaly surfaced through the logger.
+        assert any(
+            r.levelno == logging.WARNING
+            and "truncated record" in r.getMessage().lower()
+            for r in caplog.records
+        ), [r.getMessage() for r in caplog.records]
 
 
 class TestSeparateModeCommitOrder:

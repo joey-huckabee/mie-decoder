@@ -215,23 +215,26 @@ MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest -s tests/test_e2e.py::Test
 On Windows PowerShell set the variable separately: `$env:MIE_FUZZ_ITERATIONS =
 "25000"` (and `Remove-Item Env:\MIE_FUZZ_ITERATIONS` after).
 
-### Output model (why some harnesses are noisy and others are silent)
+### Output model (where the WARN noise comes from)
 
-- **Reader harnesses log diagnostics.** The reader emits WARN/ERROR through the
-  logger — Rust to process **stderr** (`src/log.rs`, default `WARN`), Python
-  through the `mie_decoder` logger (the test calls `configure_logging("WARNING")`
-  so the records reach stderr). Both `cargo test` and `pytest` **capture**
-  stderr by default and replay it only on failure; pass `--nocapture` (cargo)
-  or `-s` (pytest) to **stream it live**. Heavy WARN/ERROR output on random
-  input is expected — it's the harness exercising sync recovery and
-  invariant rejection. For a long burn-in, prefer `--nocapture` / `-s` so the
-  output streams rather than buffering tens of MB.
-- **Dump harnesses are silent by design.** The `dump` subcommand emits **no
-  logger events** — its `!! …` notes are part of the hex *report* it writes to
-  the caller's writer, and the fuzz tests point that writer at a throwaway
-  in-memory sink. So the dump harnesses print nothing even under `--nocapture` /
-  `-s`; there is no diagnostic stream to surface (only a panic/assertion would
-  appear).
+All four harnesses route diagnostics through the logger, so all four are noisy
+on random input:
+
+- **Reader harnesses** emit WARN/ERROR for sync recovery and invariant
+  rejection.
+- **Dump harnesses** emit a WARN for each record-aware scan-stop anomaly —
+  invalid `word_count`, truncated record, offset overflow (L2-CLI-013) — in
+  addition to the inline `!! …` note in the hex report (the report itself goes
+  to a throwaway sink in the fuzz tests, so you see the WARNs, not the report).
+
+The logger writes to process **stderr** in Rust (`src/log.rs`, default `WARN`)
+and through the `mie_decoder` logger in Python. Both `cargo test` and `pytest`
+**capture** stderr by default and replay it only on failure; pass `--nocapture`
+(cargo) or `-s` (pytest) to **stream it live**. The Python harnesses call
+`configure_logging("WARNING")` (via the `_surface_logs` helper) so the records
+reach stderr under `-s` — without it pytest's log capture would swallow them.
+Heavy output on random input is expected. For a long burn-in, prefer
+`--nocapture` / `-s` so the output streams rather than buffering tens of MB.
 
 ## Continuous integration
 

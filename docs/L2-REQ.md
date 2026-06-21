@@ -849,6 +849,13 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 **Rationale**: A per-invocation flag lets an operator calibrate one recording without editing a config file, and matches how the other decode-tuning knobs are exposed. Parse-time validation gives immediate feedback consistent with the config path so the two entry points reject the same inputs.
 **Verification Method**: Test (T)
 
+#### L2-CLI-013
+
+**Parent**: L1-CLI-001
+**Statement**: The record-aware dump SHALL emit each scan-stop anomaly it encounters — invalid Type Word `word_count`, a record whose declared extent runs past EOF (truncated record), and (where the host integer type can overflow) record-offset overflow — through the logger at `WARN`, in addition to the inline `!! …` note written into the hex report. The log message SHALL name the byte offset. Emission is subject to the configured global log level (default `WARN`); the inline report note is unchanged.
+**Rationale**: The record-aware dump previously surfaced these anomalies only inside the report stream, so an operator piping the dump report elsewhere — or any caller that captures the report separately — could not see the diagnostics on the normal stderr log channel the way the reader's diagnostics appear. Routing them through the logger as well makes the dump's diagnostics consistent with the reader's and visible at the configured level, while the inline note is retained for the at-a-glance visual report. (The reader's logger writes to process stderr in Rust and through the `mie_decoder` logger in Python; the dump uses the same channels.)
+**Verification Method**: Test (T), Inspection (I)
+
 ---
 
 ## L2-CONF: Cross-implementation conformance

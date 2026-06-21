@@ -14,6 +14,7 @@ Usage via CLI::
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import TextIO
@@ -29,6 +30,8 @@ from mie_decoder.decode import (
 )
 from mie_decoder.exceptions import MieFileEmptyError, MieFileNotFoundError
 from mie_decoder.models import MessageType
+
+logger = logging.getLogger(__name__)
 
 
 #: Map of known type codes to human-readable names.
@@ -135,6 +138,12 @@ def hex_dump_records(
                 f"  !! Invalid word_count={tw.word_count} at 0x{offset:08X}, stopping",
                 file=out,
             )
+            # L2-CLI-013: surface the scan-stop anomaly through the logger
+            # (subject to the configured level), in addition to the inline note.
+            logger.warning(
+                "dump: invalid word_count=%d at 0x%X; stopping record scan",
+                tw.word_count, offset,
+            )
             break
 
         record_bytes = tw.word_count * 2
@@ -143,6 +152,11 @@ def hex_dump_records(
                 f"  !! Truncated record at 0x{offset:08X} "
                 f"({record_bytes} bytes needed, {file_len - offset} available)",
                 file=out,
+            )
+            logger.warning(
+                "dump: truncated record at 0x%X (%d bytes needed, %d available); "
+                "stopping record scan",
+                offset, record_bytes, file_len - offset,
             )
             break
 

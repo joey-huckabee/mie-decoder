@@ -28,6 +28,16 @@ full release workflow.
   data); they are now rejected. Valid DDC recordings always agree, so
   conformance is unaffected.
 
+### Changed
+
+- **The record-aware `dump` now logs its scan-stop anomalies (L2-CLI-013, both
+  implementations).** Invalid `word_count`, truncated-record, and (Rust)
+  offset-overflow stops are emitted through the logger at `WARN` — to stderr,
+  subject to `--log-level` — in addition to the existing inline `!! …` note in
+  the hex report. This makes the dump's diagnostics consistent with the
+  reader's and visible on the normal log channel; the hex-report format is
+  unchanged.
+
 ### Fixed
 
 - **Reader: RT-to-RT payload extraction could read past the record extent
