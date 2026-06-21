@@ -16,6 +16,10 @@ on:
       iterations:
         description: "Fuzz iterations per implementation"
         default: "25000"
+      stream_logs:
+        description: "Stream harness WARN/ERROR diagnostics live (cargo --nocapture / pytest -s)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,6 +35,9 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
+      # Empty on the scheduled run (capture on → small logs); `--nocapture`
+      # only when a manual run ticks `stream_logs`.
+      NOCAPTURE: ${{ github.event.inputs.stream_logs == 'true' && '--nocapture' || '' }}
 
     steps:
       - name: Check out repository
@@ -42,14 +49,25 @@ jobs:
           rustup update stable --no-self-update
           rustup default stable
 
-      - name: Run the L1-ROB-001 fuzz harness (burn-in)
-        run: cargo test --locked --test integration fuzz_arbitrary_bytes_never_panic -- --nocapture
+      # Both L1-ROB-001 harnesses run as separate steps so the Actions UI
+      # shows pass/fail per harness. With `stream_logs` ticked, $NOCAPTURE is
+      # `--nocapture` and each harness's logger diagnostics (reader:
+      # sync/invariant WARNs; dump: scan-stop anomaly WARNs, L2-CLI-013) stream
+      # live; otherwise output is captured and shown only on failure.
+      - name: Reader fuzz harness (burn-in)
+        run: cargo test --locked --test integration fuzz_arbitrary_bytes_never_panic -- $NOCAPTURE
+
+      - name: Dump fuzz harness (burn-in)
+        run: cargo test --locked --test integration dump_arbitrary_bytes_never_panics -- $NOCAPTURE
 
   fuzz-python:
     name: Python fuzz burn-in
     runs-on: ubuntu-latest
     env:
       MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
+      # Empty on the scheduled run (pytest captures → small logs); `-s` only
+      # when a manual run ticks `stream_logs`.
+      PYTEST_STREAM: ${{ github.event.inputs.stream_logs == 'true' && '-s' || '' }}
 
     steps:
       - name: Check out repository
@@ -68,5 +86,10 @@ jobs:
       - name: Synchronize locked dependencies
         run: poetry -C python sync --no-interaction --no-ansi
 
-      - name: Run the L1-ROB-001 fuzz harness (burn-in)
-        run: poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness -v
+      # The TestFuzzHarness class runs both the reader and dump harnesses.
+      # When `stream_logs` is ticked, $PYTEST_STREAM is `-s` (capture off) so
+      # the harnesses' `mie_decoder` WARN/ERROR diagnostics stream live into
+      # the job log, matching the Rust job's `--nocapture`; otherwise pytest
+      # captures and shows them only on failure.
+      - name: Run the L1-ROB-001 fuzz harnesses (burn-in)
+        run: poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness -v $PYTEST_STREAM
