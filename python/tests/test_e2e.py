@@ -1370,60 +1370,84 @@ class TestFuzzHarness:
         if override and override.isdigit() and int(override) > 0:
             iterations = int(override)
 
-        for i in range(iterations):
-            state, r = self._xorshift64(state)
-            size = 32 + (r % 8192)
-            payload = bytearray(size)
-            j = 0
-            while j + 8 <= size:
+        # Surface the reader's WARN/ERROR diagnostics on stderr for the
+        # duration of the fuzz run, so `pytest -s` shows them just as the Rust
+        # reader harness does under `cargo test -- --nocapture` (the reader
+        # logs through the `mie_decoder` logger; without a handler configured
+        # the records would be swallowed by pytest's log capture). Restore the
+        # package logger afterward so we don't leave a handler bound to this
+        # test's soon-stale captured stream.
+        import logging
+
+        from mie_decoder.logger import configure_logging
+
+        mie_log = logging.getLogger("mie_decoder")
+        saved_handlers = mie_log.handlers[:]
+        saved_level = mie_log.level
+        saved_propagate = mie_log.propagate
+        configure_logging("WARNING")  # matches the Rust default WARN level
+        try:
+            for i in range(iterations):
                 state, r = self._xorshift64(state)
-                payload[j:j + 8] = r.to_bytes(8, "little")
-                j += 8
-            while j < size:
-                state, r = self._xorshift64(state)
-                payload[j] = r & 0xFF
-                j += 1
+                size = 32 + (r % 8192)
+                payload = bytearray(size)
+                j = 0
+                while j + 8 <= size:
+                    state, r = self._xorshift64(state)
+                    payload[j:j + 8] = r.to_bytes(8, "little")
+                    j += 8
+                while j < size:
+                    state, r = self._xorshift64(state)
+                    payload[j] = r & 0xFF
+                    j += 1
 
-            fpath = tmp_path / f"fuzz-{i}.bin"
-            fpath.write_bytes(bytes(payload))
+                fpath = tmp_path / f"fuzz-{i}.bin"
+                fpath.write_bytes(bytes(payload))
 
-            try:
-                reader = MieFileReader(fpath)
-            except MieDecoderError:
-                # Constructor errors (e.g., MieFileEmptyError) are
-                # documented and acceptable.
-                continue
-            except Exception as exc:
-                raise AssertionError(
-                    f"Unexpected non-MieDecoderError on construction "
-                    f"(seed=0x{seed:X}, iter={i}, size={size}): "
-                    f"{type(exc).__name__}: {exc}"
-                ) from exc
+                try:
+                    reader = MieFileReader(fpath)
+                except MieDecoderError:
+                    # Constructor errors (e.g., MieFileEmptyError) are
+                    # documented and acceptable.
+                    continue
+                except Exception as exc:
+                    raise AssertionError(
+                        f"Unexpected non-MieDecoderError on construction "
+                        f"(seed=0x{seed:X}, iter={i}, size={size}): "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
 
-            try:
-                yielded = 0
-                for _ in reader:
-                    yielded += 1
-                    if yielded > 100_000:
-                        raise AssertionError(
-                            f"iterator yielded over 100k items "
-                            f"(seed=0x{seed:X}, iter={i}, size={size}) "
-                            f"— possible unbounded loop"
-                        )
-            except MieDecoderError:
-                # Decode-time errors are documented and acceptable —
-                # the fuzz harness exists to catch IndexError,
-                # struct.error, RecursionError, etc.
-                pass
-            except AssertionError:
-                raise
-            except Exception as exc:
-                raise AssertionError(
-                    f"Unexpected non-MieDecoderError during iteration "
-                    f"(seed=0x{seed:X}, iter={i}, size={size}): "
-                    f"{type(exc).__name__}: {exc}\n"
-                    f"First 32 bytes: {bytes(payload[:32]).hex()}"
-                ) from exc
+                try:
+                    yielded = 0
+                    for _ in reader:
+                        yielded += 1
+                        if yielded > 100_000:
+                            raise AssertionError(
+                                f"iterator yielded over 100k items "
+                                f"(seed=0x{seed:X}, iter={i}, size={size}) "
+                                f"— possible unbounded loop"
+                            )
+                except MieDecoderError:
+                    # Decode-time errors are documented and acceptable —
+                    # the fuzz harness exists to catch IndexError,
+                    # struct.error, RecursionError, etc.
+                    pass
+                except AssertionError:
+                    raise
+                except Exception as exc:
+                    raise AssertionError(
+                        f"Unexpected non-MieDecoderError during iteration "
+                        f"(seed=0x{seed:X}, iter={i}, size={size}): "
+                        f"{type(exc).__name__}: {exc}\n"
+                        f"First 32 bytes: {bytes(payload[:32]).hex()}"
+                    ) from exc
+        finally:
+            for h in mie_log.handlers[:]:
+                mie_log.removeHandler(h)
+            for h in saved_handlers:
+                mie_log.addHandler(h)
+            mie_log.setLevel(saved_level)
+            mie_log.propagate = saved_propagate
 
     @pytest.mark.requirement("L1-ROB-001")
     @pytest.mark.requirement("L2-CLI-009")
