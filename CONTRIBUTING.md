@@ -172,6 +172,67 @@ the runner updates an oracle only after Rust and Python already agree.
 The current pre-commit hook runs the Rust checks documented above. Run the
 Python tests manually when changing `python/`.
 
+## Fuzz testing
+
+Each implementation carries a deterministic fuzz harness asserting the
+**L1-ROB-001** robustness contract: arbitrary input bytes must never panic
+(Rust) or raise anything other than a documented `MieDecoderError` (Python).
+There are four harnesses — a reader and a dump harness per language — all
+seeded from the same `xorshift64` PRNG so a failure is reproducible across
+implementations:
+
+| Harness | Test |
+|---------|------|
+| Rust reader | `tests/integration.rs::fuzz_arbitrary_bytes_never_panic` |
+| Rust dump | `tests/integration.rs::dump_arbitrary_bytes_never_panics` |
+| Python reader | `tests/test_e2e.py::TestFuzzHarness::test_arbitrary_bytes_never_raise_unexpected_exceptions` |
+| Python dump | `tests/test_e2e.py::TestFuzzHarness::test_dump_arbitrary_bytes_never_raise_unexpected_exceptions` |
+
+Run them (default 256 iterations):
+
+```bash
+# Rust
+cargo test --test integration fuzz_arbitrary_bytes_never_panic
+cargo test --test integration dump_arbitrary_bytes_never_panics
+
+# Python (whole class = both reader + dump)
+poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness
+```
+
+### Burn-in iterations
+
+All four harnesses honor the `MIE_FUZZ_ITERATIONS` environment variable; the
+scheduled [`.github/workflows/fuzz.yml`](.github/workflows/fuzz.yml) job runs
+25 000 iterations daily. The PRNG is deterministic, so a burn-in is a strict
+superset of the default run (same first 256 inputs); a failure prints the
+reproducer seed.
+
+```bash
+MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic -- --nocapture
+MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest -s tests/test_e2e.py::TestFuzzHarness
+```
+
+On Windows PowerShell set the variable separately: `$env:MIE_FUZZ_ITERATIONS =
+"25000"` (and `Remove-Item Env:\MIE_FUZZ_ITERATIONS` after).
+
+### Output model (why some harnesses are noisy and others are silent)
+
+- **Reader harnesses log diagnostics.** The reader emits WARN/ERROR through the
+  logger — Rust to process **stderr** (`src/log.rs`, default `WARN`), Python
+  through the `mie_decoder` logger (the test calls `configure_logging("WARNING")`
+  so the records reach stderr). Both `cargo test` and `pytest` **capture**
+  stderr by default and replay it only on failure; pass `--nocapture` (cargo)
+  or `-s` (pytest) to **stream it live**. Heavy WARN/ERROR output on random
+  input is expected — it's the harness exercising sync recovery and
+  invariant rejection. For a long burn-in, prefer `--nocapture` / `-s` so the
+  output streams rather than buffering tens of MB.
+- **Dump harnesses are silent by design.** The `dump` subcommand emits **no
+  logger events** — its `!! …` notes are part of the hex *report* it writes to
+  the caller's writer, and the fuzz tests point that writer at a throwaway
+  in-memory sink. So the dump harnesses print nothing even under `--nocapture` /
+  `-s`; there is no diagnostic stream to surface (only a panic/assertion would
+  appear).
+
 ## Continuous integration
 
 GitHub Actions runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on
