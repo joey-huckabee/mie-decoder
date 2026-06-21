@@ -42,8 +42,15 @@ jobs:
           rustup update stable --no-self-update
           rustup default stable
 
-      - name: Run the L1-ROB-001 fuzz harness (burn-in)
+      # Both L1-ROB-001 harnesses run as separate steps so the Actions UI
+      # shows pass/fail per harness. `--nocapture` streams each harness's
+      # logger diagnostics (reader: sync/invariant WARNs; dump: scan-stop
+      # anomaly WARNs, L2-CLI-013) live in the job log.
+      - name: Reader fuzz harness (burn-in)
         run: cargo test --locked --test integration fuzz_arbitrary_bytes_never_panic -- --nocapture
+
+      - name: Dump fuzz harness (burn-in)
+        run: cargo test --locked --test integration dump_arbitrary_bytes_never_panics -- --nocapture
 
   fuzz-python:
     name: Python fuzz burn-in
@@ -68,5 +75,9 @@ jobs:
       - name: Synchronize locked dependencies
         run: poetry -C python sync --no-interaction --no-ansi
 
-      - name: Run the L1-ROB-001 fuzz harness (burn-in)
-        run: poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness -v
+      # The TestFuzzHarness class runs both the reader and dump harnesses.
+      # `-s` (capture off) lets the harnesses' `mie_decoder` WARN/ERROR
+      # diagnostics stream live into the job log, matching the Rust job's
+      # `--nocapture`.
+      - name: Run the L1-ROB-001 fuzz harnesses (burn-in)
+        run: poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness -v -s
