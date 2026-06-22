@@ -856,3 +856,179 @@ fn dump_arbitrary_bytes_never_panics() {
         }
     }
 }
+
+// ── L1-MRG / L2-MRG: multi-file time-sorted merge ─────────────────────────
+
+/// An RT15 SA11 Receive record placed at a chosen IRIG instant, by patching
+/// the timestamp triple of the canonical fixture (bytes 2..8 = the three IRIG
+/// timestamp words). Lets merge tests position records at specific times.
+fn rt15_record_at(
+    day: u16,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    micro: u32,
+    freerun: bool,
+) -> Vec<u8> {
+    let mut rec = record_rt15_sa11_rcv();
+    let fr = u16::from(freerun) << 15;
+    let upper: u16 = fr | ((day & 0x1FF) << 5) | u16::from(hour & 0x1F);
+    let middle: u16 = (u16::from(minute & 0x3F) << 10)
+        | (u16::from(second & 0x3F) << 4)
+        | ((micro >> 16) as u16 & 0xF);
+    let lower: u16 = (micro & 0xFFFF) as u16;
+    rec[2..4].copy_from_slice(&upper.to_le_bytes());
+    rec[4..6].copy_from_slice(&middle.to_le_bytes());
+    rec[6..8].copy_from_slice(&lower.to_le_bytes());
+    rec
+}
+
+/// Requirements: L1-MRG-001, L2-MRG-002, L2-MRG-005
+#[test]
+fn merge_orders_records_across_files_by_absolute_time() {
+    use mie_decoder::merge::MergedRecordIter;
+
+    // File A: t=100µs, 300µs. File B: t=200µs, 400µs. Same day/h/m/s so the
+    // microsecond field is the discriminator; merged order must interleave.
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 300, false),
+    ]
+    .concat();
+    let b = [
+        rt15_record_at(192, 15, 54, 50, 200, false),
+        rt15_record_at(192, 15, 54, 50, 400, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&a);
+    let fb = TempFile::new(&b);
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+
+    let merged = MergedRecordIter::new(&readers, None, false).unwrap();
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    assert_eq!(msgs.len(), 4, "all four records survive the merge");
+
+    // Absolute microseconds include the day/hour/min/sec base; the proof of a
+    // correct interleave (A:100,300 + B:200,400 → 100,200,300,400) is that the
+    // merged keys are strictly increasing.
+    let us: Vec<u64> = msgs
+        .iter()
+        .map(|m| m.timestamp.to_microseconds(None).unwrap())
+        .collect();
+    assert!(
+        us.windows(2).all(|w| w[0] < w[1]),
+        "merged stream is not strictly time-ordered: {us:?}"
+    );
+
+    // Global DELTA (L2-MRG-005): first occurrence 0.0, then non-negative gaps
+    // on the unified timeline (all four share one RT/SA/dir key).
+    assert_eq!(msgs[0].delta, Some(0.0));
+    for m in &msgs[1..] {
+        assert!(m.delta.unwrap() >= 0.0);
+    }
+}
+
+/// Requirements: L2-MRG-001
+#[test]
+fn merge_single_input_is_unchanged() {
+    use mie_decoder::merge::MergedRecordIter;
+    // A one-file "merge" yields exactly the file's records, in order.
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 10, false),
+        rt15_record_at(192, 15, 54, 50, 20, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&a);
+    let readers = vec![MieFileReader::new(fa.path()).unwrap()];
+    let merged = MergedRecordIter::new(&readers, None, false).unwrap();
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    assert_eq!(msgs.len(), 2);
+}
+
+/// Requirements: L1-MRG-002, L2-MRG-003
+#[test]
+fn merge_rejects_freerun_leading_input() {
+    use mie_decoder::error::MieErrorKind;
+    use mie_decoder::merge::MergedRecordIter;
+
+    let good = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 300, false),
+    ]
+    .concat();
+    // Leading record carries the freerun bit → no calendar time.
+    let freerun = [
+        rt15_record_at(0, 0, 0, 0, 0, true),
+        rt15_record_at(0, 0, 0, 1, 0, true),
+    ]
+    .concat();
+    let fa = TempFile::new(&good);
+    let fb = TempFile::new(&freerun);
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    match MergedRecordIter::new(&readers, None, false) {
+        Err(e) => assert_eq!(e.kind(), MieErrorKind::IncompatibleMergeInputs),
+        Ok(_) => panic!("expected IncompatibleMergeInputs for a freerun-leading input"),
+    }
+}
+
+/// Requirements: L1-MRG-002, L2-MRG-003
+#[test]
+fn merge_rejects_standard_format_input() {
+    use mie_decoder::error::MieErrorKind;
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::models::TimestampFormat;
+    use mie_decoder::reader::ReaderOptions;
+
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 300, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&a);
+    // Forcing the Standard timestamp format makes the records decode as
+    // Standard timestamps, which carry no shared epoch → not mergeable.
+    let readers = vec![
+        MieFileReader::with_options(
+            fa.path(),
+            ReaderOptions {
+                time_format: TimestampFormat::Standard,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        MieFileReader::with_options(
+            fa.path(),
+            ReaderOptions {
+                time_format: TimestampFormat::Standard,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    ];
+    match MergedRecordIter::new(&readers, None, false) {
+        Err(e) => assert_eq!(e.kind(), MieErrorKind::IncompatibleMergeInputs),
+        Ok(_) => panic!("expected IncompatibleMergeInputs for a Standard-format input"),
+    }
+}
+
+/// Requirements: L2-MRG-001
+#[test]
+fn read_manifest_skips_blanks_and_comments() {
+    let body = "# a comment\n\nfile1.mie\n  file2.mie  \n# another\nfile3.mie\n";
+    let f = TempFile::new(body.as_bytes());
+    let paths = mie_decoder::merge::read_manifest(f.path()).unwrap();
+    assert_eq!(
+        paths,
+        vec![
+            PathBuf::from("file1.mie"),
+            PathBuf::from("file2.mie"),
+            PathBuf::from("file3.mie"),
+        ]
+    );
+}

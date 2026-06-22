@@ -121,6 +121,17 @@ pub enum MieError {
         std_score: i32,
         records_probed: u32,
     },
+
+    /// L1-EXIT-009: a multi-file merge cannot order its inputs on a common
+    /// absolute timeline — one input is Standard-format, leads with a
+    /// freerun IRIG record, or the set mixes timestamp formats. Raised
+    /// before any output is written; maps to CLI exit code `6`. `detail`
+    /// names the specific reason. See L2-MRG-003.
+    IncompatibleMergeInputs {
+        file_index: usize,
+        path: PathBuf,
+        detail: String,
+    },
 }
 
 /// Discriminant identifying which variant of [`MieError`] occurred.
@@ -142,6 +153,7 @@ pub enum MieErrorKind {
     ClobberRefused,
     UnrecoverableSyncLoss,
     TimestampFormatMismatch,
+    IncompatibleMergeInputs,
 }
 
 impl MieError {
@@ -163,6 +175,7 @@ impl MieError {
             Self::ClobberRefused { .. } => MieErrorKind::ClobberRefused,
             Self::UnrecoverableSyncLoss { .. } => MieErrorKind::UnrecoverableSyncLoss,
             Self::TimestampFormatMismatch { .. } => MieErrorKind::TimestampFormatMismatch,
+            Self::IncompatibleMergeInputs { .. } => MieErrorKind::IncompatibleMergeInputs,
         }
     }
 
@@ -317,6 +330,18 @@ impl fmt::Display for MieError {
                  (IRIG score: {irig_score}, Standard score: {std_score} over {records_probed} \
                  record(s) probed). Pass --time-format irig or --time-format standard to \
                  force the choice, or verify the file is actually an MIE recording."
+            ),
+            Self::IncompatibleMergeInputs {
+                file_index,
+                path,
+                detail,
+            } => write!(
+                f,
+                "Cannot time-merge input #{file_index} ({}): {detail}. \
+                 Multi-file merge requires every input to be calendar-locked IRIG \
+                 (Standard-format, freerun IRIG, and mixed-format sets cannot be \
+                 ordered on a common absolute timeline).",
+                path.display()
             ),
         }
     }

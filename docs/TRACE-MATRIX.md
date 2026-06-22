@@ -88,13 +88,13 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L1-DLT-001 | L2-MRG-005, L2-RDR-009, L2-RDR-010, L2-RDR-016, L2-RDR-017, L2-RDR-018, L2-RDR-019 | _(none)_ | Partially Implemented |
+| L1-DLT-001 | L2-MRG-005, L2-RDR-009, L2-RDR-010, L2-RDR-016, L2-RDR-017, L2-RDR-018, L2-RDR-019 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L2-MRG-005 | _(none)_ | _(TBD)_ | Draft |
+| L2-MRG-005 | _(none)_ | `tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Implemented |
 | L2-RDR-009 | _(none)_ | `python/tests/test_e2e.py::test_delta_same_rtmsg`<br>`python/tests/test_models.py::test_delta_key`<br>`tests/integration.rs::delta_tracker_per_rt_msg_key` | Implemented |
 | L2-RDR-010 | _(none)_ | `python/tests/test_e2e.py::test_delta_first_occurrence_is_zero` | Implemented |
 | L2-RDR-016 | _(none)_ | `python/tests/test_e2e.py::test_errored_record_participates_in_delta` | Implemented |
@@ -122,7 +122,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CLI-002 | _(none)_ | `python/tests/test_e2e.py::test_cli_decode_output_file`<br>`src/cli.rs::parse_decode_minimal_ok`<br>`tests/cli.rs::decode_happy_path_writes_csv_with_header_and_one_row` | Implemented |
 | L2-CLI-008 | L3-PY-010, L3-RS-008 | `python/tests/test_e2e.py::test_cli_count_subcommand`<br>`src/cli.rs::parse_count_help_returns_help_requested`<br>`tests/cli.rs::count_subcommand_emits_integer_to_stdout_and_status_to_stderr`<br>`tests/cli.rs::help_exits_zero_and_lists_all_subcommands` | Implemented |
 | L2-CLI-009 | _(none)_ | `python/tests/test_e2e.py::test_cli_dump_missing_file`<br>`python/tests/test_e2e.py::test_cli_dump_raw`<br>`python/tests/test_e2e.py::test_cli_dump_records`<br>`python/tests/test_e2e.py::test_dump_arbitrary_bytes_never_raise_unexpected_exceptions`<br>`src/cli.rs::parse_dump_help_returns_help_requested`<br>`src/dump.rs::raw_dump_format`<br>`src/dump.rs::raw_dump_offset_beyond_eof_yields_empty`<br>`src/dump.rs::record_dump_handles_one_record`<br>`tests/cli.rs::dump_records_outputs_hex_to_stdout`<br>`tests/cli.rs::help_exits_zero_and_lists_all_subcommands`<br>`tests/integration.rs::dump_arbitrary_bytes_never_panics` | Implemented |
-| L2-CLI-010 | _(none)_ | `python/tests/test_config.py::test_bad_rt_value_is_usage_error`<br>`python/tests/test_config.py::test_exclude_rts_cli`<br>`python/tests/test_config.py::test_exclude_types_cli`<br>`src/cli.rs::all_filter_flags_take_single_value`<br>`src/cli.rs::filter_flag_accepts_comma_separated_values`<br>`src/cli.rs::filter_flag_accepts_eq_form`<br>`src/cli.rs::filter_flag_does_not_eat_positional_input`<br>`src/cli.rs::filter_flag_old_greedy_form_fails_loudly`<br>`src/cli.rs::filter_flag_repeats_accumulate` | Implemented |
+| L2-CLI-010 | _(none)_ | `python/tests/test_config.py::test_bad_rt_value_is_usage_error`<br>`python/tests/test_config.py::test_exclude_rts_cli`<br>`python/tests/test_config.py::test_exclude_types_cli`<br>`src/cli.rs::all_filter_flags_take_single_value`<br>`src/cli.rs::filter_flag_accepts_comma_separated_values`<br>`src/cli.rs::filter_flag_accepts_eq_form`<br>`src/cli.rs::filter_flag_does_not_eat_positional_input`<br>`src/cli.rs::filter_flag_repeats_accumulate`<br>`src/cli.rs::filter_flag_takes_single_value_rest_are_positional_inputs` | Implemented |
 | L2-CLI-013 | _(none)_ | `python/tests/test_e2e.py::test_dump_logs_warning_on_truncated_record`<br>`src/dump.rs::record_dump_notes_and_warns_truncated_record` | Implemented |
 | L2-FLT-001 | L3-PY-013, L3-RS-010 | `python/tests/test_config.py::test_end_to_end_with_reader`<br>`python/tests/test_config.py::test_exclude_all`<br>`python/tests/test_config.py::test_exclude_by_bus`<br>`python/tests/test_config.py::test_exclude_by_rt`<br>`python/tests/test_config.py::test_exclude_by_type`<br>`python/tests/test_config.py::test_exclude_takes_precedence_over_include`<br>`python/tests/test_config.py::test_include_by_bus`<br>`python/tests/test_config.py::test_include_by_rt_drops_non_matches`<br>`python/tests/test_config.py::test_include_by_type`<br>`python/tests/test_config.py::test_include_comma_separated_values`<br>`python/tests/test_config.py::test_include_repeated_flag_accumulates`<br>`python/tests/test_config.py::test_include_rts_no_match_yields_header_only`<br>`python/tests/test_config.py::test_include_subaddress_drops_spurious_without_command_word`<br>`python/tests/test_config.py::test_include_subaddresses_cli`<br>`python/tests/test_config.py::test_multiple_include_sets_all_must_match`<br>`python/tests/test_config.py::test_no_filters_active`<br>`python/tests/test_config.py::test_no_filters_passes_all`<br>`python/tests/test_config.py::test_spurious_without_command_word_survives_rt_filter`<br>`src/filter.rs::empty_config_is_inactive`<br>`src/filter.rs::include_filters_drop_non_matches`<br>`src/filter.rs::iterator_adapter`<br>`tests/cli.rs::exclude_rts_filter_drops_matching_records`<br>`tests/cli.rs::include_rts_filter_keeps_only_matching_records`<br>`tests/integration.rs::filtering_drops_excluded_rts` | Implemented |
 | L2-FLT-002 | _(none)_ | `python/tests/test_config.py::test_or_logic` | Implemented |
@@ -308,16 +308,16 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L1-MRG-001 | L2-MRG-001, L2-MRG-002, L2-MRG-004 | _(none)_ | Draft |
-| L1-MRG-002 | L2-MRG-003 | _(none)_ | Draft |
+| L1-MRG-001 | L2-MRG-001, L2-MRG-002, L2-MRG-004 | `tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Partially Implemented |
+| L1-MRG-002 | L2-MRG-003 | `tests/integration.rs::merge_rejects_freerun_leading_input`<br>`tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L2-MRG-001 | _(none)_ | _(TBD)_ | Draft |
-| L2-MRG-002 | L3-PY-014, L3-RS-014 | _(TBD)_ | Draft |
-| L2-MRG-003 | _(none)_ | _(TBD)_ | Draft |
+| L2-MRG-001 | _(none)_ | `src/cli.rs::filter_flag_takes_single_value_rest_are_positional_inputs`<br>`src/merge.rs::glob_match_wildcards`<br>`tests/integration.rs::merge_single_input_is_unchanged`<br>`tests/integration.rs::read_manifest_skips_blanks_and_comments` | Implemented |
+| L2-MRG-002 | L3-PY-014, L3-RS-014 | `src/merge.rs::glob_match_wildcards`<br>`src/merge.rs::heap_entry_orders_by_key_tuple`<br>`tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Partially Implemented |
+| L2-MRG-003 | _(none)_ | `tests/integration.rs::merge_rejects_freerun_leading_input`<br>`tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
 | L2-MRG-004 | _(none)_ | _(TBD)_ | Draft |
 
 ---
@@ -341,20 +341,20 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | CONF | 1 | 6 | 0 | 3 | 0 | 5 | 0 |
 | EXIT | 9 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| MRG | 2 | 5 | 0 | 0 | 0 | 0 | 0 |
+| MRG | 2 | 5 | 0 | 4 | 0 | 4 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
 | WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 14 | 0 | 9 | 0 | 13 |
-| RS | 0 | 0 | 13 | 0 | 7 | 0 | 12 |
-| **Total** | **29** | **118** | **29** | **108** | **18** | **112** | **27** |
+| RS | 0 | 0 | 13 | 0 | 8 | 0 | 13 |
+| **Total** | **29** | **118** | **29** | **112** | **19** | **116** | **28** |
 
 The countable requirement set is every L2 and L3 requirement plus the 7 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 132 of 154 (85.7%).
+**Tested by at least one test marker**: 137 of 154 (89.0%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 145 of 154 (94.2%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 150 of 154 (97.4%).
 
 ### Orphan check
 

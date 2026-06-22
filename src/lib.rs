@@ -12,6 +12,7 @@ pub mod dump;
 pub mod error;
 pub mod filter;
 pub mod log;
+pub mod merge;
 pub mod models;
 pub mod reader;
 pub mod sync;

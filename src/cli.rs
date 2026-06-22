@@ -106,7 +106,13 @@ enum Command {
 
 #[derive(Debug, Default)]
 struct DecodeArgs {
-    input: PathBuf,
+    /// One or more positional input paths. Mutually exclusive with
+    /// `manifest` / `glob` (L2-MRG-001). More than one resolved input ⇒ merge.
+    inputs: Vec<PathBuf>,
+    /// `--manifest <file>`: read input paths from a file (one per line).
+    manifest: Option<PathBuf>,
+    /// `--glob <pattern>`: expand a single-directory `*`/`?` filename glob.
+    glob: Option<String>,
     output: Option<PathBuf>,
     inline_errors: bool,
     no_clobber: bool,
@@ -161,6 +167,9 @@ mod exit_code {
     /// Configuration error: config file not found, malformed TOML, or an
     /// invalid configuration value.
     pub const CONFIG: u8 = 5;
+    /// Merge-incompatible inputs: a multi-file merge whose inputs cannot be
+    /// ordered on a common absolute timeline (L1-EXIT-009 / L2-MRG-003).
+    pub const MERGE_INCOMPATIBLE: u8 = 6;
 }
 
 /// A subcommand failure carrying the exit code it should map to. Lets the
@@ -386,7 +395,6 @@ fn split_csv(s: &str) -> Vec<String> {
 
 fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
     let mut args = DecodeArgs::default();
-    let mut input_seen = false;
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -437,13 +445,25 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--format=") => {
                 args.output_format = Some(s["--format=".len()..].to_string());
             }
+            "--manifest" => {
+                args.manifest = Some(PathBuf::from(next_value("--manifest", iter)?));
+            }
+            s if s.starts_with("--manifest=") => {
+                args.manifest = Some(PathBuf::from(&s["--manifest=".len()..]));
+            }
+            "--glob" => {
+                args.glob = Some(next_value("--glob", iter)?);
+            }
+            s if s.starts_with("--glob=") => {
+                args.glob = Some(s["--glob=".len()..].to_string());
+            }
             // Filter flags: each takes ONE value. Multiple values either
             // repeat the flag or comma-separate within one value:
             //   --include-rts 15
             //   --include-rts 15,20,31
             //   --include-rts 15 --include-rts 31
-            // Any of those leaves a trailing positional like `file.mie`
-            // free to bind to `args.input`. Both space- and `=`-form
+            // Any of those leaves trailing positionals like `file.mie`
+            // free to bind to `args.inputs`. Both space- and `=`-form
             // value syntax are accepted.
             "--exclude-types" => {
                 for v in split_csv(&next_value("--exclude-types", iter)?) {
@@ -541,18 +561,29 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with('-') => {
                 return Err(format!("unknown decode option: {s}").into());
             }
-            _ => {
-                if input_seen {
-                    return Err(format!("unexpected positional argument: {arg}").into());
-                }
-                args.input = PathBuf::from(arg);
-                input_seen = true;
-            }
+            // Positional input path(s). One or more is accepted; more than one
+            // resolved input triggers the time-sorted merge (L2-MRG-001).
+            _ => args.inputs.push(PathBuf::from(arg)),
         }
     }
 
-    if !input_seen {
-        return Err("decode requires an input file".to_string().into());
+    // Exactly one input *method* (positionals XOR --manifest XOR --glob).
+    let methods = usize::from(!args.inputs.is_empty())
+        + usize::from(args.manifest.is_some())
+        + usize::from(args.glob.is_some());
+    if methods == 0 {
+        return Err(
+            "decode requires an input file (positional, --manifest, or --glob)"
+                .to_string()
+                .into(),
+        );
+    }
+    if methods > 1 {
+        return Err(
+            "decode accepts only one input method: positional paths, --manifest, or --glob — not a combination"
+                .to_string()
+                .into(),
+        );
     }
     Ok(args)
 }
@@ -754,6 +785,10 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, CliErr
 fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliError> {
     let cfg = resolve_config(&globals)?;
 
+    // Resolve the input set before `with_overrides` consumes the filter
+    // fields of `args` (so we can still read inputs/manifest/glob).
+    let input_paths = resolve_inputs(&args)?;
+
     let cfg = cfg.with_overrides(ConfigOverrides {
         time_format: args.time_format,
         strict: args.strict,
@@ -789,59 +824,157 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
         )));
     }
 
-    let reader = open_reader(&args.input, &cfg)?;
-    log_info!(
-        "opened {} ({} bytes)",
-        reader.path().display(),
-        reader.file_size()
-    );
+    // Open a reader per resolved input file (L2-MRG-001). `input_paths` was
+    // resolved above, before `with_overrides` consumed the filter fields.
+    let readers: Vec<MieFileReader> = input_paths
+        .iter()
+        .map(|p| open_reader(p, &cfg))
+        .collect::<Result<_, _>>()?;
+    for r in &readers {
+        log_info!("opened {} ({} bytes)", r.path().display(), r.file_size());
+    }
 
-    // Build the iterator chain once. Exactly one of the three branches
-    // below consumes it.
-    let messages = reader.iter().filter_messages(cfg.filters.clone());
-
-    // WriteOptions populated once with both file-output safety checks
-    // (input/output collision per L2-WRT-014 and no-clobber per
-    // L2-WRT-017) and L1-EXIT-004 allow_partial.
+    // WriteOptions: file-output safety checks (collision per L2-WRT-014,
+    // no-clobber per L2-WRT-017) and L1-EXIT-004 allow_partial. For a single
+    // input the writer performs its own input/output collision check; for a
+    // merge we check the output against *every* input here and disable the
+    // writer's single-path check.
+    if readers.len() > 1 {
+        if let Some(out) = args.output.as_deref() {
+            check_output_collision(out, &input_paths)?;
+        }
+    }
     let write_opts = WriteOptions {
-        input_path: Some(args.input.clone()),
+        input_path: if readers.len() == 1 {
+            input_paths.first().cloned()
+        } else {
+            None
+        },
         no_clobber: cfg.no_clobber,
         allow_partial: cfg.allow_partial,
     };
 
-    // Stdout is `output == None`; the spec's path-safety checks are
-    // file-only so they are bypassed here. Separate mode requires a
-    // file path; stdout in that case forces inline behavior with a
-    // WARN (you cannot split stdout into two streams) per L3-RS-009.
-    let write_result = if cfg.error_mode == ErrorMode::Separate {
-        match args.output.as_ref() {
+    // One input → the existing single-file path (unchanged, monomorphized,
+    // per-file DELTA). Two or more → the time-sorted k-way merge with global
+    // DELTA (L2-MRG-002 / L2-MRG-005). Both feed the same generic writer.
+    let write_result = if readers.len() == 1 {
+        let messages = readers[0].iter().filter_messages(cfg.filters.clone());
+        write_messages(messages, args.output.as_deref(), cfg.error_mode, write_opts)
+    } else {
+        match crate::merge::MergedRecordIter::new(
+            &readers,
+            cfg.standard_tick_rate_hz,
+            cfg.allow_partial,
+        ) {
+            Ok(merged) => write_messages(
+                merged.filter_messages(cfg.filters.clone()),
+                args.output.as_deref(),
+                cfg.error_mode,
+                write_opts,
+            ),
+            // Incompatible inputs (L2-MRG-003) and prime-time file failures
+            // surface here, before any output. Route through the same
+            // classifier so each maps to its proper exit code.
+            Err(e) => return Ok(classify_decode_exit(Err(e), 0)),
+        }
+    };
+
+    // Cumulative sync-loss count across all inputs drives the L1-EXIT-005
+    // exit-class summary. Safe to query after the iterator(s) are consumed.
+    let sync_losses: u64 = readers.iter().map(|r| r.sync_losses()).sum();
+
+    Ok(classify_decode_exit(write_result, sync_losses))
+}
+
+/// Resolve the `decode` input set from exactly one method (positionals,
+/// `--manifest`, or `--glob`; mutual exclusivity already enforced at parse
+/// time), enforcing the `MAX_MERGE_FILES` cap (L2-MRG-001).
+fn resolve_inputs(args: &DecodeArgs) -> Result<Vec<PathBuf>, CliError> {
+    let paths = if let Some(manifest) = &args.manifest {
+        crate::merge::read_manifest(manifest).map_err(|e| {
+            CliError::runtime(format!(
+                "failed to read manifest {}: {e}",
+                manifest.display()
+            ))
+        })?
+    } else if let Some(pattern) = &args.glob {
+        crate::merge::expand_glob(pattern)
+            .map_err(|e| CliError::runtime(format!("failed to expand --glob {pattern:?}: {e}")))?
+    } else {
+        args.inputs.clone()
+    };
+
+    if paths.is_empty() {
+        return Err(CliError::usage(match (&args.manifest, &args.glob) {
+            (Some(m), _) => format!("manifest {} contains no input paths", m.display()),
+            (_, Some(g)) => format!("--glob {g:?} matched no files"),
+            _ => "decode requires at least one input file".to_string(),
+        }));
+    }
+    if paths.len() > crate::merge::MAX_MERGE_FILES {
+        return Err(CliError::usage(format!(
+            "too many input files: {} (maximum is {}); split the set into smaller batches",
+            paths.len(),
+            crate::merge::MAX_MERGE_FILES
+        )));
+    }
+    Ok(paths)
+}
+
+/// Reject a merge whose output path resolves to one of its inputs
+/// (L2-WRT-014 extended across the input set). Best-effort canonicalization;
+/// falls back to a literal path comparison when a path cannot be canonicalized
+/// (e.g. the output does not exist yet).
+fn check_output_collision(output: &Path, inputs: &[PathBuf]) -> Result<(), CliError> {
+    let out_canon = std::fs::canonicalize(output).ok();
+    for inp in inputs {
+        let collides = match (&out_canon, std::fs::canonicalize(inp).ok()) {
+            (Some(o), Some(i)) => *o == i,
+            _ => output == inp.as_path(),
+        };
+        if collides {
+            return Err(CliError::runtime(format!(
+                "output path {} resolves to merge input {}; choose a different output path",
+                output.display(),
+                inp.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Route a message stream to the CSV writer per the configured error mode.
+/// Generic over the iterator so both the single-file reader and the merge
+/// iterator are monomorphized (no dynamic dispatch on the hot path).
+fn write_messages<I>(
+    messages: I,
+    output: Option<&Path>,
+    error_mode: ErrorMode,
+    write_opts: WriteOptions,
+) -> crate::error::MieResult<crate::writer::WriteOutcome>
+where
+    I: Iterator<Item = crate::error::MieResult<crate::models::MieMessage>>,
+{
+    // Separate mode requires a file path; stdout in that case forces inline
+    // behavior with a WARN (you cannot split stdout) per L3-RS-009.
+    if error_mode == ErrorMode::Separate {
+        match output {
             None => {
-                // Stdout can't be split; force inline behavior with
-                // a warning and ignore file-only write options.
                 crate::log_warn!("stdout output forces inline error mode");
                 write_csv(messages, None, WriteOptions::default())
             }
-            Some(output) => write_csv_split(messages, output, write_opts).inspect(|outcome| {
+            Some(out) => write_csv_split(messages, out, write_opts).inspect(|outcome| {
                 log_info!(
                     "wrote {} messages + {} errors to {}",
                     outcome.normal_count,
                     outcome.error_count,
-                    output.display()
+                    out.display()
                 );
             }),
         }
     } else {
-        write_csv(messages, args.output.as_deref(), write_opts)
-    };
-
-    // After the iterator is exhausted, the reader's atomic sync_losses
-    // counter is authoritative for the L1-EXIT-005 exit-class summary
-    // (Complete vs PartialRecovered). Querying here is safe because
-    // the iterator (which borrows the reader) was already moved into
-    // and consumed by write_csv* above.
-    let sync_losses = reader.sync_losses();
-
-    Ok(classify_decode_exit(write_result, sync_losses))
+        write_csv(messages, output, write_opts)
+    }
 }
 
 /// Map a writer-side result + the reader's sync-loss count to an
@@ -903,6 +1036,14 @@ fn classify_decode_exit(
                  pass --allow-partial to preserve the rows decoded so far"
             );
             ExitCode::from(exit_code::SYNC_LOSS)
+        }
+        Err(e @ MieError::IncompatibleMergeInputs { .. }) => {
+            // L1-EXIT-009 / L2-MRG-003: inputs cannot be ordered on a common
+            // absolute timeline. Rejected before any output was written.
+            log_error!("{e}");
+            eprintln!("Error: {e}");
+            log_info!("decode exit class: merge-incompatible");
+            ExitCode::from(exit_code::MERGE_INCOMPATIBLE)
         }
         Err(e) => {
             log_error!("{e}");
@@ -1041,7 +1182,7 @@ mod tests {
     fn parse_decode_minimal_ok() {
         let mut it = args(&["recording.mie"]);
         let parsed = parse_decode(&mut it).unwrap();
-        assert_eq!(parsed.input, PathBuf::from("recording.mie"));
+        assert_eq!(parsed.inputs, vec![PathBuf::from("recording.mie")]);
     }
 
     /// Regression test for the team's exact reproducer:
@@ -1053,7 +1194,7 @@ mod tests {
     fn filter_flag_does_not_eat_positional_input() {
         let mut it = args(&["--include-rts", "15", "file.mie"]);
         let parsed = parse_decode(&mut it).unwrap();
-        assert_eq!(parsed.input, PathBuf::from("file.mie"));
+        assert_eq!(parsed.inputs, vec![PathBuf::from("file.mie")]);
         assert_eq!(parsed.include_rts, vec![15]);
     }
 
@@ -1063,7 +1204,7 @@ mod tests {
     fn filter_flag_accepts_comma_separated_values() {
         let mut it = args(&["--include-rts", "15,20,31", "file.mie"]);
         let parsed = parse_decode(&mut it).unwrap();
-        assert_eq!(parsed.input, PathBuf::from("file.mie"));
+        assert_eq!(parsed.inputs, vec![PathBuf::from("file.mie")]);
         assert_eq!(parsed.include_rts, vec![15, 20, 31]);
     }
 
@@ -1073,7 +1214,7 @@ mod tests {
     fn filter_flag_repeats_accumulate() {
         let mut it = args(&["--include-rts", "15", "--include-rts", "31", "file.mie"]);
         let parsed = parse_decode(&mut it).unwrap();
-        assert_eq!(parsed.input, PathBuf::from("file.mie"));
+        assert_eq!(parsed.inputs, vec![PathBuf::from("file.mie")]);
         assert_eq!(parsed.include_rts, vec![15, 31]);
     }
 
@@ -1083,7 +1224,7 @@ mod tests {
     fn filter_flag_accepts_eq_form() {
         let mut it = args(&["--include-rts=15,20", "file.mie"]);
         let parsed = parse_decode(&mut it).unwrap();
-        assert_eq!(parsed.input, PathBuf::from("file.mie"));
+        assert_eq!(parsed.inputs, vec![PathBuf::from("file.mie")]);
         assert_eq!(parsed.include_rts, vec![15, 20]);
     }
 
@@ -1101,28 +1242,27 @@ mod tests {
             "rec.mie",
         ]);
         let parsed = parse_decode(&mut it).unwrap();
-        assert_eq!(parsed.input, PathBuf::from("rec.mie"));
+        assert_eq!(parsed.inputs, vec![PathBuf::from("rec.mie")]);
         assert_eq!(parsed.exclude_types, vec![0x20]);
         assert_eq!(parsed.include_buses, vec![crate::models::Bus::A]);
         assert_eq!(parsed.exclude_subaddresses, vec![0, 31]);
     }
 
-    /// Old greedy-form usage now produces a clear error rather than
-    /// silently misbinding the filename.
-    /// Requirements: L2-CLI-010
+    /// A single-value filter flag consumes exactly one value; any further
+    /// tokens are positional inputs. With multi-file input (L2-MRG-001),
+    /// `--include-rts 15 31 file.mie` parses as include-rts=[15] and inputs
+    /// ["31", "file.mie"] — the stray "31" becomes a path (failing later at
+    /// open time) rather than being silently absorbed as a second RT value.
+    /// Requirements: L2-CLI-010, L2-MRG-001
     #[test]
-    fn filter_flag_old_greedy_form_fails_loudly() {
-        // `--include-rts 15 31 file.mie` used to put 15+31 in include
-        // and "file.mie" as input. Now: 15 binds to include, "31" gets
-        // taken as the positional input, "file.mie" is unexpected.
-        // The user gets an error instead of silent miswiring.
+    fn filter_flag_takes_single_value_rest_are_positional_inputs() {
         let mut it = args(&["--include-rts", "15", "31", "file.mie"]);
-        match parse_decode(&mut it) {
-            Err(ParseError::Other(msg)) => {
-                assert!(msg.contains("unexpected positional"));
-            }
-            other => panic!("expected Other(unexpected positional...), got {other:?}"),
-        }
+        let parsed = parse_decode(&mut it).unwrap();
+        assert_eq!(parsed.include_rts, vec![15]);
+        assert_eq!(
+            parsed.inputs,
+            vec![PathBuf::from("31"), PathBuf::from("file.mie")]
+        );
     }
 
     /// Requirements: L2-CLI-012
@@ -1130,7 +1270,7 @@ mod tests {
     fn parse_decode_standard_tick_rate_hz_space_and_eq_forms() {
         let mut it = args(&["--standard-tick-rate-hz", "1000000", "rec.mie"]);
         let parsed = parse_decode(&mut it).unwrap();
-        assert_eq!(parsed.input, PathBuf::from("rec.mie"));
+        assert_eq!(parsed.inputs, vec![PathBuf::from("rec.mie")]);
         assert_eq!(parsed.standard_tick_rate_hz, Some(1_000_000.0));
 
         let mut it = args(&["--standard-tick-rate-hz=2.5e6", "rec.mie"]);
