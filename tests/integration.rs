@@ -1032,3 +1032,34 @@ fn read_manifest_skips_blanks_and_comments() {
         ]
     );
 }
+
+/// L1-ROB-001 for the merge input-resolution surface: a manifest of arbitrary
+/// bytes, an arbitrary glob pattern, and arbitrary glob_match inputs must
+/// never panic — only return Ok/Err (or a bool). Deterministic PRNG.
+/// Requirements: L1-ROB-001, L2-MRG-001
+#[test]
+fn merge_input_resolution_tolerates_arbitrary_bytes() {
+    fn xorshift64(state: &mut u64) -> u64 {
+        let mut x = *state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *state = x;
+        x
+    }
+    let mut state = 0x0DDCD1ECDDC0DEC0u64;
+    for _ in 0..512 {
+        let n = (xorshift64(&mut state) % 96) as usize;
+        let bytes: Vec<u8> = (0..n)
+            .map(|_| (xorshift64(&mut state) & 0xFF) as u8)
+            .collect();
+        let f = TempFile::new(&bytes);
+        // read_manifest: Ok (parsed lines) or Err (non-UTF8) — never panic.
+        let _ = mie_decoder::merge::read_manifest(f.path());
+        // Treat the bytes (lossily) as a glob pattern: matcher + expansion
+        // must not panic on any input.
+        let pat = String::from_utf8_lossy(&bytes);
+        let _ = mie_decoder::merge::glob_match(&pat, "some.name.mie");
+        let _ = mie_decoder::merge::expand_glob(&pat);
+    }
+}

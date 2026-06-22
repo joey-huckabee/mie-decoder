@@ -475,7 +475,14 @@ def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
         )
 
     if args.manifest is not None:
-        paths = read_manifest(args.manifest)
+        try:
+            paths = read_manifest(args.manifest)
+        except UnicodeDecodeError as exc:
+            # A non-text manifest is a runtime input error (exit 1), matching
+            # the Rust reader's read_to_string failure — not a usage error.
+            raise OSError(
+                f"manifest {args.manifest} is not valid UTF-8 text"
+            ) from exc
     elif args.glob is not None:
         paths = expand_glob(args.glob)
     else:

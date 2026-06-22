@@ -151,3 +151,79 @@ def test_glob_match_wildcards() -> None:
 def test_max_merge_files_matches_rust() -> None:
     # The cap is shared in value with the Rust constant (L3-PY-014).
     assert MAX_MERGE_FILES == 256
+
+
+# ── CLI bad-input / cap / robustness (L2-MRG-001, L1-ROB-001) ──────────────
+
+
+@pytest.mark.requirement("L2-MRG-001")
+def test_cli_rejects_combined_input_methods(tmp_path: Path) -> None:
+    from mie_decoder.cli import EXIT_USAGE, main
+
+    out = tmp_path / "o.csv"
+    # positional + --manifest, positional + --glob, --manifest + --glob
+    assert main(["decode", "a.mie", "--manifest", "list.txt", "-o", str(out)]) == EXIT_USAGE
+    assert main(["decode", "a.mie", "--glob", "*.mie", "-o", str(out)]) == EXIT_USAGE
+    assert main(["decode", "--manifest", "l.txt", "--glob", "*.mie", "-o", str(out)]) == EXIT_USAGE
+    assert not out.exists()
+
+
+@pytest.mark.requirement("L2-MRG-001")
+def test_cli_rejects_over_cap(tmp_path: Path) -> None:
+    from mie_decoder.cli import EXIT_USAGE, main
+
+    manifest = tmp_path / "many.txt"
+    manifest.write_text(
+        "\n".join(f"f{i}.mie" for i in range(MAX_MERGE_FILES + 1)) + "\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "o.csv"
+    # Cap is checked before any file is opened, so non-existent paths are fine.
+    assert main(["decode", "--manifest", str(manifest), "-o", str(out)]) == EXIT_USAGE
+    assert not out.exists()
+
+
+@pytest.mark.requirement("L2-MRG-001")
+def test_cli_glob_no_match_is_usage_error(tmp_path: Path) -> None:
+    from mie_decoder.cli import EXIT_USAGE, main
+
+    out = tmp_path / "o.csv"
+    assert main(["decode", "--glob", str(tmp_path / "*.nomatch"), "-o", str(out)]) == EXIT_USAGE
+
+
+@pytest.mark.requirement("L1-ROB-001")
+def test_cli_manifest_missing_is_runtime_error(tmp_path: Path) -> None:
+    from mie_decoder.cli import EXIT_RUNTIME, main
+
+    out = tmp_path / "o.csv"
+    assert main(["decode", "--manifest", str(tmp_path / "nope.txt"), "-o", str(out)]) == EXIT_RUNTIME
+
+
+@pytest.mark.requirement("L1-ROB-001")
+def test_cli_manifest_non_utf8_is_runtime_error(tmp_path: Path) -> None:
+    # Matches the Rust reader's read_to_string failure → exit 1 (not a usage
+    # error), keeping the two implementations' exit codes identical.
+    from mie_decoder.cli import EXIT_RUNTIME, main
+
+    manifest = tmp_path / "bin.txt"
+    manifest.write_bytes(b"\xff\xfe\x00\x01\x80\x81 not utf-8")
+    out = tmp_path / "o.csv"
+    assert main(["decode", "--manifest", str(manifest), "-o", str(out)]) == EXIT_RUNTIME
+
+
+@pytest.mark.requirement("L1-ROB-001")
+def test_read_manifest_tolerates_arbitrary_bytes(tmp_path: Path) -> None:
+    # read_manifest on arbitrary bytes must only ever return a list or raise
+    # UnicodeDecodeError — never an unexpected exception. Deterministic.
+    import random
+
+    rng = random.Random(0x0DDCD1EC)
+    manifest = tmp_path / "fuzz.txt"
+    for _ in range(512):
+        n = rng.randint(0, 96)
+        manifest.write_bytes(bytes(rng.randint(0, 255) for _ in range(n)))
+        try:
+            result = read_manifest(manifest)
+        except UnicodeDecodeError:
+            continue  # non-UTF8 is a documented failure, not a crash
+        assert isinstance(result, list)

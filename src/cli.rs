@@ -1519,4 +1519,48 @@ mod tests {
             Ok(()) => panic!("expected error, got Ok"),
         }
     }
+
+    /// Combining input methods (positionals + --manifest / --glob) is a usage
+    /// error at parse time.
+    /// Requirements: L2-MRG-001
+    #[test]
+    fn decode_rejects_combined_input_methods() {
+        for argv in [
+            vec!["a.mie", "--manifest", "list.txt"],
+            vec!["a.mie", "--glob", "*.mie"],
+            vec!["--manifest", "list.txt", "--glob", "*.mie"],
+        ] {
+            let mut it = args(&argv);
+            match parse_decode(&mut it) {
+                Err(ParseError::Other(msg)) => {
+                    assert!(msg.contains("only one input method"), "got: {msg}");
+                }
+                other => panic!("expected combined-method usage error, got {other:?}"),
+            }
+        }
+    }
+
+    /// More than MAX_MERGE_FILES resolved inputs is a usage error (exit 4),
+    /// rejected before any file is opened.
+    /// Requirements: L2-MRG-001
+    #[test]
+    fn resolve_inputs_rejects_over_cap() {
+        let a = DecodeArgs {
+            inputs: (0..=crate::merge::MAX_MERGE_FILES)
+                .map(|i| PathBuf::from(format!("f{i}.mie")))
+                .collect(),
+            ..Default::default()
+        };
+        match resolve_inputs(&a) {
+            Err(e) => {
+                assert_eq!(e.code, exit_code::USAGE);
+                assert!(
+                    e.message.contains("too many input files"),
+                    "got: {}",
+                    e.message
+                );
+            }
+            Ok(_) => panic!("expected over-cap usage error"),
+        }
+    }
 }
