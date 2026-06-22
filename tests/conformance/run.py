@@ -30,8 +30,10 @@ MANIFEST = SUITE / "manifest.json"
 FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "name": str,
     "input": str,
+    "inputs": list,  # multi-file merge: list of hex input paths
     "expected": str,
     "expected_errors": str,
+    "expected_partial": str,  # oracle for the <output>.partial (allow-partial)
     "config": str,
     "mode": str,
     "args": list,
@@ -67,8 +69,17 @@ def validate_case_schema(case: Any, index: int) -> None:
     label = repr(name) if name else f"at index {index}"
     if "name" not in case:
         raise RuntimeError(f"manifest case {label}: missing required 'name' field")
-    if "input" not in case:
-        raise RuntimeError(f"manifest case {label}: missing required 'input' field")
+    # Exactly one of 'input' (single file) or 'inputs' (multi-file merge).
+    has_input = "input" in case
+    has_inputs = "inputs" in case
+    if not (has_input or has_inputs):
+        raise RuntimeError(
+            f"manifest case {label}: missing required 'input' or 'inputs' field"
+        )
+    if has_input and has_inputs:
+        raise RuntimeError(
+            f"manifest case {label}: specify exactly one of 'input' or 'inputs', not both"
+        )
 
     unknown = sorted(set(case) - set(FIELD_TYPES))
     if unknown:
@@ -207,7 +218,7 @@ def run_command(
 def rust_command(
     args: argparse.Namespace,
     case: dict[str, Any],
-    source: Path,
+    sources: list[Path],
     output: Path | None,
 ) -> list[str]:
     """Build the Rust CLI invocation for a case.
@@ -217,13 +228,13 @@ def rust_command(
     no -o flag).
     """
     command = [str(args.rust_bin)]
-    return _build_command(command, case, source, output)
+    return _build_command(command, case, sources, output)
 
 
 def python_command(
     args: argparse.Namespace,
     case: dict[str, Any],
-    source: Path,
+    sources: list[Path],
     output: Path | None,
 ) -> list[str]:
     """Build the Python CLI invocation for a case.
@@ -235,28 +246,30 @@ def python_command(
     passed verbatim to both.
     """
     command = [str(args.python_bin), "-m", "mie_decoder"]
-    return _build_command(command, case, source, output)
+    return _build_command(command, case, sources, output)
 
 
 def _build_command(
     command: list[str],
     case: dict[str, Any],
-    source: Path,
+    sources: list[Path],
     output: Path | None,
 ) -> list[str]:
     """Append the shared subcommand/flag tail to a CLI prefix.
 
-    ``output`` is the per-case scratch CSV path for ``mode == "decode"``,
-    or ``None`` for ``mode == "count"`` (stdout-comparison mode, no -o).
-    ``--config`` is global (before the subcommand) for both CLIs.
+    ``sources`` is one path for a single-input case, or several for a
+    multi-file merge (``decode`` takes them as positionals). ``output`` is the
+    per-case scratch CSV path for ``mode == "decode"``, or ``None`` for
+    ``mode == "count"`` (stdout-comparison mode, no -o). ``--config`` is global
+    (before the subcommand) for both CLIs.
     """
     if config := case.get("config"):
         command += ["--config", str((SUITE / config).resolve())]
     mode = case.get("mode", "decode")
     if mode == "count":
-        command += ["count", str(source)]
+        command += ["count", str(sources[0])]
     else:
-        command += ["decode", str(source), "-o", str(output)]
+        command += ["decode", *(str(s) for s in sources), "-o", str(output)]
     command += case.get("args", [])
     return command
 
@@ -390,8 +403,15 @@ def main() -> int:
         temp = Path(temp_dir)
         for case in manifest["cases"]:
             name = case["name"]
-            source = temp / f"{name}.mie"
-            source.write_bytes(read_hex(SUITE / case["input"]))
+            # One 'input' or several 'inputs' (multi-file merge). Each hex
+            # fixture is materialized to its own temp .mie and passed as a
+            # positional to both CLIs.
+            input_specs = case.get("inputs") or [case["input"]]
+            sources = []
+            for i, spec in enumerate(input_specs):
+                src = temp / f"{name}-in{i}.mie"
+                src.write_bytes(read_hex(SUITE / spec))
+                sources.append(src)
             expected_exit = int(case.get("expected_exit", 0))
             mode = case.get("mode", "decode")
 
@@ -405,14 +425,14 @@ def main() -> int:
                 python_output = temp / f"{name}-python.csv"
 
             rust, rust_stderr = run_command(
-                rust_command(args, case, source, rust_output),
+                rust_command(args, case, sources, rust_output),
                 rust_output,
                 name,
                 "Rust",
                 expected_exit=expected_exit,
             )
             python, python_stderr = run_command(
-                python_command(args, case, source, python_output),
+                python_command(args, case, sources, python_output),
                 python_output,
                 name,
                 "Python",

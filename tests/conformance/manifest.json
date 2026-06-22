@@ -222,6 +222,26 @@
         "standard"
       ],
       "expected_exit": 2
+    },
+    {
+      "name": "merge-ordered",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-b.hex"
+      ],
+      "expected": "expected/merge-ordered.csv",
+      "args": [
+        "--inline-errors"
+      ]
+    },
+    {
+      "name": "merge-incompatible-freerun",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-freerun.hex"
+      ],
+      "expected_exit": 6,
+      "expected_stderr_contains": "freerun"
     }
   ]
 }
