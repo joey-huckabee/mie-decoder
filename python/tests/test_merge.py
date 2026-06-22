@@ -211,6 +211,36 @@ def test_cli_manifest_non_utf8_is_runtime_error(tmp_path: Path) -> None:
     assert main(["decode", "--manifest", str(manifest), "-o", str(out)]) == EXIT_RUNTIME
 
 
+@pytest.mark.requirement("L2-MRG-004")
+def test_merge_allow_partial_writes_partial_on_file_failure(tmp_path: Path) -> None:
+    """L2-MRG-004 / L1-EXIT-004: with allow_partial, a merge whose input hits
+    an unrecoverable sync loss truncates that file, completes from the rest,
+    and the writer commits the combined output as ``.partial``. Mirrors the
+    Rust ``merge_allow_partial_writes_partial_on_file_failure``."""
+    from mie_decoder.writer import WriteOptions, write_csv
+
+    a = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    b = (
+        rt15_record_at(192, 15, 54, 50, 200)
+        + rt15_record_at(192, 15, 54, 50, 400)
+        + b"\xff" * 70_000  # >64 KB of non-resyncing garbage → unrecoverable
+    )
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(a)
+    fb.write_bytes(b)
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    merged = merge_readers(readers, allow_partial=True)
+
+    out = tmp_path / "out.csv"
+    outcome = write_csv(
+        merged, output=out, opts=WriteOptions(allow_partial=True)
+    )
+    assert outcome.partial is not None
+    assert outcome.normal_count == 3  # A:100 + B:200 + A:300 before B's loss
+    assert (tmp_path / "out.csv.partial").exists()
+
+
 @pytest.mark.requirement("L1-ROB-001")
 def test_read_manifest_tolerates_arbitrary_bytes(tmp_path: Path) -> None:
     # read_manifest on arbitrary bytes must only ever return a list or raise

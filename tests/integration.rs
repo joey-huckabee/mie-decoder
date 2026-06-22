@@ -1063,3 +1063,54 @@ fn merge_input_resolution_tolerates_arbitrary_bytes() {
         let _ = mie_decoder::merge::expand_glob(&pat);
     }
 }
+
+/// L2-MRG-004 / L1-EXIT-004: with --allow-partial, a merge whose input hits an
+/// unrecoverable sync loss truncates that file, completes from the rest, and
+/// the writer commits the combined output as `.partial`. (Forcing an
+/// unrecoverable loss needs >64 KB of non-resyncing garbage, so this is a
+/// library test rather than a small conformance hex fixture.)
+/// Requirements: L2-MRG-004, L1-EXIT-004
+#[test]
+fn merge_allow_partial_writes_partial_on_file_failure() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::writer::{WriteOptions, write_csv};
+
+    // File A: good records at 100µs, 300µs. File B: good records at 200µs,
+    // 400µs, then 70 KB of 0xFF → recover_sync exhausts the 64 KB window
+    // (unrecoverable) after B yields its first record.
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 300, false),
+    ]
+    .concat();
+    let mut b = [
+        rt15_record_at(192, 15, 54, 50, 200, false),
+        rt15_record_at(192, 15, 54, 50, 400, false),
+    ]
+    .concat();
+    b.extend(vec![0xFFu8; 70_000]);
+    let fa = TempFile::new(&a);
+    let fb = TempFile::new(&b);
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+
+    let merged = MergedRecordIter::new(&readers, None, true).unwrap();
+    let out = TempFile::new(b"");
+    let opts = WriteOptions {
+        input_path: None,
+        no_clobber: false,
+        allow_partial: true,
+    };
+    let outcome = write_csv(merged, Some(out.path()), opts).unwrap();
+    assert!(
+        outcome.partial.is_some(),
+        "--allow-partial should commit a .partial on the file failure"
+    );
+    // A's 100 + B's 200 + A's 300 reached the writer before B's terminal loss.
+    assert_eq!(outcome.normal_count, 3);
+    let partial = std::path::PathBuf::from(format!("{}.partial", out.path().display()));
+    assert!(partial.exists(), "the .partial output file should exist");
+    let _ = std::fs::remove_file(&partial);
+}
