@@ -35,8 +35,8 @@ def test_conformance_runner_invokes_both_clis_and_compares_outputs() -> None:
     """The runner SHALL execute both implementations and compare them."""
     body = (_CONFORMANCE_DIR / "run.py").read_text(encoding="utf-8")
     for required in [
-        "rust_command(args, case, source, rust_output)",
-        "python_command(args, case, source, python_output)",
+        "rust_command(args, case, sources, rust_output)",
+        "python_command(args, case, sources, python_output)",
         "require_equal(rust, python",
     ]:
         assert required in body, f"conformance runner missing {required!r}"
@@ -55,7 +55,9 @@ def test_conformance_manifest_has_cases_with_oracles() -> None:
     expected_dir = _CONFORMANCE_DIR / "expected"
     for case in cases:
         name = case.get("name", "<unnamed>")
-        assert "input" in case, f"case {name!r} missing 'input'"
+        # A case has either a single 'input' or a multi-file merge 'inputs'.
+        specs = case.get("inputs") or ([case["input"]] if "input" in case else None)
+        assert specs, f"case {name!r} missing 'input' or 'inputs'"
         # Negative cases (expected_exit != 0) may not have an oracle.
         if case.get("expected_exit", 0) == 0:
             assert "expected" in case, f"case {name!r} missing 'expected'"
@@ -63,10 +65,11 @@ def test_conformance_manifest_has_cases_with_oracles() -> None:
             assert oracle.is_file(), (
                 f"oracle for case {name!r} missing at {oracle}"
             )
-        fixture = inputs_dir / Path(case["input"]).name
-        assert fixture.is_file(), (
-            f"input fixture for case {name!r} missing at {fixture}"
-        )
+        for spec in specs:
+            fixture = inputs_dir / Path(spec).name
+            assert fixture.is_file(), (
+                f"input fixture for case {name!r} missing at {fixture}"
+            )
 
 
 @pytest.mark.requirement("L2-CONF-005")
