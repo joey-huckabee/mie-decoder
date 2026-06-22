@@ -93,6 +93,9 @@ Python memory usage during decode SHALL be O(1) in the number of records: the wr
 **L3-PY-013** · Parent: L2-FLT-001 · Verification: T
 The Python package SHALL provide include filters equivalent to the Rust crate (`L3-RS-010`): `--include-types`, `--include-rts`, `--include-buses`, `--include-subaddresses` on the `decode` subcommand, with the same "passes only if contained in every active include set" semantics and the same comma-separated, repeatable argument syntax. Include filters are CLI-only overrides (no config-file key), matching Rust.
 
+**L3-PY-014** · Parent: L2-MRG-002 · Verification: T
+The Python multi-file merge SHALL be implemented in `mie_decoder/merge.py` using the standard-library `heapq` as the k-way merge heap (no new dependency). The global-DELTA stage SHALL overwrite each message's `delta` via `dataclasses.replace` on the frozen `MieMessage`. The `--glob` expansion SHALL be constrained to the single-directory `*`/`?` filename semantics shared with Rust (`L3-RS-014`) and sorted lexicographically, so the resolved input set is byte-identical across implementations. The file-count cap `MAX_MERGE_FILES` SHALL match the Rust constant.
+
 ---
 
 ## L3-RS: Rust implementation technology
@@ -134,3 +137,6 @@ Rust decode memory usage SHALL be O(1) in the record count. The writer streams r
 
 **L3-RS-013** · Parent: L2-CONF-006 · Verification: T
 The Rust crate SHALL re-export its public decode entry point (`MieFileReader`) and core public types (`MieMessage`, plus the error and timestamp/model types) from the crate root via `pub use` (in `src/lib.rs`), so downstream crates can write `use mie_decoder::MieFileReader` without naming internal modules. Verified by a test that imports these symbols from the crate root and asserts the root paths are the same types as their module-path definitions.
+
+**L3-RS-014** · Parent: L2-MRG-002 · Verification: T
+The Rust multi-file merge SHALL be implemented in `src/merge.rs` using `std::collections::BinaryHeap` (with `std::cmp::Reverse` for min-heap behavior) as the k-way merge heap — no new external dependency (preserving `L3-RS-002`). The `--glob` expansion SHALL be a hand-rolled single-directory `*`/`?` filename matcher (no `**`, no brace expansion) reading one directory via `std::fs`, sorted lexicographically, identical to the Python semantics (`L3-PY-014`). The file-count cap SHALL be the named constant `MAX_MERGE_FILES`, shared in value with Python.

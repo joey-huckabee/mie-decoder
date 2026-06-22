@@ -84,6 +84,7 @@ CATEGORIES: list[tuple[str, str]] = [
     ("CONF", "Cross-implementation conformance"),
     ("EXIT", "Exit-code semantics and operational contract"),
     ("ROB", "Robustness against arbitrary input"),
+    ("MRG", "Multi-file time-sorted merge"),
     # L2-only categories (no L1 parent of the same code)
     ("RDR", "Reader behavior (L2)"),
     ("MSG", "Message semantics (L2)"),

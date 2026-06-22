@@ -827,7 +827,7 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 #### L2-CLI-011
 
 **Parent**: L1-EXIT-001
-**Statement**: Exit codes SHALL follow L1-EXIT-002 through L1-EXIT-008 and SHALL be identical across both implementations for the same condition:
+**Statement**: Exit codes SHALL follow L1-EXIT-002 through L1-EXIT-009 and SHALL be identical across both implementations for the same condition:
 
 | Code | Class | Condition |
 |------|-------|-----------|
@@ -835,10 +835,11 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 | `1` | runtime/decode error | input I/O (incl. file-not-found), writer failure, strict-mode record or structural-invariant failure |
 | `2` | no valid records | input is not an MIE recording (wrong file type, homogeneous-payload, ambiguous timestamp format in strict mode) |
 | `3` | unrecoverable sync loss | mid-file sync loss without `--allow-partial` |
-| `4` | CLI usage error | unknown/missing/invalid flag or argument, invalid flag value, no subcommand |
+| `4` | CLI usage error | unknown/missing/invalid flag or argument, invalid flag value, no subcommand, combined input methods, or more than `MAX_MERGE_FILES` inputs |
 | `5` | configuration error | config file not found, malformed TOML, or invalid config value |
+| `6` | merge-incompatible inputs | multi-file merge where an input is Standard-format, leads with a freerun IRIG record, or the set mixes timestamp formats (L1-EXIT-009) |
 
-The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NOT produce exit `3` because they do not write a streaming output that could be partial.
+The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NOT produce exit `3` (they do not write a streaming output that could be partial) or `6` (they do not merge).
 **Rationale**: The exit-code taxonomy is the single most operationally useful piece of CLI behavior, so each failure class an operator can act on differently gets its own code: a bad command line (`4`), a bad config file (`5`), a bad input (`2`), and a corruption event (`3`) are distinct situations with distinct fixes. Usage errors use `4` rather than the argparse / Unix default `2` because `2` is the no-valid-records class — overloading it would conflate "you typed a bad flag" with "you pointed me at the wrong file". The count/dump exemption from `3` keeps `3` specifically about a partial output that did not complete.
 **Verification Method**: Test (T)
 
@@ -855,6 +856,45 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 **Statement**: The record-aware dump SHALL emit each scan-stop anomaly it encounters — invalid Type Word `word_count`, a record whose declared extent runs past EOF (truncated record), and (where the host integer type can overflow) record-offset overflow — through the logger at `WARN`, in addition to the inline `!! …` note written into the hex report. The log message SHALL name the byte offset. Emission is subject to the configured global log level (default `WARN`); the inline report note is unchanged.
 **Rationale**: The record-aware dump previously surfaced these anomalies only inside the report stream, so an operator piping the dump report elsewhere — or any caller that captures the report separately — could not see the diagnostics on the normal stderr log channel the way the reader's diagnostics appear. Routing them through the logger as well makes the dump's diagnostics consistent with the reader's and visible at the configured level, while the inline note is retained for the at-a-glance visual report. (The reader's logger writes to process stderr in Rust and through the `mie_decoder` logger in Python; the dump uses the same channels.)
 **Verification Method**: Test (T), Inspection (I)
+
+---
+
+## L2-MRG: Multi-file time-sorted merge
+
+#### L2-MRG-001
+
+**Parent**: L1-MRG-001
+**Statement**: The `decode` command SHALL accept the input set via exactly one of three mutually exclusive methods: one or more positional paths, a `--manifest <file>` (one path per line; blank lines and `#`-prefixed comment lines ignored), or a `--glob <pattern>`. Supplying more than one method, or resolving to more than `MAX_MERGE_FILES` inputs, SHALL be a usage error (exit `4`). Resolving to a single input SHALL invoke the existing single-file path unchanged; resolving to two or more SHALL invoke the merge. The `--glob` pattern SHALL be a single-directory pattern supporting `*` and `?` wildcards over the filename only (no recursive `**`, no brace expansion), and both implementations SHALL expand it identically and in a deterministic (lexicographic) order.
+**Rationale**: Positionals serve ad-hoc use, a manifest serves large/scripted sets, and a tool-expanded glob serves directories on shells (Windows) that do not expand globs. Mutual exclusivity avoids ambiguous union/ordering semantics. A fixed file-count cap keeps open mappings/descriptors within OS limits. Constraining the glob to a small, identical syntax lets the Rust crate stay dependency-free while keeping cross-implementation behavior byte-identical.
+**Verification Method**: Test (T)
+
+#### L2-MRG-002
+
+**Parent**: L1-MRG-001
+**Statement**: The merge SHALL be a streaming k-way merge driven by a min-heap holding at most one decoded record per open input. The ordering key SHALL be the tuple `(IRIG total microseconds, input index in resolved order, within-file sequence number)`, giving a total, deterministic order including for equal timestamps. Resident memory SHALL be O(number of inputs) and independent of the total record count.
+**Rationale**: Each recording is already chronological within itself, so a heap-merge of k sorted streams yields global order without buffering. The index/sequence tiebreak makes output reproducible regardless of heap internals. The O(k) bound preserves the constant-record-memory guarantee.
+**Verification Method**: Test (T)
+
+#### L2-MRG-003
+
+**Parent**: L1-MRG-002
+**Statement**: Before emitting any output, the merge SHALL confirm every input resolves to the IRIG timestamp format and that each input's leading valid record is calendar-locked (not freerun). If any input is Standard-format, leads with a freerun record, or the set mixes formats, the merge SHALL reject the whole invocation with exit code `6` (L1-EXIT-009), naming the offending file and its detected format, and SHALL NOT create an output file. A freerun IRIG record encountered after the leading record SHALL emit a WARN and still be ordered by its key.
+**Rationale**: Absolute-time ordering requires a shared calendar-anchored clock; Standard counters and freerun IRIG do not provide one. Validating each file's leading record is an O(1)-per-file guard that catches the common case before any work; the mid-stream freerun WARN surfaces the rarer in-file transition without aborting a partially-written merge.
+**Verification Method**: Test (T)
+
+#### L2-MRG-004
+
+**Parent**: L1-MRG-001
+**Statement**: Per-file failure during a merge SHALL follow the same strict/lenient/`--allow-partial` policy as a single-file decode, applied across the batch: strict mode SHALL surface the first record or structural-invariant failure in any file; lenient mode SHALL skip invalid records; an unrecoverable failure in any file (unrecoverable sync loss, or an unreadable/empty/non-MIE input) SHALL fail the batch unless `--allow-partial`, in which case that file SHALL be truncated at its failure point with a WARN naming it, the merge SHALL complete from the remaining inputs, and the combined output SHALL be written with the `.partial` suffix (and `<stem>_errors.partial` in separate mode), exit `0`.
+**Rationale**: Reusing the established within-file semantics means operators learn one failure model. Because the output is a single time-sorted stream, an incomplete batch yields one `.partial` artifact containing everything decoded, consistent with how a single-file partial is surfaced.
+**Verification Method**: Test (T)
+
+#### L2-MRG-005
+
+**Parent**: L1-DLT-001
+**Statement**: In merge mode, DELTA SHALL be computed on the merged (globally time-ordered) stream rather than per input file, so that each RT/SA/direction inter-arrival gap reflects the unified timeline across all inputs. The merged stream is monotonic per key by construction, so DELTA SHALL be non-negative.
+**Rationale**: The analyst intent for a merged timeline is the gap between consecutive same-key transactions across the whole session, not a gap that resets at file boundaries. A future release that adds per-recorder file-naming context may compute per-file DELTA for identified recorders; until then the global timeline is the well-defined default.
+**Verification Method**: Test (T)
 
 ---
 

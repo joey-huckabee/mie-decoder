@@ -88,12 +88,13 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L1-DLT-001 | L2-RDR-009, L2-RDR-010, L2-RDR-016, L2-RDR-017, L2-RDR-018, L2-RDR-019 | _(none)_ | Implemented |
+| L1-DLT-001 | L2-MRG-005, L2-RDR-009, L2-RDR-010, L2-RDR-016, L2-RDR-017, L2-RDR-018, L2-RDR-019 | _(none)_ | Partially Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
+| L2-MRG-005 | _(none)_ | _(TBD)_ | Draft |
 | L2-RDR-009 | _(none)_ | `python/tests/test_e2e.py::test_delta_same_rtmsg`<br>`python/tests/test_models.py::test_delta_key`<br>`tests/integration.rs::delta_tracker_per_rt_msg_key` | Implemented |
 | L2-RDR-010 | _(none)_ | `python/tests/test_e2e.py::test_delta_first_occurrence_is_zero` | Implemented |
 | L2-RDR-016 | _(none)_ | `python/tests/test_e2e.py::test_errored_record_participates_in_delta` | Implemented |
@@ -274,6 +275,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L1-EXIT-006 | L2-RDR-020 | _(none)_ | Implemented |
 | L1-EXIT-007 | _(none)_ | `python/tests/test_e2e.py::test_cli_no_subcommand`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_flag_rejects_nonpositive`<br>`python/tests/test_e2e.py::test_cli_unknown_flag_is_usage_error`<br>`src/cli.rs::run_count_with_invalid_cli_log_level_fails_via_resolve_config`<br>`tests/cli.rs::no_args_invocation_is_usage_error_exit_4` | Implemented |
 | L1-EXIT-008 | _(none)_ | `python/tests/test_e2e.py::test_cli_malformed_config_is_config_error`<br>`src/cli.rs::run_count_propagates_config_load_error`<br>`src/cli.rs::run_count_propagates_missing_config_file`<br>`src/cli.rs::run_count_with_invalid_config_log_level_fails`<br>`src/cli.rs::run_dump_propagates_config_load_error` | Implemented |
+| L1-EXIT-009 | _(none)_ | _(none)_ | Draft |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -300,6 +302,24 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
 
+### L1-MRG: Multi-file time-sorted merge
+
+**L1 -> L2**
+
+| L1 ID | L2 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L1-MRG-001 | L2-MRG-001, L2-MRG-002, L2-MRG-004 | _(none)_ | Draft |
+| L1-MRG-002 | L2-MRG-003 | _(none)_ | Draft |
+
+**L2 -> L3 -> Verification Artifacts**
+
+| L2 ID | L3 Children | Test Artifacts | Status |
+|-------|-------------|----------------|--------|
+| L2-MRG-001 | _(none)_ | _(TBD)_ | Draft |
+| L2-MRG-002 | L3-PY-014, L3-RS-014 | _(TBD)_ | Draft |
+| L2-MRG-003 | _(none)_ | _(TBD)_ | Draft |
+| L2-MRG-004 | _(none)_ | _(TBD)_ | Draft |
+
 ---
 
 ## Coverage summary
@@ -319,21 +339,22 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | ERR | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CFG | 1 | 10 | 0 | 10 | 0 | 10 | 0 |
 | CONF | 1 | 6 | 0 | 3 | 0 | 5 | 0 |
-| EXIT | 8 | 0 | 0 | 0 | 0 | 0 | 0 |
+| EXIT | 9 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| MRG | 2 | 5 | 0 | 0 | 0 | 0 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
 | WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
-| PY | 0 | 0 | 13 | 0 | 9 | 0 | 13 |
-| RS | 0 | 0 | 12 | 0 | 7 | 0 | 12 |
-| **Total** | **26** | **113** | **27** | **108** | **18** | **112** | **27** |
+| PY | 0 | 0 | 14 | 0 | 9 | 0 | 13 |
+| RS | 0 | 0 | 13 | 0 | 7 | 0 | 12 |
+| **Total** | **29** | **118** | **29** | **108** | **18** | **112** | **27** |
 
-The countable requirement set is every L2 and L3 requirement plus the 6 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
+The countable requirement set is every L2 and L3 requirement plus the 7 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 132 of 146 (90.4%).
+**Tested by at least one test marker**: 132 of 154 (85.7%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 145 of 146 (99.3%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 145 of 154 (94.2%).
 
 ### Orphan check
 

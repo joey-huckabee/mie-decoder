@@ -57,6 +57,7 @@ Each requirement carries the following fields:
 | `CONF`   | Cross-implementation conformance            |
 | `EXIT`   | Exit-code semantics and operational contract|
 | `ROB`    | Robustness against arbitrary input          |
+| `MRG`    | Multi-file time-sorted merge                |
 
 (Per-category and total requirement counts are intentionally omitted — they
 drift as requirements are added. The requirement entries below, and the
@@ -308,6 +309,14 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 
 **Verification Method**: Test (T)
 
+### L1-EXIT-009
+
+**Statement**: A multi-file merge invocation whose inputs cannot be ordered on a common absolute timeline — because a file resolves to the Standard timestamp format, leads with a freerun IRIG record, or the input set mixes timestamp formats — SHALL exit with code `6`, SHALL name the offending file and its detected format, and SHALL NOT create an output file. Both implementations SHALL return the same code for the same condition.
+
+**Rationale**: Time-sorted merge is only meaningful when every input shares one calendar-anchored clock (calendar-locked IRIG). Standard free-running counters have no shared epoch, and freerun IRIG carries no calendar meaning, so a merge across such inputs would silently emit a misleadingly "sorted" CSV. A dedicated exit code — distinct from a bad single input (`2`), a usage error (`4`), and a config error (`5`) — lets automation detect "these recordings are not mergeable" specifically, and refusing before any output prevents a wrong-order CSV from reaching a downstream consumer.
+
+**Verification Method**: Test (T)
+
 ---
 
 ## L1-ROB: Robustness against arbitrary input
@@ -317,6 +326,26 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 **Statement**: For arbitrary input bytes within the size limits of `usize`, no implementation SHALL panic, segfault, or enter an unbounded loop. All failures SHALL surface as a documented decoder error variant (`MieError` in Rust, a `MieDecoderError` subclass in Python). Verified by a per-implementation deterministic-PRNG fuzz harness.
 
 **Rationale**: The decoder is run on operator-supplied files, some of which are corrupt by accident and some of which are the output of misconfigured recording sessions. Crashing on bad input gives the operator no useful information and may take down a batch pipeline. Surfacing every failure as a structured error variant lets the operator diagnose and act. The deterministic-PRNG harness ensures regressions can be reproduced.
+
+**Verification Method**: Test (T)
+
+---
+
+## L1-MRG: Multi-file time-sorted merge
+
+### L1-MRG-001
+
+**Statement**: Each implementation SHALL accept more than one input recording in a single `decode` invocation and emit one CSV whose records are in global time order, streaming the merge so that resident memory is bounded by the number of input files (not the total record count). A single input SHALL behave exactly as it does today.
+
+**Rationale**: Analysts routinely need to combine several recordings from one session into a unified timeline. A streaming k-way merge keeps the constant-memory guarantee that lets the tools process multi-GB / 10M+-record inputs, while one ordered CSV is what downstream analysis expects. Leaving the single-input path unchanged guarantees no regression for the common case.
+
+**Verification Method**: Test (T)
+
+### L1-MRG-002
+
+**Statement**: Multi-file merge ordering SHALL be by absolute IRIG time and SHALL require every input to be calendar-locked IRIG. Inputs that cannot be ordered on a common absolute timeline (Standard format, freerun IRIG, or mixed formats across files) SHALL be rejected before any output is written (see L1-EXIT-009). The number of input files SHALL be bounded by a documented fixed limit; exceeding it SHALL be a usage error (L1-EXIT-007).
+
+**Rationale**: A merge is only correct when all inputs share one calendar-anchored clock; absolute IRIG microseconds give an exact, comparable key. Rejecting incompatible sets up front prevents a misleadingly-ordered CSV. Bounding the file count keeps open file handles / mappings within OS limits and makes resource use predictable.
 
 **Verification Method**: Test (T)
 
