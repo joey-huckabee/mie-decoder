@@ -69,6 +69,15 @@ fn errored_record() -> Vec<u8> {
     hex(&s)
 }
 
+/// `one_valid_record` with the IRIG freerun bit (bit 15 of the upper
+/// timestamp word) set — a record with no calendar anchor. A merge rejects a
+/// freerun-leading input because it can't share an absolute timeline.
+fn freerun_record() -> Vec<u8> {
+    let mut r = one_valid_record();
+    r[3] |= 0x80; // set bit 15 of the little-endian upper timestamp word
+    r
+}
+
 // ── Scratch directory helper ─────────────────────────────────────────
 
 /// Per-test scratch directory, removed on drop. Tests work inside one
@@ -184,6 +193,38 @@ fn decode_happy_path_writes_csv_with_header_and_one_row() {
     assert!(
         csv.lines().count() >= 2,
         "CSV has fewer than 2 lines (header + data)\n--- csv ---\n{csv}"
+    );
+}
+
+/// A multi-file merge whose inputs can't share an absolute timeline (a
+/// freerun-leading file here) is rejected before any output, exit 6.
+/// Requirements: L1-EXIT-009, L2-MRG-003, L2-CLI-011
+#[test]
+fn merge_incompatible_inputs_exit_6() {
+    let tmp = TempDir::new();
+    let mut good = one_valid_record();
+    good.extend(one_valid_record());
+    let mut freerun = freerun_record();
+    freerun.extend(freerun_record());
+    let g = tmp.write("good.mie", &good);
+    let f = tmp.write("freerun.mie", &freerun);
+    let output = tmp.path().join("merged.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        g.as_os_str(),
+        f.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(
+        exit_code(&out),
+        6,
+        "incompatible (freerun) merge inputs must exit 6"
+    );
+    assert!(
+        !output.exists(),
+        "no output file should be created when the merge is rejected"
     );
 }
 

@@ -49,6 +49,7 @@ def rt15_record_at(
 @pytest.mark.requirement("L1-MRG-001")
 @pytest.mark.requirement("L2-MRG-002")
 @pytest.mark.requirement("L2-MRG-005")
+@pytest.mark.requirement("L3-PY-014")
 def test_merge_orders_records_across_files_by_absolute_time(tmp_path: Path) -> None:
     # File A: 100µs, 300µs; File B: 200µs, 400µs (same sec → micros discriminate).
     a = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
@@ -135,6 +136,7 @@ def test_expand_glob_matches_and_sorts(tmp_path: Path) -> None:
 
 
 @pytest.mark.requirement("L2-MRG-001")
+@pytest.mark.requirement("L3-PY-014")
 def test_glob_match_wildcards() -> None:
     assert glob_match("*.mie", "rec1.mie")
     assert glob_match("rec?.mie", "rec5.mie")
@@ -148,9 +150,31 @@ def test_glob_match_wildcards() -> None:
     assert not glob_match("a.b", "axb")
 
 
+@pytest.mark.requirement("L3-PY-014")
 def test_max_merge_files_matches_rust() -> None:
     # The cap is shared in value with the Rust constant (L3-PY-014).
     assert MAX_MERGE_FILES == 256
+
+
+@pytest.mark.requirement("L1-EXIT-009")
+@pytest.mark.requirement("L2-MRG-003")
+def test_cli_merge_incompatible_exits_6(tmp_path: Path) -> None:
+    """A merge whose inputs can't share an absolute timeline (a freerun-leading
+    file) exits 6 and writes no output. Mirrors the Rust
+    `merge_incompatible_inputs_exit_6` CLI test."""
+    from mie_decoder.cli import EXIT_MERGE_INCOMPATIBLE, main
+
+    good = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    freerun = rt15_record_at(0, 0, 0, 0, 0, freerun=True) + rt15_record_at(
+        0, 0, 0, 1, 0, freerun=True
+    )
+    fg = tmp_path / "good.mie"
+    ff = tmp_path / "freerun.mie"
+    fg.write_bytes(good)
+    ff.write_bytes(freerun)
+    out = tmp_path / "merged.csv"
+    assert main(["decode", str(fg), str(ff), "-o", str(out)]) == EXIT_MERGE_INCOMPATIBLE
+    assert not out.exists()
 
 
 # ── CLI bad-input / cap / robustness (L2-MRG-001, L1-ROB-001) ──────────────
