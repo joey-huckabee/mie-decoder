@@ -2,6 +2,22 @@
 
 ## Release status
 
+**v2.1.0 — joint Rust + Python cut.** Feature release: **multi-file,
+time-sorted merge** (L1-MRG / L2-MRG), shipped identically in both
+implementations. `decode` now accepts more than one input — multiple
+positionals, a `--manifest` file, or a tool-expanded `--glob` (mutually
+exclusive) — and emits one CSV in global time order via a streaming k-way
+heap merge keyed on absolute IRIG microseconds (O(files) memory, O(1) in
+records), with DELTA recomputed on the unified timeline. Merge requires
+calendar-locked IRIG; Standard / freerun / mixed-format sets are rejected
+with the new exit code **6** (L1-EXIT-009). More than `MAX_MERGE_FILES`
+(256) inputs, or combined input methods, is a usage error (4). Per-file
+failure reuses `--strict` / lenient / `--allow-partial` across the batch
+(`--allow-partial` writes a combined `.partial`). No new dependency
+(`BinaryHeap` in Rust, `heapq` in Python); output is byte-identical across
+implementations, pinned by the `merge-ordered` conformance case. Follows the
+v2.0.1 hardening patch. See [`CHANGELOG.md`](../CHANGELOG.md).
+
 **v2.0.0 — joint Rust + Python cut, 2026-06-18.** Major release whose theme
 is **parity**: the two tools now function the same way. The Python CLI was
 brought to the Rust v2 argument surface — a `count` subcommand (replacing
@@ -126,12 +142,34 @@ checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 
 | Version | Feature |
 |---------|---------|
-| Rust 2.x | Multi-file input, time-sorted merge to single CSV. |
 | 3.0 | Data word decoders, additional per-message-type CSVs. |
 | 4.0 | Apache Parquet output. |
 
 (Version labels renumbered after the `v2.0.0` cut consumed the prior "v2.0"
-slot. The data-word-decoder and Parquet items moved to `3.0` / `4.0`.)
+slot. The data-word-decoder and Parquet items moved to `3.0` / `4.0`.
+**Multi-file time-sorted merge shipped in `v2.1.0`** — see Release status.)
+
+### Merge follow-ups (future, no committed version)
+
+- **Per-recorder DELTA via a file-naming convention.** v2.1.0 computes DELTA on
+  the merged *global* timeline because the tool has no way to tell which
+  recorder a file came from. A future release will define a file-naming
+  convention that carries **recorder context**; once a merge can identify its
+  inputs as distinct recorders, DELTA SHOULD be computed **per file** (each
+  recorder's own inter-arrival cadence), falling back to the global timeline
+  only for inputs that cannot be identified. This is the next planned step after
+  v2.1.0.
+- **`--order file` (non-time merge).** A distant-future opt-in that would
+  concatenate inputs in CLI/manifest order **without** time-sorting, for sets
+  that are not calendar-locked IRIG (Standard counters, freerun, or
+  mixed-format). Today such sets are hard-rejected (exit 6) because they cannot
+  share an absolute timeline; `--order file` would let an operator explicitly
+  accept a non-time ordering. It is gated behind an explicit flag precisely so
+  the default can never silently emit a misleadingly "sorted" CSV — the operator
+  must opt out of the time guarantee. Output rows would carry their source-file
+  order; DELTA would be per file (no global timeline exists in this mode). Not
+  scheduled; recorded here so the request isn't folded into the time-merge
+  contract without separate design.
 
 **PY-streaming landed in `v2.0.0`** (see `CHANGELOG.md`). The Python
 writer now streams each row straight to the output via the standard-library

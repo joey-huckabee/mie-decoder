@@ -440,7 +440,54 @@ Column indices reference the spec column order (1 = TIME_STAMP, 2 = RT, 3 = MSG,
 
 ---
 
-## 13. See also
+## 13. Merge several recordings into one time-sorted CSV
+
+A session split across several IRIG recordings, combined into one timeline:
+
+```bash
+# Ad-hoc: a few files by name.
+mie-decoder decode run-a.mie run-b.mie run-c.mie -o session.csv
+
+# Many files: list them in a manifest (one path per line; # comments ok).
+cat > session.txt <<'EOF'
+# Flight 4471, all recorders
+/data/4471/recorder-1.mie
+/data/4471/recorder-2.mie
+/data/4471/recorder-3.mie
+EOF
+mie-decoder decode --manifest session.txt -o session.csv
+
+# A whole directory (the tool expands the glob — works in cmd.exe/PowerShell too):
+mie-decoder decode --glob '/data/4471/*.mie' -o session.csv
+```
+
+Robust batch that tolerates one corrupt recorder and reports cleanly:
+
+```bash
+mie-decoder decode --glob '/data/4471/*.mie' -o session.csv --allow-partial
+case $? in
+  0) [ -f session.csv.partial ] && echo "merged (partial — one input failed): session.csv.partial" \
+                                || echo "merged cleanly: session.csv" ;;
+  6) echo "inputs aren't all calendar-locked IRIG — decode them individually" >&2; exit 6 ;;
+  4) echo "usage error (combined input methods, or > 256 files)" >&2; exit 4 ;;
+  *) echo "merge failed (exit $?)" >&2; exit 1 ;;
+esac
+```
+
+Filter the merged stream just like a single decode — filters apply across all
+inputs:
+
+```bash
+mie-decoder decode run-a.mie run-b.mie -o rt15.csv --include-rts 15 --inline-errors
+```
+
+The Python CLI accepts the identical commands and produces byte-identical
+output. Merge only IRIG recordings from the same calendar year; see
+[`USER-GUIDE.md`](USER-GUIDE.md) §6 for the full contract.
+
+---
+
+## 14. See also
 
 - [`USER-GUIDE.md`](USER-GUIDE.md) — How each piece works (vs this doc, which shows the pieces composed).
 - [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md) — Every TOML key, type, default, CLI override.

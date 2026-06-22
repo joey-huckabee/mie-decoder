@@ -48,9 +48,13 @@ mie-decoder --config config/default.toml decode recording.mie -o decoded.csv
 ### decode
 
 ```
-mie-decoder decode <input> [options]
+mie-decoder decode <input>... [options]
 
   -o, --output PATH                Output CSV (default stdout)
+  --manifest PATH                  Read input paths from a file (one per line;
+                                   blank lines and #-comments ignored)
+  --glob PATTERN                   Expand a single-directory *.mie-style glob
+                                   (* and ? over the filename; no recursion)
   --inline-errors                  Errors inline in main CSV
                                    (default: separate <stem>_errors.csv)
   --time-format auto|irig|standard Default auto
@@ -80,6 +84,26 @@ mie-decoder decode rec.mie --include-rts=15,31       # = form
 The previous space-separated greedy form (`--include-rts 15 31 file.mie`)
 is no longer accepted — it would consume `file.mie` as another RT
 value.
+
+#### Multi-file merge
+
+Pass more than one input and `decode` merges them into a single
+time-sorted CSV (streaming, constant memory in the record count):
+
+```bash
+mie-decoder decode a.mie b.mie c.mie -o merged.csv   # positionals
+mie-decoder decode --manifest files.txt -o merged.csv  # one path per line
+mie-decoder decode --glob 'recordings/*.mie' -o merged.csv  # tool-expanded
+```
+
+The three input methods are mutually exclusive. Records are ordered by
+absolute IRIG time, so **every input must be calendar-locked IRIG** —
+a Standard-format, freerun, or mixed-format set is rejected before any
+output with exit code 6. A single input behaves exactly as before; up to
+256 files may be merged at once. Per-file failures follow the same
+`--strict` / lenient / `--allow-partial` policy as a single decode
+(`--allow-partial` writes the combined `.partial` output). Rust and
+Python produce byte-identical merged output.
 
 ### count
 

@@ -15,6 +15,30 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-file, time-sorted merge (L1-MRG, both implementations, identical).**
+  The `decode` command now accepts more than one input and emits a single CSV
+  whose records are in global time order. Inputs are supplied by **multiple
+  positionals** (`decode a.mie b.mie -o out.csv`), a **`--manifest <file>`**
+  (one path per line; blank lines and `#`-comments ignored), or a
+  **`--glob <pattern>`** (single-directory `*`/`?` filename match, expanded by
+  the tool so it works on Windows); the three methods are **mutually exclusive**.
+  A single input behaves exactly as before. The merge is a streaming k-way heap
+  merge keyed on absolute IRIG microseconds, so resident memory stays O(number
+  of files) and O(1) in record count, and DELTA is recomputed on the unified
+  timeline (L2-MRG-005). Time-sorted merge requires every input to be
+  calendar-locked IRIG: a Standard-format input, a freerun-leading input, or a
+  mixed-format set is rejected before any output with a new **exit code 6**
+  (L1-EXIT-009 / L2-MRG-003). More than `MAX_MERGE_FILES` (256) inputs, or
+  combining input methods, is a usage error (exit 4). Per-file failure follows
+  the existing `--strict` / lenient / `--allow-partial` policy across the batch:
+  `--allow-partial` truncates a failed file, completes the merge from the rest,
+  and writes the combined output as `.partial` (L2-MRG-004). Rust uses
+  `std::collections::BinaryHeap` and a hand-rolled glob matcher; Python uses
+  `heapq` — no new dependency in either. Output is byte-identical across the two
+  implementations (pinned by the `merge-ordered` conformance case).
+
 ## [2.0.1] — 2026-06-21
 
 ### Added

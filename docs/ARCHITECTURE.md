@@ -19,6 +19,7 @@ MIE-Decoder ships as a Rust crate (`src/`) and a Python package (`python/src/mie
 | TOML configuration loader | `src/config.rs` | `python/src/mie_decoder/config.py` |
 | Message filtering | `src/filter.rs` | `python/src/mie_decoder/filters.py` |
 | Reader pipeline (mmap → records) | `src/reader.rs` | `python/src/mie_decoder/reader.py` |
+| Multi-file time-sorted merge | `src/merge.rs` | `python/src/mie_decoder/merge.py` |
 | Pure decode (bit-level field extraction) | `src/decode.rs` | `python/src/mie_decoder/decode.py` |
 | Sync helpers (validate, find first, recover) | `src/sync.rs` | `python/src/mie_decoder/sync.py` |
 | Domain models + error code constants | `src/models.rs` | `python/src/mie_decoder/models.py` |
@@ -472,17 +473,17 @@ constant memory.
 
 For either implementation, decoding a 10 GB recording uses the same memory as decoding a 10 MB recording. The streaming property is load-bearing in **both**: changes to a writer that buffer rows (e.g., a `Vec<Row>` collection step in Rust, or re-materializing a DataFrame in Python) would break `L3-RS-012` / `L3-PY-012` and must be rejected at review.
 
-### Planned: multi-file time-sorted merge (streaming k-way merge)
+### Multi-file time-sorted merge (streaming k-way merge)
 
-> **Status: planned, not yet implemented** (ROADMAP "Multi-file input,
-> time-sorted merge", Rust v1.x). Described here so the streaming mechanism
-> is understood before it lands; the full design, constraints, and open
-> decisions live in [`ROADMAP.md`](ROADMAP.md). No `decode` flag accepts
-> multiple files today.
+> **Status: implemented in v2.1.0** (L1-MRG / L2-MRG), in both implementations
+> (`src/merge.rs`, `python/src/mie_decoder/merge.py`). `decode` accepts more
+> than one input via multiple positionals, `--manifest`, or `--glob` (mutually
+> exclusive, capped at `MAX_MERGE_FILES = 256`); a single input bypasses the
+> merge module and behaves exactly as before.
 
-The planned feature takes N input recordings and emits a single CSV in
-global time order **without** loading all records into memory — preserving
-the O(1)-in-record-count guarantee above, at the cost of O(k) where k is the
+The feature takes N input recordings and emits a single CSV in global time
+order **without** loading all records into memory — preserving the
+O(1)-in-record-count guarantee above, at the cost of O(k) where k is the
 number of input files.
 
 The mechanism is a **streaming k-way merge**, and it works because of one
@@ -512,12 +513,30 @@ see k cards at once yet produce one fully sorted stream.
 The heap is the easy part; the constraints come from the MIE timestamp model
 (detailed with their resolutions in `ROADMAP.md`):
 
-- **Merge key** is `IrigTimestamp::to_total_microseconds()` — microseconds
-  from the start of the year.
+- **Merge key** is `IrigTimestamp::to_total_microseconds()` (Rust) /
+  `IrigTimestamp.to_total_microseconds()` (Python) — microseconds from the
+  start of the year — with a deterministic `(microseconds, file_index,
+  within-file sequence)` tiebreak so equal timestamps order reproducibly
+  (L2-MRG-002).
 - **Absolute time only.** Standard-format counters (card-local, no shared
   epoch) and freerun IRIG records are not comparable across files; mixed
-  formats likewise. These inputs are refused or given a non-time fallback,
-  not silently mis-ordered.
+  formats likewise. Each input's leading record is validated up front; an
+  incompatible set is **hard-rejected before any output** with
+  `IncompatibleMergeInputs` → exit 6 (L1-EXIT-009 / L2-MRG-003), never
+  silently mis-ordered. (A future opt-in `--order file` non-time mode is on
+  the ROADMAP.)
+- **Global DELTA.** DELTA is recomputed on the merged stream so inter-arrival
+  gaps reflect one unified timeline (L2-MRG-005); the sorted stream makes
+  per-key gaps non-negative. (A future recorder-context convention may switch
+  identified recorders to per-file DELTA — see ROADMAP.)
+- **Per-file failure** reuses the single-file `--strict` / lenient /
+  `--allow-partial` policy across the batch; `--allow-partial` truncates a
+  failed file, finishes from the rest, and the writer commits a combined
+  `.partial` (L2-MRG-004).
+- **No new dependency.** The heap is `std::collections::BinaryHeap`
+  (with `Reverse`) in Rust and the stdlib `heapq` in Python; `--glob` uses a
+  hand-rolled single-directory `*`/`?` matcher with identical semantics in
+  both (L3-RS-014 / L3-PY-014).
 - **Single year.** IRIG-B carries day-of-year but no year, so the key totally
   orders only within one calendar year; cross-year / New-Year-boundary inputs
   cannot be ordered from the timestamp alone. This intersects the IRIG

@@ -263,6 +263,50 @@ mie-decoder --config /etc/mie-decoder/site.toml decode flight.mie -o flight.csv
 
 CLI arguments still take precedence over config-file values per L2-CFG-003. For the full TOML schema with every key documented, see [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md). Copy [`config/default.toml`](../config/default.toml) as a fully-commented starting point.
 
+### Merging multiple recordings into one timeline
+
+When a session produced several recordings (e.g. one per recorder), `decode`
+can merge them into a single CSV in global time order. Give it more than one
+input, in any of three ways:
+
+```bash
+# 1. Positional paths (ad-hoc):
+mie-decoder decode flight-1.mie flight-2.mie flight-3.mie -o session.csv
+
+# 2. A manifest file (one path per line; blank lines and #-comments ignored):
+mie-decoder decode --manifest session-files.txt -o session.csv
+
+# 3. A glob the tool expands itself (works on Windows; * and ? over the
+#    filename in one directory — no recursion):
+mie-decoder decode --glob 'recordings/*.mie' -o session.csv
+```
+
+The Python CLI takes the exact same forms (`python -m mie_decoder decode …`
+or the `mie-decoder` console script). The three methods are **mutually
+exclusive** — pick one. A single input behaves exactly as a normal decode.
+
+What to expect:
+
+- **Ordering** is by absolute IRIG time, so **every input must be
+  calendar-locked IRIG.** If any file is Standard-format, leads with a freerun
+  record, or the set mixes formats, the merge refuses before writing anything
+  and exits **6**, naming the offending file — it never emits a misleadingly
+  "sorted" CSV. Decode such files individually instead.
+- **Memory** stays flat regardless of total record count (it holds one record
+  per open file), so merging many multi-GB recordings is fine. Up to **256**
+  files per invocation; combining input methods or exceeding that is a usage
+  error (exit 4).
+- **DELTA** is computed across the merged timeline (one unified
+  inter-arrival gap per RT/SA), not reset at file boundaries.
+- **A bad file among many:** by default the batch fails. Add `--allow-partial`
+  to skip/truncate the failing file with a warning, finish the merge from the
+  rest, and write the combined result as `<output>.partial` (exit 0). Use
+  `--strict` to fail on the first invalid record in any file.
+- **Same year only:** IRIG carries day-of-year but no year, so a set spanning a
+  New-Year boundary cannot be ordered from the timestamp alone.
+
+Both implementations produce byte-identical merged output.
+
 ---
 
 ## 7. Reading the CSV

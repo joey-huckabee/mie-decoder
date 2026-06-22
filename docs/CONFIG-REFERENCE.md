@@ -304,6 +304,23 @@ Use the `WARN`-level log to catch typos in your config without an explicit schem
 
 ---
 
+## CLI-only options (no TOML key)
+
+Some `decode` capabilities are intentionally **CLI-only** and have **no
+configuration-file key**:
+
+- **Include filters** — `--include-types` / `--include-rts` / `--include-buses`
+  / `--include-subaddresses` (per-invocation overrides; see the `[filter]`
+  section for the exclude-side keys).
+- **Multi-file merge inputs** — the multiple positionals, `--manifest`, and
+  `--glob` that select a set of recordings to merge (L2-MRG-001). Whether to
+  merge, and which files, is a per-invocation decision, so there is no
+  `[merge]` config section. The merge honors the existing `[decode]` /
+  `[filter]` / `[output]` keys (e.g. `strict`, `allow_partial`,
+  `standard_tick_rate_hz`, filters) applied uniformly across all inputs.
+
+---
+
 ## Validation timing
 
 Per L2-CFG-010, all schema validation (type checks, range checks, enum membership, unknown-key detection) happens at **configuration load time**, not at use time. By the time a `DecoderConfig` / `MieConfig` is constructed, the values have been validated.

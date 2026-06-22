@@ -13,7 +13,7 @@ This doc covers the **observable surface**. Spec rationale lives in [`L1-REQ.md`
 
 ## 1. CLI exit codes
 
-The exit-code taxonomy is pinned by L1-EXIT-001 through L1-EXIT-008 and the L2-CLI-011 table, and is identical across both implementations. Every decode invocation logs a one-line `decode exit class:` summary (L1-EXIT-005) so the class is grep-able even when only stderr is captured.
+The exit-code taxonomy is pinned by L1-EXIT-001 through L1-EXIT-009 and the L2-CLI-011 table, and is identical across both implementations. Every decode invocation logs a one-line `decode exit class:` summary (L1-EXIT-005) so the class is grep-able even when only stderr is captured.
 
 | Code | Class | Triggering errors | What it means | Operator action |
 |------|-------|-------------------|---------------|-----------------|
@@ -26,8 +26,9 @@ The exit-code taxonomy is pinned by L1-EXIT-001 through L1-EXIT-008 and the L2-C
 | **3** | `partial-unrecoverable` | `UnrecoverableSyncLoss` without `--allow-partial` | A mid-file sync loss could not be recovered within the 64 KB scan window. | Re-run with `--allow-partial` to keep the rows decoded before the loss as `<dest>.partial`, then triage the recording. |
 | **4** | usage error | unknown/missing/invalid flag or argument, invalid flag value (e.g. `--detect-records 99`, `--standard-tick-rate-hz 0`), no subcommand | The command line itself is wrong. No input is opened and no output file is created. | Fix the invocation; run `--help` for the accepted flags. |
 | **5** | configuration error | config file not found, malformed TOML, or an invalid config value (e.g. `time_format = "potato"`, out-of-range `detect_records`) | The `--config` file can't be loaded or fails validation. No input is opened and no output file is created. | Fix the TOML file named in the stderr message. |
+| **6** | merge-incompatible inputs | `IncompatibleMergeInputs` — a multi-file merge whose inputs cannot share an absolute timeline: an input resolves to the Standard timestamp format, leads with a freerun IRIG record, or the set mixes timestamp formats (L1-EXIT-009 / L2-MRG-003) | Time-sorted merge requires every input to be calendar-locked IRIG. The offending file and its detected format are named on stderr. No output file is created. | Merge only calendar-locked IRIG recordings together; decode Standard or freerun inputs individually. |
 
-The `count` and `dump` subcommands inherit `0`, `1`, `2`, `4`, and `5` — they don't write a streaming output that could be partial, so exit `3` cannot occur (L2-CLI-011).
+The `count` and `dump` subcommands inherit `0`, `1`, `2`, `4`, and `5` — they don't write a streaming output that could be partial (no exit `3`) and they don't merge (no exit `6`) (L2-CLI-011). A multi-file merge that exceeds `MAX_MERGE_FILES` (256) inputs, or combines input methods (positionals + `--manifest` / `--glob`), is a **usage error → exit 4**.
 
 **Configuration vs. flag-value validation.** Out-of-range or malformed values are rejected *before* decoding begins, with a stderr message naming the offending key or flag. The same logical check yields a different code depending on the *source*: a bad **CLI flag value** (e.g. a non-positive `--standard-tick-rate-hz`, an out-of-range `--detect-records`) is a **usage error → exit 4**, while the same value supplied through a **TOML key** is a **configuration error → exit 5** (L2-CFG-011, L2-CLI-012). Either way the input is never opened and no output file is created.
 
@@ -48,6 +49,7 @@ Exception
     │   ├── MieNoValidRecordsError
     │   ├── MieHomogeneousPayloadError
     │   ├── MieTimestampFormatMismatchError
+    │   ├── MieIncompatibleMergeInputsError
     │   ├── MieInputOutputCollisionError
     │   └── MieClobberRefusedError
     ├── MieRecordError               (per-record problem; carries an offset)
@@ -63,7 +65,7 @@ Exception
 
 ### Rust (`mie_decoder::MieError`)
 
-A single `enum MieError { … }` with the same 15 variants. `MieError::kind()` returns a `MieErrorKind` discriminant; `is_file_error()` / `is_record_error()` predicates mirror the Python class split.
+A single `enum MieError { … }` with the same 16 variants. `MieError::kind()` returns a `MieErrorKind` discriminant; `is_file_error()` / `is_record_error()` predicates mirror the Python class split.
 
 ```
 MieError ├── FileNotFound             ── MieErrorKind::FileNotFound             (is_file_error)
@@ -72,6 +74,7 @@ MieError ├── FileNotFound             ── MieErrorKind::FileNotFound   
          ├── NoValidRecords           ── MieErrorKind::NoValidRecords
          ├── HomogeneousPayload       ── MieErrorKind::HomogeneousPayload
          ├── TimestampFormatMismatch  ── MieErrorKind::TimestampFormatMismatch
+         ├── IncompatibleMergeInputs  ── MieErrorKind::IncompatibleMergeInputs  (is_file_error analogue)
          ├── InputOutputCollision     ── MieErrorKind::InputOutputCollision
          ├── ClobberRefused           ── MieErrorKind::ClobberRefused
          ├── InvalidTypeWord          ── MieErrorKind::InvalidTypeWord          (is_record_error)
@@ -102,6 +105,7 @@ These fire before any record is decoded, or before the writer touches the destin
 | `MieTimestampFormatMismatchError` / `TimestampFormatMismatch` | L2-DEC-015 multi-record probe completed with an L2-DEC-016 Ambiguous classification (max aggregate score < 4 OR margin < 3). **Strict mode only**: lenient mode logs a single WARN with the score breakdown and proceeds with the chosen format. Typical cause: the file genuinely isn't an MIE recording, OR the first N records score weakly enough that the probe can't pick a side. | **2** | First confirm the file is actually an MIE recording. If it is, pass `--time-format irig` or `--time-format standard` to force the choice. If a one-time decode is acceptable with the auto-picked format (IRIG on ties per L2-DEC-012), drop `--strict` to take the lenient path. |
 | `MieInputOutputCollisionError` / `InputOutputCollision` | The output path resolves to the same file as the input (L2-WRT-014). | 1 | Choose a different output path; decoding in-place is unsafe under mmap. |
 | `MieClobberRefusedError` / `ClobberRefused` | The output exists and `--no-clobber` / `output.no_clobber = true` is set (L2-WRT-017). | 1 | Remove the existing file or unset the flag. |
+| `MieIncompatibleMergeInputsError` / `IncompatibleMergeInputs` | A multi-file merge input is Standard-format, leads with a freerun IRIG record, or the set mixes timestamp formats — so the inputs can't be ordered on a common absolute timeline (L2-MRG-003). Raised before any output. | **6** | Merge only calendar-locked IRIG recordings; decode Standard / freerun inputs individually. |
 
 ---
 

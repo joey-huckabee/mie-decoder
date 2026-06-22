@@ -304,6 +304,8 @@ Cross-implementation conformance fixtures verify byte-identical CSV output (or m
 
 3. For negative cases (no oracle, just exit-code check), set `expected_exit` in the manifest and skip the oracle file.
 
+   **Multi-file merge cases** use `"inputs": ["inputs/a.hex", "inputs/b.hex", …]` (a list) instead of the single `"input"` — the runner materializes each hex to its own temp `.mie` and passes them all as positionals to both CLIs (L2-MRG-001). See the `merge-ordered` (oracle) and `merge-incompatible-freerun` (`expected_exit: 6`) cases. Note: the `--allow-partial` merge path needs >64 KB of garbage to force an unrecoverable sync loss, which isn't a small reviewable hex fixture, so it's covered by a library test in each implementation (`merge_allow_partial_*`) rather than a conformance case.
+
 4. Register in `tests/conformance/manifest.json`:
 
    ```json
