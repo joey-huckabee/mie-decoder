@@ -142,6 +142,33 @@ class MieClobberRefusedError(MieFileError):
         )
 
 
+class MieIncompatibleMergeInputsError(MieFileError):
+    """Raised when a multi-file merge cannot order its inputs on a common
+    absolute timeline.
+
+    Per L1-EXIT-009 / L2-MRG-003: time-sorted merge requires every input to
+    be calendar-locked IRIG. A Standard-format input, a freerun-leading
+    input, or a set that mixes timestamp formats is rejected before any
+    output is written. Maps to CLI exit code 6.
+
+    Attributes:
+        file_index: Index of the offending input in resolved order.
+        path: Path of the offending input.
+        detail: The specific reason it cannot be merged.
+    """
+
+    def __init__(self, file_index: int, path: str, detail: str) -> None:
+        self.file_index = file_index
+        self.path = path
+        self.detail = detail
+        super().__init__(
+            f"Cannot time-merge input #{file_index} ({path}): {detail}. "
+            f"Multi-file merge requires every input to be calendar-locked "
+            f"IRIG (Standard-format, freerun IRIG, and mixed-format sets "
+            f"cannot be ordered on a common absolute timeline)."
+        )
+
+
 class MieRecordError(MieDecoderError):
     """Base exception for record-level decoding errors.
 

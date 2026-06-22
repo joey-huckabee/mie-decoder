@@ -94,7 +94,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L2-MRG-005 | _(none)_ | `tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Implemented |
+| L2-MRG-005 | _(none)_ | `python/tests/test_merge.py::test_merge_orders_records_across_files_by_absolute_time`<br>`tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Implemented |
 | L2-RDR-009 | _(none)_ | `python/tests/test_e2e.py::test_delta_same_rtmsg`<br>`python/tests/test_models.py::test_delta_key`<br>`tests/integration.rs::delta_tracker_per_rt_msg_key` | Implemented |
 | L2-RDR-010 | _(none)_ | `python/tests/test_e2e.py::test_delta_first_occurrence_is_zero` | Implemented |
 | L2-RDR-016 | _(none)_ | `python/tests/test_e2e.py::test_errored_record_participates_in_delta` | Implemented |
@@ -308,16 +308,16 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L1-MRG-001 | L2-MRG-001, L2-MRG-002, L2-MRG-004 | `tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Partially Implemented |
-| L1-MRG-002 | L2-MRG-003 | `tests/integration.rs::merge_rejects_freerun_leading_input`<br>`tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
+| L1-MRG-001 | L2-MRG-001, L2-MRG-002, L2-MRG-004 | `python/tests/test_merge.py::test_merge_orders_records_across_files_by_absolute_time`<br>`tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Partially Implemented |
+| L1-MRG-002 | L2-MRG-003 | `python/tests/test_merge.py::test_merge_rejects_freerun_leading_input`<br>`python/tests/test_merge.py::test_merge_rejects_standard_format_input`<br>`tests/integration.rs::merge_rejects_freerun_leading_input`<br>`tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
 | L2 ID | L3 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L2-MRG-001 | _(none)_ | `src/cli.rs::filter_flag_takes_single_value_rest_are_positional_inputs`<br>`src/merge.rs::glob_match_wildcards`<br>`tests/integration.rs::merge_single_input_is_unchanged`<br>`tests/integration.rs::read_manifest_skips_blanks_and_comments` | Implemented |
-| L2-MRG-002 | L3-PY-014, L3-RS-014 | `src/merge.rs::glob_match_wildcards`<br>`src/merge.rs::heap_entry_orders_by_key_tuple`<br>`tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Partially Implemented |
-| L2-MRG-003 | _(none)_ | `tests/integration.rs::merge_rejects_freerun_leading_input`<br>`tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
+| L2-MRG-001 | _(none)_ | `python/tests/test_merge.py::test_expand_glob_matches_and_sorts`<br>`python/tests/test_merge.py::test_glob_match_wildcards`<br>`python/tests/test_merge.py::test_merge_single_input_is_unchanged`<br>`python/tests/test_merge.py::test_read_manifest_skips_blanks_and_comments`<br>`src/cli.rs::filter_flag_takes_single_value_rest_are_positional_inputs`<br>`src/merge.rs::glob_match_wildcards`<br>`tests/integration.rs::merge_single_input_is_unchanged`<br>`tests/integration.rs::read_manifest_skips_blanks_and_comments` | Implemented |
+| L2-MRG-002 | L3-PY-014, L3-RS-014 | `python/tests/test_merge.py::test_merge_orders_records_across_files_by_absolute_time`<br>`src/merge.rs::glob_match_wildcards`<br>`src/merge.rs::heap_entry_orders_by_key_tuple`<br>`tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Partially Implemented |
+| L2-MRG-003 | _(none)_ | `python/tests/test_merge.py::test_merge_rejects_freerun_leading_input`<br>`python/tests/test_merge.py::test_merge_rejects_standard_format_input`<br>`tests/integration.rs::merge_rejects_freerun_leading_input`<br>`tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
 | L2-MRG-004 | _(none)_ | _(TBD)_ | Draft |
 
 ---

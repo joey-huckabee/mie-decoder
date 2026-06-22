@@ -41,6 +41,7 @@ from mie_decoder.exceptions import (
     MieDecoderError,
     MieFileError,
     MieHomogeneousPayloadError,
+    MieIncompatibleMergeInputsError,
     MieInputOutputCollisionError,
     MieNoValidRecordsError,
     MieTimestampFormatMismatchError,
@@ -60,6 +61,7 @@ EXIT_NO_RECORDS = 2  # input is not an MIE recording
 EXIT_SYNC_LOSS = 3  # unrecoverable mid-file sync loss without --allow-partial
 EXIT_USAGE = 4  # CLI usage error (bad/unknown/missing flag or argument)
 EXIT_CONFIG = 5  # configuration error (missing/malformed/invalid config)
+EXIT_MERGE_INCOMPATIBLE = 6  # merge inputs cannot share an absolute timeline (L1-EXIT-009)
 
 
 class _UsageErrorParser(argparse.ArgumentParser):
@@ -197,9 +199,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Decode MIE binary file to CSV.",
     )
     decode_parser.add_argument(
-        "input",
+        "inputs",
         type=Path,
-        help="Path to the MIE binary recording file.",
+        nargs="*",
+        metavar="INPUT",
+        help=(
+            "Path(s) to MIE binary recording file(s). Give more than one to "
+            "merge them into a single time-sorted CSV (requires calendar-locked "
+            "IRIG inputs). Mutually exclusive with --manifest / --glob."
+        ),
+    )
+    decode_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Read input paths from a file (one per line; blank lines and "
+            "#-comments ignored). Mutually exclusive with positionals / --glob."
+        ),
+    )
+    decode_parser.add_argument(
+        "--glob",
+        dest="glob",
+        default=None,
+        metavar="PATTERN",
+        help=(
+            "Expand a single-directory glob (e.g. 'dir/*.mie'); '*' and '?' "
+            "wildcards over the filename only (no recursion). Mutually "
+            "exclusive with positionals / --manifest."
+        ),
     )
     decode_parser.add_argument(
         "-o",
@@ -419,6 +448,67 @@ def _apply_config_log_level(args: argparse.Namespace, config_log_level: str) -> 
         configure_logging(config_log_level)
 
 
+def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
+    """Resolve the decode input set from exactly one method (positionals,
+    ``--manifest``, or ``--glob``), enforcing mutual exclusivity and the
+    ``MAX_MERGE_FILES`` cap (L2-MRG-001).
+
+    Raises:
+        ValueError: usage problems (no method / combined methods / empty
+            resolution / over-cap) → the caller maps to exit 4.
+        OSError: a manifest that cannot be read or a glob directory that does
+            not exist → the caller maps to exit 1.
+    """
+    from mie_decoder.merge import MAX_MERGE_FILES, expand_glob, read_manifest
+
+    methods = sum(
+        [bool(args.inputs), args.manifest is not None, args.glob is not None]
+    )
+    if methods == 0:
+        raise ValueError(
+            "decode requires an input file (positional, --manifest, or --glob)"
+        )
+    if methods > 1:
+        raise ValueError(
+            "decode accepts only one input method: positional paths, "
+            "--manifest, or --glob — not a combination"
+        )
+
+    if args.manifest is not None:
+        paths = read_manifest(args.manifest)
+    elif args.glob is not None:
+        paths = expand_glob(args.glob)
+    else:
+        paths = list(args.inputs)
+
+    if not paths:
+        if args.manifest is not None:
+            raise ValueError(f"manifest {args.manifest} contains no input paths")
+        if args.glob is not None:
+            raise ValueError(f"--glob {args.glob!r} matched no files")
+        raise ValueError("decode requires at least one input file")
+    if len(paths) > MAX_MERGE_FILES:
+        raise ValueError(
+            f"too many input files: {len(paths)} (maximum is {MAX_MERGE_FILES}); "
+            f"split the set into smaller batches"
+        )
+    return paths
+
+
+def _merge_output_collision(output: Path, inputs: list[Path]) -> str | None:
+    """Return an error message if a merge's output path resolves to one of its
+    inputs (L2-WRT-014 across the input set), else None. ``Path.resolve`` is
+    non-strict, so a not-yet-existing output resolves fine."""
+    out_resolved = output.resolve()
+    for inp in inputs:
+        if inp.resolve() == out_resolved:
+            return (
+                f"output path {output} resolves to merge input {inp}; "
+                f"choose a different output path"
+            )
+    return None
+
+
 def _run_decode(args: argparse.Namespace) -> int:
     """Execute the decode subcommand.
 
@@ -442,6 +532,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         _parse_bus_names,
     )
     from mie_decoder.filters import apply_filters
+    from mie_decoder.merge import merge_readers
     from mie_decoder.reader import MieFileReader
     from mie_decoder.writer import WriteOptions, write_csv, write_csv_split
     from mie_decoder.models import ErrorMode, TimestampFormat
@@ -536,35 +627,75 @@ def _run_decode(args: argparse.Namespace) -> int:
 
     config = config.with_overrides(**overrides)
 
-    # ── Open file ──────────────────────────────────────────────────
+    # ── Resolve the input set (positionals / --manifest / --glob) ──
     try:
-        reader = MieFileReader(
-            args.input,
-            time_format=config.time_format,
-            strict=config.strict,
-            detect_records=config.detect_records,
-            lookahead_records=config.lookahead_records,
-            standard_tick_rate_hz=config.standard_tick_rate_hz,
-        )
+        input_paths = _resolve_decode_inputs(args)
+    except ValueError as exc:
+        # Usage problems: no method, combined methods, empty resolution,
+        # over-cap (L2-MRG-001).
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except OSError as exc:
+        # Manifest unreadable / glob directory missing.
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+
+    # ── Open a reader per input ────────────────────────────────────
+    try:
+        readers = [
+            MieFileReader(
+                p,
+                time_format=config.time_format,
+                strict=config.strict,
+                detect_records=config.detect_records,
+                lookahead_records=config.lookahead_records,
+                standard_tick_rate_hz=config.standard_tick_rate_hz,
+            )
+            for p in input_paths
+        ]
     except MieFileError as exc:
         logger.error("Failed to open input file: %s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         return EXIT_RUNTIME
 
-    logger.info("Opened %s (%d bytes)", reader.path.name, reader.file_size)
+    for r in readers:
+        logger.info("Opened %s (%d bytes)", r.path.name, r.file_size)
 
-    # ── Apply filters ──────────────────────────────────────────────
-    messages = apply_filters(reader, config.filters)
+    # For a merge, check the output against *every* input (L2-WRT-014 across
+    # the set) and disable the writer's single-path check; a single input uses
+    # the writer's own check via input_path.
+    if len(readers) > 1 and args.output is not None:
+        collision = _merge_output_collision(args.output, input_paths)
+        if collision is not None:
+            logger.error("%s", collision)
+            print(f"Error: {collision}", file=sys.stderr)
+            return EXIT_RUNTIME
 
-    # WriteOptions populated once with all three file-output safety
-    # checks (L2-WRT-014 collision, L2-WRT-017 no-clobber, L1-EXIT-004
-    # allow_partial). File-path destinations consume these; stdout
-    # output ignores them.
     write_opts = WriteOptions(
-        input_path=args.input,
+        input_path=input_paths[0] if len(readers) == 1 else None,
         no_clobber=config.no_clobber,
         allow_partial=config.allow_partial,
     )
+
+    # ── Build the message stream: single reader, or time-sorted merge ──
+    # One input → today's path (per-file DELTA). Two or more → the k-way
+    # merge (global DELTA, L2-MRG-002/005). merge_readers validates eagerly,
+    # so an incompatible set raises here before any output (L2-MRG-003).
+    try:
+        if len(readers) == 1:
+            messages = apply_filters(readers[0], config.filters)
+        else:
+            merged = merge_readers(
+                readers,
+                standard_tick_rate_hz=config.standard_tick_rate_hz,
+                allow_partial=config.allow_partial,
+            )
+            messages = apply_filters(merged, config.filters)
+    except MieIncompatibleMergeInputsError as exc:
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: merge-incompatible")
+        return EXIT_MERGE_INCOMPATIBLE
 
     try:
         t0 = time.perf_counter()
@@ -643,9 +774,9 @@ def _run_decode(args: argparse.Namespace) -> int:
         return EXIT_RUNTIME
 
     # L1-EXIT-005 exit-class summary. Distinguish complete from
-    # partial-recovered via reader.sync_losses, partial-committed
-    # via outcome.partial.
-    sync_losses = reader.sync_losses
+    # partial-recovered via the cumulative sync-loss count across all
+    # inputs, partial-committed via outcome.partial.
+    sync_losses = sum(r.sync_losses for r in readers)
     if outcome.partial is not None:
         cls = "partial-unrecoverable"
     elif sync_losses > 0:
