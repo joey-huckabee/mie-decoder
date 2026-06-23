@@ -2,6 +2,24 @@
 
 ## Release status
 
+**v2.3.0 — joint Rust + Python cut, 2026-06-23.** Adds **MUX-from-filename**
+(L2-WRT-020): the long-empty `MUX` CSV column is now populated from a
+configurable field of each input's file name (basename split on a delimiter,
+default `.`, taking a 0-based field, default `4`, negative-from-end allowed), so
+a decoded CSV carries the source/recorder identity operators encode in the name
+(e.g. `…1553.aa.unused.mie_irig` → `MUX = aa`). In a multi-file merge each row
+carries its **source file's** value. Configurable via a new `[mux]` config
+section and `--no-mux` / `--mux-delimiter` / `--mux-field` (identical in both
+CLIs); extraction is hand-rolled (delimiter + index, no new dependency). This is
+the first concrete step of the "recorder identity from a parsed file-naming
+convention" item (per-recorder DELTA and identity-based tiebreak remain future).
+**Behavior change:** MUX population is **on by default**, so default output no
+longer matches the DDC vendor CSV byte-for-byte when the file name has the field;
+`--no-mux` restores vendor-exact output. Also bundles the v2.2.x-staged
+Standard-timestamp **mode-code-with-data** decode fix (L2-MSG-004) and two
+doc-drift corrections. No other decode-output changes. See
+[`CHANGELOG.md`](../CHANGELOG.md) section `[2.3.0]`.
+
 **v2.2.0 — joint Rust + Python cut, 2026-06-22.** Merge-hardening +
 cross-implementation parity release. Adds **within-file monotonicity detection**
 to the multi-file merge (L2-MRG-006): a backward IRIG-microsecond step within a
