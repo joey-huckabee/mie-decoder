@@ -395,7 +395,7 @@ Both crates **must** raise the same variant for the same input. Add a conformanc
 
 ## 8. Adding a CLI flag
 
-The Rust and Python CLIs differ in syntax (per L1-CLI-001) but must offer the same capabilities. If the new flag enables an L1-CLI-001 capability, both must implement it.
+L1-CLI-001 only requires the two CLIs to offer the same capabilities; their syntax MAY differ. In practice they have been kept to an **identical flag surface** across `decode` / `count` / `dump` — add the flag to both implementations with the same name and semantics so that parity holds (the conformance suite drives both CLIs from a single shared `args` vector, so a flag missing from one side breaks any case that uses it).
 
 ### Rust (`src/cli.rs`)
 

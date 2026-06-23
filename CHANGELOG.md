@@ -30,19 +30,34 @@ full release workflow.
   A new `merge-non-monotonic-within-file` conformance case pins the cross-impl
   WARN + byte-identical output. A single-file decode is unaffected (the merge
   path only runs for two or more inputs).
+- **The Python `decode` CLI gains `--strict` and `--format`, completing
+  argument-surface parity with the Rust CLI.** `--strict` (raise on invalid
+  records) was previously settable only via `[decode] strict = true` in a config
+  file on the Python side, even though the Rust CLI and the docs already exposed
+  it as a flag; it is now a `decode` flag in both, overriding the config like
+  every other CLI override. `--format` (output format; `csv` only at present)
+  likewise matches Rust: `csv` is accepted and any other value is a **runtime
+  error (exit 1)** applied after config load, distinct from the config-file
+  `output.format` validation (a config error, exit 5) that both already shared.
+  With these, both CLIs accept an identical set of flags across `decode`,
+  `count`, and `dump`. The `merge-non-monotonic-strict` conformance case now
+  drives strict via the shared `--strict` arg (rather than a config file),
+  directly proving both CLIs accept it.
 
 ### Changed
 
 - **Strict mode now fails a merge whose input is not internally time-sorted
-  (behavior change, both implementations).** Under `--strict` (Rust) or
-  `[decode] strict = true` (both), a within-file backward timestamp step
+  (behavior change, both implementations).** Under `--strict` or
+  `[decode] strict = true`, a within-file backward timestamp step
   (L2-MRG-006, above) is treated as a record error — `NonMonotonicInput` /
   `MieNonMonotonicInputError`, mapped to **exit 1** (the runtime/decode-error
   class, like other strict record failures) — rather than being silently
   accepted. Lenient mode (the default) is unchanged apart from the new WARN.
-  Pinned by the `merge-non-monotonic-strict` conformance case. (The Python
-  `decode` CLI sets strict via config only; it has no `--strict` flag — a
-  separate, pre-existing parity gap.)
+  Pinned by the `merge-non-monotonic-strict` conformance case.
+- **The Rust `decode --help` now documents `--manifest` and `--glob`** (and
+  shows `decode <INPUT>...` for the multi-input merge). Both flags were already
+  accepted by the parser since v2.1.0 but were missing from the help text; no
+  behavior change.
 
 ## [2.1.0] — 2026-06-21
 

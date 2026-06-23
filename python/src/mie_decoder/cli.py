@@ -379,6 +379,25 @@ def build_parser() -> argparse.ArgumentParser:
             "decode.standard_tick_rate_hz config key."
         ),
     )
+    decode_parser.add_argument(
+        "--strict",
+        action="store_true",
+        default=None,
+        help=(
+            "Raise on invalid records instead of skipping them. Overrides "
+            "the config file (default: lenient). Mirrors the decode.strict "
+            "config key and the Rust --strict flag."
+        ),
+    )
+    decode_parser.add_argument(
+        "--format",
+        default=None,
+        metavar="FORMAT",
+        help=(
+            "Output format (csv only at present). Overrides the "
+            "output.format config key, matching the Rust --format flag."
+        ),
+    )
 
     # ── count subcommand ───────────────────────────────────────────
     # Its own subcommand, matching the Rust CLI (`count <INPUT>`).
@@ -632,8 +651,24 @@ def _run_decode(args: argparse.Namespace) -> int:
             )
             return EXIT_USAGE
         overrides["standard_tick_rate_hz"] = hz
+    if args.strict is not None:
+        overrides["strict"] = args.strict
+    if args.format is not None:
+        overrides["output_format"] = args.format
 
     config = config.with_overrides(**overrides)
+
+    # L2-CFG-010 mirror of the Rust runtime check (src/cli.rs): a config-file
+    # output.format is validated at load time (exit 5), but a --format override
+    # is applied after load, so re-check here. Non-csv is a runtime error
+    # (exit 1), matching the Rust CLI.
+    if config.output_format != "csv":
+        print(
+            f"Error: output format {config.output_format!r} not yet "
+            f"supported (only 'csv')",
+            file=sys.stderr,
+        )
+        return EXIT_RUNTIME
 
     # ── Resolve the input set (positionals / --manifest / --glob) ──
     try:

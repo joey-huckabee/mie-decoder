@@ -261,7 +261,9 @@
         "inputs/merge-non-monotonic.hex",
         "inputs/merge-a.hex"
       ],
-      "config": "configs/strict.toml",
+      "args": [
+        "--strict"
+      ],
       "expected_exit": 1,
       "expected_stderr_contains": "not internally time-sorted"
     }

@@ -220,6 +220,31 @@ def test_cli_merge_incompatible_exits_6(tmp_path: Path) -> None:
     assert not out.exists()
 
 
+@pytest.mark.requirement("L2-MRG-006")
+def test_cli_merge_strict_flag_exits_1_on_backward_step(tmp_path: Path) -> None:
+    """The `--strict` CLI flag (parity with the Rust CLI) makes a within-file
+    backward timestamp step fail the merge with exit 1. Lenient (no flag) exits
+    0. This exercises the flag end-to-end through the CLI."""
+    from mie_decoder.cli import EXIT_OK, EXIT_RUNTIME, main
+
+    nonmono = (
+        rt15_record_at(192, 15, 54, 50, 200)
+        + rt15_record_at(192, 15, 54, 50, 400)
+        + rt15_record_at(192, 15, 54, 50, 150)  # backward step
+    )
+    a = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    fn = tmp_path / "nonmono.mie"
+    fa = tmp_path / "a.mie"
+    fn.write_bytes(nonmono)
+    fa.write_bytes(a)
+
+    out = tmp_path / "merged.csv"
+    assert main(["decode", str(fn), str(fa), "--strict", "-o", str(out)]) == EXIT_RUNTIME
+    # Lenient (default) keeps everything and succeeds.
+    out2 = tmp_path / "merged2.csv"
+    assert main(["decode", str(fn), str(fa), "-o", str(out2)]) == EXIT_OK
+
+
 # ── CLI bad-input / cap / robustness (L2-MRG-001, L1-ROB-001) ──────────────
 
 

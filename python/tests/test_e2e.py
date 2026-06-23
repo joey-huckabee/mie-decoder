@@ -817,6 +817,25 @@ class TestAtomicWriteSafety:
         assert (tmp_path / "out.csv.partial").exists()
         assert not out.exists()
 
+    @pytest.mark.requirement("L2-CLI-011")
+    def test_cli_format_flag_parity_with_rust(self, tmp_path: Path) -> None:
+        """The `--format` flag matches the Rust CLI: `csv` is accepted, any
+        other value is a runtime error (exit 1) — not a parse error — applied
+        after config load like the Rust override path."""
+        from mie_decoder.cli import main
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "rec.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV)
+
+        out = tmp_path / "out.csv"
+        assert main(["decode", str(fpath), "--format", "csv", "-o", str(out)]) == 0
+        assert out.exists()
+
+        out2 = tmp_path / "out2.csv"
+        assert main(["decode", str(fpath), "--format", "json", "-o", str(out2)]) == 1
+        assert not out2.exists()
+
     @pytest.mark.requirement("L2-WRT-017")
     def test_write_csv_split_no_clobber_checks_errors_file(
         self, tmp_mie_file: Path, tmp_path: Path

@@ -30,9 +30,9 @@ USAGE:
   mie-decoder [--log-level L] [--config PATH] <command> [options]
 
 COMMANDS:
-  decode <INPUT>   Decode an MIE file to CSV
-  count  <INPUT>   Print message count (no CSV)
-  dump   <INPUT>   Hex dump (raw or record-aware)
+  decode <INPUT>... Decode MIE file(s) to CSV (2+ inputs → time-sorted merge)
+  count  <INPUT>    Print message count (no CSV)
+  dump   <INPUT>    Hex dump (raw or record-aware)
 
 GLOBAL OPTIONS:
   --log-level LEVEL                     DEBUG|INFO|WARNING|WARN|ERROR|
@@ -44,6 +44,13 @@ GLOBAL OPTIONS:
 
 DECODE OPTIONS:
   -o, --output PATH                     Output CSV (default stdout)
+  --manifest PATH                       Read input paths from a file (one per
+                                        line; blank/#-comment lines ignored).
+                                        Mutually exclusive with positionals /
+                                        --glob (L2-MRG-001)
+  --glob PATTERN                        Expand a single-directory *|? filename
+                                        glob (no recursion). Mutually exclusive
+                                        with positionals / --manifest
   --inline-errors                       Errors inline in main CSV
                                         (default: separate <stem>_errors.csv)
   --no-clobber                          Refuse to overwrite an existing
@@ -90,6 +97,8 @@ DUMP OPTIONS:
 EXAMPLES:
   mie-decoder decode rec.mie -o out.csv
   mie-decoder decode rec.mie --inline-errors --include-rts 15
+  mie-decoder decode a.mie b.mie c.mie -o merged.csv   # time-sorted merge
+  mie-decoder decode --glob 'recordings/*.mie' -o merged.csv
   mie-decoder count rec.mie
   mie-decoder dump rec.mie --records 10
 ";
