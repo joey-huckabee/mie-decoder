@@ -2,6 +2,23 @@
 
 ## Release status
 
+**v2.2.0 — joint Rust + Python cut, 2026-06-22.** Merge-hardening +
+cross-implementation parity release. Adds **within-file monotonicity detection**
+to the multi-file merge (L2-MRG-006): a backward IRIG-microsecond step within a
+single input (sync-loss recovery or a day/year rollover) is detected in O(1) —
+lenient mode WARNs once per input and still emits every record (never
+re-sorting), strict mode fails the batch with a `NonMonotonicInput` record error
+(exit 1). Completes **CLI argument-surface parity**: the Python `decode` CLI
+gained `--strict` and `--format`, so both CLIs now expose an identical flag set
+across `decode` / `count` / `dump`, and a new `check_cli_surface` gate in the
+conformance runner fails CI if the two surfaces ever diverge. Fixes two
+**Python config-parsing divergences** found by a parity audit — integer
+`exclude_types` codes now parse (and bound-check to `0..=255`) instead of
+crashing, an out-of-range code is rejected rather than silently ignored, and a
+non-string `exclude_buses` entry raises a clean error instead of crashing — all
+matching the Rust behavior. No decode-output changes; CSV remains byte-identical.
+See [`CHANGELOG.md`](../CHANGELOG.md) section `[2.2.0]`.
+
 **v2.1.0 — joint Rust + Python cut.** Feature release: **multi-file,
 time-sorted merge** (L1-MRG / L2-MRG), shipped identically in both
 implementations. `decode` now accepts more than one input — multiple
