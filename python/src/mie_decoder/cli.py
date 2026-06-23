@@ -43,6 +43,7 @@ from mie_decoder.exceptions import (
     MieHomogeneousPayloadError,
     MieIncompatibleMergeInputsError,
     MieInputOutputCollisionError,
+    MieNonMonotonicInputError,
     MieNoValidRecordsError,
     MieTimestampFormatMismatchError,
     MieUnrecoverableSyncLossError,
@@ -696,6 +697,7 @@ def _run_decode(args: argparse.Namespace) -> int:
                 readers,
                 standard_tick_rate_hz=config.standard_tick_rate_hz,
                 allow_partial=config.allow_partial,
+                strict=config.strict,
             )
             messages = apply_filters(merged, config.filters)
     except MieIncompatibleMergeInputsError as exc:
@@ -774,6 +776,14 @@ def _run_decode(args: argparse.Namespace) -> int:
     except MieWriterError as exc:
         logger.error("Write failed: %s", exc)
         print(f"Error writing output: {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+    except MieNonMonotonicInputError as exc:
+        # L2-MRG-006: strict-mode merge hit an input that is not internally
+        # time-sorted. Record-error class (exit 1), same as other strict
+        # record failures. Lenient mode never reaches here (it only WARNs).
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: non-monotonic-input (strict)")
         return EXIT_RUNTIME
     except MieDecoderError as exc:
         logger.error("Decode failed: %s", exc)

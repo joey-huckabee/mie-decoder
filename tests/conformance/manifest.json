@@ -242,6 +242,28 @@
       ],
       "expected_exit": 6,
       "expected_stderr_contains": "freerun"
+    },
+    {
+      "name": "merge-non-monotonic-within-file",
+      "inputs": [
+        "inputs/merge-non-monotonic.hex",
+        "inputs/merge-a.hex"
+      ],
+      "expected": "expected/merge-non-monotonic-within-file.csv",
+      "expected_stderr_contains": "not internally time-sorted",
+      "args": [
+        "--inline-errors"
+      ]
+    },
+    {
+      "name": "merge-non-monotonic-strict",
+      "inputs": [
+        "inputs/merge-non-monotonic.hex",
+        "inputs/merge-a.hex"
+      ],
+      "config": "configs/strict.toml",
+      "expected_exit": 1,
+      "expected_stderr_contains": "not internally time-sorted"
     }
   ]
 }

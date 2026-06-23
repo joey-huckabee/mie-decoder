@@ -541,6 +541,13 @@ The heap is the easy part; the constraints come from the MIE timestamp model
   orders only within one calendar year; cross-year / New-Year-boundary inputs
   cannot be ordered from the timestamp alone. This intersects the IRIG
   day-field decoding limitation (§/ROADMAP) on the affected card models.
+- **Within-file monotonicity** is verified, not just assumed (L2-MRG-006). The
+  merge tracks the previous record's key per input and detects a strictly
+  backward step in O(1) (capture order broken by sync-loss recovery or a
+  day/year rollover). Lenient mode WARNs once per input and still emits every
+  record (it never re-sorts — that would defeat the O(k) streaming guarantee);
+  strict mode raises `NonMonotonicInput` → exit 1. Detection mirrors the
+  single-file non-monotonic-DELTA advisory (L2-RDR-017).
 - **File-local error classification.** The `prev_was_error` state that tags
   `SPURIOUS_DATA` as `0x2000` vs `0x2001` is per-file and is resolved inside
   each file's reader *before* merge — never on the merged stream — so a

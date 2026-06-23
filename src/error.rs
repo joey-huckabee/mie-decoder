@@ -132,6 +132,21 @@ pub enum MieError {
         path: PathBuf,
         detail: String,
     },
+
+    /// L2-MRG-006: during a multi-file merge, one input's records are not in
+    /// chronological capture order — a record's absolute IRIG microsecond key
+    /// stepped backward relative to the previous record pulled from the *same*
+    /// file. The time-merge assumes each input is internally time-sorted; a
+    /// backward step (sync-loss recovery or a day/year rollover) means the
+    /// merged output may be out of order for that input. Strict mode surfaces
+    /// this (record-error class, exit `1`); lenient mode only WARNs and keeps
+    /// going.
+    NonMonotonicInput {
+        file_index: usize,
+        path: PathBuf,
+        prev_us: u64,
+        curr_us: u64,
+    },
 }
 
 /// Discriminant identifying which variant of [`MieError`] occurred.
@@ -154,6 +169,7 @@ pub enum MieErrorKind {
     UnrecoverableSyncLoss,
     TimestampFormatMismatch,
     IncompatibleMergeInputs,
+    NonMonotonicInput,
 }
 
 impl MieError {
@@ -176,6 +192,7 @@ impl MieError {
             Self::UnrecoverableSyncLoss { .. } => MieErrorKind::UnrecoverableSyncLoss,
             Self::TimestampFormatMismatch { .. } => MieErrorKind::TimestampFormatMismatch,
             Self::IncompatibleMergeInputs { .. } => MieErrorKind::IncompatibleMergeInputs,
+            Self::NonMonotonicInput { .. } => MieErrorKind::NonMonotonicInput,
         }
     }
 
@@ -341,6 +358,18 @@ impl fmt::Display for MieError {
                  Multi-file merge requires every input to be calendar-locked IRIG \
                  (Standard-format, freerun IRIG, and mixed-format sets cannot be \
                  ordered on a common absolute timeline).",
+                path.display()
+            ),
+            Self::NonMonotonicInput {
+                file_index,
+                path,
+                prev_us,
+                curr_us,
+            } => write!(
+                f,
+                "merge: input #{file_index} ({}) is not internally time-sorted: \
+                 timestamp stepped backward (prev_us={prev_us} curr_us={curr_us}). \
+                 The time-merge assumes each input is in chronological capture order.",
                 path.display()
             ),
         }

@@ -177,6 +177,19 @@ pub struct MergedRecordIter<'a> {
     next_seq: Vec<u64>,
     tick: Option<f64>,
     allow_partial: bool,
+    /// In strict mode a within-file backward timestamp step (L2-MRG-006) is a
+    /// record error that fails the batch; in lenient mode it only WARNs.
+    strict: bool,
+    /// Microsecond key of the previous record pulled from each input file, in
+    /// capture order. `None` until a file's first record is seen. Used to
+    /// detect a within-file backward step (L2-MRG-006).
+    prev_us: Vec<Option<u64>>,
+    /// One-time-per-file guard so a non-monotonic input WARNs at most once
+    /// (lenient mode), mirroring the single-file non-monotonic-DELTA WARN.
+    warned_backward: Vec<bool>,
+    /// Input paths in resolved order, for naming a file in the L2-MRG-006
+    /// non-monotonic WARN / error (the per-file readers are not retained).
+    paths: Vec<PathBuf>,
     delta_tracker: HashMap<String, u64>,
     /// Error to surface on the *next* `next()` call (non-`--allow-partial`
     /// mid-stream failure — fails the batch).
@@ -196,16 +209,19 @@ impl<'a> MergedRecordIter<'a> {
         readers: &'a [MieFileReader],
         tick: Option<f64>,
         allow_partial: bool,
+        strict: bool,
     ) -> MieResult<Self> {
         let mut iters: Vec<RecordIter<'a>> = readers.iter().map(|r| r.iter()).collect();
         let mut heap = BinaryHeap::new();
         let mut next_seq = vec![0u64; readers.len()];
+        let mut prev_us = vec![None; readers.len()];
 
         for (idx, iter) in iters.iter_mut().enumerate() {
             match iter.next() {
                 Some(Ok(msg)) => {
                     check_mergeable(&msg, idx, readers[idx].path())?;
                     let us = merge_micros(&msg, tick);
+                    prev_us[idx] = Some(us);
                     heap.push(Reverse(HeapEntry {
                         us,
                         file_index: idx,
@@ -232,12 +248,18 @@ impl<'a> MergedRecordIter<'a> {
             }
         }
 
+        let warned_backward = vec![false; readers.len()];
+        let paths = readers.iter().map(|r| r.path().to_path_buf()).collect();
         Ok(Self {
             iters,
             heap,
             next_seq,
             tick,
             allow_partial,
+            strict,
+            prev_us,
+            warned_backward,
+            paths,
             delta_tracker: HashMap::new(),
             pending_error: None,
             pending_terminal: None,
@@ -272,6 +294,35 @@ impl<'a> MergedRecordIter<'a> {
         match self.iters[file_index].next() {
             Some(Ok(msg)) => {
                 let us = merge_micros(&msg, self.tick);
+                // L2-MRG-006: each input is assumed internally time-sorted
+                // (capture order is chronological). A backward step means the
+                // merged output may be out of order for this file. Strict mode
+                // fails the batch; lenient mode WARNs once per file.
+                if let Some(prev) = self.prev_us[file_index] {
+                    if us < prev {
+                        if self.strict {
+                            self.pending_error = Some(MieError::NonMonotonicInput {
+                                file_index,
+                                path: self.paths[file_index].clone(),
+                                prev_us: prev,
+                                curr_us: us,
+                            });
+                        } else if !self.warned_backward[file_index] {
+                            self.warned_backward[file_index] = true;
+                            log_warn!(
+                                "merge: input #{} ({}) is not internally time-sorted: \
+                                 timestamp stepped backward (prev_us={} curr_us={}) — merged \
+                                 output may be out of order for this input \
+                                 (further occurrences suppressed)",
+                                file_index,
+                                self.paths[file_index].display(),
+                                prev,
+                                us
+                            );
+                        }
+                    }
+                }
+                self.prev_us[file_index] = Some(us);
                 let seq = self.next_seq[file_index];
                 self.next_seq[file_index] = seq + 1;
                 self.heap.push(Reverse(HeapEntry {

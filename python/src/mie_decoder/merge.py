@@ -29,6 +29,7 @@ from pathlib import Path
 from mie_decoder.exceptions import (
     MieDecoderError,
     MieIncompatibleMergeInputsError,
+    MieNonMonotonicInputError,
     MieUnrecoverableSyncLossError,
 )
 from mie_decoder.models import IrigTimestamp, MieMessage, StandardTimestamp
@@ -160,6 +161,7 @@ def merge_readers(
     *,
     standard_tick_rate_hz: float | None = None,
     allow_partial: bool = False,
+    strict: bool = False,
 ) -> Iterator[MieMessage]:
     """Stream a time-sorted k-way merge over ``readers``.
 
@@ -172,11 +174,17 @@ def merge_readers(
     the merge completes, deferring the terminal
     :class:`MieUnrecoverableSyncLossError` so the writer commits a ``.partial``
     (L2-MRG-004). The heap key ``(microseconds, file index, sequence)`` gives a
-    deterministic total order (L2-MRG-002).
+    deterministic total order (L2-MRG-002). A within-file backward timestamp
+    step (L2-MRG-006) WARNs once per file in lenient mode and raises
+    :class:`MieNonMonotonicInputError` in ``strict`` mode.
     """
     iters = [iter(r) for r in readers]
     seqs = [0] * len(readers)
     counter = itertools.count()
+    # Microsecond key of the previous record pulled from each file, in capture
+    # order, plus a one-time WARN guard — for L2-MRG-006 backward-step detection.
+    prev_us: list[int | None] = [None] * len(readers)
+    warned: list[bool] = [False] * len(readers)
     # Heap items: (us, file_index, seq, tiebreak_counter, msg). The unique
     # counter guarantees msg is never compared.
     heap: list[tuple[int, int, int, int, MieMessage]] = []
@@ -196,14 +204,14 @@ def merge_readers(
                 continue
             raise
         _check_mergeable(msg, idx, readers[idx].path)
-        heapq.heappush(
-            heap,
-            (_merge_micros(msg, standard_tick_rate_hz), idx, 0, next(counter), msg),
-        )
+        us = _merge_micros(msg, standard_tick_rate_hz)
+        prev_us[idx] = us
+        heapq.heappush(heap, (us, idx, 0, next(counter), msg))
         seqs[idx] = 1
 
     return _merge_drain(
-        readers, iters, seqs, counter, heap, standard_tick_rate_hz, allow_partial
+        readers, iters, seqs, counter, heap, standard_tick_rate_hz,
+        allow_partial, strict, prev_us, warned,
     )
 
 
@@ -215,6 +223,9 @@ def _merge_drain(
     heap: list[tuple[int, int, int, int, MieMessage]],
     tick: float | None,
     allow_partial: bool,
+    strict: bool,
+    prev_us: list[int | None],
+    warned: list[bool],
 ) -> Iterator[MieMessage]:
     """Drain the primed heap: pop the min, recompute global DELTA, advance the
     file that record came from."""
@@ -235,11 +246,30 @@ def _merge_drain(
                 pending_terminal = exc  # defer until the heap drains
                 continue
             raise
+        # L2-MRG-006: each input is assumed internally time-sorted (capture
+        # order is chronological). A backward step means the merged output may
+        # be out of order for this file — strict fails the batch, lenient WARNs
+        # once per file.
+        curr = _merge_micros(nxt, tick)
+        prev = prev_us[idx]
+        if prev is not None and curr < prev:
+            if strict:
+                raise MieNonMonotonicInputError(
+                    idx, str(readers[idx].path), prev, curr
+                )
+            if not warned[idx]:
+                warned[idx] = True
+                logger.warning(
+                    "merge: input #%d (%s) is not internally time-sorted: "
+                    "timestamp stepped backward (prev_us=%d curr_us=%d) — "
+                    "merged output may be out of order for this input "
+                    "(further occurrences suppressed)",
+                    idx, readers[idx].path, prev, curr,
+                )
+        prev_us[idx] = curr
         seq = seqs[idx]
         seqs[idx] = seq + 1
-        heapq.heappush(
-            heap, (_merge_micros(nxt, tick), idx, seq, next(counter), nxt)
-        )
+        heapq.heappush(heap, (curr, idx, seq, next(counter), nxt))
 
     # An --allow-partial deferred failure surfaces here so the writer commits a
     # `.partial` after all good records are written.

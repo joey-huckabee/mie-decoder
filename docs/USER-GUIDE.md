@@ -337,6 +337,16 @@ What to expect:
   `--strict` to fail on the first invalid record in any file.
 - **Same year only:** IRIG carries day-of-year but no year, so a set spanning a
   New-Year boundary cannot be ordered from the timestamp alone.
+- **A file that isn't internally time-sorted:** the merge assumes each input is
+  in chronological capture order (true for normal recordings). If an input's own
+  timestamps step backward — rare, from sync-loss recovery or a day/year
+  rollover — the tool detects it and, by default (lenient), prints a one-time
+  WARN naming that file and still merges everything (the out-of-order rows sort
+  to their key positions; it never re-sorts a whole file). Under `--strict` (or
+  `[decode] strict = true`) a backward step inside one file is treated as a
+  record error and the merge fails (exit **1**), on the principle that a
+  recorder's own clock running backward is corruption you probably want to know
+  about before trusting the merge.
 
 Both implementations produce byte-identical merged output.
 

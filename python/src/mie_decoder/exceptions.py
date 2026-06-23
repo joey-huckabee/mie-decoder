@@ -169,6 +169,38 @@ class MieIncompatibleMergeInputsError(MieFileError):
         )
 
 
+class MieNonMonotonicInputError(MieDecoderError):
+    """Raised in strict mode when a merge input is not internally time-sorted.
+
+    Per L2-MRG-006 the time-merge assumes each input file's records are in
+    chronological capture order. A backward microsecond step within one file
+    (sync-loss recovery or a day/year rollover) means the merged output may be
+    out of order for that input. Strict mode surfaces this as a record error
+    (the CLI maps it to exit code ``1``); lenient mode only logs a WARN and
+    keeps going.
+
+    Attributes:
+        file_index: Index of the offending input in resolved order.
+        path: Path of the offending input.
+        prev_us: Microsecond key of the previous record from that file.
+        curr_us: Microsecond key of the backward-stepping record.
+    """
+
+    def __init__(
+        self, file_index: int, path: str, prev_us: int, curr_us: int
+    ) -> None:
+        self.file_index = file_index
+        self.path = path
+        self.prev_us = prev_us
+        self.curr_us = curr_us
+        super().__init__(
+            f"merge: input #{file_index} ({path}) is not internally "
+            f"time-sorted: timestamp stepped backward "
+            f"(prev_us={prev_us} curr_us={curr_us}). The time-merge assumes "
+            f"each input is in chronological capture order."
+        )
+
+
 class MieRecordError(MieDecoderError):
     """Base exception for record-level decoding errors.
 

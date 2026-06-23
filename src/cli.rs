@@ -865,6 +865,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
             &readers,
             cfg.standard_tick_rate_hz,
             cfg.allow_partial,
+            cfg.strict,
         ) {
             Ok(merged) => write_messages(
                 merged.filter_messages(cfg.filters.clone()),
@@ -1044,6 +1045,15 @@ fn classify_decode_exit(
             eprintln!("Error: {e}");
             log_info!("decode exit class: merge-incompatible");
             ExitCode::from(exit_code::MERGE_INCOMPATIBLE)
+        }
+        Err(e @ MieError::NonMonotonicInput { .. }) => {
+            // L2-MRG-006: a strict-mode merge hit an input whose records are
+            // not in chronological capture order. Same record-error class as
+            // other strict-mode record failures (exit 1).
+            log_error!("{e}");
+            eprintln!("Error: {e}");
+            log_info!("decode exit class: non-monotonic-input (strict)");
+            ExitCode::from(exit_code::RUNTIME)
         }
         Err(e) => {
             log_error!("{e}");

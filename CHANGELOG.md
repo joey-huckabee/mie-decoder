@@ -15,6 +15,35 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **Within-file monotonicity detection in the multi-file merge (L2-MRG-006,
+  both implementations, identical).** The time-sorted merge assumes each input
+  is internally chronological (capture order). It now verifies this: when a
+  record's absolute IRIG microsecond key steps strictly backward relative to the
+  previous record from the **same** input (caused by sync-loss recovery or a
+  day/year rollover), the merge detects it in O(1) per record. In the default
+  (lenient) mode it logs a WARN once per offending input — naming the file and
+  the backward step — and still emits every record in heap order (it never
+  re-sorts, preserving the O(number-of-files) streaming guarantee). Previously
+  such an input produced silently out-of-order merged rows with no diagnostic.
+  A new `merge-non-monotonic-within-file` conformance case pins the cross-impl
+  WARN + byte-identical output. A single-file decode is unaffected (the merge
+  path only runs for two or more inputs).
+
+### Changed
+
+- **Strict mode now fails a merge whose input is not internally time-sorted
+  (behavior change, both implementations).** Under `--strict` (Rust) or
+  `[decode] strict = true` (both), a within-file backward timestamp step
+  (L2-MRG-006, above) is treated as a record error — `NonMonotonicInput` /
+  `MieNonMonotonicInputError`, mapped to **exit 1** (the runtime/decode-error
+  class, like other strict record failures) — rather than being silently
+  accepted. Lenient mode (the default) is unchanged apart from the new WARN.
+  Pinned by the `merge-non-monotonic-strict` conformance case. (The Python
+  `decode` CLI sets strict via config only; it has no `--strict` flag — a
+  separate, pre-existing parity gap.)
+
 ## [2.1.0] — 2026-06-21
 
 ### Added

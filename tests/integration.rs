@@ -907,7 +907,7 @@ fn merge_orders_records_across_files_by_absolute_time() {
         MieFileReader::new(fb.path()).unwrap(),
     ];
 
-    let merged = MergedRecordIter::new(&readers, None, false).unwrap();
+    let merged = MergedRecordIter::new(&readers, None, false, false).unwrap();
     let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
     assert_eq!(msgs.len(), 4, "all four records survive the merge");
 
@@ -943,7 +943,7 @@ fn merge_single_input_is_unchanged() {
     .concat();
     let fa = TempFile::new(&a);
     let readers = vec![MieFileReader::new(fa.path()).unwrap()];
-    let merged = MergedRecordIter::new(&readers, None, false).unwrap();
+    let merged = MergedRecordIter::new(&readers, None, false, false).unwrap();
     let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
     assert_eq!(msgs.len(), 2);
 }
@@ -971,7 +971,7 @@ fn merge_rejects_freerun_leading_input() {
         MieFileReader::new(fa.path()).unwrap(),
         MieFileReader::new(fb.path()).unwrap(),
     ];
-    match MergedRecordIter::new(&readers, None, false) {
+    match MergedRecordIter::new(&readers, None, false, false) {
         Err(e) => assert_eq!(e.kind(), MieErrorKind::IncompatibleMergeInputs),
         Ok(_) => panic!("expected IncompatibleMergeInputs for a freerun-leading input"),
     }
@@ -1011,7 +1011,7 @@ fn merge_rejects_standard_format_input() {
         )
         .unwrap(),
     ];
-    match MergedRecordIter::new(&readers, None, false) {
+    match MergedRecordIter::new(&readers, None, false, false) {
         Err(e) => assert_eq!(e.kind(), MieErrorKind::IncompatibleMergeInputs),
         Ok(_) => panic!("expected IncompatibleMergeInputs for a Standard-format input"),
     }
@@ -1096,7 +1096,7 @@ fn merge_allow_partial_writes_partial_on_file_failure() {
         MieFileReader::new(fb.path()).unwrap(),
     ];
 
-    let merged = MergedRecordIter::new(&readers, None, true).unwrap();
+    let merged = MergedRecordIter::new(&readers, None, true, false).unwrap();
     let out = TempFile::new(b"");
     let opts = WriteOptions {
         input_path: None,
@@ -1113,4 +1113,68 @@ fn merge_allow_partial_writes_partial_on_file_failure() {
     let partial = std::path::PathBuf::from(format!("{}.partial", out.path().display()));
     assert!(partial.exists(), "the .partial output file should exist");
     let _ = std::fs::remove_file(&partial);
+}
+
+/// L2-MRG-006: an input whose records step backward in time (not internally
+/// time-sorted) is a data-quality anomaly. In lenient mode the merge WARNs and
+/// still emits every record (never re-sorts), so all records survive.
+/// Requirements: L2-MRG-006
+#[test]
+fn merge_warns_on_within_file_backward_step() {
+    use mie_decoder::merge::MergedRecordIter;
+
+    // One file whose microsecond keys step 100 → 200 → 150 (the third record
+    // is older than the second): a within-file backward step.
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 200, false),
+        rt15_record_at(192, 15, 54, 50, 150, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&a);
+    let readers = vec![MieFileReader::new(fa.path()).unwrap()];
+
+    let merged = MergedRecordIter::new(&readers, None, false, false).unwrap();
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    // Lenient: advisory only — every record is still emitted (no failure).
+    assert_eq!(
+        msgs.len(),
+        3,
+        "lenient mode keeps all records despite the WARN"
+    );
+}
+
+/// L2-MRG-006: in strict mode the same within-file backward step is a record
+/// error that fails the batch (exit-1 class), mirroring how strict already
+/// treats per-record / structural-invariant failures.
+/// Requirements: L2-MRG-006
+#[test]
+fn merge_strict_fails_on_within_file_backward_step() {
+    use mie_decoder::error::MieErrorKind;
+    use mie_decoder::merge::MergedRecordIter;
+
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 200, false),
+        rt15_record_at(192, 15, 54, 50, 150, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&a);
+    let readers = vec![MieFileReader::new(fa.path()).unwrap()];
+
+    // strict = true. The first two records pop cleanly; pulling the backward
+    // third record arms a pending error that surfaces as a terminal Err.
+    let merged = MergedRecordIter::new(&readers, None, false, true).unwrap();
+    let mut saw_err = false;
+    for item in merged {
+        if let Err(e) = item {
+            assert_eq!(e.kind(), MieErrorKind::NonMonotonicInput);
+            saw_err = true;
+            break;
+        }
+    }
+    assert!(
+        saw_err,
+        "strict mode should surface a NonMonotonicInput error"
+    );
 }

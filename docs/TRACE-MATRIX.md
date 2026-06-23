@@ -308,7 +308,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L1-MRG-001 | L2-MRG-001, L2-MRG-002, L2-MRG-004 | `python/tests/test_merge.py::test_merge_orders_records_across_files_by_absolute_time`<br>`tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Implemented |
+| L1-MRG-001 | L2-MRG-001, L2-MRG-002, L2-MRG-004, L2-MRG-006 | `python/tests/test_merge.py::test_merge_orders_records_across_files_by_absolute_time`<br>`tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Implemented |
 | L1-MRG-002 | L2-MRG-003 | `python/tests/test_merge.py::test_merge_rejects_freerun_leading_input`<br>`python/tests/test_merge.py::test_merge_rejects_standard_format_input`<br>`tests/integration.rs::merge_rejects_freerun_leading_input`<br>`tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
@@ -319,6 +319,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-MRG-002 | L3-PY-014, L3-RS-014 | `python/tests/test_merge.py::test_glob_match_wildcards`<br>`python/tests/test_merge.py::test_max_merge_files_matches_rust`<br>`python/tests/test_merge.py::test_merge_orders_records_across_files_by_absolute_time`<br>`src/merge.rs::glob_match_wildcards`<br>`src/merge.rs::heap_entry_orders_by_key_tuple`<br>`tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Implemented |
 | L2-MRG-003 | _(none)_ | `python/tests/test_merge.py::test_cli_merge_incompatible_exits_6`<br>`python/tests/test_merge.py::test_merge_rejects_freerun_leading_input`<br>`python/tests/test_merge.py::test_merge_rejects_standard_format_input`<br>`tests/cli.rs::merge_incompatible_inputs_exit_6`<br>`tests/integration.rs::merge_rejects_freerun_leading_input`<br>`tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
 | L2-MRG-004 | _(none)_ | `python/tests/test_merge.py::test_merge_allow_partial_writes_partial_on_file_failure`<br>`tests/integration.rs::merge_allow_partial_writes_partial_on_file_failure` | Implemented |
+| L2-MRG-006 | _(none)_ | `python/tests/test_merge.py::test_merge_strict_fails_on_within_file_backward_step`<br>`python/tests/test_merge.py::test_merge_warns_on_within_file_backward_step`<br>`tests/integration.rs::merge_strict_fails_on_within_file_backward_step`<br>`tests/integration.rs::merge_warns_on_within_file_backward_step` | Implemented |
 
 ---
 
@@ -341,20 +342,20 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | CONF | 1 | 6 | 0 | 3 | 0 | 5 | 0 |
 | EXIT | 9 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| MRG | 2 | 5 | 0 | 5 | 0 | 5 | 0 |
+| MRG | 2 | 6 | 0 | 6 | 0 | 6 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
 | MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
 | WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 14 | 0 | 10 | 0 | 14 |
 | RS | 0 | 0 | 13 | 0 | 8 | 0 | 13 |
-| **Total** | **29** | **118** | **29** | **113** | **20** | **117** | **29** |
+| **Total** | **29** | **119** | **29** | **114** | **20** | **118** | **29** |
 
 The countable requirement set is every L2 and L3 requirement plus the 7 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 140 of 154 (90.9%).
+**Tested by at least one test marker**: 141 of 155 (91.0%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 153 of 154 (99.4%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 154 of 155 (99.4%).
 
 ### Orphan check
 

@@ -10,7 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from mie_decoder.exceptions import MieIncompatibleMergeInputsError
+from mie_decoder.exceptions import (
+    MieIncompatibleMergeInputsError,
+    MieNonMonotonicInputError,
+)
 from mie_decoder.merge import (
     MAX_MERGE_FILES,
     expand_glob,
@@ -109,6 +112,46 @@ def test_merge_rejects_standard_format_input(tmp_path: Path) -> None:
     ]
     with pytest.raises(MieIncompatibleMergeInputsError):
         merge_readers(readers)
+
+
+@pytest.mark.requirement("L2-MRG-006")
+def test_merge_warns_on_within_file_backward_step(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # One file whose microsecond keys step 100 → 200 → 150 (the third record is
+    # older than the second): a within-file backward step. Lenient mode WARNs
+    # once and still emits every record (never re-sorts).
+    a = (
+        rt15_record_at(192, 15, 54, 50, 100)
+        + rt15_record_at(192, 15, 54, 50, 200)
+        + rt15_record_at(192, 15, 54, 50, 150)
+    )
+    fa = tmp_path / "a.mie"
+    fa.write_bytes(a)
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="mie_decoder.merge"):
+        msgs = list(merge_readers([MieFileReader(fa)]))
+    assert len(msgs) == 3, "lenient mode keeps all records despite the WARN"
+    backward_warns = [
+        r for r in caplog.records if "not internally time-sorted" in r.getMessage()
+    ]
+    assert len(backward_warns) == 1, "exactly one backward-step WARN per file"
+
+
+@pytest.mark.requirement("L2-MRG-006")
+def test_merge_strict_fails_on_within_file_backward_step(tmp_path: Path) -> None:
+    # The same backward step is a record error in strict mode (exit-1 class).
+    a = (
+        rt15_record_at(192, 15, 54, 50, 100)
+        + rt15_record_at(192, 15, 54, 50, 200)
+        + rt15_record_at(192, 15, 54, 50, 150)
+    )
+    fa = tmp_path / "a.mie"
+    fa.write_bytes(a)
+    # The raise is lazy (during the drain), so the generator must be consumed.
+    with pytest.raises(MieNonMonotonicInputError):
+        list(merge_readers([MieFileReader(fa)], strict=True))
 
 
 @pytest.mark.requirement("L2-MRG-001")

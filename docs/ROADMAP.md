@@ -195,16 +195,9 @@ remains distant-future. None has a committed version yet.
   identity above (knowing the source recorder is what makes a "duplicate across
   recorders" meaningful).
 
-- **Within-file monotonicity detection + WARN.** *Near-term — next-release
-  candidate.* The merge's correctness rests on each input being internally
-  time-sorted, and the original design (this doc, the merge design notes) called
-  for detecting a backward timestamp step within a file in O(1) and emitting a
-  WARN (never a global re-sort). **That check was not implemented** in either
-  `src/merge.rs` or `python/src/mie_decoder/merge.py` — the advance step pushes
-  the next record unconditionally. So a file made briefly non-monotonic by
-  sync-loss recovery or a day/year rollover currently produces silently
-  out-of-order merged rows with no diagnostic. Add the per-file backward-step
-  detection + WARN to close the gap between the documented contract and the code.
+  *(Within-file monotonicity detection — formerly listed here — **shipped** as
+  L2-MRG-006; see `CHANGELOG.md` `[Unreleased]`.)*
+
 - **`--order file` (non-time merge).** A distant-future opt-in that would
   concatenate inputs in CLI/manifest order **without** time-sorting, for sets
   that are not calendar-locked IRIG (Standard counters, freerun, or
@@ -285,9 +278,11 @@ wrong — so time-merge on those models is gated on that investigation.
 
 **Within-file monotonicity.** Correctness rests on each file being internally
 time-sorted. Generally true (chronological recording), but sync-loss recovery
-or a day/year rollover can break it. Contract: assume monotonic, detect a
-backward step against the previous key per file in O(1) and WARN; do **not**
-globally re-sort (that would defeat streaming).
+or a day/year rollover can break it. **Implemented as L2-MRG-006:** the merge
+detects a backward step against the previous key per file in O(1); lenient mode
+WARNs once per file and keeps going (it does **not** globally re-sort — that
+would defeat streaming), and strict mode escalates to a `NonMonotonicInput`
+record error (exit 1).
 
 **Deterministic ties.** Equal keys are common at coarse resolution. The heap
 comparator orders on `(key, file_index_in_CLI_order, within_file_sequence)`

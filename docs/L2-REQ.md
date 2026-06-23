@@ -896,6 +896,13 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 **Rationale**: The analyst intent for a merged timeline is the gap between consecutive same-key transactions across the whole session, not a gap that resets at file boundaries. A future release that adds per-recorder file-naming context may compute per-file DELTA for identified recorders; until then the global timeline is the well-defined default.
 **Verification Method**: Test (T)
 
+#### L2-MRG-006
+
+**Parent**: L1-MRG-001
+**Statement**: The merge SHALL verify that each input is internally time-sorted: when a record's absolute IRIG microsecond key is strictly less than that of the previous record pulled from the **same** input (capture order), the merge SHALL detect the backward step in O(1) per record. In lenient mode it SHALL emit a WARN naming the offending input, at most once per input, and SHALL still emit every record in heap order (it SHALL NOT re-sort). In strict mode it SHALL surface a record error (the `NonMonotonicInput` / `MieNonMonotonicInputError` class, CLI exit `1`), consistent with the strict/lenient policy of L2-MRG-004. Equal keys (ties) SHALL NOT be treated as a backward step.
+**Rationale**: The k-way merge (L2-MRG-002) is only correct if each input is itself chronological; a file made non-monotonic by sync-loss recovery or a day/year rollover otherwise produces silently out-of-order merged rows. Detection mirrors the existing within-file non-monotonic-DELTA advisory (L2-RDR-017): WARN, never re-sort (re-sorting would defeat the streaming O(k) memory guarantee). Strict mode escalates to a failure because a backward step inside one recorder's own file is the same class of data-integrity anomaly that strict mode already rejects at the record level. The one-time-per-input WARN cadence avoids log flooding on a badly corrupted input.
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-CONF: Cross-implementation conformance

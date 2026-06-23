@@ -60,12 +60,13 @@ Exception
     │   ├── MiePayloadError
     │   ├── MieUnknownErrorCodeError
     │   └── MieUnrecoverableSyncLossError
-    └── MieWriterError               (output write failed)
+    ├── MieWriterError               (output write failed)
+    └── MieNonMonotonicInputError    (merge input not internally time-sorted)
 ```
 
 ### Rust (`mie_decoder::MieError`)
 
-A single `enum MieError { … }` with the same 16 variants. `MieError::kind()` returns a `MieErrorKind` discriminant; `is_file_error()` / `is_record_error()` predicates mirror the Python class split.
+A single `enum MieError { … }` with the same set of variants. `MieError::kind()` returns a `MieErrorKind` discriminant; `is_file_error()` / `is_record_error()` predicates mirror the Python class split.
 
 ```
 MieError ├── FileNotFound             ── MieErrorKind::FileNotFound             (is_file_error)
@@ -84,7 +85,8 @@ MieError ├── FileNotFound             ── MieErrorKind::FileNotFound   
          ├── PayloadError             ── MieErrorKind::PayloadError             (is_record_error)
          ├── UnknownErrorCode         ── MieErrorKind::UnknownErrorCode         (is_record_error)
          ├── UnrecoverableSyncLoss    ── MieErrorKind::UnrecoverableSyncLoss
-         └── WriterError              ── MieErrorKind::WriterError
+         ├── WriterError              ── MieErrorKind::WriterError
+         └── NonMonotonicInput        ── MieErrorKind::NonMonotonicInput        (neither predicate — no byte offset)
 ```
 
 Python `mie_decoder.MieFileError` is the analogue of Rust's `MieError::is_file_error()` predicate; `MieRecordError` is the analogue of `is_record_error()`. The non-classified variants (`NoValidRecords`, `HomogeneousPayload`, `InputOutputCollision`, `ClobberRefused`, `UnrecoverableSyncLoss`, `WriterError`) inherit from `MieFileError` or `MieRecordError` in Python by the same rule the Rust predicate applies.
@@ -106,6 +108,7 @@ These fire before any record is decoded, or before the writer touches the destin
 | `MieInputOutputCollisionError` / `InputOutputCollision` | The output path resolves to the same file as the input (L2-WRT-014). | 1 | Choose a different output path; decoding in-place is unsafe under mmap. |
 | `MieClobberRefusedError` / `ClobberRefused` | The output exists and `--no-clobber` / `output.no_clobber = true` is set (L2-WRT-017). | 1 | Remove the existing file or unset the flag. |
 | `MieIncompatibleMergeInputsError` / `IncompatibleMergeInputs` | A multi-file merge input is Standard-format, leads with a freerun IRIG record, or the set mixes timestamp formats — so the inputs can't be ordered on a common absolute timeline (L2-MRG-003). Raised before any output. | **6** | Merge only calendar-locked IRIG recordings; decode Standard / freerun inputs individually. |
+| `MieNonMonotonicInputError` / `NonMonotonicInput` | During a multi-file merge, one input is not internally time-sorted — a record's IRIG microsecond key stepped backward relative to the previous record from the **same** file (L2-MRG-006). Typical cause: sync-loss recovery or a day/year rollover inside that recording. **Strict mode only**: lenient mode logs a single WARN per input and still merges every record (the merged output may carry those rows out of order). | 1 | Investigate the named input (its own clock ran backward — possible corruption). To merge anyway, drop strict mode (`decode.strict = false`) and accept the WARN; the merge completes with all records. |
 
 ---
 
