@@ -77,6 +77,17 @@ full release workflow.
   `usage-error-exclude-types-out-of-range` (exit 4 both impls) conformance
   cases, plus Python unit tests.
 
+### Maintenance
+
+- **CLI flag-surface parity is now gated against drift.** The conformance
+  runner (`tests/conformance/run.py`) gained a `check_cli_surface` step that
+  extracts the full long-flag set from each CLI's `--help` (top-level +
+  `decode` / `count` / `dump`) and fails the run — naming the offending flag —
+  if the Rust and Python surfaces diverge. A flag added to only one
+  implementation now fails CI even when no conformance case exercises it. (A
+  one-word Rust `--help` reword — `--flag=value` → `=value` — removes a phantom
+  token so the check is exact.)
+
 ## [2.1.0] — 2026-06-21
 
 ### Added

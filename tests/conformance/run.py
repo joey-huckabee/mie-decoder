@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -378,6 +379,49 @@ def require_equal(
     )
 
 
+# Long-option token, e.g. `--exclude-types`. The CLIs expose no flags with
+# digits, but the pattern allows them defensively.
+_FLAG_RE = re.compile(r"--[a-z][a-z0-9-]*")
+# Subcommands whose --help is scanned in addition to the top-level --help.
+_HELP_SUBCOMMANDS = ("decode", "count", "dump")
+
+
+def _help_flags(base_command: list[str]) -> set[str]:
+    """Union of long-option flags across a CLI's top-level and per-subcommand
+    ``--help`` output. The Rust help is one combined block (every flag appears
+    regardless of subcommand), so its union comes from any single ``--help``;
+    the Python argparse help is per-subcommand, so the union spans them all."""
+    flags: set[str] = set()
+    invocations = [base_command + ["--help"]]
+    invocations += [base_command + [sub, "--help"] for sub in _HELP_SUBCOMMANDS]
+    for inv in invocations:
+        result = subprocess.run(inv, capture_output=True, text=True, check=False)
+        flags |= set(_FLAG_RE.findall(result.stdout + result.stderr))
+    return flags
+
+
+def check_cli_surface(args: argparse.Namespace) -> None:
+    """Assert the Rust and Python CLIs expose an identical long-flag set across
+    ``decode`` / ``count`` / ``dump`` (plus global options).
+
+    The two CLIs are kept to one identical argument surface (L1-CLI-001 only
+    *requires* matching capabilities, but parity is maintained in practice). A
+    flag added to one implementation but not the other — or a help text that
+    stops advertising a flag the parser still accepts — fails here, guarding the
+    cross-implementation parity against silent drift."""
+    rust_flags = _help_flags([str(args.rust_bin)])
+    python_flags = _help_flags([str(args.python_bin), "-m", "mie_decoder"])
+    if rust_flags != python_flags:
+        only_rust = sorted(rust_flags - python_flags) or ["(none)"]
+        only_python = sorted(python_flags - rust_flags) or ["(none)"]
+        raise AssertionError(
+            "CLI flag surface diverged between implementations:\n"
+            f"  only in Rust  : {', '.join(only_rust)}\n"
+            f"  only in Python: {', '.join(only_python)}"
+        )
+    print(f"PASS cli-surface-parity ({len(rust_flags)} flags)")
+
+
 def main() -> int:
     args = parse_args()
 
@@ -391,6 +435,9 @@ def main() -> int:
 
     prepare_rust_bin(args)
     prepare_python_bin(args)
+
+    # Cross-impl CLI flag-surface parity (independent of the per-case oracles).
+    check_cli_surface(args)
 
     passed = 0
     if args.temp_root:

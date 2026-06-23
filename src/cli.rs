@@ -86,7 +86,7 @@ DECODE OPTIONS:
 
   Filter flags accept ONE value (comma-separable). Repeat the flag to
   accumulate. `--include-rts 15,31` and `--include-rts 15 --include-rts 31`
-  are equivalent. The `--flag=value` form also works.
+  are equivalent. Appending `=value` (e.g. `--include-rts=15`) also works.
 
 DUMP OPTIONS:
   --raw                                 Raw hex dump (no record parsing)

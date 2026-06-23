@@ -395,7 +395,7 @@ Both crates **must** raise the same variant for the same input. Add a conformanc
 
 ## 8. Adding a CLI flag
 
-L1-CLI-001 only requires the two CLIs to offer the same capabilities; their syntax MAY differ. In practice they have been kept to an **identical flag surface** across `decode` / `count` / `dump` — add the flag to both implementations with the same name and semantics so that parity holds (the conformance suite drives both CLIs from a single shared `args` vector, so a flag missing from one side breaks any case that uses it).
+L1-CLI-001 only requires the two CLIs to offer the same capabilities; their syntax MAY differ. In practice they have been kept to an **identical flag surface** across `decode` / `count` / `dump` — add the flag to both implementations with the same name and semantics so that parity holds. Two things enforce this: the conformance suite drives both CLIs from a single shared `args` vector (so a flag missing from one side breaks any case that uses it), and the `check_cli_surface` gate in `tests/conformance/run.py` compares the two CLIs' full long-flag sets (extracted from their `--help` output) and **fails the conformance run if they diverge** — naming the offending flag. So a flag added to only one implementation fails CI even if no case exercises it; add it to both (and keep the help text advertising it, since the gate reads `--help`).
 
 ### Rust (`src/cli.rs`)
 
