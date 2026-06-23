@@ -124,6 +124,31 @@ class TestParseTypeNames:
         with pytest.raises(ValueError, match="Invalid hex"):
             _parse_type_names(["0xZZ"])
 
+    @pytest.mark.requirement("L2-CFG-007")
+    def test_integer_codes_accepted(self) -> None:
+        # A TOML array may carry bare integers; accept them bounded to u8,
+        # matching the Rust parse_type_value (src/config.rs). Previously this
+        # crashed with an AttributeError on .strip().
+        result = _parse_type_names([0x02, 32, "RT_TO_BC"])
+        assert result == {0x02, 0x20, 0x04}
+
+    @pytest.mark.requirement("L2-CFG-007")
+    def test_integer_out_of_range_raises(self) -> None:
+        with pytest.raises(ValueError, match="out of range"):
+            _parse_type_names([256])
+
+    @pytest.mark.requirement("L2-CFG-007")
+    def test_hex_out_of_range_raises(self) -> None:
+        # 0x100 = 256 > u8 max; Rust rejects it, so Python must too (previously
+        # it was silently accepted, making the filter a no-op).
+        with pytest.raises(ValueError, match="Invalid hex"):
+            _parse_type_names(["0x100"])
+
+    @pytest.mark.requirement("L2-CFG-007")
+    def test_non_str_non_int_raises(self) -> None:
+        with pytest.raises(ValueError, match="must be strings or integers"):
+            _parse_type_names([1.5])
+
 
 class TestParseBusNames:
     """Tests for bus name parsing."""
@@ -142,6 +167,14 @@ class TestParseBusNames:
     def test_invalid_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid bus"):
             _parse_bus_names(["C"])
+
+    @pytest.mark.requirement("L2-CFG-006")
+    def test_non_str_entry_raises_cleanly(self) -> None:
+        # A non-string TOML entry (e.g. an integer) must raise a clean
+        # ValueError matching Rust ("entries must be strings"), not crash with
+        # an AttributeError on .strip().
+        with pytest.raises(ValueError, match="must be strings"):
+            _parse_bus_names([1])
 
 
 class TestDecoderConfig:

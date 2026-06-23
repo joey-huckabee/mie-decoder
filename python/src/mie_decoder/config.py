@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -341,30 +342,53 @@ class DecoderConfig:
         )
 
 
-def _parse_type_names(names: list[str]) -> set[int]:
-    """Parse a list of message type name strings into type code values.
+def _parse_type_names(names: Sequence[object]) -> set[int]:
+    """Parse message-type identifiers into type code values.
+
+    Each element is either a **string** (an enum name like ``"BC_TO_RT"`` or a
+    hex code like ``"0x02"``) or an **integer** type code. Mirrors the Rust
+    ``parse_type_value`` (``src/config.rs``): integer and hex codes are bounded
+    to a ``u8`` (``0..=255``); anything else is rejected with a ``ValueError``
+    (so the caller maps it to a config error / usage error, never a crash).
 
     Args:
-        names: List of type name strings (case-insensitive). Accepts
-            both enum names (e.g., ``"BC_TO_RT"``) and hex codes
-            (e.g., ``"0x02"``).
+        names: Sequence of type identifiers (strings and/or integers). Comes
+            either from a TOML array (which may mix strings and integers) or
+            from the comma-separated CLI flag (always strings).
 
     Returns:
         Set of integer message type codes.
 
     Raises:
-        ValueError: If a name is not recognized.
+        ValueError: an unrecognized name, a code outside ``0..=255``, or an
+            element that is neither a string nor an integer.
     """
     result: set[int] = set()
     for name in names:
+        # bool is an int subclass; a TOML boolean is not a valid type code.
+        if isinstance(name, bool):
+            raise ValueError(f"Invalid message type code: {name!r}")
+        if isinstance(name, int):
+            if not (0 <= name <= 255):
+                raise ValueError(f"Type code out of range: {name}")
+            result.add(name)
+            continue
+        if not isinstance(name, str):
+            raise ValueError(
+                "exclude_types/include_types entries must be strings or "
+                f"integers, got {type(name).__name__}"
+            )
         upper = name.strip().upper()
         if upper in _TYPE_NAME_MAP:
             result.add(_TYPE_NAME_MAP[upper])
         elif upper.startswith("0X"):
             try:
-                result.add(int(upper, 16))
+                code = int(upper, 16)
             except ValueError:
                 raise ValueError(f"Invalid hex type code: {name!r}")
+            if not (0 <= code <= 255):
+                raise ValueError(f"Invalid hex type code: {name!r}")
+            result.add(code)
         else:
             valid = ", ".join(sorted(_TYPE_NAME_MAP.keys()))
             raise ValueError(
@@ -374,20 +398,27 @@ def _parse_type_names(names: list[str]) -> set[int]:
     return result
 
 
-def _parse_bus_names(names: list[str]) -> set[Bus]:
-    """Parse a list of bus name strings into Bus enum values.
+def _parse_bus_names(names: Sequence[object]) -> set[Bus]:
+    """Parse bus identifiers into Bus enum values.
+
+    Each element must be a **string** (``"A"`` or ``"B"``, case-insensitive) —
+    matching the Rust ``parse_bus_value`` (``src/config.rs``), which rejects a
+    non-string entry rather than crashing. Comes from a TOML array (which may
+    contain non-strings) or the CLI flag (always strings).
 
     Args:
-        names: List of bus name strings (case-insensitive, "A" or "B").
+        names: Sequence of bus identifiers.
 
     Returns:
         Set of Bus enum values.
 
     Raises:
-        ValueError: If a name is not "A" or "B".
+        ValueError: an entry that is not a string, or not "A"/"B".
     """
     result: set[Bus] = set()
     for name in names:
+        if not isinstance(name, str):
+            raise ValueError("exclude_buses entries must be strings")
         upper = name.strip().upper()
         if upper in _BUS_NAME_MAP:
             result.add(_BUS_NAME_MAP[upper])

@@ -223,9 +223,9 @@ CLI filter values **merge** with config-file values (L2-CFG-004) — they don't 
 
 ### `exclude_types`
 
-**Type:** array of string · **Default:** `[]` · **CLI:** `--exclude-types <name1,name2,...>` (additive)
+**Type:** array of string or integer · **Default:** `[]` · **CLI:** `--exclude-types <name1,name2,...>` (additive)
 
-Exclude messages by Type Word message type. Accepts symbolic names (case-insensitive) or hexadecimal codes (`"0x02"` etc.) interchangeably per L2-CFG-007.
+Exclude messages by Type Word message type. In a TOML config each array element may be a symbolic name (case-insensitive), a hexadecimal-code string (`"0x02"`), or a bare integer code (`2`); the three are interchangeable per L2-CFG-007. (On the CLI the value is always a string.) Codes are bounded to a `u8` (`0..=255`) in both implementations — an out-of-range code (e.g. `"0x100"`) is rejected (a CLI usage error → exit 4, or a config error → exit 5), never silently ignored.
 
 | Symbolic | Hex | Description |
 |----------|-----|-------------|

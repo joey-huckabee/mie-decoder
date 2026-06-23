@@ -59,6 +59,24 @@ full release workflow.
   accepted by the parser since v2.1.0 but were missing from the help text; no
   behavior change.
 
+### Fixed
+
+- **Python: `[filter] exclude_types` / `include_types` now accept integer codes
+  and bound-check them, matching Rust (cross-impl parity).** A TOML config with
+  a bare integer type code (e.g. `exclude_types = [2]`) previously crashed the
+  Python CLI with an uncaught `AttributeError`, while the Rust CLI accepted it;
+  Python now accepts integer codes (bounded to `0..=255`) like Rust. An
+  out-of-range code (e.g. `"0x100"`) was previously **silently accepted** by
+  Python — making the filter a no-op — whereas Rust rejected it; Python now
+  rejects it too (a CLI usage error → exit 4, or a config error → exit 5),
+  matching Rust. **Python: a non-string `[filter] exclude_buses` entry** (e.g.
+  `exclude_buses = [1]`) likewise crashed with an uncaught `AttributeError`; it
+  now raises a clean config error (exit 5) naming the problem, as Rust does.
+  Found by a cross-implementation parity audit. Pinned by the new
+  `config-exclude-types-int` (int code == name, byte-identical) and
+  `usage-error-exclude-types-out-of-range` (exit 4 both impls) conformance
+  cases, plus Python unit tests.
+
 ## [2.1.0] — 2026-06-21
 
 ### Added

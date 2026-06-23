@@ -1,0 +1,10 @@
+# Filter by an INTEGER message-type code (4 = RT_TO_BC) rather than the name.
+# Proves both implementations accept bare integer type codes in a TOML array
+# identically — the `config-exclude-types-int` case reuses the
+# `exclude-transmit.toml` oracle (expected/config-filter.csv), so int 4 must
+# produce byte-for-byte the same output as the name "RT_TO_BC".
+[decode]
+time_format = "irig"
+
+[filter]
+exclude_types = [4]

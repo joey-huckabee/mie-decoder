@@ -266,6 +266,21 @@
       ],
       "expected_exit": 1,
       "expected_stderr_contains": "not internally time-sorted"
+    },
+    {
+      "name": "config-exclude-types-int",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/config-filter.csv",
+      "config": "configs/exclude-types-int.toml"
+    },
+    {
+      "name": "usage-error-exclude-types-out-of-range",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--exclude-types",
+        "0x100"
+      ],
+      "expected_exit": 4
     }
   ]
 }
