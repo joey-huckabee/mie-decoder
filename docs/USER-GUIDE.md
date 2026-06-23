@@ -285,6 +285,39 @@ The Python CLI takes the exact same forms (`python -m mie_decoder decode …`
 or the `mie-decoder` console script). The three methods are **mutually
 exclusive** — pick one. A single input behaves exactly as a normal decode.
 
+#### How the rows get ordered (it is not arbitrary)
+
+Each input file comes from an independent recorder, and each recorder may log
+any given message at a different rate across the timeline. The merge does **not**
+pull a row from each file in turn, or interleave them blindly — every row it
+writes is the one with the earliest timestamp out of *all* the files at that
+moment. It works like this:
+
+1. It opens all the files at once and looks at the **first (earliest) record of
+   each** — so it always has the current front record of every recorder in
+   front of it simultaneously.
+2. It writes out the single record with the **smallest timestamp** among those
+   fronts.
+3. It then pulls the **next** record from *only the file that record came
+   from*, and adds it to the set of fronts being compared.
+4. It repeats until every file is used up.
+
+So before any row is written, its timestamp has been compared against the
+current front of every other file, and the earliest one wins. A recorder that
+goes quiet for a stretch simply doesn't win any rows until its next record's
+time comes due; a recorder logging at a high rate contributes many rows in a
+row — both end up correctly interleaved by time. This works because each
+individual recording is already written in chronological order (bus traffic is
+captured as it happens), so the tool only has to merge already-sorted streams,
+never re-sort the whole set — which is also why memory stays flat no matter how
+many total records there are.
+
+When two records carry the **exact same timestamp** (common at coarse time
+resolution), the tie is broken deterministically by the file's **position in
+the input list** (the order you gave the files on the command line / in the
+manifest, or lexicographic filename order for `--glob`) and then by the
+record's position within that file — so the output is reproducible run to run.
+
 What to expect:
 
 - **Ordering** is by absolute IRIG time, so **every input must be
