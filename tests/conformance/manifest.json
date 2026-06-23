@@ -290,6 +290,40 @@
         "--time-format",
         "standard"
       ]
+    },
+    {
+      "name": "mux-from-filename",
+      "input": "inputs/basic-multi-record.hex",
+      "input_names": [
+        "full_loadout.draw.data.1553.aa.unused.mie_irig"
+      ],
+      "expected": "expected/mux-from-filename.csv"
+    },
+    {
+      "name": "mux-disabled",
+      "input": "inputs/basic-multi-record.hex",
+      "input_names": [
+        "full_loadout.draw.data.1553.aa.unused.mie_irig"
+      ],
+      "args": [
+        "--no-mux"
+      ],
+      "expected": "expected/basic-multi-record.csv"
+    },
+    {
+      "name": "mux-merge-per-file",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-b.hex"
+      ],
+      "input_names": [
+        "full_loadout.draw.data.1553.aa.unused.mie_irig",
+        "full_loadout.draw.data.1553.gun.unused.mie_irig"
+      ],
+      "expected": "expected/mux-merge-per-file.csv",
+      "args": [
+        "--inline-errors"
+      ]
     }
   ]
 }

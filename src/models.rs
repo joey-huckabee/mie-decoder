@@ -460,6 +460,11 @@ pub struct MieMessage {
     /// timestamps (no known tick rate), and non-monotonic timestamps.
     pub delta: Option<f64>,
     pub file_offset: u64,
+    /// MUX column value derived from the source file name (L2-WRT-020), shared
+    /// (one `Arc<str>` per input file) so per-record carry stays O(1) in resident
+    /// memory. `None` when MUX population is disabled or the configured filename
+    /// field is absent/empty.
+    pub mux: Option<std::sync::Arc<str>>,
 }
 
 impl MieMessage {
@@ -737,6 +742,7 @@ mod tests {
             error_word: None,
             delta: Some(0.0),
             file_offset: 0,
+            mux: None,
         }
     }
 }

@@ -117,7 +117,7 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 
 **Statement**: Each implementation SHALL produce CSV output that is column-name and column-order compatible with DDC's vendor recording software, per the layout defined in `docs/MIE-FORMAT.md`.
 
-**Rationale**: Byte-exact compatibility with the DDC vendor CSV enables `diff`-based validation against vendor output and allows the decoder to drop into downstream analysis pipelines that already consume the DDC layout. Vendor-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`) are preserved as a matter of layout fidelity even when their cells are empty.
+**Rationale**: Byte-exact compatibility with the DDC vendor CSV enables `diff`-based validation against vendor output and allows the decoder to drop into downstream analysis pipelines that already consume the DDC layout. The vendor placeholder columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`) are preserved in layout position; `TERM_NAME` / `IM_GAP` / `RCV_GAP` / `XMT_GAP` stay empty, while `MUX` carries a filename-derived value by default (L2-WRT-020, restored to empty with `--no-mux` for a byte-exact vendor diff).
 
 **Verification Method**: Test (T)
 

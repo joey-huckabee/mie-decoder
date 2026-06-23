@@ -60,7 +60,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 
 | L1 ID | L2 Children | Test Artifacts | Status |
 |-------|-------------|----------------|--------|
-| L1-OUT-001 | L2-DEC-014, L2-ERR-007, L2-ERR-010, L2-WRT-001, L2-WRT-002, L2-WRT-003, L2-WRT-004, L2-WRT-007, L2-WRT-011, L2-WRT-012, L2-WRT-013 | _(none)_ | Implemented |
+| L1-OUT-001 | L2-DEC-014, L2-ERR-007, L2-ERR-010, L2-WRT-001, L2-WRT-002, L2-WRT-003, L2-WRT-004, L2-WRT-007, L2-WRT-011, L2-WRT-012, L2-WRT-013, L2-WRT-020 | _(none)_ | Implemented |
 | L1-OUT-002 | L2-WRT-014, L2-WRT-015, L2-WRT-017, L2-WRT-019 | _(none)_ | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
@@ -82,6 +82,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-WRT-015 | L3-WRT-001 | `python/tests/test_e2e.py::test_write_csv_to_file_cleans_up_temp`<br>`python/tests/test_writer_streaming_primitives.py::test_atomic_commit_renames_temp_over_destination`<br>`src/writer.rs::atomic_commit_renames_temp_over_destination`<br>`src/writer.rs::atomic_drop_without_commit_unlinks_temp_and_leaves_destination`<br>`src/writer.rs::make_temp_path_lives_next_to_destination`<br>`src/writer.rs::split_errors_commit_failure_leaves_main_not_orphan_errors`<br>`src/writer.rs::split_main_commit_failure_leaves_neither_file` | Implemented |
 | L2-WRT-017 | _(none)_ | `python/tests/test_e2e.py::test_write_csv_overwrites_by_default`<br>`python/tests/test_e2e.py::test_write_csv_rejects_clobber_with_no_clobber`<br>`python/tests/test_e2e.py::test_write_csv_split_no_clobber_checks_errors_file`<br>`src/writer.rs::write_csv_overwrites_by_default`<br>`src/writer.rs::write_csv_rejects_clobber_when_no_clobber_set`<br>`src/writer.rs::write_csv_split_no_clobber_checks_errors_file_too` | Implemented |
 | L2-WRT-019 | _(none)_ | `python/tests/test_e2e.py::test_errors_commit_failure_leaves_main_not_orphan_errors`<br>`src/writer.rs::split_errors_commit_failure_leaves_main_not_orphan_errors`<br>`src/writer.rs::split_main_commit_failure_leaves_neither_file` | Implemented |
+| L2-WRT-020 | _(none)_ | `python/tests/test_mux.py::test_mux_from_filename`<br>`python/tests/test_mux.py::test_reader_attaches_mux_from_filename`<br>`python/tests/test_mux.py::test_writer_emits_mux_and_quotes`<br>`src/decode.rs::mux_from_filename_extraction`<br>`src/writer.rs::mux_value_written_with_quoting` | Implemented |
 
 ### L1-DLT: DELTA inter-arrival tracking
 
@@ -346,17 +347,17 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | MRG | 2 | 6 | 0 | 6 | 0 | 6 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
 | MSG | 0 | 4 | 0 | 4 | 0 | 4 | 0 |
-| WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
+| WRT | 0 | 15 | 2 | 15 | 2 | 15 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 14 | 0 | 10 | 0 | 14 |
 | RS | 0 | 0 | 13 | 0 | 8 | 0 | 13 |
-| **Total** | **29** | **120** | **29** | **115** | **20** | **119** | **29** |
+| **Total** | **29** | **121** | **29** | **116** | **20** | **120** | **29** |
 
 The countable requirement set is every L2 and L3 requirement plus the 7 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 142 of 156 (91.0%).
+**Tested by at least one test marker**: 143 of 157 (91.1%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 155 of 156 (99.4%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 156 of 157 (99.4%).
 
 ### Orphan check
 

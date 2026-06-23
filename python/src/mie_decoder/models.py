@@ -427,6 +427,10 @@ class MieMessage:
             uncalibrated Standard timestamps (no known tick rate), and
             non-monotonic timestamps.
         file_offset: Byte offset of this record in the source file.
+        mux: MUX column value derived from the source file name (L2-WRT-020),
+            or None when MUX population is disabled or the configured filename
+            field is absent. Shared (one str per input file) so per-record
+            carry stays O(1) in resident memory.
     """
 
     timestamp: Timestamp
@@ -440,6 +444,7 @@ class MieMessage:
     error_word: int | None
     delta: float | None
     file_offset: int
+    mux: str | None = None
 
     @property
     def rt(self) -> int | None:

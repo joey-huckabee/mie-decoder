@@ -398,6 +398,32 @@ def build_parser() -> argparse.ArgumentParser:
             "output.format config key, matching the Rust --format flag."
         ),
     )
+    decode_parser.add_argument(
+        "--no-mux",
+        action="store_true",
+        default=None,
+        help=(
+            "Leave the MUX column empty (vendor-exact output). By default MUX "
+            "is derived from the input file name (L2-WRT-020). Mirrors "
+            "[mux] enabled = false."
+        ),
+    )
+    decode_parser.add_argument(
+        "--mux-delimiter",
+        default=None,
+        metavar="D",
+        help="MUX field separator (default '.'). Mirrors the mux.delimiter key.",
+    )
+    decode_parser.add_argument(
+        "--mux-field",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "0-based MUX field index; negative counts from the end "
+            "(default 4). Mirrors the mux.field config key."
+        ),
+    )
 
     # ── count subcommand ───────────────────────────────────────────
     # Its own subcommand, matching the Rust CLI (`count <INPUT>`).
@@ -655,6 +681,18 @@ def _run_decode(args: argparse.Namespace) -> int:
         overrides["strict"] = args.strict
     if args.format is not None:
         overrides["output_format"] = args.format
+    if args.no_mux:
+        overrides["mux_enabled"] = False
+    if args.mux_delimiter is not None:
+        if args.mux_delimiter == "":
+            print(
+                "Error: invalid --mux-delimiter: must be a non-empty string",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        overrides["mux_delimiter"] = args.mux_delimiter
+    if args.mux_field is not None:
+        overrides["mux_field"] = args.mux_field
 
     config = config.with_overrides(**overrides)
 
@@ -693,6 +731,9 @@ def _run_decode(args: argparse.Namespace) -> int:
                 detect_records=config.detect_records,
                 lookahead_records=config.lookahead_records,
                 standard_tick_rate_hz=config.standard_tick_rate_hz,
+                mux_enabled=config.mux_enabled,
+                mux_delimiter=config.mux_delimiter,
+                mux_field=config.mux_field,
             )
             for p in input_paths
         ]

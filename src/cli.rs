@@ -75,6 +75,12 @@ DECODE OPTIONS:
                                         Standard). L2-DEC-017.
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
+  --no-mux                              Leave the MUX column empty
+                                        (vendor-exact). Default: MUX is
+                                        derived from the file name (L2-WRT-020)
+  --mux-delimiter D                     MUX field separator (default '.')
+  --mux-field N                         0-based MUX field index; negative
+                                        counts from the end (default 4)
   --exclude-types VAL                   Comma-separated names or 0xNN
   --exclude-rts VAL                     Comma-separated RT addresses
   --exclude-buses VAL                   Comma-separated A|B
@@ -132,6 +138,12 @@ struct DecodeArgs {
     standard_tick_rate_hz: Option<f64>,
     strict: Option<bool>,
     output_format: Option<String>,
+    /// `--no-mux`: disable MUX-from-filename population (vendor-exact output).
+    no_mux: bool,
+    /// `--mux-delimiter <D>`: field separator for MUX extraction.
+    mux_delimiter: Option<String>,
+    /// `--mux-field <N>`: 0-based field index (negative = from end) for MUX.
+    mux_field: Option<i64>,
 
     exclude_types: Vec<u8>,
     exclude_rts: Vec<u8>,
@@ -454,6 +466,20 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--format=") => {
                 args.output_format = Some(s["--format=".len()..].to_string());
             }
+            "--no-mux" => args.no_mux = true,
+            "--mux-delimiter" => {
+                args.mux_delimiter =
+                    Some(parse_mux_delimiter(&next_value("--mux-delimiter", iter)?)?);
+            }
+            s if s.starts_with("--mux-delimiter=") => {
+                args.mux_delimiter = Some(parse_mux_delimiter(&s["--mux-delimiter=".len()..])?);
+            }
+            "--mux-field" => {
+                args.mux_field = Some(parse_mux_field(&next_value("--mux-field", iter)?)?);
+            }
+            s if s.starts_with("--mux-field=") => {
+                args.mux_field = Some(parse_mux_field(&s["--mux-field=".len()..])?);
+            }
             "--manifest" => {
                 args.manifest = Some(PathBuf::from(next_value("--manifest", iter)?));
             }
@@ -730,6 +756,19 @@ fn parse_standard_tick_rate_hz(s: &str) -> Result<f64, String> {
     Ok(hz)
 }
 
+fn parse_mux_delimiter(s: &str) -> Result<String, String> {
+    if s.is_empty() {
+        return Err("invalid --mux-delimiter: must be a non-empty string".to_string());
+    }
+    Ok(s.to_string())
+}
+
+fn parse_mux_field(s: &str) -> Result<i64, String> {
+    s.trim()
+        .parse::<i64>()
+        .map_err(|_| format!("invalid --mux-field: {s:?}; must be an integer"))
+}
+
 // ── Subcommand runners ────────────────────────────────────────────────
 
 /// Apply a log-level string. Returns Err on an unrecognized name so the
@@ -786,6 +825,9 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, CliErr
             detect_records: cfg.detect_records,
             lookahead_records: cfg.lookahead_records,
             standard_tick_rate_hz: cfg.standard_tick_rate_hz,
+            mux_enabled: cfg.mux_enabled,
+            mux_delimiter: cfg.mux_delimiter.clone(),
+            mux_field: cfg.mux_field,
         },
     )
     .map_err(|e| CliError::runtime(format_mie_error(e)))
@@ -815,6 +857,10 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
         detect_records: args.detect_records,
         lookahead_records: args.lookahead_records,
         standard_tick_rate_hz: args.standard_tick_rate_hz,
+        // --no-mux disables MUX population; absence leaves the config value.
+        mux_enabled: if args.no_mux { Some(false) } else { None },
+        mux_delimiter: args.mux_delimiter.clone(),
+        mux_field: args.mux_field,
         exclude_types: args.exclude_types,
         exclude_rts: args.exclude_rts,
         exclude_buses: args.exclude_buses,

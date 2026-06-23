@@ -160,6 +160,7 @@ mod tests {
             error_word: None,
             delta: Some(0.0),
             file_offset: 0,
+            mux: None,
         }
     }
 

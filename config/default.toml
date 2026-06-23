@@ -254,3 +254,32 @@ format = "csv"
 # Default: false
 # ──────────────────────────────────────────────────────────────────────────
 no_clobber = false
+
+
+[mux]
+# ──────────────────────────────────────────────────────────────────────────
+# MUX column from the input file name (L2-WRT-020).
+#
+# When enabled, the MUX column is filled from a field of each input's file
+# name — useful when recordings are named so a field encodes the source /
+# recorder, e.g.  full_loadout.draw.data.1553.aa.unused.mie_irig  where the
+# 5th dot-separated field (index 4) is the recorder id "aa". In a multi-file
+# merge each row carries the MUX of the file it was decoded from.
+#
+# NOTE: this is ON by default, so default output is NOT byte-for-byte vendor
+# CSV when the input name has the field. For a vendor-exact diff, set
+# enabled = false (or pass --no-mux). See docs/VENDOR-CSV-DIFFS.md.
+# ──────────────────────────────────────────────────────────────────────────
+
+# Populate MUX from the file name. Overridden by --no-mux (which sets false).
+# Default: true
+enabled = true
+
+# Field separator applied to the file's basename. Must be non-empty.
+# Overridden by --mux-delimiter. Default: "."
+delimiter = "."
+
+# 0-based index of the MUX field; a negative value counts from the end
+# (e.g. -3 selects the third-from-last field). An out-of-range index leaves
+# MUX empty. Overridden by --mux-field. Default: 4
+field = 4

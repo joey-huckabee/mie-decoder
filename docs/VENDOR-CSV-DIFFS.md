@@ -20,7 +20,8 @@ The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **col
 | Line endings | **Match** (both produce LF; see §4) |
 | Per-row data content for clean records | **Match** |
 | Per-row data content for errored / SPURIOUS records | **Match** |
-| Vendor-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`) | **Both empty in v1** (see §3) |
+| Placeholder columns `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` | **Empty** (see §3) |
+| `MUX` column | **Populated from the file name by default** (L2-WRT-020); empty with `--no-mux` for a vendor-exact diff (see §3) |
 | IRIG `TIME_STAMP` day-of-year field | **Firmware-dependent discrepancy** on some DDC card models (see §5) |
 
 If you find a divergence outside the documented exceptions, **it is a bug** in MIE-Decoder. See §7.
@@ -56,13 +57,13 @@ The following columns produce byte-identical content between MIE-Decoder and the
 
 ---
 
-## 3. Vendor-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`)
+## 3. Placeholder columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`)
 
-Five columns sit between the meaningful payload columns and the trailing diagnostic columns. They are emitted as empty cells by MIE-Decoder in v1, preserved by spec (L2-WRT-013).
+Five columns sit between the meaningful payload columns and the trailing diagnostic columns. Four are emitted as empty cells, preserved by spec (L2-WRT-013). **`MUX` is the exception: by default MIE-Decoder populates it from the input file name (L2-WRT-020)** — so default output is *not* byte-for-byte identical to the vendor CSV when the input name carries that field.
 
-| Column | What the vendor uses it for | MIE-Decoder v1 |
+| Column | What the vendor uses it for | MIE-Decoder |
 |--------|---------------------------|----------------|
-| `MUX` | Multiplexer channel identifier on multi-channel DDC cards. | Empty. |
+| `MUX` | Multiplexer channel identifier on multi-channel DDC cards. | **Populated from a field of the input file name by default** (L2-WRT-020); empty with `--no-mux` / `[mux] enabled = false`. |
 | `TERM_NAME` | Operator-assigned symbolic name for the RT (loaded from a side-channel config file in the vendor tool). | Empty. |
 | `IM_GAP` | Inter-message gap (microseconds since the previous transaction on either bus). | Empty. |
 | `RCV_GAP` | Receive gap (between command and data on a receive transaction). | Empty. |
@@ -70,11 +71,11 @@ Five columns sit between the meaningful payload columns and the trailing diagnos
 
 ### Why we keep the columns
 
-Removing them would break the L1-OUT-001 byte-compat contract: any downstream tool that consumes the vendor CSV by column index would point at the wrong field after we'd shifted the columns left. The columns are part of the layout per spec; the cell content is empty by default.
+Removing them would break the L1-OUT-001 byte-compat contract: any downstream tool that consumes the vendor CSV by column index would point at the wrong field after we'd shifted the columns left. The columns are part of the layout per spec; `MUX` now carries a filename-derived value (its position is unchanged) and the other four stay empty.
 
-### When the vendor populates them and we don't
+### Getting vendor-exact output (`--no-mux`)
 
-If your vendor CSV has values in these columns, MIE-Decoder's output will differ in those cells specifically. That's expected and documented — not a bug. The contract is "column layout matches"; populating the gap-timing and MUX columns is on the roadmap (per ROADMAP backlog, not yet scheduled) but unimplemented today.
+For a byte-for-byte diff against a vendor CSV, disable MUX population: pass **`--no-mux`** (or set `[mux] enabled = false` in your config). MIE-Decoder then leaves `MUX` empty like the other four placeholders, and the only remaining differences are the genuinely vendor-populated cells (gap timing, `TERM_NAME`, and any `MUX` values the vendor itself wrote). Those remaining differences are expected and documented — not a bug; the contract is "column layout matches."
 
 To make the diff easier to read, filter the comparison to the meaningful columns:
 
@@ -145,7 +146,8 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
 4. **Expect zero differences** outside the documented exceptions. If you see a divergence:
 
    - Day-of-year column → known firmware discrepancy (§5).
-   - Empty `MUX` / `TERM_NAME` / gap columns on our side → expected (§3).
+   - `MUX` column → populated from the file name by default; pass `--no-mux` for a vendor-exact diff (§3).
+   - Empty `TERM_NAME` / gap columns on our side → expected (§3).
    - Anything else → bug. See §7.
 
 5. **For automated comparison** in a regression pipeline, MIE-Decoder ships a cross-implementation conformance suite under `tests/conformance/` that asserts byte-identical CSV between the Rust and Python implementations against checked-in oracles. The oracle generation method (manual validation against vendor output, then committed) is documented in [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6.

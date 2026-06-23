@@ -16,7 +16,9 @@
 use std::fs;
 use std::path::Path;
 
-use crate::decode::DEFAULT_DETECT_RECORDS;
+use crate::decode::{
+    DEFAULT_DETECT_RECORDS, DEFAULT_MUX_DELIMITER, DEFAULT_MUX_ENABLED, DEFAULT_MUX_FIELD,
+};
 use crate::filter::FilterConfig;
 use crate::models::{Bus, ErrorMode, MessageType, TimestampFormat};
 use crate::sync::DEFAULT_LOOKAHEAD_RECORDS;
@@ -74,6 +76,13 @@ pub struct DecoderConfig {
     /// `--standard-tick-rate-hz <hz>` on the CLI. Validated as finite and
     /// `> 0` at load time.
     pub standard_tick_rate_hz: Option<f64>,
+    /// L2-WRT-020: populate the MUX column from a field of the input file name.
+    /// Enabled by default (`[mux] enabled = false` / `--no-mux` disables it for
+    /// vendor-exact output). The file name is split on `mux_delimiter` and the
+    /// `mux_field`-th field (0-based; negative counts from the end) becomes MUX.
+    pub mux_enabled: bool,
+    pub mux_delimiter: String,
+    pub mux_field: i64,
 }
 
 impl Default for DecoderConfig {
@@ -90,6 +99,9 @@ impl Default for DecoderConfig {
             detect_records: DEFAULT_DETECT_RECORDS,
             lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
             standard_tick_rate_hz: None,
+            mux_enabled: DEFAULT_MUX_ENABLED,
+            mux_delimiter: DEFAULT_MUX_DELIMITER.to_string(),
+            mux_field: DEFAULT_MUX_FIELD,
         }
     }
 }
@@ -109,6 +121,9 @@ pub struct ConfigOverrides {
     pub detect_records: Option<usize>,
     pub lookahead_records: Option<usize>,
     pub standard_tick_rate_hz: Option<f64>,
+    pub mux_enabled: Option<bool>,
+    pub mux_delimiter: Option<String>,
+    pub mux_field: Option<i64>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -152,6 +167,15 @@ impl DecoderConfig {
         }
         if let Some(v) = ov.standard_tick_rate_hz {
             self.standard_tick_rate_hz = Some(v);
+        }
+        if let Some(v) = ov.mux_enabled {
+            self.mux_enabled = v;
+        }
+        if let Some(v) = ov.mux_delimiter {
+            self.mux_delimiter = v;
+        }
+        if let Some(v) = ov.mux_field {
+            self.mux_field = v;
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -289,6 +313,22 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
         cfg.standard_tick_rate_hz = Some(hz);
     }
 
+    // L2-WRT-020: MUX-from-filename configuration.
+    if let Some(b) = toml.get_bool("mux", "enabled")? {
+        cfg.mux_enabled = b;
+    }
+    if let Some(d) = toml.get_string("mux", "delimiter")? {
+        if d.is_empty() {
+            return Err(ConfigError(
+                "Invalid mux.delimiter: must be a non-empty string".to_string(),
+            ));
+        }
+        cfg.mux_delimiter = d.to_string();
+    }
+    if let Some(n) = toml.get_int("mux", "field")? {
+        cfg.mux_field = n;
+    }
+
     if let Some(types) = toml.get_array("filter", "exclude_types")? {
         for v in types {
             cfg.filters.exclude_types.push(parse_type_value(v)?);
@@ -343,6 +383,9 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("decode", "standard_tick_rate_hz")
             | ("output", "format")
             | ("output", "no_clobber")
+            | ("mux", "enabled")
+            | ("mux", "delimiter")
+            | ("mux", "field")
             | ("filter", "exclude_types")
             | ("filter", "exclude_rts")
             | ("filter", "exclude_buses")

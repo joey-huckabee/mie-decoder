@@ -46,6 +46,30 @@ MIN_RECORD_WORDS_STANDARD: Final[int] = 4
 #: struct format for a single little-endian unsigned 16-bit word
 _LE_U16: Final[str] = "<H"
 
+#: L2-WRT-020 MUX-from-filename defaults.
+DEFAULT_MUX_ENABLED: Final[bool] = True
+DEFAULT_MUX_DELIMITER: Final[str] = "."
+DEFAULT_MUX_FIELD: Final[int] = 4
+
+
+def mux_from_filename(file_name: str, delimiter: str, field: int) -> str | None:
+    """Extract the MUX column value from a file *name* (basename, not a path):
+    split on ``delimiter`` and return the ``field``-th part (0-based; a negative
+    ``field`` counts from the end, e.g. ``-1`` is the last part), trimmed.
+
+    Returns ``None`` (-> empty MUX) when the index is out of range, the selected
+    field is empty after trimming, or ``delimiter`` is empty. Mirrors the Rust
+    ``mux_from_filename`` (src/decode.rs).
+    """
+    if not delimiter:
+        return None
+    parts = file_name.split(delimiter)
+    idx = len(parts) + field if field < 0 else field
+    if idx < 0 or idx >= len(parts):
+        return None
+    value = parts[idx].strip()
+    return value or None
+
 
 def decode_type_word(raw: int) -> TypeWord:
     """Decode a 16-bit Type Word into its constituent fields.

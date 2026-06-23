@@ -15,6 +15,31 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **MUX column populated from the input file name (L2-WRT-020, both
+  implementations, behavior change).** The previously-always-empty `MUX` CSV
+  column is now filled from a field of each input's file name, so a decoded CSV
+  can carry the source/recorder identity that operators encode in the name (e.g.
+  `full_loadout.draw.data.1553.aa.unused.mie_irig` → `MUX = aa`). The basename
+  is split on a configurable delimiter (default `.`) and a configurable 0-based
+  field index (default `4`; negative counts from the end) selects the value; an
+  out-of-range/empty field leaves MUX empty. In a multi-file merge each row
+  carries the MUX of the file it was decoded from. Configurable via the new
+  `[mux]` config section (`enabled` / `delimiter` / `field`) and the new
+  `--no-mux` / `--mux-delimiter` / `--mux-field` CLI flags (identical in both
+  CLIs). Extraction is hand-rolled (delimiter + index, **no new dependency**).
+  Pinned by the `mux-from-filename`, `mux-merge-per-file` (per-file values
+  through the merge), and `mux-disabled` conformance cases plus unit tests.
+  - **Behavior / vendor-compat change:** because this is **on by default**,
+    default output is no longer byte-for-byte identical to the DDC vendor CSV
+    when the input name carries the field. Pass **`--no-mux`** (or set
+    `[mux] enabled = false`) to restore empty MUX for a vendor-exact diff. The
+    other placeholder columns (`TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`)
+    remain empty; the `MUX` column position is unchanged. `L2-WRT-013`,
+    `VENDOR-CSV-DIFFS.md`, and the "Shared Commitments" / "Conventions" notes
+    were updated accordingly.
+
 ### Fixed
 
 - **Standard-timestamp mode-code records with data are no longer misclassified

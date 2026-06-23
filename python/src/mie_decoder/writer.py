@@ -281,7 +281,7 @@ def message_to_row(msg: MieMessage) -> dict[str, str]:
         "MSG": msg.msg_label,
         "STAT": f"{msg.status_word:04X}" if msg.status_word is not None else "",
         "CMD": f"{msg.command_word.raw:04X}" if msg.command_word is not None else "",
-        "MUX": "",
+        "MUX": msg.mux or "",
         "TERM_NAME": "",
         "BUS": msg.bus.name,
         "DELTA": f"{msg.delta:.6f}" if msg.delta is not None else "",

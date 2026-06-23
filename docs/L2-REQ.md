@@ -611,8 +611,8 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-WRT-013
 
 **Parent**: L1-OUT-001
-**Statement**: CSV output SHALL preserve the currently-empty vendor compatibility columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`).
-**Rationale**: These columns are part of the vendor layout. Future versions may populate them; current versions emit them empty for layout fidelity.
+**Statement**: CSV output SHALL preserve the vendor compatibility columns `TERM_NAME`, `IM_GAP`, `RCV_GAP`, and `XMT_GAP` as empty, and SHALL preserve the `MUX` column in its vendor layout position. `MUX` is populated from the input file name per L2-WRT-020 (and is empty when that population is disabled or yields no value); the other four remain empty.
+**Rationale**: These columns are part of the vendor layout and are preserved for column-order fidelity. `MUX` is the first of them to carry decoder-derived content (L2-WRT-020); the rest stay empty until a future version defines a meaning for them.
 **Verification Method**: Test (T)
 
 #### L2-WRT-014
@@ -655,6 +655,13 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 **Parent**: L1-OUT-002
 **Statement**: In separate (default) error mode, the main CSV and the errors CSV SHALL each be committed via its own atomic temp+rename (L2-WRT-015), and the main CSV SHALL be committed **before** the errors CSV. The two commits are sequential — no cross-file atomic rename exists — so this is explicitly **not** an all-or-nothing guarantee across the two files: a failure of the second (errors) commit SHALL leave the already-committed main CSV in place, and a failure of the first (main) commit SHALL leave neither file (the errors output is still an un-renamed temp and is unlinked). Both implementations SHALL use this main-before-errors order.
 **Rationale**: There is no portable way to atomically commit two files together. Since one file may survive a mid-commit failure, the residue must be the main CSV — the primary deliverable — never an orphan errors file with no corresponding main output. Pinning the order also removes a latent cross-implementation divergence: Rust previously committed errors-first while Python committed main-first, so the file left behind on failure differed by implementation.
+**Verification Method**: Test (T)
+
+#### L2-WRT-020
+
+**Parent**: L1-OUT-001
+**Statement**: The `MUX` column SHALL be populated from a field of each record's **source file name**. The file's basename SHALL be split on a configurable `delimiter` (default `.`) and the field at a configurable 0-based `field` index (default `4`; a negative index counts from the end) SHALL be used as the MUX value, trimmed of surrounding whitespace. When the index is out of range, the selected field is empty, the delimiter is empty, or population is disabled, `MUX` SHALL be empty. Population is **enabled by default** and SHALL be disabled by `[mux] enabled = false` (TOML) or `--no-mux` (CLI), with `[mux] delimiter` / `--mux-delimiter` and `[mux] field` / `--mux-field` overriding the extraction. In multi-file merge mode each record SHALL carry the MUX value of the **file it was decoded from**. A MUX value containing the CSV delimiter, a double quote, or a line break SHALL be RFC4180-quoted identically in both implementations.
+**Rationale**: Operators encode a source/recorder identity in a file-name field (e.g. `…1553.aa.unused.mie_irig`); surfacing it in the long-empty `MUX` column lets a decoded CSV identify its origin without an external lookup. Delimiter+index extraction is dependency-free (no regex), preserving the hand-rolled / single-dependency property. Default-on serves the common operator workflow; `--no-mux` restores vendor-exact output for a byte-for-byte vendor-CSV diff (see `docs/VENDOR-CSV-DIFFS.md`). Per-file carry through the merge is what makes the value meaningful when several recorders are combined, and is the first concrete step of the ROADMAP "recorder identity from a parsed file-naming convention" item.
 **Verification Method**: Test (T)
 
 ---

@@ -444,7 +444,7 @@ Raw 16-bit MIL-STD-1553 Command Word in uppercase 4-character hex. Empty for SPU
 
 ### `MUX`, `TERM_NAME`
 
-Vendor compatibility columns. Always empty in MIE-Decoder v1; reserved for future per-card metadata. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3 for vendor semantics.
+`MUX` is populated from a field of the input **file name** by default (L2-WRT-020) — operators encode a source/recorder id in the name; the decoder splits the basename on a configurable delimiter (default `.`) and emits the configured field (default index `4`). It is empty with `--no-mux` / `[mux] enabled = false`, or when the field is absent. A MUX value containing the CSV delimiter, a quote, or a line break is RFC4180-quoted (identically in both implementations). `TERM_NAME` is a vendor compatibility column, always empty. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3 for vendor semantics and the `--no-mux` vendor-exact path.
 
 ### `BUS`
 

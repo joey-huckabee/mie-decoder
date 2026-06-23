@@ -106,6 +106,41 @@ pub fn decode_command_word(raw: u16) -> CommandWord {
     }
 }
 
+// ── MUX from file name (L2-WRT-020) ───────────────────────────────────
+
+/// Default: MUX population is on (derive from the file name).
+pub const DEFAULT_MUX_ENABLED: bool = true;
+/// Default MUX field delimiter.
+pub const DEFAULT_MUX_DELIMITER: &str = ".";
+/// Default MUX field index (0-based): the 5th dot-separated field, matching the
+/// `name.part.part.part.<MUX>.part.ext` recorder convention.
+pub const DEFAULT_MUX_FIELD: i64 = 4;
+
+/// Extract the MUX column value from a file *name* (basename, not a path):
+/// split on `delimiter` and return the `field`-th part (0-based; a negative
+/// `field` counts from the end, e.g. `-1` is the last part), trimmed.
+///
+/// Returns `None` (→ empty MUX) when the index is out of range, the selected
+/// field is empty after trimming, or `delimiter` is empty. Pure and
+/// allocation-light; the caller wraps the result in a shared `Arc<str>`.
+pub fn mux_from_filename(file_name: &str, delimiter: &str, field: i64) -> Option<String> {
+    if delimiter.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = file_name.split(delimiter).collect();
+    let len = parts.len() as i64;
+    let idx = if field < 0 { len + field } else { field };
+    if idx < 0 || idx >= len {
+        return None;
+    }
+    let value = parts[idx as usize].trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
 // ── Format classification ─────────────────────────────────────────────
 
 pub fn classify_message_format(
@@ -602,6 +637,41 @@ pub fn message_type_is_valid(code: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Requirements: L2-WRT-020
+    #[test]
+    fn mux_from_filename_extraction() {
+        let name = "full_loadout.draw.data.1553.aa.unused.mie_irig";
+        // Default field 4 → the recorder identity.
+        assert_eq!(mux_from_filename(name, ".", 4).as_deref(), Some("aa"));
+        // Other operator files at the same index.
+        assert_eq!(
+            mux_from_filename("full_loadout.draw.data.1553.s10.unused.mie_irig", ".", 4).as_deref(),
+            Some("s10")
+        );
+        // Negative index counts from the end (-3 == index 4 here).
+        assert_eq!(mux_from_filename(name, ".", -3).as_deref(), Some("aa"));
+        // Index 0 and the last field.
+        assert_eq!(
+            mux_from_filename(name, ".", 0).as_deref(),
+            Some("full_loadout")
+        );
+        assert_eq!(
+            mux_from_filename(name, ".", -1).as_deref(),
+            Some("mie_irig")
+        );
+        // Out-of-range → None (empty MUX).
+        assert_eq!(mux_from_filename(name, ".", 99), None);
+        assert_eq!(mux_from_filename(name, ".", -99), None);
+        // A different delimiter.
+        assert_eq!(mux_from_filename("a_b_c", "_", 1).as_deref(), Some("b"));
+        // Empty delimiter / empty field → None.
+        assert_eq!(mux_from_filename(name, "", 4), None);
+        assert_eq!(mux_from_filename("a..b", ".", 1), None);
+        // No delimiter present and field != 0 → None.
+        assert_eq!(mux_from_filename("plain", ".", 4), None);
+        assert_eq!(mux_from_filename("plain", ".", 0).as_deref(), Some("plain"));
+    }
 
     /// Requirements: L2-DEC-001
     #[test]

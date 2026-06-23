@@ -29,6 +29,11 @@ allow_partial  = false           # true | false
 format     = "csv"               # csv (only value in v1)
 no_clobber = false               # true | false
 
+[mux]
+enabled   = true                 # populate MUX from the file name (--no-mux disables)
+delimiter = "."                  # field separator (non-empty)
+field     = 4                    # 0-based field index (negative = from end)
+
 [filter]
 exclude_types        = []        # array of names or hex codes
 exclude_rts          = []        # array of integers in [0, 31]
@@ -46,8 +51,11 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `decode.detect_records` | int | `8` | `--detect-records` | L2-CFG-001, L2-DEC-015 |
 | `decode.lookahead_records` | int | `2` | `--lookahead-records` | L2-CFG-001, L2-SYN-026 |
 | `decode.standard_tick_rate_hz` | float | unset | `--standard-tick-rate-hz` | L2-CFG-011, L2-DEC-017 |
-| `output.format` | string | `"csv"` | (no CLI flag) | L2-CFG-001 |
+| `output.format` | string | `"csv"` | `--format` | L2-CFG-001 |
 | `output.no_clobber` | bool | `false` | `--no-clobber` | L2-CFG-001, L2-WRT-017 |
+| `mux.enabled` | bool | `true` | `--no-mux` (sets `false`) | L2-WRT-020 |
+| `mux.delimiter` | string | `"."` | `--mux-delimiter` | L2-WRT-020 |
+| `mux.field` | int | `4` | `--mux-field` | L2-WRT-020 |
 | `filter.exclude_types` | array | `[]` | `--exclude-types` (additive) | L2-CFG-006, L2-CFG-007 |
 | `filter.exclude_rts` | array | `[]` | `--exclude-rts` (additive) | L2-CFG-006 |
 | `filter.exclude_buses` | array | `[]` | `--exclude-buses` (additive) | L2-CFG-006 |
@@ -210,6 +218,32 @@ Controls whether the writer is allowed to overwrite an existing destination (L2-
 When `error_mode = "separate"`, the no-clobber check applies to both the main output AND the errors file — either existing triggers refusal.
 
 **Validation:** TOML boolean only.
+
+---
+
+## `[mux]`
+
+Populate the `MUX` CSV column from a field of each input's **file name** (L2-WRT-020). Useful when recordings are named so a field encodes the source / recorder, e.g. `full_loadout.draw.data.1553.aa.unused.mie_irig` → `MUX = aa`. In a multi-file merge each row carries the MUX of the file it was decoded from.
+
+> **Vendor compatibility:** this is **on by default**, so default output is *not* byte-for-byte identical to the DDC vendor CSV when the input name has the field. Set `enabled = false` (or pass `--no-mux`) for a vendor-exact diff. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md).
+
+### `enabled`
+
+**Type:** bool · **Default:** `true` · **CLI:** `--no-mux` (sets `false`)
+
+When `true`, the MUX column is derived from the file name; when `false`, MUX is left empty. **Validation:** TOML boolean only.
+
+### `delimiter`
+
+**Type:** string · **Default:** `"."` · **CLI:** `--mux-delimiter`
+
+Separator the file's basename is split on. **Validation:** must be a non-empty string (rejected at load time otherwise).
+
+### `field`
+
+**Type:** int · **Default:** `4` · **CLI:** `--mux-field`
+
+0-based index of the field used as the MUX value; a **negative** index counts from the end (e.g. `-1` is the last field). An out-of-range index, an empty selected field, or a `false` `enabled` leaves MUX empty. **Validation:** TOML integer only (any value accepted; out-of-range simply yields empty MUX).
 
 ---
 

@@ -62,6 +62,11 @@ mie-decoder decode <input>... [options]
                                    Standard timestamps (default: unset)
   --strict                         Raise on invalid records
   --format csv                     Output format (csv only at present)
+  --no-mux                         Leave the MUX column empty (vendor-exact);
+                                   default: MUX is derived from the file name
+  --mux-delimiter D                MUX field separator (default '.')
+  --mux-field N                    0-based MUX field index; negative counts
+                                   from the end (default 4)
   --exclude-types VAL              Comma-separated names or 0xNN hex codes
   --exclude-rts VAL                Comma-separated RT addresses
   --exclude-buses VAL              Comma-separated A|B
@@ -104,6 +109,25 @@ output with exit code 6. A single input behaves exactly as before; up to
 `--strict` / lenient / `--allow-partial` policy as a single decode
 (`--allow-partial` writes the combined `.partial` output). Rust and
 Python produce byte-identical merged output.
+
+#### MUX from the file name
+
+The `MUX` column is filled from a field of each input's **file name**, so a
+decoded CSV can carry the source/recorder identity encoded in the name. For
+example, given `full_loadout.draw.data.1553.aa.unused.mie_irig`, the default
+splits on `.` and takes field index `4` → `MUX = aa`:
+
+```bash
+mie-decoder decode full_loadout.draw.data.1553.aa.unused.mie_irig -o out.csv  # MUX=aa
+mie-decoder decode rec.mie --mux-delimiter _ --mux-field 1 -o out.csv         # custom
+mie-decoder decode rec.mie --no-mux -o out.csv                                # MUX empty
+```
+
+This is **on by default**. In a multi-file merge each row carries the MUX of
+the file it was decoded from. A negative `--mux-field` counts from the end; an
+out-of-range field leaves MUX empty. To produce output that matches the DDC
+vendor CSV byte-for-byte (empty MUX), pass `--no-mux` (or set
+`[mux] enabled = false`). See [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md).
 
 ### count
 
@@ -239,6 +263,11 @@ exclude_subaddresses = []
 
 [output]
 format = "csv"
+
+[mux]                       # MUX column from the file name (L2-WRT-020)
+enabled = true             # false (or --no-mux) leaves MUX empty (vendor-exact)
+delimiter = "."            # field separator applied to the basename
+field = 4                  # 0-based field index (negative counts from the end)
 ```
 
 CLI args override config file values; config file values override built-in defaults.
@@ -336,7 +365,7 @@ python tests/conformance/run.py
 ## Known Limitations
 
 - The Day field in IRIG timestamps may not decode correctly on all DDC card models.
-- `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but currently empty (by spec).
+- `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but empty (by spec). `MUX` is populated from the input file name by default (L2-WRT-020); pass `--no-mux` for vendor-exact (empty) output.
 - Standard timestamp tick-to-microsecond conversion requires external calibration.
 - SPURIOUS_DATA payload structure is raw words with no further interpretation.
 

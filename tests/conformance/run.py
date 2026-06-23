@@ -32,6 +32,7 @@ FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "name": str,
     "input": str,
     "inputs": list,  # multi-file merge: list of hex input paths
+    "input_names": list,  # override materialized temp file name(s) (L2-WRT-020)
     "expected": str,
     "expected_errors": str,
     "expected_partial": str,  # oracle for the <output>.partial (allow-partial)
@@ -454,9 +455,17 @@ def main() -> int:
             # fixture is materialized to its own temp .mie and passed as a
             # positional to both CLIs.
             input_specs = case.get("inputs") or [case["input"]]
+            # L2-WRT-020: a case may override the materialized file name(s) so a
+            # filename-derived feature (the MUX column) can be exercised. Names
+            # are placed in a per-case subdirectory to avoid collisions.
+            input_names = case.get("input_names")
+            case_dir = temp / name if input_names else temp
+            if input_names:
+                case_dir.mkdir(parents=True, exist_ok=True)
             sources = []
             for i, spec in enumerate(input_specs):
-                src = temp / f"{name}-in{i}.mie"
+                fname = input_names[i] if input_names else f"{name}-in{i}.mie"
+                src = case_dir / fname
                 src.write_bytes(read_hex(SUITE / spec))
                 sources.append(src)
             expected_exit = int(case.get("expected_exit", 0))

@@ -47,9 +47,13 @@ from mie_decoder.decode import (
     MIN_RECORD_BYTES_STANDARD,
     MIN_RECORD_WORDS,
     DEFAULT_DETECT_RECORDS,
+    DEFAULT_MUX_DELIMITER,
+    DEFAULT_MUX_ENABLED,
+    DEFAULT_MUX_FIELD,
     MIN_RECORD_WORDS_STANDARD,
     DetectionConfidence,
     classify_message_format,
+    mux_from_filename,
     decode_command_word,
     decode_irig_timestamp,
     decode_standard_timestamp,
@@ -154,6 +158,9 @@ class MieFileReader:
         detect_records: int = DEFAULT_DETECT_RECORDS,
         lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
         standard_tick_rate_hz: float | None = None,
+        mux_enabled: bool = DEFAULT_MUX_ENABLED,
+        mux_delimiter: str = DEFAULT_MUX_DELIMITER,
+        mux_field: int = DEFAULT_MUX_FIELD,
     ) -> None:
         self._path = Path(path)
         self._strict = strict
@@ -179,6 +186,13 @@ class MieFileReader:
         # after the loop completes (for L1-EXIT-003 / L1-EXIT-005 exit-class
         # summary). Mirrors `MieFileReader::sync_losses` in Rust.
         self._sync_losses: int = 0
+        # L2-WRT-020: resolve the per-file MUX value once, from the file name.
+        # Shared by reference across every message this reader yields.
+        self._mux: str | None = (
+            mux_from_filename(self._path.name, mux_delimiter, mux_field)
+            if mux_enabled
+            else None
+        )
         if not self._path.exists():
             raise MieFileNotFoundError(str(self._path))
         self._file_size = self._path.stat().st_size
@@ -595,6 +609,7 @@ class MieFileReader:
                             error_word=error_code,
                             delta=None,
                             file_offset=offset,
+                            mux=self._mux,
                         )
 
                         msg_count += 1
@@ -633,6 +648,7 @@ class MieFileReader:
                             error_word=msg.error_word,
                             delta=delta,
                             file_offset=msg.file_offset,
+                            mux=self._mux,
                         )
 
                         yield msg
@@ -741,6 +757,7 @@ class MieFileReader:
                         error_word=None,
                         delta=delta,
                         file_offset=offset,
+                        mux=self._mux,
                     )
 
                     msg_count += 1

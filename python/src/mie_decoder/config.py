@@ -67,6 +67,9 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset({
     ("decode", "standard_tick_rate_hz"),
     ("output", "format"),
     ("output", "no_clobber"),
+    ("mux", "enabled"),
+    ("mux", "delimiter"),
+    ("mux", "field"),
     ("filter", "exclude_types"),
     ("filter", "exclude_rts"),
     ("filter", "exclude_buses"),
@@ -267,6 +270,13 @@ class DecoderConfig:
     #: records; a finite, strictly-positive value enables tick->microsecond
     #: conversion and DELTA participation. Validated at load time.
     standard_tick_rate_hz: float | None = None
+    #: L2-WRT-020: populate the MUX column from a field of the input file
+    #: name. Enabled by default ([mux] enabled = false / --no-mux disables
+    #: it for vendor-exact output). The name is split on mux_delimiter and the
+    #: mux_field-th field (0-based; negative counts from the end) becomes MUX.
+    mux_enabled: bool = True
+    mux_delimiter: str = "."
+    mux_field: int = 4
 
     def with_overrides(self, **kwargs: Any) -> DecoderConfig:
         """Return a new config with specified fields overridden.
@@ -312,6 +322,17 @@ class DecoderConfig:
             if kwargs.get("standard_tick_rate_hz") is not None
             else self.standard_tick_rate_hz
         )
+        new_mux_enabled = (
+            kwargs["mux_enabled"]
+            if kwargs.get("mux_enabled") is not None
+            else self.mux_enabled
+        )
+        new_mux_delimiter = kwargs.get("mux_delimiter") or self.mux_delimiter
+        new_mux_field = (
+            kwargs["mux_field"]
+            if kwargs.get("mux_field") is not None
+            else self.mux_field
+        )
 
         # Merge filter overrides — CLI adds to (not replaces) config file
         # filters. include_* are CLI-only (no config-file key), matching
@@ -339,6 +360,9 @@ class DecoderConfig:
             detect_records=new_dr,
             lookahead_records=new_lr,
             standard_tick_rate_hz=new_sthz,
+            mux_enabled=new_mux_enabled,
+            mux_delimiter=new_mux_delimiter,
+            mux_field=new_mux_field,
         )
 
 
@@ -589,6 +613,23 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
             )
         standard_tick_rate_hz = hz
 
+    # L2-WRT-020: MUX-from-filename configuration.
+    mux_section = data.get("mux", {})
+    if not isinstance(mux_section, dict):
+        mux_section = {}
+    mux_enabled = _require_bool("mux", "enabled", mux_section.get("enabled", True))
+    mux_delimiter_raw = mux_section.get("delimiter", ".")
+    if not isinstance(mux_delimiter_raw, str) or mux_delimiter_raw == "":
+        raise ValueError(
+            f"Invalid mux.delimiter: {mux_delimiter_raw!r}; "
+            f"must be a non-empty string"
+        )
+    mux_delimiter = mux_delimiter_raw
+    mux_field_raw = mux_section.get("field", 4)
+    if isinstance(mux_field_raw, bool) or not isinstance(mux_field_raw, int):
+        raise ValueError(f"Invalid mux.field: {mux_field_raw!r}; must be an integer")
+    mux_field = mux_field_raw
+
     # L2-CFG-009: WARN on unknown keys so typos surface to the operator
     # instead of being silently dropped. Non-fatal so forward-compatible
     # additions don't break older configs.
@@ -611,6 +652,9 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         detect_records=detect_records,
         lookahead_records=lookahead_records,
         standard_tick_rate_hz=standard_tick_rate_hz,
+        mux_enabled=mux_enabled,
+        mux_delimiter=mux_delimiter,
+        mux_field=mux_field,
     )
 
     logger.debug("Loaded config: %s", config)

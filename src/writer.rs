@@ -277,6 +277,29 @@ impl<W: Write> CsvWriter<W> {
     }
 }
 
+/// Write a CSV field with RFC4180 minimal quoting, matching Python's
+/// `csv.QUOTE_MINIMAL`: a value containing the delimiter (`,`), a double quote,
+/// or a line break is wrapped in double quotes with internal quotes doubled;
+/// plain values are written verbatim. Only the MUX cell can carry such a value,
+/// so this keeps MUX output byte-identical across implementations.
+fn write_csv_field<W: Write>(out: &mut W, value: &str) -> std::io::Result<()> {
+    if value.contains([',', '"', '\n', '\r']) {
+        out.write_all(b"\"")?;
+        let mut buf = [0u8; 4];
+        for ch in value.chars() {
+            if ch == '"' {
+                out.write_all(b"\"\"")?;
+            } else {
+                out.write_all(ch.encode_utf8(&mut buf).as_bytes())?;
+            }
+        }
+        out.write_all(b"\"")?;
+    } else {
+        out.write_all(value.as_bytes())?;
+    }
+    Ok(())
+}
+
 fn write_row<W: Write>(out: &mut W, msg: &MieMessage) -> std::io::Result<()> {
     // TIME_STAMP
     out.write_all(msg.timestamp.format().as_bytes())?;
@@ -312,7 +335,11 @@ fn write_row<W: Write>(out: &mut W, msg: &MieMessage) -> std::io::Result<()> {
     }
     out.write_all(b",")?;
 
-    // MUX, TERM_NAME (always empty)
+    // MUX (L2-WRT-020: derived from the file name; empty when disabled or the
+    // configured field is absent), then TERM_NAME (always empty).
+    if let Some(mux) = &msg.mux {
+        write_csv_field(out, mux)?;
+    }
     out.write_all(b",,")?;
 
     // BUS
@@ -683,6 +710,27 @@ mod tests {
     use super::*;
     use crate::models::*;
 
+    /// Requirements: L2-WRT-020
+    #[test]
+    fn mux_value_written_with_quoting() {
+        use std::sync::Arc;
+        let row = |mux: Option<Arc<str>>| {
+            let msg = MieMessage {
+                mux,
+                ..sample_msg()
+            };
+            let mut buf = Vec::new();
+            write_row(&mut buf, &msg).unwrap();
+            String::from_utf8(buf).unwrap()
+        };
+        // Plain value appears verbatim in the MUX cell (after CMD 797E).
+        assert!(row(Some(Arc::from("aa"))).contains(",797E,aa,,"));
+        // A value containing the delimiter is RFC4180-quoted (matches Python).
+        assert!(row(Some(Arc::from("a,b"))).contains(",797E,\"a,b\",,"));
+        // None → empty MUX (and empty TERM_NAME).
+        assert!(row(None).contains(",797E,,,"));
+    }
+
     fn sample_msg() -> MieMessage {
         MieMessage {
             timestamp: Timestamp::Irig(IrigTimestamp {
@@ -715,6 +763,7 @@ mod tests {
             error_word: None,
             delta: Some(0.123456),
             file_offset: 0,
+            mux: None,
         }
     }
 

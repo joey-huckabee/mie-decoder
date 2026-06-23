@@ -173,33 +173,30 @@ for the **next release** (investigate-then-schedule); the `--order file` item
 remains distant-future. None has a committed version yet.
 
 - **Recorder identity from a parsed file-naming convention (drives MUX,
-  per-recorder DELTA, and the tiebreak).** *Near-term — next-release candidate.*
-  v2.1.0 has no way to tell which recorder a file came from, which forces three
-  compromises:
-  - **DELTA** is computed on the merged *global* timeline (L2-MRG-005) rather
-    than per recorder, so it does not reflect any single recorder's true
+  per-recorder DELTA, and the tiebreak).** *Partially delivered.* The
+  **MUX** part shipped as **L2-WRT-020**: the `MUX` column is now populated from a
+  configurable filename field (delimiter + 0-based index, default `.` / `4`,
+  on by default, `--no-mux` to disable), and in merge mode each row carries its
+  source file's value. Two parts of the original idea remain **near-term —
+  next-release candidates**, and could reuse the same parsed value:
+  - **Per-recorder DELTA.** DELTA is still computed on the merged *global*
+    timeline (L2-MRG-005), so it does not reflect any single recorder's true
     inter-arrival cadence when more than one recorder contributes the same RT/SA
-    key. (See the "How the rows get ordered" plain-language section in
-    `docs/USER-GUIDE.md` §6 for the operator-facing description.)
-  - The **MUX** CSV column is one of the vendor-empty placeholders
-    (`L2-WRT-013`) — there is no recorder/bus identity to populate it with.
-  - The **merge tiebreak** for equal-timestamp records keys on
+    key. A future release could key DELTA on the parsed recorder identity (the
+    same field that now feeds MUX), falling back to the global timeline for
+    inputs whose name cannot be parsed. (See "How the rows get ordered" in
+    `docs/USER-GUIDE.md` §6.)
+  - **Identity-based merge tiebreak.** The equal-timestamp tiebreak still keys on
     `(microseconds, file_index, within-file sequence)`, where `file_index` is the
-    file's **position in the resolved input list** (CLI/manifest order, or
-    lexicographic filename order under `--glob`) — *not* a parsed identity from
-    the filename.
-
-  Proposed direction: define a **file-naming convention** that carries recorder
-  context, parse it at merge time to a stable **recorder identity**, and use that
-  identity to (a) populate the **MUX** column, (b) compute **DELTA per recorder**
-  (each recorder's own cadence), falling back to the global timeline only for
-  inputs whose name cannot be parsed, and (c) **break timestamp ties by the
-  parsed recorder identity** instead of by raw input position. Note this is a
-  deliberate change from today's tiebreak: `file_index` currently means "Nth
-  input given," which is only incidentally the filename (and only under `--glob`,
-  via lexicographic sort) — the convention would make the parsed name the
-  authoritative key. Needs its own requirements + design review (naming-scheme
-  grammar, fallback behavior, MUX value format, cross-impl conformance).
+    file's **position in the resolved input list** — *not* the parsed identity.
+    A future release could break ties by the parsed recorder identity instead, a
+    deliberate change from "Nth input given" to the authoritative parsed name.
+  - **Optional `TERM_NAME` from the filename** — the same delimiter+index
+    mechanism (a second configurable field) could populate the still-empty
+    `TERM_NAME` column, if a terminal-name field is encoded in the name.
+  - **Richer locator** — if delimiter+index proves insufficient for some naming
+    scheme, a hand-rolled wildcard locator (reusing the `--glob` matcher) could
+    be added without a new dependency. Not needed for the current convention.
 
 - **De-duplication of the same bus transaction seen by multiple recorders.**
   *Near-term — next-release candidate (investigate).* Multiple recorders on the
@@ -544,7 +541,7 @@ open "IRIG day-field decoding across DDC card models" investigation item.
 ## Shared Commitments
 
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.
-- **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including currently-empty columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`).
+- **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including the vendor placeholder columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`). `TERM_NAME`/`IM_GAP`/`RCV_GAP`/`XMT_GAP` remain empty. As of L2-WRT-020 the `MUX` *cell* is populated from the input file name by default (its column position is unchanged); `--no-mux` / `[mux] enabled = false` restores empty MUX for a byte-for-byte vendor diff.
 - **Sync recovery semantics preserved.** N-record look-ahead (default `N = 2` per L2-SYN-005, configurable via L2-SYN-026), 64 KB scan cap, error records and SPURIOUS_DATA continuations remain valid records that pass validation.
 - **One validation implementation.** Header skip, normal forward decode, and post-loss recovery share the same validation rules through the boolean compatibility wrapper or the detailed failure API. There is no weaker fast path.
 - **Cross-implementation conformance.** Text-based fixtures under

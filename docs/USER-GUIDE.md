@@ -350,6 +350,34 @@ What to expect:
 
 Both implementations produce byte-identical merged output.
 
+### Labeling output by recorder (MUX from the file name)
+
+If your recordings are named so a field identifies the source or recorder, the
+decoder can copy that field into the `MUX` column. For the convention
+`full_loadout.draw.data.1553.aa.unused.mie_irig` — where the 5th dot-separated
+field (`aa`, `gun`, `s2`, …) is the recorder — the **defaults already do the
+right thing**:
+
+```bash
+mie-decoder decode full_loadout.draw.data.1553.aa.unused.mie_irig -o out.csv
+# every row's MUX column is "aa"
+```
+
+The default splits the file name on `.` and takes field index `4`. Adjust for a
+different scheme with `--mux-delimiter` and `--mux-field` (a negative index
+counts from the end), or set them in a config `[mux]` section. **In a merge**,
+each row carries the MUX of the file it came from — so a merged CSV of several
+recorders is self-labeling:
+
+```bash
+mie-decoder decode --glob 'flight/*.mie_irig' -o merged.csv
+# rows from …aa…  → MUX "aa";  rows from …gun… → MUX "gun";  etc.
+```
+
+MUX population is **on by default**. To produce output that matches a DDC vendor
+CSV byte-for-byte (empty MUX), turn it off with **`--no-mux`** (or
+`[mux] enabled = false`). See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md).
+
 ---
 
 ## 7. Reading the CSV
@@ -364,7 +392,8 @@ The column layout matches DDC vendor output byte-for-byte. Columns in order:
 | `WD01`–`WD32` | Up to 32 data words, 4-character uppercase hex without `0x` prefix. Unused trailing columns are empty (not `0000`). |
 | `STAT` | Status Word, 4-character uppercase hex. Empty when not present (e.g. some Mode Code formats). |
 | `CMD` | Command Word, 4-character uppercase hex. Empty for SPURIOUS_DATA. |
-| `MUX`, `TERM_NAME` | Vendor compatibility columns. Always empty in v1; reserved for future per-card metadata. |
+| `MUX` | Source/recorder label derived from the input **file name** by default (see [Labeling output by recorder](#labeling-output-by-recorder-mux-from-the-file-name)). Empty with `--no-mux`. |
+| `TERM_NAME` | Vendor compatibility column. Always empty; reserved for future per-card metadata. |
 | `BUS` | `A` or `B`. |
 | `DELTA` | Seconds since the previous message on the same RT/MSG key. `0.000000` on first occurrence. Empty when the timestamp basis is unknown (uncalibrated Standard format — see [Calibrating Standard timestamps](#calibrating-standard-timestamps)), the record is SPURIOUS_DATA, or the timestamp is non-monotonic. |
 | `ERROR` | `ERROR`, `SPURIOUS`, or empty. Empty in clean rows of separate-mode CSV. |

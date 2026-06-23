@@ -11,14 +11,16 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use memmap2::Mmap;
 
 use crate::decode::{
-    DEFAULT_DETECT_RECORDS, DetectionConfidence, MIN_RECORD_BYTES_STANDARD,
-    classify_message_format, decode_command_word, decode_irig_timestamp, decode_standard_timestamp,
-    decode_type_word, probe_timestamp_format, read_u16, read_u16_array,
+    DEFAULT_DETECT_RECORDS, DEFAULT_MUX_DELIMITER, DEFAULT_MUX_ENABLED, DEFAULT_MUX_FIELD,
+    DetectionConfidence, MIN_RECORD_BYTES_STANDARD, classify_message_format, decode_command_word,
+    decode_irig_timestamp, decode_standard_timestamp, decode_type_word, mux_from_filename,
+    probe_timestamp_format, read_u16, read_u16_array,
 };
 use crate::error::{MieError, MieResult};
 use crate::models::{
@@ -56,6 +58,11 @@ pub struct MieFileReader {
     /// IRIG. `None` (the default) preserves the historical empty-DELTA
     /// behavior for Standard records.
     standard_tick_rate_hz: Option<f64>,
+    /// L2-WRT-020: MUX column value derived once from this file's name
+    /// (`None` when MUX population is disabled or the configured field is
+    /// absent/empty). Shared per file as an `Arc<str>` and cloned (a refcount
+    /// bump) onto each decoded message, so per-record carry is O(1).
+    mux: Option<Arc<str>>,
     /// Cumulative sync-recovery attempts during the most recent iter()
     /// call. Reset to 0 at the start of each iter(). Shared with the
     /// active RecordIter via a reference so the CLI can query it
@@ -66,7 +73,7 @@ pub struct MieFileReader {
 
 /// Builder-style options. `strict=false`, `time_format=Auto`,
 /// `detect_records=DEFAULT_DETECT_RECORDS` by default.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ReaderOptions {
     pub strict: bool,
     pub time_format: TimestampFormat,
@@ -84,6 +91,15 @@ pub struct ReaderOptions {
     /// historical empty-DELTA behavior. Validated upstream by
     /// config / CLI parsing.
     pub standard_tick_rate_hz: Option<f64>,
+    /// L2-WRT-020: when true (the default), populate the MUX column from a
+    /// field of this file's name. When false, MUX is left empty
+    /// (vendor-exact output).
+    pub mux_enabled: bool,
+    /// Field delimiter for MUX extraction (default `.`).
+    pub mux_delimiter: String,
+    /// 0-based field index for MUX extraction; negative counts from the end
+    /// (default `4`).
+    pub mux_field: i64,
 }
 
 impl Default for ReaderOptions {
@@ -94,6 +110,9 @@ impl Default for ReaderOptions {
             detect_records: DEFAULT_DETECT_RECORDS,
             lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
             standard_tick_rate_hz: None,
+            mux_enabled: DEFAULT_MUX_ENABLED,
+            mux_delimiter: DEFAULT_MUX_DELIMITER.to_string(),
+            mux_field: DEFAULT_MUX_FIELD,
         }
     }
 }
@@ -143,6 +162,16 @@ impl MieFileReader {
             opts.detect_records
         );
 
+        // L2-WRT-020: resolve the per-file MUX value once, from the file name.
+        let mux: Option<Arc<str>> = if opts.mux_enabled {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| mux_from_filename(n, &opts.mux_delimiter, opts.mux_field))
+                .map(Arc::from)
+        } else {
+            None
+        };
+
         Ok(Self {
             path,
             mmap,
@@ -152,6 +181,7 @@ impl MieFileReader {
             detect_records: opts.detect_records.max(1),
             lookahead_records: opts.lookahead_records.max(1),
             standard_tick_rate_hz: opts.standard_tick_rate_hz,
+            mux,
             sync_losses: AtomicU64::new(0),
         })
     }
@@ -443,6 +473,7 @@ impl MieFileReader {
             sync_losses: 0,
             sync_losses_atomic: &self.sync_losses,
             path_for_log: &self.path,
+            mux: self.mux.clone(),
         }
     }
 }
@@ -511,6 +542,8 @@ pub struct RecordIter<'a> {
     /// the cumulative count after iteration ends.
     sync_losses_atomic: &'a AtomicU64,
     path_for_log: &'a Path,
+    /// L2-WRT-020 per-file MUX value, cloned (refcount bump) onto each message.
+    mux: Option<Arc<str>>,
 }
 
 fn log_validation_context(data: &[u8], offset: usize) {
@@ -792,6 +825,7 @@ impl<'a> Iterator for RecordIter<'a> {
                     error_word: Some(error_code),
                     delta: None,
                     file_offset: self.offset as u64,
+                    mux: self.mux.clone(),
                 };
                 self.advance_after_yield(record_bytes);
                 self.prev_was_error = false;
@@ -935,6 +969,7 @@ impl<'a> Iterator for RecordIter<'a> {
                 error_word: None,
                 delta,
                 file_offset: self.offset as u64,
+                mux: self.mux.clone(),
             };
             self.advance_after_yield(record_bytes);
             self.prev_was_error = false;
@@ -1045,6 +1080,7 @@ impl<'a> RecordIter<'a> {
             error_word: Some(error_code),
             delta,
             file_offset: self.offset as u64,
+            mux: self.mux.clone(),
         })
     }
 
@@ -1340,6 +1376,9 @@ mod tests {
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
                 standard_tick_rate_hz: None,
+                mux_enabled: false,
+                mux_delimiter: ".".to_string(),
+                mux_field: 4,
             },
         )
         .unwrap();
@@ -1398,6 +1437,9 @@ mod tests {
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
                 standard_tick_rate_hz: None,
+                mux_enabled: false,
+                mux_delimiter: ".".to_string(),
+                mux_field: 4,
             },
         )
         .unwrap();
@@ -1428,6 +1470,9 @@ mod tests {
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
                 standard_tick_rate_hz: None,
+                mux_enabled: false,
+                mux_delimiter: ".".to_string(),
+                mux_field: 4,
             },
         )
         .unwrap();
@@ -1457,6 +1502,9 @@ mod tests {
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
                 standard_tick_rate_hz: None,
+                mux_enabled: false,
+                mux_delimiter: ".".to_string(),
+                mux_field: 4,
             },
         )
         .unwrap();

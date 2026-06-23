@@ -411,7 +411,8 @@ Expected output: nothing. A successful diff is silent.
 If you see differences:
 
 - **Day-of-year on IRIG `TIME_STAMP`** — known firmware-dependent discrepancy on some DDC card models. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §5.
-- **Empty `MUX` / `TERM_NAME` / `IM_GAP` / `RCV_GAP` / `XMT_GAP` on our side, populated on vendor** — expected, our v1 leaves these empty by spec. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3.
+- **`MUX` column differs** — by default we populate `MUX` from the input file name (L2-WRT-020); pass `--no-mux` for vendor-exact (empty) output. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3.
+- **Empty `TERM_NAME` / `IM_GAP` / `RCV_GAP` / `XMT_GAP` on our side, populated on vendor** — expected; we leave these empty by spec. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3.
 - **Anything else** — bug. Report per [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §7.
 
 ---
