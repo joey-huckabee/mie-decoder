@@ -149,16 +149,62 @@ checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 slot. The data-word-decoder and Parquet items moved to `3.0` / `4.0`.
 **Multi-file time-sorted merge shipped in `v2.1.0`** — see Release status.)
 
-### Merge follow-ups (future, no committed version)
+### Merge follow-ups
 
-- **Per-recorder DELTA via a file-naming convention.** v2.1.0 computes DELTA on
-  the merged *global* timeline because the tool has no way to tell which
-  recorder a file came from. A future release will define a file-naming
-  convention that carries **recorder context**; once a merge can identify its
-  inputs as distinct recorders, DELTA SHOULD be computed **per file** (each
-  recorder's own inter-arrival cadence), falling back to the global timeline
-  only for inputs that cannot be identified. This is the next planned step after
-  v2.1.0.
+The first three items below came out of a merge design review and are candidates
+for the **next release** (investigate-then-schedule); the `--order file` item
+remains distant-future. None has a committed version yet.
+
+- **Recorder identity from a parsed file-naming convention (drives MUX,
+  per-recorder DELTA, and the tiebreak).** *Near-term — next-release candidate.*
+  v2.1.0 has no way to tell which recorder a file came from, which forces three
+  compromises:
+  - **DELTA** is computed on the merged *global* timeline (L2-MRG-005) rather
+    than per recorder, so it does not reflect any single recorder's true
+    inter-arrival cadence when more than one recorder contributes the same RT/SA
+    key. (See the "How the rows get ordered" plain-language section in
+    `docs/USER-GUIDE.md` §6 for the operator-facing description.)
+  - The **MUX** CSV column is one of the vendor-empty placeholders
+    (`L2-WRT-013`) — there is no recorder/bus identity to populate it with.
+  - The **merge tiebreak** for equal-timestamp records keys on
+    `(microseconds, file_index, within-file sequence)`, where `file_index` is the
+    file's **position in the resolved input list** (CLI/manifest order, or
+    lexicographic filename order under `--glob`) — *not* a parsed identity from
+    the filename.
+
+  Proposed direction: define a **file-naming convention** that carries recorder
+  context, parse it at merge time to a stable **recorder identity**, and use that
+  identity to (a) populate the **MUX** column, (b) compute **DELTA per recorder**
+  (each recorder's own cadence), falling back to the global timeline only for
+  inputs whose name cannot be parsed, and (c) **break timestamp ties by the
+  parsed recorder identity** instead of by raw input position. Note this is a
+  deliberate change from today's tiebreak: `file_index` currently means "Nth
+  input given," which is only incidentally the filename (and only under `--glob`,
+  via lexicographic sort) — the convention would make the parsed name the
+  authoritative key. Needs its own requirements + design review (naming-scheme
+  grammar, fallback behavior, MUX value format, cross-impl conformance).
+
+- **De-duplication of the same bus transaction seen by multiple recorders.**
+  *Near-term — next-release candidate (investigate).* Multiple recorders on the
+  same 1553 bus can witness the *same* transaction; the merge currently emits
+  **both** rows (adjacent, tiebroken by file index) with no de-duplication, so an
+  overlapping recorder set inflates the merged message count. Investigate whether
+  the tool should detect and optionally collapse such duplicates (and on what
+  identity — timestamp + Command Word + payload?), almost certainly behind an
+  explicit opt-in flag so the default stays loss-free. Interacts with recorder
+  identity above (knowing the source recorder is what makes a "duplicate across
+  recorders" meaningful).
+
+- **Within-file monotonicity detection + WARN.** *Near-term — next-release
+  candidate.* The merge's correctness rests on each input being internally
+  time-sorted, and the original design (this doc, the merge design notes) called
+  for detecting a backward timestamp step within a file in O(1) and emitting a
+  WARN (never a global re-sort). **That check was not implemented** in either
+  `src/merge.rs` or `python/src/mie_decoder/merge.py` — the advance step pushes
+  the next record unconditionally. So a file made briefly non-monotonic by
+  sync-loss recovery or a day/year rollover currently produces silently
+  out-of-order merged rows with no diagnostic. Add the per-file backward-step
+  detection + WARN to close the gap between the documented contract and the code.
 - **`--order file` (non-time merge).** A distant-future opt-in that would
   concatenate inputs in CLI/manifest order **without** time-sorting, for sets
   that are not calendar-locked IRIG (Standard counters, freerun, or
