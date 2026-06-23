@@ -112,6 +112,7 @@ pub fn classify_message_format(
     message_type: u8,
     command_word: &CommandWord,
     word_count: u16,
+    timestamp_words: u16,
 ) -> MieResult<MessageFormat> {
     use MessageType::*;
     match MessageType::from_code(message_type) {
@@ -120,7 +121,11 @@ pub fn classify_message_format(
         Some(RtToRt) => Ok(MessageFormat::RtToRt),
         Some(BroadcastBcToRt) => Ok(MessageFormat::ReceiveBroadcast),
         Some(BroadcastRtToRt) => Ok(MessageFormat::RtToRtBroadcast),
-        Some(ModeCommand) => Ok(classify_mode_code(command_word, word_count)),
+        Some(ModeCommand) => Ok(classify_mode_code(
+            command_word,
+            word_count,
+            timestamp_words,
+        )),
         Some(SpuriousData) => Ok(MessageFormat::SpuriousData),
         None => Err(MieError::UnknownTypeWord {
             offset: 0,
@@ -357,13 +362,18 @@ pub fn detect_record_anomalies(
     out
 }
 
-fn classify_mode_code(cmd: &CommandWord, word_count: u16) -> MessageFormat {
+fn classify_mode_code(cmd: &CommandWord, word_count: u16, timestamp_words: u16) -> MessageFormat {
+    // The data-vs-no-data thresholds are relative to the record's timestamp
+    // word count (IRIG = 3, Standard = 2), not absolute — a Standard record is
+    // one word shorter than the IRIG equivalent (L2-MSG-004). The fixed
+    // overhead per shape: Type(1) + timestamp_words + ModeCmd(1) [+ Status(1)
+    // for non-broadcast] [+ Data(1) when present].
     let is_broadcast = cmd.rt == 31;
     if is_broadcast {
         // Broadcast mode codes have no status word.
-        //   With data:    Type + 3×TS + ModeCmd + Data = 6
-        //   Without data: Type + 3×TS + ModeCmd        = 5
-        return if word_count > 5 {
+        //   With data:    Type + TS + ModeCmd + Data = timestamp_words + 3
+        //   Without data: Type + TS + ModeCmd        = timestamp_words + 2
+        return if word_count >= timestamp_words + 3 {
             MessageFormat::ModeCodeBcastData
         } else {
             MessageFormat::ModeCodeBcastNoData
@@ -374,7 +384,9 @@ fn classify_mode_code(cmd: &CommandWord, word_count: u16) -> MessageFormat {
     if cmd.direction == Direction::Transmit {
         return MessageFormat::ModeCodeTxData;
     }
-    if word_count >= 7 {
+    //   RX with data: Type + TS + ModeCmd + Data + Status = timestamp_words + 4
+    //   RX no data:   Type + TS + ModeCmd        + Status = timestamp_words + 3
+    if word_count >= timestamp_words + 4 {
         MessageFormat::ModeCodeRxData
     } else {
         MessageFormat::ModeCodeNoData
@@ -679,28 +691,33 @@ mod tests {
     /// Requirements: L2-MSG-001
     #[test]
     fn classify_simple_types() {
+        // Non-mode-code formats are direct type mappings; the timestamp word
+        // count is irrelevant to them (pass 3 = IRIG).
         let cmd = decode_command_word(0x797E);
         assert_eq!(
-            classify_message_format(0x02, &cmd, 36).unwrap(),
+            classify_message_format(0x02, &cmd, 36, 3).unwrap(),
             MessageFormat::Receive
         );
         assert_eq!(
-            classify_message_format(0x04, &cmd, 10).unwrap(),
+            classify_message_format(0x04, &cmd, 10, 3).unwrap(),
             MessageFormat::Transmit
         );
         assert_eq!(
-            classify_message_format(0x08, &cmd, 12).unwrap(),
+            classify_message_format(0x08, &cmd, 12, 3).unwrap(),
             MessageFormat::RtToRt
         );
         assert_eq!(
-            classify_message_format(0x20, &cmd, 8).unwrap(),
+            classify_message_format(0x20, &cmd, 8, 3).unwrap(),
             MessageFormat::SpuriousData
         );
     }
 
-    /// Requirements: L2-MSG-001
+    /// Broadcast mode-code data/no-data boundary is relative to the timestamp
+    /// word count: data iff word_count >= timestamp_words + 3 (L2-MSG-004). For
+    /// IRIG (3) that is WC >= 6; for Standard (2) that is WC >= 5.
+    /// Requirements: L2-MSG-001, L2-MSG-004
     #[test]
-    fn classify_mode_code_broadcast_no_data() {
+    fn classify_mode_code_broadcast_data_vs_no_data() {
         let cmd = CommandWord {
             rt: 31,
             direction: Direction::Receive,
@@ -708,12 +725,22 @@ mod tests {
             data_word_count: 0,
             raw: 0,
         };
+        // IRIG (3 timestamp words): boundary at WC 5/6.
         assert_eq!(
-            classify_message_format(0x01, &cmd, 5).unwrap(),
+            classify_message_format(0x01, &cmd, 5, 3).unwrap(),
             MessageFormat::ModeCodeBcastNoData
         );
         assert_eq!(
-            classify_message_format(0x01, &cmd, 6).unwrap(),
+            classify_message_format(0x01, &cmd, 6, 3).unwrap(),
+            MessageFormat::ModeCodeBcastData
+        );
+        // Standard (2 timestamp words): boundary shifts down to WC 4/5.
+        assert_eq!(
+            classify_message_format(0x01, &cmd, 4, 2).unwrap(),
+            MessageFormat::ModeCodeBcastNoData
+        );
+        assert_eq!(
+            classify_message_format(0x01, &cmd, 5, 2).unwrap(),
             MessageFormat::ModeCodeBcastData
         );
     }
@@ -721,6 +748,8 @@ mod tests {
     /// Requirements: L2-MSG-001
     #[test]
     fn classify_mode_code_tx_data() {
+        // Transmit mode codes are classified by direction, independent of the
+        // word count / timestamp size.
         let cmd = CommandWord {
             rt: 5,
             direction: Direction::Transmit,
@@ -729,12 +758,19 @@ mod tests {
             raw: 0,
         };
         assert_eq!(
-            classify_message_format(0x01, &cmd, 7).unwrap(),
+            classify_message_format(0x01, &cmd, 7, 3).unwrap(),
+            MessageFormat::ModeCodeTxData
+        );
+        assert_eq!(
+            classify_message_format(0x01, &cmd, 6, 2).unwrap(),
             MessageFormat::ModeCodeTxData
         );
     }
 
-    /// Requirements: L2-MSG-001
+    /// Non-broadcast receive mode-code data/no-data boundary is relative to the
+    /// timestamp word count: data iff word_count >= timestamp_words + 4
+    /// (L2-MSG-004). For IRIG (3) that is WC >= 7; for Standard (2) WC >= 6.
+    /// Requirements: L2-MSG-001, L2-MSG-004
     #[test]
     fn classify_mode_code_rx_vs_no_data() {
         let cmd = CommandWord {
@@ -744,12 +780,23 @@ mod tests {
             data_word_count: 1,
             raw: 0,
         };
+        // IRIG (3 timestamp words): boundary at WC 6/7.
         assert_eq!(
-            classify_message_format(0x01, &cmd, 7).unwrap(),
+            classify_message_format(0x01, &cmd, 7, 3).unwrap(),
             MessageFormat::ModeCodeRxData
         );
         assert_eq!(
-            classify_message_format(0x01, &cmd, 6).unwrap(),
+            classify_message_format(0x01, &cmd, 6, 3).unwrap(),
+            MessageFormat::ModeCodeNoData
+        );
+        // Standard (2 timestamp words): boundary shifts down to WC 5/6 — the
+        // previously-misclassified case (WC=6 Standard was treated as no-data).
+        assert_eq!(
+            classify_message_format(0x01, &cmd, 6, 2).unwrap(),
+            MessageFormat::ModeCodeRxData
+        );
+        assert_eq!(
+            classify_message_format(0x01, &cmd, 5, 2).unwrap(),
             MessageFormat::ModeCodeNoData
         );
     }
@@ -758,7 +805,7 @@ mod tests {
     #[test]
     fn classify_unknown_type() {
         let cmd = decode_command_word(0);
-        assert!(classify_message_format(0x03, &cmd, 5).is_err());
+        assert!(classify_message_format(0x03, &cmd, 5, 3).is_err());
     }
 
     // ── L2-SYN-020..025 structural invariants (Phase 7a) ──────────────────

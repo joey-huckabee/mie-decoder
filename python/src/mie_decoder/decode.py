@@ -386,6 +386,7 @@ def classify_message_format(
     message_type: int,
     command_word: CommandWord,
     word_count: int,
+    timestamp_words: int,
 ) -> MessageFormat:
     """Classify a record into one of the 10 MIL-STD-1553 message formats.
 
@@ -433,7 +434,7 @@ def classify_message_format(
 
     Examples:
         >>> cmd = decode_command_word(0x797E)  # RT15, Receive, SA11
-        >>> classify_message_format(0x02, cmd, 36)
+        >>> classify_message_format(0x02, cmd, 36, 3)
         <MessageFormat.RECEIVE: 1>
     """
     # ── Direct type-to-format mappings (one code → one format) ──────
@@ -454,7 +455,7 @@ def classify_message_format(
 
     # ── Mode Command sub-classification (0x01 → 5 possible formats) ─
     if message_type == MessageType.MODE_COMMAND:
-        return _classify_mode_code(command_word, word_count)
+        return _classify_mode_code(command_word, word_count, timestamp_words)
 
     # ── Spurious data — raw bus words, no command structure ──────
     if message_type == MessageType.SPURIOUS_DATA:
@@ -464,47 +465,57 @@ def classify_message_format(
     raise ValueError(f"Cannot classify message_type=0x{message_type:02X}")
 
 
-def _classify_mode_code(cmd: CommandWord, word_count: int) -> MessageFormat:
+def _classify_mode_code(
+    cmd: CommandWord, word_count: int, timestamp_words: int
+) -> MessageFormat:
     """Sub-classify a Mode Command (type 0x01) into one of five formats.
 
-    Uses a layered approach combining Command Word fields with the
-    record word count for cross-validation:
+    Combines Command Word fields with the record word count. The data-vs-no-data
+    thresholds are relative to the timestamp word count (IRIG = 3, Standard = 2),
+    so a Standard record (one word shorter) classifies correctly (L2-MSG-004).
 
-    Decision tree:
-        ┌─ RT == 31 (broadcast)?
-        │  ├─ WC > 5 → MODE_CODE_BCAST_DATA    (ModeCmd + DataWord = 6 words)
-        │  └─ WC == 5 → MODE_CODE_BCAST_NO_DATA (ModeCmd only = 5 words)
-        └─ RT != 31 (non-broadcast)?
-           ├─ T/R == 1 (transmit) → MODE_CODE_TX_DATA (ModeCmd+Status+Data = 7 words)
-           ├─ WC >= 7 → MODE_CODE_RX_DATA (ModeCmd+Data+Status = 7 words)
-           └─ WC == 6 → MODE_CODE_NO_DATA (ModeCmd+Status = 6 words)
+    Decision tree (``ts`` = ``timestamp_words``):
+        ┌─ RT == 31 (broadcast, no status word)?
+        │  ├─ WC >= ts + 3 → MODE_CODE_BCAST_DATA    (Type+TS+ModeCmd+Data)
+        │  └─ WC <  ts + 3 → MODE_CODE_BCAST_NO_DATA (Type+TS+ModeCmd)
+        └─ RT != 31 (non-broadcast, has status word)?
+           ├─ T/R == 1 (transmit) → MODE_CODE_TX_DATA (ModeCmd+Status+Data)
+           ├─ WC >= ts + 4 → MODE_CODE_RX_DATA  (ModeCmd+Data+Status)
+           └─ WC <  ts + 4 → MODE_CODE_NO_DATA  (ModeCmd+Status)
 
     Args:
         cmd: The decoded Mode Command Word.
         word_count: Total record word count from the Type Word.
+        timestamp_words: Timestamp word count for the resolved format
+            (3 for IRIG, 2 for Standard).
 
     Returns:
         One of the five mode code MessageFormat variants.
     """
+    # The data-vs-no-data thresholds are relative to the record's timestamp
+    # word count (IRIG = 3, Standard = 2), not absolute — a Standard record is
+    # one word shorter than the IRIG equivalent (L2-MSG-004). Fixed overhead per
+    # shape: Type(1) + timestamp_words + ModeCmd(1) [+ Status(1) non-broadcast]
+    # [+ Data(1) when present].
     is_broadcast = cmd.rt == 31
 
     if is_broadcast:
         # Broadcast mode codes have no status word.
-        # With data: Type(1) + TS(3) + ModeCmd(1) + Data(1) = 6
-        # Without:   Type(1) + TS(3) + ModeCmd(1)            = 5
-        if word_count > 5:
+        # With data: Type + TS + ModeCmd + Data = timestamp_words + 3
+        # Without:   Type + TS + ModeCmd        = timestamp_words + 2
+        if word_count >= timestamp_words + 3:
             return MessageFormat.MODE_CODE_BCAST_DATA
         return MessageFormat.MODE_CODE_BCAST_NO_DATA
 
     # Non-broadcast mode codes always have a status word.
     if cmd.direction == Direction.TRANSMIT:
-        # RT transmits: ModeCmd → Status → DataWord (WC = 7)
+        # RT transmits: ModeCmd → Status → DataWord
         return MessageFormat.MODE_CODE_TX_DATA
 
     # RT receives or no data:
-    # With data:    ModeCmd → DataWord → Status (WC = 7)
-    # Without data: ModeCmd → Status            (WC = 6)
-    if word_count >= 7:
+    # With data:    ModeCmd → DataWord → Status = timestamp_words + 4
+    # Without data: ModeCmd → Status            = timestamp_words + 3
+    if word_count >= timestamp_words + 4:
         return MessageFormat.MODE_CODE_RX_DATA
 
     return MessageFormat.MODE_CODE_NO_DATA

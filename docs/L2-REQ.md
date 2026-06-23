@@ -474,6 +474,13 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 **Rationale**: The `<subaddress><T|R>` form is the DDC vendor CSV convention and is used as the secondary key for DELTA tracking. SPURIOUS_DATA has no Command Word and therefore has no MSG label.
 **Verification Method**: Test (T)
 
+#### L2-MSG-004
+
+**Parent**: L1-DEC-003
+**Statement**: When sub-classifying a Mode Command (L2-MSG-001 formats 6–10), the data-vs-no-data decision SHALL be made relative to the record's **timestamp word count** (IRIG = 3 words, Standard = 2 words), not against absolute word-count thresholds. Specifically, a broadcast mode code (RT 31) carries data iff `word_count ≥ timestamp_words + 3` (otherwise no-data), and a non-broadcast receive mode code carries data iff `word_count ≥ timestamp_words + 4` (otherwise no-data). A transmit mode code is classified by direction independent of word count. Classification SHALL therefore be correct under both timestamp formats.
+**Rationale**: A Standard timestamp occupies one fewer word than IRIG, so every mode-code shape's total word count is one smaller under Standard. Fixed IRIG-sized thresholds misclassified Standard mode-code-with-data records (broadcast at `word_count = 5`, receive at `word_count = 6`) as no-data, emitting the data word in the Status position. Deriving the threshold from the resolved timestamp word count makes the classifier correct for both formats while leaving IRIG output byte-identical.
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-ERR: Error record handling

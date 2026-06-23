@@ -242,7 +242,7 @@ GitHub Actions runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on
 every push and pull request:
 
 - **Rust:** `cargo fmt --check`, Clippy with warnings denied, all-target tests,
-  and the `cargo cov-ci` 70% line + region coverage gate.
+  and the `cargo cov-ci` 84% line / 83% region coverage gate.
 - **Python 3.10 through 3.14:** locked dependency synchronization and the full
   pytest suite on every supported minor version.
 - **Python 3.12:** strict package/lockfile validation and wheel + source
@@ -274,7 +274,7 @@ Three cargo aliases are pre-wired in `.cargo/config.toml`:
 ```bash
 cargo cov         # Local: build instrumented, run tests, open HTML report
 cargo cov-lcov    # Generate target-relative lcov.info (for IDE / CI tooling)
-cargo cov-ci      # Enforced gate: --fail-under-lines 70 --fail-under-regions 70
+cargo cov-ci      # Enforced gate: --fail-under-lines 84 --fail-under-regions 83
 ```
 
 Or via the script wrapper, equivalent to `cargo cov`:
@@ -287,14 +287,14 @@ bash scripts/coverage.sh
 
 `cargo cov-ci` enforces:
 
-- **Lines: 70%** floor
-- **Regions: 70%** floor
+- **Lines: 84%** floor
+- **Regions: 83%** floor
 
-These were set with ~5 percentage points of headroom below the
-integration-time baseline (74.81% / 71.55%) so routine refactors
-don't trip the gate. Ratchet up by editing the `cov-ci` alias if
-we want stricter — do it in increments after watching baseline
-readings stabilize.
+These have been ratcheted up from the original 70/70 floor to roughly
+two percentage points below the current baseline, so routine refactors
+don't trip the gate while genuine coverage regressions do. Ratchet up
+further by editing the `cov-ci` alias in `.cargo/config.toml` — do it
+in increments after watching baseline readings stabilize.
 
 ### Why coverage is NOT in the pre-commit hook
 

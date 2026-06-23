@@ -25,7 +25,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 |-------|-------------|----------------|--------|
 | L1-DEC-001 | L2-DEC-001, L2-DEC-008, L2-DEC-010 | _(none)_ | Implemented |
 | L1-DEC-002 | L2-DEC-002, L2-DEC-003, L2-DEC-007, L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016, L2-DEC-017 | _(none)_ | Implemented |
-| L1-DEC-003 | L2-DEC-004, L2-DEC-009, L2-MSG-001, L2-MSG-003, L2-RDR-007, L2-RDR-008 | _(none)_ | Implemented |
+| L1-DEC-003 | L2-DEC-004, L2-DEC-009, L2-MSG-001, L2-MSG-003, L2-MSG-004, L2-RDR-007, L2-RDR-008 | _(none)_ | Implemented |
 | L1-DEC-004 | L2-MSG-002 | _(none)_ | Implemented |
 | L1-DEC-005 | L2-RDR-002 | _(none)_ | Implemented |
 
@@ -46,9 +46,10 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-DEC-015 | _(none)_ | `python/tests/test_decode.py::test_detects_irig_from_known_data`<br>`python/tests/test_decode.py::test_detects_irig_from_transmit`<br>`python/tests/test_decode.py::test_eight_irig_records_aggregates_decisively`<br>`python/tests/test_decode.py::test_max_records_zero_clamps_to_one`<br>`python/tests/test_decode.py::test_single_irig_record_picks_irig`<br>`python/tests/test_decode.py::test_zero_score_ties_to_irig`<br>`python/tests/test_e2e.py::test_cli_detect_records_flag_accepts_valid_size`<br>`python/tests/test_e2e.py::test_cli_detect_records_flag_rejects_out_of_range`<br>`src/decode.rs::probe_eight_irig_records_aggregates_decisively`<br>`src/decode.rs::probe_max_records_one_still_works`<br>`src/decode.rs::probe_single_irig_record_picks_irig`<br>`src/decode.rs::probe_stops_at_eof_records_probed_reflects_truncation`<br>`src/decode.rs::probe_zero_score_ties_to_irig`<br>`tests/cli.rs::detect_records_flag_accepts_valid_size`<br>`tests/cli.rs::detect_records_flag_rejects_out_of_range` | Implemented |
 | L2-DEC-016 | _(none)_ | `src/decode.rs::probe_ambiguous_below_floor_classifies_ambiguous` | Implemented |
 | L2-DEC-017 | _(none)_ | `python/tests/test_config.py::test_standard_tick_rate_hz_default_is_none`<br>`python/tests/test_decode.py::test_to_microseconds_calibrated`<br>`python/tests/test_decode.py::test_to_microseconds_returns_none`<br>`python/tests/test_decode.py::test_to_microseconds_rounds_half_away_from_zero`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_enables_delta`<br>`python/tests/test_e2e.py::test_cli_standard_tick_rate_hz_flag_rejects_nonpositive`<br>`src/config.rs::standard_tick_rate_hz_default_is_none`<br>`src/models.rs::standard_to_microseconds_requires_calibration`<br>`src/models.rs::standard_to_microseconds_rounds_half_away_from_zero` | Implemented |
-| L2-MSG-001 | _(none)_ | `python/tests/test_decode.py::test_all_known_types`<br>`python/tests/test_decode.py::test_bc_to_rt`<br>`python/tests/test_decode.py::test_broadcast_bc_to_rt`<br>`python/tests/test_decode.py::test_broadcast_rt_to_rt`<br>`python/tests/test_decode.py::test_mode_code_bcast_data`<br>`python/tests/test_decode.py::test_mode_code_bcast_no_data`<br>`python/tests/test_decode.py::test_mode_code_no_data`<br>`python/tests/test_decode.py::test_mode_code_rx_data`<br>`python/tests/test_decode.py::test_mode_code_tx_data`<br>`python/tests/test_decode.py::test_rt_to_bc`<br>`python/tests/test_decode.py::test_rt_to_rt`<br>`python/tests/test_decode.py::test_spurious_data`<br>`python/tests/test_models.py::test_known_values`<br>`python/tests/test_models.py::test_message_format_field`<br>`python/tests/test_models.py::test_valid_message_types_set`<br>`src/decode.rs::classify_mode_code_broadcast_no_data`<br>`src/decode.rs::classify_mode_code_rx_vs_no_data`<br>`src/decode.rs::classify_mode_code_tx_data`<br>`src/decode.rs::classify_simple_types`<br>`src/models.rs::message_type_round_trip` | Implemented |
+| L2-MSG-001 | _(none)_ | `python/tests/test_decode.py::test_all_known_types`<br>`python/tests/test_decode.py::test_bc_to_rt`<br>`python/tests/test_decode.py::test_broadcast_bc_to_rt`<br>`python/tests/test_decode.py::test_broadcast_rt_to_rt`<br>`python/tests/test_decode.py::test_mode_code_bcast_data`<br>`python/tests/test_decode.py::test_mode_code_bcast_no_data`<br>`python/tests/test_decode.py::test_mode_code_no_data`<br>`python/tests/test_decode.py::test_mode_code_rx_data`<br>`python/tests/test_decode.py::test_mode_code_tx_data`<br>`python/tests/test_decode.py::test_rt_to_bc`<br>`python/tests/test_decode.py::test_rt_to_rt`<br>`python/tests/test_decode.py::test_spurious_data`<br>`python/tests/test_models.py::test_known_values`<br>`python/tests/test_models.py::test_message_format_field`<br>`python/tests/test_models.py::test_valid_message_types_set`<br>`src/decode.rs::classify_mode_code_broadcast_data_vs_no_data`<br>`src/decode.rs::classify_mode_code_rx_vs_no_data`<br>`src/decode.rs::classify_mode_code_tx_data`<br>`src/decode.rs::classify_simple_types`<br>`src/models.rs::message_type_round_trip` | Implemented |
 | L2-MSG-002 | _(none)_ | `python/tests/test_e2e.py::test_bus_b_record`<br>`python/tests/test_models.py::test_bus_shortcut` | Implemented |
 | L2-MSG-003 | _(none)_ | `python/tests/test_models.py::test_msg_label_receive`<br>`python/tests/test_models.py::test_msg_label_transmit`<br>`python/tests/test_models.py::test_rt_shortcut`<br>`src/models.rs::msg_label_and_delta_key` | Implemented |
+| L2-MSG-004 | _(none)_ | `python/tests/test_decode.py::test_mode_code_bcast_data_standard`<br>`python/tests/test_decode.py::test_mode_code_rx_data_standard`<br>`src/decode.rs::classify_mode_code_broadcast_data_vs_no_data`<br>`src/decode.rs::classify_mode_code_rx_vs_no_data` | Implemented |
 | L2-RDR-002 | _(none)_ | `python/tests/test_e2e.py::test_truncated_record` | Implemented |
 | L2-RDR-007 | _(none)_ | `python/tests/test_e2e.py::test_first_record_matches_csv`<br>`python/tests/test_e2e.py::test_second_record_receive`<br>`src/reader.rs::decodes_rt15_sa11_record`<br>`tests/integration.rs::single_receive_record_decodes_to_expected_fields` | Implemented |
 | L2-RDR-008 | _(none)_ | `python/tests/test_e2e.py::test_third_record_transmit`<br>`tests/integration.rs::single_transmit_record_layout` | Implemented |
@@ -344,18 +345,18 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MRG | 2 | 6 | 0 | 6 | 0 | 6 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
-| MSG | 0 | 3 | 0 | 3 | 0 | 3 | 0 |
+| MSG | 0 | 4 | 0 | 4 | 0 | 4 | 0 |
 | WRT | 0 | 14 | 2 | 14 | 2 | 14 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
 | PY | 0 | 0 | 14 | 0 | 10 | 0 | 14 |
 | RS | 0 | 0 | 13 | 0 | 8 | 0 | 13 |
-| **Total** | **29** | **119** | **29** | **114** | **20** | **118** | **29** |
+| **Total** | **29** | **120** | **29** | **115** | **20** | **119** | **29** |
 
 The countable requirement set is every L2 and L3 requirement plus the 7 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 141 of 155 (91.0%).
+**Tested by at least one test marker**: 142 of 156 (91.0%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 154 of 155 (99.4%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 155 of 156 (99.4%).
 
 ### Orphan check
 

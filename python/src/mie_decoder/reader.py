@@ -644,7 +644,7 @@ class MieFileReader:
                     # ── Normal record ──────────────────────────
                     try:
                         msg_fmt = classify_message_format(
-                            tw.message_type, cmd, tw.word_count
+                            tw.message_type, cmd, tw.word_count, ts_words
                         )
                     except ValueError as exc:
                         logger.warning(
@@ -795,7 +795,7 @@ def _decode_error_record(
 
     try:
         msg_fmt = classify_message_format(
-            tw.message_type, cmd, tw.word_count
+            tw.message_type, cmd, tw.word_count, ts_words
         )
     except ValueError:
         msg_fmt = MessageFormat.RECEIVE

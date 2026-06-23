@@ -15,6 +15,36 @@ full release workflow.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Standard-timestamp mode-code records with data are no longer misclassified
+  (L2-MSG-004, both implementations, behavior change).** The mode-code
+  data-vs-no-data classifier used absolute word-count thresholds that assumed an
+  IRIG timestamp (3 timestamp words): broadcast data iff `word_count > 5`,
+  receive data iff `word_count >= 7`. A Standard timestamp is only 2 words, so a
+  Standard broadcast-with-data record (`word_count = 5`) and a Standard
+  receive-with-data record (`word_count = 6`) were classified as *no-data* — the
+  data word was emitted under `STAT` instead of `WD01`. The thresholds are now
+  derived from the resolved timestamp word count (broadcast data iff
+  `word_count >= timestamp_words + 3`, receive data iff
+  `word_count >= timestamp_words + 4`), so classification is correct under both
+  formats. **IRIG output is byte-identical** (the IRIG thresholds are unchanged);
+  only Standard mode-code-with-data records change. Pinned by the new
+  `standard-mode-code-data` conformance case (the data word now appears in
+  `WD01`) plus Standard-timestamp classifier unit tests in both implementations.
+
+### Documentation
+
+- Corrected the Rust coverage gate in `CONTRIBUTING.md`: it stated the
+  `cargo cov-ci` floor was 70% line / 70% region, but the enforced value in
+  `.cargo/config.toml` is **84% line / 83% region**. Updated the gate references
+  and the stale headroom rationale.
+- Corrected the look-ahead description in `docs/MIE-FORMAT.md`: it claimed the
+  following Type Word during look-ahead "must also pass checks 1–4", but
+  L2-SYN-005 and the implementation (`src/sync.rs`) only require a **plausible
+  Type Word** (known message type + in-range word count). Reworded to match the
+  normative requirement and the code.
+
 ## [2.2.0] — 2026-06-22
 
 ### Added

@@ -232,39 +232,41 @@ class TestClassifyMessageFormat:
 
     from mie_decoder.models import MessageFormat
 
+    # Non-mode-code formats are direct type mappings; the timestamp word count
+    # (last arg) is irrelevant to them — pass 3 (IRIG).
     @pytest.mark.requirement("L2-MSG-001")
     def test_bc_to_rt(self) -> None:
         """0x02 → RECEIVE regardless of command word."""
         cmd = decode_command_word(0x797E)  # RT15, Receive, SA11, WC30
-        fmt = classify_message_format(0x02, cmd, 36)
+        fmt = classify_message_format(0x02, cmd, 36, 3)
         assert fmt == self.MessageFormat.RECEIVE
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_rt_to_bc(self) -> None:
         """0x04 → TRANSMIT regardless of command word."""
         cmd = decode_command_word(0x7EDE)  # RT15, Transmit, SA22, WC30
-        fmt = classify_message_format(0x04, cmd, 36)
+        fmt = classify_message_format(0x04, cmd, 36, 3)
         assert fmt == self.MessageFormat.TRANSMIT
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_rt_to_rt(self) -> None:
         """0x08 → RT_TO_RT."""
         cmd = decode_command_word(0x797E)
-        fmt = classify_message_format(0x08, cmd, 40)
+        fmt = classify_message_format(0x08, cmd, 40, 3)
         assert fmt == self.MessageFormat.RT_TO_RT
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_broadcast_bc_to_rt(self) -> None:
         """0x10 → RECEIVE_BROADCAST."""
         cmd = decode_command_word(0xF97E)  # RT31, Receive
-        fmt = classify_message_format(0x10, cmd, 35)
+        fmt = classify_message_format(0x10, cmd, 35, 3)
         assert fmt == self.MessageFormat.RECEIVE_BROADCAST
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_broadcast_rt_to_rt(self) -> None:
         """0x18 → RT_TO_RT_BROADCAST."""
         cmd = decode_command_word(0xF97E)
-        fmt = classify_message_format(0x18, cmd, 39)
+        fmt = classify_message_format(0x18, cmd, 39, 3)
         assert fmt == self.MessageFormat.RT_TO_RT_BROADCAST
 
     @pytest.mark.requirement("L2-MSG-001")
@@ -272,42 +274,71 @@ class TestClassifyMessageFormat:
         """0x01 with non-broadcast RT, T/R=1 → MODE_CODE_TX_DATA."""
         # RT15, Transmit, SA0 (mode code), mode code number in WC
         cmd = decode_command_word(0x7C01)  # RT15, T, SA0, WC=1
-        fmt = classify_message_format(0x01, cmd, 7)
+        fmt = classify_message_format(0x01, cmd, 7, 3)
         assert fmt == self.MessageFormat.MODE_CODE_TX_DATA
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_mode_code_rx_data(self) -> None:
-        """0x01 with non-broadcast RT, T/R=0, WC>=7 → MODE_CODE_RX_DATA."""
+        """IRIG (ts=3): 0x01 non-broadcast RX, WC>=7 → MODE_CODE_RX_DATA."""
         cmd = decode_command_word(0x7801)  # RT15, R, SA0, WC=1
-        fmt = classify_message_format(0x01, cmd, 7)
+        fmt = classify_message_format(0x01, cmd, 7, 3)
         assert fmt == self.MessageFormat.MODE_CODE_RX_DATA
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_mode_code_no_data(self) -> None:
-        """0x01 with non-broadcast RT, T/R=0, WC=6 → MODE_CODE_NO_DATA."""
+        """IRIG (ts=3): 0x01 non-broadcast RX, WC=6 → MODE_CODE_NO_DATA."""
         cmd = decode_command_word(0x7801)  # RT15, R, SA0
-        fmt = classify_message_format(0x01, cmd, 6)
+        fmt = classify_message_format(0x01, cmd, 6, 3)
         assert fmt == self.MessageFormat.MODE_CODE_NO_DATA
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_mode_code_bcast_no_data(self) -> None:
-        """0x01 with RT=31, WC=5 → MODE_CODE_BCAST_NO_DATA."""
+        """IRIG (ts=3): 0x01 RT=31, WC=5 → MODE_CODE_BCAST_NO_DATA."""
         cmd = decode_command_word(0xF801)  # RT31, R, SA0
-        fmt = classify_message_format(0x01, cmd, 5)
+        fmt = classify_message_format(0x01, cmd, 5, 3)
         assert fmt == self.MessageFormat.MODE_CODE_BCAST_NO_DATA
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_mode_code_bcast_data(self) -> None:
-        """0x01 with RT=31, WC=6 → MODE_CODE_BCAST_DATA."""
+        """IRIG (ts=3): 0x01 RT=31, WC=6 → MODE_CODE_BCAST_DATA."""
         cmd = decode_command_word(0xF801)  # RT31, R, SA0
-        fmt = classify_message_format(0x01, cmd, 6)
+        fmt = classify_message_format(0x01, cmd, 6, 3)
         assert fmt == self.MessageFormat.MODE_CODE_BCAST_DATA
+
+    # Standard timestamps are 2 words, so every mode-code data/no-data boundary
+    # shifts down by one relative to IRIG (L2-MSG-004). These are the cases that
+    # were previously misclassified as no-data.
+    @pytest.mark.requirement("L2-MSG-004")
+    def test_mode_code_rx_data_standard(self) -> None:
+        """Standard (ts=2): RX data at WC=6 → MODE_CODE_RX_DATA (was no-data)."""
+        cmd = decode_command_word(0x7801)  # RT15, R, SA0
+        assert (
+            classify_message_format(0x01, cmd, 6, 2)
+            == self.MessageFormat.MODE_CODE_RX_DATA
+        )
+        assert (
+            classify_message_format(0x01, cmd, 5, 2)
+            == self.MessageFormat.MODE_CODE_NO_DATA
+        )
+
+    @pytest.mark.requirement("L2-MSG-004")
+    def test_mode_code_bcast_data_standard(self) -> None:
+        """Standard (ts=2): broadcast data at WC=5 → BCAST_DATA (was no-data)."""
+        cmd = decode_command_word(0xF801)  # RT31, R, SA0
+        assert (
+            classify_message_format(0x01, cmd, 5, 2)
+            == self.MessageFormat.MODE_CODE_BCAST_DATA
+        )
+        assert (
+            classify_message_format(0x01, cmd, 4, 2)
+            == self.MessageFormat.MODE_CODE_BCAST_NO_DATA
+        )
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_spurious_data(self) -> None:
         """0x20 → SPURIOUS_DATA format."""
         cmd = decode_command_word(0x0000)
-        fmt = classify_message_format(0x20, cmd, 10)
+        fmt = classify_message_format(0x20, cmd, 10, 3)
         assert fmt == self.MessageFormat.SPURIOUS_DATA
 
 

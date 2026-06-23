@@ -827,19 +827,20 @@ impl<'a> Iterator for RecordIter<'a> {
             }
 
             // ── Normal record: classify and extract payload ────────
-            let msg_fmt = match classify_message_format(tw.message_type, &cmd, tw.word_count) {
-                Ok(f) => f,
-                Err(_) => {
-                    log_warn!(
-                        "cannot classify record at 0x{:X} (type=0x{:02X}); skipping",
-                        self.offset,
-                        tw.message_type
-                    );
-                    self.offset += record_bytes;
-                    self.prev_was_error = false;
-                    continue;
-                }
-            };
+            let msg_fmt =
+                match classify_message_format(tw.message_type, &cmd, tw.word_count, ts_words) {
+                    Ok(f) => f,
+                    Err(_) => {
+                        log_warn!(
+                            "cannot classify record at 0x{:X} (type=0x{:02X}); skipping",
+                            self.offset,
+                            tw.message_type
+                        );
+                        self.offset += record_bytes;
+                        self.prev_was_error = false;
+                        continue;
+                    }
+                };
 
             log_debug!(
                 "record at 0x{:X}: type=0x{:02X} fmt={:?} RT{} SA{}",
@@ -1019,7 +1020,7 @@ impl<'a> RecordIter<'a> {
             }
         }
 
-        let msg_fmt = classify_message_format(tw.message_type, cmd, tw.word_count)
+        let msg_fmt = classify_message_format(tw.message_type, cmd, tw.word_count, ts_words)
             .unwrap_or(MessageFormat::Receive);
 
         log_info!(

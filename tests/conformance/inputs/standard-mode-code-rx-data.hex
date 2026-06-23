@@ -1,0 +1,13 @@
+# Standard-timestamp mode-code RECEIVE record WITH data (L2-MSG-004).
+# Crosses the two axes the suite previously never combined: a Standard
+# (2-word) timestamp AND a mode-code-with-data record. Wire layout per record
+# (word_count = 6): Type(0x01, wc=6) + Standard TS (2 words) + Cmd (RT15, R,
+# SA0, mode code 2 = 0x7802) + Data (0x1234) + Status (0x7800).
+#
+# With the IRIG-sized thresholds this WC=6 Standard record was misclassified as
+# MODE_CODE_NO_DATA, so 0x1234 was emitted under STAT instead of WD01. With the
+# timestamp-relative thresholds (RX data iff wc >= ts_words + 4 = 6) it is now
+# MODE_CODE_RX_DATA and 0x1234 lands in WD01. Two records so record 1's
+# look-ahead sees a valid Type Word at the start of record 2. Decode with
+# --time-format standard.
+01060100a08602783412007801060100a086027834120078
