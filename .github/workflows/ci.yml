@@ -162,6 +162,23 @@ jobs:
         working-directory: rust
         run: cargo check --locked --all-targets
 
+  cargo-deny:
+    name: Rust supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Run cargo-deny
+        # Checks advisories (RustSec), licenses, bans, and sources against
+        # rust/deny.toml. The action installs cargo-deny and fetches a fresh
+        # advisory DB, so a newly-published advisory on a dependency fails CI.
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: rust/Cargo.toml
+          command: check
+
   python:
     name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

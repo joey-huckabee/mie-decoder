@@ -1,0 +1,33 @@
+# cargo-deny configuration — supply-chain gate for the crate's dependency tree.
+# Run: `cargo deny check` (from rust/). Docs: https://embarkstudios.github.io/cargo-deny/
+#
+# The crate keeps a deliberately tiny tree (memmap2, plus unix-only libc), so
+# this gate is low-noise: it mainly guards against a RustSec advisory landing on
+# a dependency, an incompatible license slipping in, or a new dependency being
+# pulled from somewhere other than crates.io.
+
+[advisories]
+version = 2
+# Reject crates whose published version has been yanked from the registry.
+# Security vulnerabilities and `unsound` advisories from the RustSec DB are
+# denied by default under version = 2.
+yanked = "deny"
+
+[licenses]
+version = 2
+# The crate is MIT; its only dependency `memmap2` and the unix-only transitive
+# `libc` are "MIT OR Apache-2.0". Keep this set tight — a dependency under any
+# other license fails the gate and forces a conscious review.
+allow = ["MIT", "Apache-2.0"]
+
+[bans]
+# No duplicate versions of a crate (none today) and no wildcard ("*") version
+# requirements — both keep the dependency surface predictable.
+multiple-versions = "deny"
+wildcards = "deny"
+
+[sources]
+# Dependencies must come from crates.io. A git or alternative-registry source
+# fails the gate.
+unknown-registry = "deny"
+unknown-git = "deny"
