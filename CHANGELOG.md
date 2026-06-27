@@ -15,6 +15,20 @@ full release workflow.
 
 ## [Unreleased]
 
+### Changed
+
+- **Repository layout: the Rust crate now lives under `rust/`, mirroring
+  `python/`.** The crate source (`src/`), integration tests
+  (`tests/cli.rs`, `tests/integration.rs`), `Cargo.toml` / `Cargo.lock`, and the
+  `.cargo/` coverage aliases moved from the repository root into `rust/`. The
+  shared artifacts stay at the root: `config/default.toml`, the cross-impl
+  `tests/conformance/` oracle, and `docs/`. **No runtime, CLI, or library-API
+  change** — decoded output is byte-identical and the cross-implementation
+  conformance contract is unaffected. Building from source now runs from the
+  crate directory (`cd rust && cargo build`; cargo's `-C` flag is still
+  unstable); CI, the pre-commit hook, the conformance runner, and the
+  trace-matrix generator were updated to match.
+
 ## [2.3.0] — 2026-06-23
 
 ### Added

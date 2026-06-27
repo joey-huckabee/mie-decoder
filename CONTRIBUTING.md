@@ -65,7 +65,7 @@ staged.
    genuinely need a large file.
 5. **`*.mie` recordings** — defense-in-depth on top of `.gitignore`.
    Sample binaries shouldn't be committed.
-6. **`Cargo.lock` parity** — if `Cargo.toml` is staged, `Cargo.lock`
+6. **`rust/Cargo.lock` parity** — if `rust/Cargo.toml` is staged, `rust/Cargo.lock`
    must also be staged (or already match). Catches the common
    "bumped a dep version, forgot to commit the lock update" mistake.
    Uses `cargo metadata --locked --offline` to confirm.
@@ -132,6 +132,7 @@ emergencies; CI runs the same checks and will fail the merge anyway.
 Rust:
 
 ```bash
+cd rust
 # Build
 cargo build               # Dev
 cargo build --release     # Optimized
@@ -183,15 +184,15 @@ implementations:
 
 | Harness | Test |
 |---------|------|
-| Rust reader | `tests/integration.rs::fuzz_arbitrary_bytes_never_panic` |
-| Rust dump | `tests/integration.rs::dump_arbitrary_bytes_never_panics` |
+| Rust reader | `rust/tests/integration.rs::fuzz_arbitrary_bytes_never_panic` |
+| Rust dump | `rust/tests/integration.rs::dump_arbitrary_bytes_never_panics` |
 | Python reader | `tests/test_e2e.py::TestFuzzHarness::test_arbitrary_bytes_never_raise_unexpected_exceptions` |
 | Python dump | `tests/test_e2e.py::TestFuzzHarness::test_dump_arbitrary_bytes_never_raise_unexpected_exceptions` |
 
 Run them (default 256 iterations):
 
 ```bash
-# Rust
+# Rust (from rust/)
 cargo test --test integration fuzz_arbitrary_bytes_never_panic
 cargo test --test integration dump_arbitrary_bytes_never_panics
 
@@ -208,7 +209,7 @@ superset of the default run (same first 256 inputs); a failure prints the
 reproducer seed.
 
 ```bash
-MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic -- --nocapture
+(cd rust && MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic -- --nocapture)
 MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest -s tests/test_e2e.py::TestFuzzHarness
 ```
 
@@ -227,7 +228,7 @@ on random input:
   addition to the inline `!! …` note in the hex report (the report itself goes
   to a throwaway sink in the fuzz tests, so you see the WARNs, not the report).
 
-The logger writes to process **stderr** in Rust (`src/log.rs`, default `WARN`)
+The logger writes to process **stderr** in Rust (`rust/src/log.rs`, default `WARN`)
 and through the `mie_decoder` logger in Python. Both `cargo test` and `pytest`
 **capture** stderr by default and replay it only on failure; pass `--nocapture`
 (cargo) or `-s` (pytest) to **stream it live**. The Python harnesses call
@@ -269,9 +270,10 @@ cargo install cargo-llvm-cov
 
 ### Daily use
 
-Three cargo aliases are pre-wired in `.cargo/config.toml`:
+Three cargo aliases are pre-wired in `rust/.cargo/config.toml`:
 
 ```bash
+cd rust
 cargo cov         # Local: build instrumented, run tests, open HTML report
 cargo cov-lcov    # Generate target-relative lcov.info (for IDE / CI tooling)
 cargo cov-ci      # Enforced gate: --fail-under-lines 84 --fail-under-regions 83
@@ -293,7 +295,7 @@ bash scripts/coverage.sh
 These have been ratcheted up from the original 70/70 floor to roughly
 two percentage points below the current baseline, so routine refactors
 don't trip the gate while genuine coverage regressions do. Ratchet up
-further by editing the `cov-ci` alias in `.cargo/config.toml` — do it
+further by editing the `cov-ci` alias in `rust/.cargo/config.toml` — do it
 in increments after watching baseline readings stabilize.
 
 ### Why coverage is NOT in the pre-commit hook
@@ -365,7 +367,7 @@ These are codified in `CLAUDE.md`; the highlights:
 - **Test fixtures are byte-exact** translations of records cross-
   referenced against vendor CSV. Treat them as oracles; if a test
   fails, suspect the code first.
-- **Both implementations are maintained.** Changes under `src/` and `tests/`
+- **Both implementations are maintained.** Changes under `rust/src/` and `rust/tests/`
   apply to Rust; changes under `python/` apply to Python. Preserve shared MIE
   format semantics and vendor-compatible CSV behavior across both.
 

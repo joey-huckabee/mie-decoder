@@ -49,7 +49,7 @@ module = ["tomli"]
 ignore_missing_imports = true
 
 # Coverage gate parallels the Rust crate's cargo-llvm-cov gate
-# (.cargo/config.toml's `cov-ci` alias, 84 line / 83 region). The
+# (rust/.cargo/config.toml's `cov-ci` alias, 84 line / 83 region). The
 # combined line+branch coverage has held ~90% for several releases, so
 # the floor is ratcheted to baseline-2pp (88%), matching the Rust ratchet
 # rationale. `fail_under` below is the single source of truth — CI runs
@@ -57,7 +57,7 @@ ignore_missing_imports = true
 #
 # __main__.py is the entry shim (python -m mie_decoder) — three-line
 # wrapper around cli.main(), uncoverable without spawning a child
-# process. Mirrors the Rust exclusion of bin/mie-decoder.rs.
+# process. Mirrors the Rust exclusion of rust/src/bin/mie-decoder.rs.
 [tool.coverage.run]
 source = ["mie_decoder"]
 branch = true

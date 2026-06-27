@@ -18,7 +18,7 @@ Verification method abbreviations (DO-178 / MIL-STD vocabulary): **T** = Test, *
 Two L3 categories are reserved for per-implementation technology constraints:
 
 - `PY` — obligations that apply only to the Python implementation under `python/`
-- `RS` — obligations that apply only to the Rust crate at the repository root
+- `RS` — obligations that apply only to the Rust crate under `rust/`
 
 All other L3 categories mirror the L2 category they refine (e.g., `L3-WRT-*` decomposes `L2-WRT-*`).
 
@@ -101,7 +101,7 @@ The Python multi-file merge SHALL be implemented in `mie_decoder/merge.py` using
 ## L3-RS: Rust implementation technology
 
 **L3-RS-001** · Parent: L2-CONF-005 · Verification: I
-The Rust crate SHALL declare `edition = "2024"` in `Cargo.toml` and SHALL declare a Minimum Supported Rust Version (MSRV) of 1.85 or newer.
+The Rust crate SHALL declare `edition = "2024"` in `rust/Cargo.toml` and SHALL declare a Minimum Supported Rust Version (MSRV) of 1.85 or newer.
 
 **L3-RS-002** · Parent: L2-CONF-005 · Verification: I
 The Rust crate SHALL declare `memmap2` as its only external runtime dependency. Additional dependencies SHALL require explicit justification; argument parsing, CSV writing, TOML parsing, logging, and error types are hand-rolled by design.
@@ -136,7 +136,7 @@ The Rust CI workflow SHALL enforce: `cargo fmt --check`, `cargo clippy --all-tar
 Rust decode memory usage SHALL be O(1) in the record count. The writer streams rows directly to a `BufWriter` (per L3-RS-004) and the `DataWords` payload buffer is inline-fixed (per L3-RS-005); the only per-record allocation is `String` for log messages and the per-key `HashMap` entry in the DELTA tracker, which is bounded by the count of distinct RT/MSG keys (at most 32 × 32 × 2). Verified by inspection of the writer and DELTA tracker.
 
 **L3-RS-013** · Parent: L2-CONF-006 · Verification: T
-The Rust crate SHALL re-export its public decode entry point (`MieFileReader`) and core public types (`MieMessage`, plus the error and timestamp/model types) from the crate root via `pub use` (in `src/lib.rs`), so downstream crates can write `use mie_decoder::MieFileReader` without naming internal modules. Verified by a test that imports these symbols from the crate root and asserts the root paths are the same types as their module-path definitions.
+The Rust crate SHALL re-export its public decode entry point (`MieFileReader`) and core public types (`MieMessage`, plus the error and timestamp/model types) from the crate root via `pub use` (in `rust/src/lib.rs`), so downstream crates can write `use mie_decoder::MieFileReader` without naming internal modules. Verified by a test that imports these symbols from the crate root and asserts the root paths are the same types as their module-path definitions.
 
 **L3-RS-014** · Parent: L2-MRG-002 · Verification: T
-The Rust multi-file merge SHALL be implemented in `src/merge.rs` using `std::collections::BinaryHeap` (with `std::cmp::Reverse` for min-heap behavior) as the k-way merge heap — no new external dependency (preserving `L3-RS-002`). The `--glob` expansion SHALL be a hand-rolled single-directory `*`/`?` filename matcher (no `**`, no brace expansion) reading one directory via `std::fs`, sorted lexicographically, identical to the Python semantics (`L3-PY-014`). The file-count cap SHALL be the named constant `MAX_MERGE_FILES`, shared in value with Python.
+The Rust multi-file merge SHALL be implemented in `rust/src/merge.rs` using `std::collections::BinaryHeap` (with `std::cmp::Reverse` for min-heap behavior) as the k-way merge heap — no new external dependency (preserving `L3-RS-002`). The `--glob` expansion SHALL be a hand-rolled single-directory `*`/`?` filename matcher (no `**`, no brace expansion) reading one directory via `std::fs`, sorted lexicographically, identical to the Python semantics (`L3-PY-014`). The file-count cap SHALL be the named constant `MAX_MERGE_FILES`, shared in value with Python.

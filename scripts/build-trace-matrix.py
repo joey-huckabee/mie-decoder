@@ -47,7 +47,7 @@ L2_DOC = ROOT / "docs" / "L2-REQ.md"
 L3_DOC = ROOT / "docs" / "L3-REQ.md"
 TRACE_DOC = ROOT / "docs" / "TRACE-MATRIX.md"
 PY_TESTS_DIR = ROOT / "python" / "tests"
-RUST_SOURCE_ROOTS = [ROOT / "src", ROOT / "tests"]
+RUST_SOURCE_ROOTS = [ROOT / "rust" / "src", ROOT / "rust" / "tests"]
 
 REQ_ID_PATTERN = re.compile(r"L(?P<level>[123])-(?P<cat>[A-Z]+)-(?P<num>\d+)")
 L1_HEADER = re.compile(r"^###\s+(L1-[A-Z]+-\d+)\s*$", re.MULTILINE)

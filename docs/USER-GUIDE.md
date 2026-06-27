@@ -46,7 +46,7 @@ If a prebuilt binary is available for your platform, just download and run it. T
 
 ```bash
 git clone <repo-url>
-cd mie-decoder
+cd mie-decoder/rust
 cargo build --release
 ./target/release/mie-decoder --help
 ```

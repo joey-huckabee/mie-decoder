@@ -11,22 +11,22 @@ Companion docs: [`MIE-FORMAT.md`](MIE-FORMAT.md) (binary format reference), [`ER
 
 ## 1. Two implementations, one architecture
 
-MIE-Decoder ships as a Rust crate (`src/`) and a Python package (`python/src/mie_decoder/`). They are independent implementations that satisfy the same shared specification and produce byte-identical CSV output (verified by the cross-implementation conformance suite under `tests/conformance/`). The module structure is intentionally aligned so the architecture description fits both.
+MIE-Decoder ships as a Rust crate (`rust/src/`) and a Python package (`python/src/mie_decoder/`). They are independent implementations that satisfy the same shared specification and produce byte-identical CSV output (verified by the cross-implementation conformance suite under `tests/conformance/`). The module structure is intentionally aligned so the architecture description fits both.
 
 | Concern | Rust module | Python module |
 |---------|-------------|---------------|
-| CLI / argument parsing | `src/cli.rs` | `python/src/mie_decoder/cli.py` |
-| TOML configuration loader | `src/config.rs` | `python/src/mie_decoder/config.py` |
-| Message filtering | `src/filter.rs` | `python/src/mie_decoder/filters.py` |
-| Reader pipeline (mmap → records) | `src/reader.rs` | `python/src/mie_decoder/reader.py` |
-| Multi-file time-sorted merge | `src/merge.rs` | `python/src/mie_decoder/merge.py` |
-| Pure decode (bit-level field extraction) | `src/decode.rs` | `python/src/mie_decoder/decode.py` |
-| Sync helpers (validate, find first, recover) | `src/sync.rs` | `python/src/mie_decoder/sync.py` |
-| Domain models + error code constants | `src/models.rs` | `python/src/mie_decoder/models.py` |
-| Error types | `src/error.rs` (single enum) | `python/src/mie_decoder/exceptions.py` (class hierarchy) |
-| CSV writer | `src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (streaming, stdlib `csv`) |
-| Logging | `src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) |
-| Hex dump | `src/dump.rs` | `python/src/mie_decoder/dump.py` |
+| CLI / argument parsing | `rust/src/cli.rs` | `python/src/mie_decoder/cli.py` |
+| TOML configuration loader | `rust/src/config.rs` | `python/src/mie_decoder/config.py` |
+| Message filtering | `rust/src/filter.rs` | `python/src/mie_decoder/filters.py` |
+| Reader pipeline (mmap → records) | `rust/src/reader.rs` | `python/src/mie_decoder/reader.py` |
+| Multi-file time-sorted merge | `rust/src/merge.rs` | `python/src/mie_decoder/merge.py` |
+| Pure decode (bit-level field extraction) | `rust/src/decode.rs` | `python/src/mie_decoder/decode.py` |
+| Sync helpers (validate, find first, recover) | `rust/src/sync.rs` | `python/src/mie_decoder/sync.py` |
+| Domain models + error code constants | `rust/src/models.rs` | `python/src/mie_decoder/models.py` |
+| Error types | `rust/src/error.rs` (single enum) | `python/src/mie_decoder/exceptions.py` (class hierarchy) |
+| CSV writer | `rust/src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (streaming, stdlib `csv`) |
+| Logging | `rust/src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) |
+| Hex dump | `rust/src/dump.rs` | `python/src/mie_decoder/dump.py` |
 
 Per L1-CONF-001 the two implementations must remain aligned on shared format and CSV semantics. Per-implementation requirements (`L3-PY-*` / `L3-RS-*`) cover the technology-specific obligations (stdlib `csv` / tomllib for Python; memmap2 / streaming `BufWriter` for Rust). See [`L3-REQ.md`](L3-REQ.md) for the per-impl details.
 
@@ -38,7 +38,7 @@ The `MUX` column value (L2-WRT-020) is resolved **once per input file** from its
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                  src/bin/mie-decoder.rs                      │
+│                  rust/src/bin/mie-decoder.rs                      │
 │                (delegates to cli::run(argv))                 │
 └──────────────────────────┬───────────────────────────────────┘
                            │
@@ -478,7 +478,7 @@ For either implementation, decoding a 10 GB recording uses the same memory as de
 ### Multi-file time-sorted merge (streaming k-way merge)
 
 > **Status: implemented in v2.1.0** (L1-MRG / L2-MRG), in both implementations
-> (`src/merge.rs`, `python/src/mie_decoder/merge.py`). `decode` accepts more
+> (`rust/src/merge.rs`, `python/src/mie_decoder/merge.py`). `decode` accepts more
 > than one input via multiple positionals, `--manifest`, or `--glob` (mutually
 > exclusive, capped at `MAX_MERGE_FILES = 256`); a single input bypasses the
 > merge module and behaves exactly as before.
@@ -587,7 +587,7 @@ Each `recover_sync` invocation scans at most `MAX_SCAN_BYTES` (64 KB) forward fr
 
 Both implementations carry a deterministic-PRNG fuzz harness that feeds 256 random byte sequences (32 B – 8 KB each) through the `MieFileReader → message iterator` path and asserts that every outcome is either a successfully decoded message or a documented decoder error variant — never a panic, `IndexError`, `struct.error`, or unbounded iteration. The harnesses use a shared xorshift64 PRNG with seed `0x0DDCD1ECDDC0DEC0`, so a failure in one implementation is exactly reproducible against the other.
 
-- Rust: `tests/integration.rs::fuzz_arbitrary_bytes_never_panic`
+- Rust: `rust/tests/integration.rs::fuzz_arbitrary_bytes_never_panic`
 - Python: `python/tests/test_e2e.py::TestFuzzHarness`
 
 The default-suite iteration count (256) is sized so the harness completes in a few seconds per implementation. CI environments that want a longer burn-in can override via a separate follow-on smoke test outside the default suite.

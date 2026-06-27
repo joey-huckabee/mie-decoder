@@ -10,20 +10,25 @@ This guide is for **maintainers**. End-user CLI usage belongs in [`docs/USER-GUI
 
 ```
 mie-decoder/
-├── src/                    Rust crate (edition 2024, MSRV 1.85)
-│   ├── reader.rs           mmap-backed sequential reader; the central pipeline
-│   ├── sync.rs             validate_record, find_first_record, recover_sync
-│   ├── decode.rs           Type Word, IRIG/Standard timestamps, Cmd Word, classification
-│   ├── models.rs           plain structs + enums + DDC/decoder error code constants
-│   ├── error.rs            single MieError enum + MieErrorKind discriminant
-│   ├── writer.rs           streaming CSV writer with atomic temp + rename
-│   ├── filter.rs           message exclusion / inclusion filtering
-│   ├── config.rs           hand-rolled TOML loader for the L2-CFG schema
-│   ├── cli.rs              hand-rolled argparse + run() entry
-│   ├── dump.rs             raw + record-aware hex dump
-│   └── log.rs              ~50-line stderr logger
+├── rust/                   Rust crate (edition 2024, MSRV 1.85)
+│   ├── Cargo.toml / Cargo.lock
+│   ├── .cargo/config.toml  cargo-llvm-cov coverage aliases (cov / cov-lcov / cov-ci)
+│   ├── src/
+│   │   ├── reader.rs        mmap-backed sequential reader; the central pipeline
+│   │   ├── sync.rs          validate_record, find_first_record, recover_sync
+│   │   ├── decode.rs        Type Word, IRIG/Standard timestamps, Cmd Word, classification
+│   │   ├── models.rs        plain structs + enums + DDC/decoder error code constants
+│   │   ├── error.rs         single MieError enum + MieErrorKind discriminant
+│   │   ├── writer.rs        streaming CSV writer with atomic temp + rename
+│   │   ├── filter.rs        message exclusion / inclusion filtering
+│   │   ├── config.rs        hand-rolled TOML loader for the L2-CFG schema
+│   │   ├── cli.rs           hand-rolled argparse + run() entry
+│   │   ├── dump.rs          raw + record-aware hex dump
+│   │   └── log.rs           ~50-line stderr logger
+│   └── tests/
+│       ├── cli.rs           CLI acceptance tests (built binary as a subprocess)
+│       └── integration.rs   cargo integration tests (multi-record, fuzz harness)
 ├── tests/
-│   ├── integration.rs      cargo integration tests (multi-record, fuzz harness)
 │   └── conformance/        cross-implementation suite (Rust ↔ Python)
 │       ├── manifest.json   case catalog
 │       ├── inputs/*.hex    reviewable hex fixtures (NOT committed binaries)
@@ -48,8 +53,7 @@ mie-decoder/
 │   ├── MAINTAINER-GUIDE.md (this file)
 │   └── diagrams/           PlantUML sources and rendered SVGs
 ├── config/default.toml     fully-commented reference TOML schema
-├── .github/workflows/ci.yml
-└── Cargo.toml / Cargo.lock
+└── .github/workflows/      ci.yml, fuzz.yml
 ```
 
 ---
@@ -62,6 +66,7 @@ mie-decoder/
 rustup update stable
 rustup default stable
 rustup component add clippy rustfmt llvm-tools-preview
+cd rust
 cargo build
 cargo test
 ```
@@ -80,7 +85,7 @@ The Python package is installed in editable mode via `poetry sync`'s root-packag
 
 ```bash
 # Build the Rust binary first so the runner doesn't have to:
-cargo build
+(cd rust && cargo build)
 # Then run the suite (uses Poetry's interpreter for the Python side):
 poetry -C python run python ../tests/conformance/run.py
 ```
@@ -92,12 +97,12 @@ The runner reads `tests/conformance/manifest.json`, materializes each `.hex` fix
 ## 3. Daily-command cheat sheet
 
 ```bash
-# Rust
+# Rust (from rust/)
 cargo test --all-targets                         # all unit + integration
 cargo test --lib reader::tests::skips_proprietary_header   # single test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
-cargo cov-ci                                     # coverage gate (alias in .cargo/config.toml)
+cargo cov-ci                                     # coverage gate (alias in rust/.cargo/config.toml)
 
 # Python (from repo root)
 poetry -C python run pytest                      # all tests
@@ -118,7 +123,7 @@ python scripts/build-trace-matrix.py --check     # what CI does — exits 1 on d
 plantuml -tsvg docs/diagrams/*.puml              # regenerate committed SVGs
 
 # CLI dry-runs against a real file
-cargo run --release -- decode path/to/recording.mie -o decoded.csv
+(cd rust && cargo run --release -- decode path/to/recording.mie -o decoded.csv)
 poetry -C python run mie-decoder decode path/to/recording.mie -o decoded.csv
 ```
 
@@ -203,7 +208,7 @@ def test_cli_no_valid_records_returns_exit_2(...):
     ...
 ```
 
-**Rust** (`src/**/*.rs` and `tests/*.rs`):
+**Rust** (`rust/src/**/*.rs` and `rust/tests/*.rs`):
 
 ```rust
 /// Requirements: L2-WRT-015
@@ -240,17 +245,17 @@ The project uses four test tiers, narrowest scope at the bottom:
 
 | Tier                  | Subject                                  | Location                            | Run with                                         | Cross-platform |
 |-----------------------|------------------------------------------|-------------------------------------|--------------------------------------------------|----------------|
-| **Unit**              | one function / one module, in-process    | `src/<module>.rs` `#[cfg(test)] mod tests` (Rust); `python/tests/test_*.py` (Python) | `cargo test --lib` / `pytest`                    | Linux + Windows |
-| **Integration**       | multiple modules via the library API, in-process | `tests/integration.rs` (Rust); `python/tests/test_integration_*.py` (Python) | `cargo test --test integration` / `pytest`       | Linux + Windows |
-| **CLI acceptance**    | the **built binary** as a subprocess — exit codes, stdout, stderr, filesystem effects | `tests/cli.rs` (Rust)               | `cargo test --test cli`                          | Linux + Windows |
+| **Unit**              | one function / one module, in-process    | `rust/src/<module>.rs` `#[cfg(test)] mod tests` (Rust); `python/tests/test_*.py` (Python) | `cargo test --lib` / `pytest`                    | Linux + Windows |
+| **Integration**       | multiple modules via the library API, in-process | `rust/tests/integration.rs` (Rust); `python/tests/test_integration_*.py` (Python) | `cargo test --test integration` / `pytest`       | Linux + Windows |
+| **CLI acceptance**    | the **built binary** as a subprocess — exit codes, stdout, stderr, filesystem effects | `rust/tests/cli.rs` (Rust)               | `cargo test --test cli`                          | Linux + Windows |
 | **Conformance**       | byte-exact cross-impl equivalence (Rust ↔ Python CLI) | `tests/conformance/`                | `python tests/conformance/run.py`                | Linux + Windows |
 
 The two upper tiers both spawn the actual binary, but they serve different purposes:
 
-- **CLI acceptance** (`tests/cli.rs`) is Rust-only. It covers behaviors that conformance can't or doesn't: `--no-clobber`, input/output collision rejection, `--include-*` filter syntax (a Rust-only axis per L3-RS-010), `--help` / `--version`, exit-class taxonomy, and other CLI surfaces where stdout/stderr/exit-code semantics matter more than CSV byte-equality.
+- **CLI acceptance** (`rust/tests/cli.rs`) is Rust-only. It covers behaviors that conformance can't or doesn't: `--no-clobber`, input/output collision rejection, `--include-*` filter syntax (a Rust-only axis per L3-RS-010), `--help` / `--version`, exit-class taxonomy, and other CLI surfaces where stdout/stderr/exit-code semantics matter more than CSV byte-equality.
 - **Conformance** (`tests/conformance/`) holds Rust and Python to byte-identical CSV output (or matching exit code for negative cases). Anything that affects the CSV contract should land here so both implementations stay aligned.
 
-When you add a behavior, ask: **does this need to behave the same in Python?** If yes, add it to conformance. If no (Rust-only feature, atomic-write artifact, exit-class taxonomy detail), add it to `tests/cli.rs`. Both tiers run on Linux and Windows automatically via `cargo test --all-targets`.
+When you add a behavior, ask: **does this need to behave the same in Python?** If yes, add it to conformance. If no (Rust-only feature, atomic-write artifact, exit-class taxonomy detail), add it to `rust/tests/cli.rs`. Both tiers run on Linux and Windows automatically via `cargo test --all-targets`.
 
 ### Python
 
@@ -264,15 +269,15 @@ For end-to-end CLI tests, use `pytest.LogCaptureFixture` to assert on log messag
 
 ### Rust unit and integration
 
-Unit tests live next to the code they test in `src/<module>.rs` under `#[cfg(test)] mod tests { ... }`. Library-level integration tests live in `tests/integration.rs`.
+Unit tests live next to the code they test in `rust/src/<module>.rs` under `#[cfg(test)] mod tests { ... }`. Library-level integration tests live in `rust/tests/integration.rs`.
 
-Use the existing `TempFile` helper at the bottom of `src/reader.rs` (private) or `tests/integration.rs` (also private but copy-paste-friendly). For new variants, construct minimal byte sequences from the canonical `RECORD_RT15_SA11_RCV` shape.
+Use the existing `TempFile` helper at the bottom of `rust/src/reader.rs` (private) or `rust/tests/integration.rs` (also private but copy-paste-friendly). For new variants, construct minimal byte sequences from the canonical `RECORD_RT15_SA11_RCV` shape.
 
 Always tag new tests with `/// Requirements:` so the trace matrix credits them.
 
 ### Rust CLI acceptance
 
-CLI acceptance tests in `tests/cli.rs` spawn the actual built binary located via `env!("CARGO_BIN_EXE_mie-decoder")` (Cargo populates this per test target and appends `.exe` on Windows automatically — no per-OS code paths needed) and use `std::process::Command::output()` to invoke it. Style conventions:
+CLI acceptance tests in `rust/tests/cli.rs` spawn the actual built binary located via `env!("CARGO_BIN_EXE_mie-decoder")` (Cargo populates this per test target and appends `.exe` on Windows automatically — no per-OS code paths needed) and use `std::process::Command::output()` to invoke it. Style conventions:
 
 - Use the `TempDir` helper in the same file: per-test scratch directories under `std::env::temp_dir()`, keyed by pid + atomic counter, removed on drop. Tests can then use plain `dir/input.mie`, `dir/output.csv` paths.
 - Use the `run([...])` helper rather than `Command::new` directly. It echoes any captured stderr into test output so a Windows CI failure can be triaged from the runner log without re-running locally.
@@ -356,7 +361,7 @@ See `tests/conformance/README.md` for the full manifest schema.
 
 When a new error class is needed (per `docs/ERROR-CATALOG.md` taxonomy), land it in both crates and document.
 
-### Rust (`src/error.rs`)
+### Rust (`rust/src/error.rs`)
 
 1. Add the variant to `enum MieError { ... }` with `offset` and any structured detail fields.
 2. Add a matching value to `enum MieErrorKind`.
@@ -371,7 +376,7 @@ When a new error class is needed (per `docs/ERROR-CATALOG.md` taxonomy), land it
 
 ### CLI exit-code mapping
 
-`src/cli.rs` and `python/src/mie_decoder/cli.py` both have a try/except (or `match`) chain that maps errors to exit codes. Decide which class the new error belongs to (see `docs/ERROR-CATALOG.md` section 1):
+`rust/src/cli.rs` and `python/src/mie_decoder/cli.py` both have a try/except (or `match`) chain that maps errors to exit codes. Decide which class the new error belongs to (see `docs/ERROR-CATALOG.md` section 1):
 
 - Wrong-file-type / file-shape errors → exit 2 (alongside `NoValidRecords`)
 - Unrecoverable mid-file → exit 3 (alongside `UnrecoverableSyncLoss`)
@@ -397,7 +402,7 @@ Both crates **must** raise the same variant for the same input. Add a conformanc
 
 L1-CLI-001 only requires the two CLIs to offer the same capabilities; their syntax MAY differ. In practice they have been kept to an **identical flag surface** across `decode` / `count` / `dump` — add the flag to both implementations with the same name and semantics so that parity holds. Two things enforce this: the conformance suite drives both CLIs from a single shared `args` vector (so a flag missing from one side breaks any case that uses it), and the `check_cli_surface` gate in `tests/conformance/run.py` compares the two CLIs' full long-flag sets (extracted from their `--help` output) and **fails the conformance run if they diverge** — naming the offending flag. So a flag added to only one implementation fails CI even if no case exercises it; add it to both (and keep the help text advertising it, since the gate reads `--help`).
 
-### Rust (`src/cli.rs`)
+### Rust (`rust/src/cli.rs`)
 
 The CLI argparse is hand-rolled. Add the flag in the relevant subcommand's parser. Wire it into the appropriate path (`run_decode`, `run_count`, `run_dump`). Add `parse_*` unit tests for the new flag (greedy / non-greedy / repeats / `=value`) following the existing `filter_flag_*` pattern.
 
@@ -423,7 +428,7 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 
 | Job | What it gates | Platforms | Failure cost |
 |-----|---------------|-----------|--------------|
-| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `tests/integration.rs` + `tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (84% line / 83% region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
+| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `rust/tests/integration.rs` + `rust/tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (84% line / 83% region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
 | `python` | `poetry sync` + `poetry run pytest`; `poetry check --strict --lock` + `poetry build` Linux/3.12-only | 5 versions × Linux (3.10–3.14), 2 versions × Windows (3.12, 3.14) | Block merge |
 | `mypy` | `poetry run mypy src` — strict type check, analyzed as Python 3.10 (config in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `python-coverage` | `poetry run pytest --cov` — 88% combined line+branch floor (`fail_under` in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
@@ -437,7 +442,7 @@ The `diagrams` job pins PlantUML to the version that produced the committed SVGs
 
 A separate scheduled workflow, `.github/workflows/fuzz.yml`, runs a deeper L1-ROB-001 fuzz burn-in daily (and on manual `workflow_dispatch`). The normal `rust` / `python` jobs run the fixed 256-iteration default; the burn-in sets `MIE_FUZZ_ITERATIONS` (default 25 000) so the deterministic harness sweeps a much larger input space. Because the PRNG seed is fixed, the burn-in is a strict superset of the default run and any failure prints a reproducible seed. To reproduce locally: `MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic` or `MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness`.
 
-Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs — the `diagrams` CI job is your safety net there.
+Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, rust/Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs — the `diagrams` CI job is your safety net there.
 
 ---
 
@@ -447,7 +452,7 @@ Both implementations are gated. Rust uses `cargo-llvm-cov`; Python uses `pytest-
 
 ### Rust
 
-The CI gate is `cargo cov-ci` (alias defined in `.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 84 line / 83 region). After the gate passes, CI runs `cargo cov-lcov` and uploads `lcov.info` as the `rust-lcov` artifact.
+The CI gate is `cargo cov-ci` (alias defined in `rust/.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 84 line / 83 region). After the gate passes, CI runs `cargo cov-lcov` and uploads `lcov.info` as the `rust-lcov` artifact.
 
 ```bash
 cargo cov-ci         # what CI runs
@@ -469,7 +474,7 @@ poetry -C python run pytest --cov --cov-report=html
 
 ### Ratcheting the floor
 
-When coverage is consistently above the floor by >2pp, bump it. For Rust, edit the `cov-ci` alias in `.cargo/config.toml`. For Python, edit `fail_under` in `python/pyproject.toml`'s `[tool.coverage.report]` block (the CI job has no `--cov-fail-under` flag — the config value is authoritative). Update the rationale comment in both files when you do.
+When coverage is consistently above the floor by >2pp, bump it. For Rust, edit the `cov-ci` alias in `rust/.cargo/config.toml`. For Python, edit `fail_under` in `python/pyproject.toml`'s `[tool.coverage.report]` block (the CI job has no `--cov-fail-under` flag — the config value is authoritative). Update the rationale comment in both files when you do.
 
 ---
 
@@ -481,7 +486,7 @@ When coverage is consistently above the floor by >2pp, bump it. For Rust, edit t
 cargo build --release
 ```
 
-The resulting binary at `target/release/mie-decoder` is the deliverable artifact.
+The resulting binary at `rust/target/release/mie-decoder` is the deliverable artifact.
 
 ### Python package
 
@@ -503,7 +508,7 @@ Tagging scheme:
 
 Bump versions when:
 
-- **Rust (`Cargo.toml`)** — any change to the public crate API, the CLI surface, or the on-disk output.
+- **Rust (`rust/Cargo.toml`)** — any change to the public crate API, the CLI surface, or the on-disk output.
 - **Python (`python/pyproject.toml` only)** — same axes for the Python package. `python/src/mie_decoder/__init__.py::__version__` reads from package metadata via `importlib.metadata.version("mie-decoder")`, so `pyproject.toml` is the single source of truth — no second file to keep in lockstep. `poetry check --strict --lock` catches `pyproject.toml`/`poetry.lock` drift in CI.
 
 ### CHANGELOG discipline
@@ -521,7 +526,7 @@ The version bump itself rolls up the accumulated `[Unreleased]` entries into a d
 
 1. Renames `[Unreleased]` to `[<version>] — YYYY-MM-DD` in `CHANGELOG.md` and seeds a new empty `[Unreleased]` section.
 2. Updates the compare-URL footer (`[<version>]: .../compare/<previous>...<version>`) — see the warning below; this is the step most often missed.
-3. Updates `Cargo.toml` (Rust) or `python/pyproject.toml` (Python) — both for a joint cut.
+3. Updates `rust/Cargo.toml` (Rust) or `python/pyproject.toml` (Python) — both for a joint cut.
 4. Updates any per-version doc references (e.g. "X-test suite (as of vN.M.0)" in MAINTAINER-GUIDE.md §10).
 
 > **Watch the footer (step 2).** This step was silently skipped on the `1.4.0` and `1.4.1` cuts: the body sections were dated correctly but the footer's `[Unreleased]` link was left pointing at `v1.3.0...HEAD` and no `[1.4.0]`/`[1.4.1]` entries were added. It was repaired during the `1.5.0` cut. The body roll-up (step 1) is visible in the rendered changelog so it's hard to forget; the footer is easy to miss because nothing breaks without it. When cutting, after editing, confirm the footer's `[Unreleased]` line points at the *new* version (`compare/v<new>...HEAD`) and that every released version since the last footer update has its own `compare/<prev>...<this>` line — `git tag --sort=-creatordate` is the cross-check.

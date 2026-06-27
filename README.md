@@ -21,8 +21,9 @@ cross-implementation conformance suite (`tests/conformance/`). See
 ## Rust Build
 
 ```bash
+cd rust
 cargo build --release
-# binary lands at target/release/mie-decoder
+# binary lands at rust/target/release/mie-decoder
 ```
 
 The crate has exactly one external dependency (`memmap2`); everything else — argument parsing, CSV writing, TOML config, logging, error types — is hand-rolled.
@@ -293,20 +294,26 @@ All 10 MIL-STD-1553 message formats plus SPURIOUS_DATA:
 ## Project Structure
 
 ```
-src/
-├── lib.rs           Library entry point and re-exports
-├── bin/mie-decoder  Binary entry point
-├── cli.rs           Hand-rolled argparse + dispatch
-├── config.rs        Hand-rolled TOML loader, DecoderConfig
-├── decode.rs        Pure decoders + format classifier
-├── dump.rs          Hex dump (raw + record-aware)
-├── error.rs         MieError enum + Display/Error impls
-├── filter.rs        FilterConfig + Iterator adapter
-├── log.rs           Tiny stderr logger
-├── models.rs        Data structures, enums, error codes
-├── reader.rs        mmap-backed iterator with sync recovery
-├── sync.rs          Pure validation + recovery helpers
-└── writer.rs        Streaming CSV writer
+rust/                Rust crate (single dependency: memmap2)
+├── Cargo.toml / Cargo.lock
+├── .cargo/          cargo-llvm-cov coverage aliases (cov / cov-lcov / cov-ci)
+├── src/
+│   ├── lib.rs           Library entry point and re-exports
+│   ├── bin/mie-decoder  Binary entry point
+│   ├── cli.rs           Hand-rolled argparse + dispatch
+│   ├── config.rs        Hand-rolled TOML loader, DecoderConfig
+│   ├── decode.rs        Pure decoders + format classifier
+│   ├── dump.rs          Hex dump (raw + record-aware)
+│   ├── error.rs         MieError enum + Display/Error impls
+│   ├── filter.rs        FilterConfig + Iterator adapter
+│   ├── log.rs           Tiny stderr logger
+│   ├── models.rs        Data structures, enums, error codes
+│   ├── reader.rs        mmap-backed iterator with sync recovery
+│   ├── sync.rs          Pure validation + recovery helpers
+│   └── writer.rs        Streaming CSV writer
+└── tests/
+    ├── cli.rs           CLI acceptance tests (built binary as a subprocess)
+    └── integration.rs   End-to-end tests with byte-exact fixtures
 
 config/
 └── default.toml     Fully commented reference configuration
@@ -328,7 +335,7 @@ docs/
 └── diagrams/           PlantUML sources and rendered SVGs
 
 tests/
-└── integration.rs   End-to-end tests with byte-exact fixtures
+└── conformance/     Cross-implementation suite (Rust ↔ Python oracle)
 
 python/              Maintained Python package and CLI
 ```
@@ -342,9 +349,10 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 Rust:
 
 ```bash
+cd rust
 cargo test                  # All unit + integration tests
 cargo test --test integration -- multi_record_stream   # One integration test
-cargo build --release       # Release binary at target/release/mie-decoder
+cargo build --release       # Release binary at rust/target/release/mie-decoder
 cargo clippy --all-targets  # Lint (if installed)
 ```
 

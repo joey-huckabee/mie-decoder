@@ -20,7 +20,7 @@ python tests/conformance/run.py
 To use an already-built Rust binary:
 
 ```bash
-python tests/conformance/run.py --rust-bin target/debug/mie-decoder
+python tests/conformance/run.py --rust-bin rust/target/debug/mie-decoder
 ```
 
 When intentionally changing shared CSV behavior, update the checked-in
