@@ -177,20 +177,20 @@ struct GlobalArgs {
 mod exit_code {
     /// Runtime / decode error: input I/O (incl. file-not-found), writer
     /// failure, strict-mode record & structural-invariant failures.
-    pub const RUNTIME: u8 = 1;
+    pub(crate) const RUNTIME: u8 = 1;
     /// No valid records — the input is not an MIE recording.
-    pub const NO_RECORDS: u8 = 2;
+    pub(crate) const NO_RECORDS: u8 = 2;
     /// Unrecoverable mid-file sync loss without `--allow-partial`.
-    pub const SYNC_LOSS: u8 = 3;
+    pub(crate) const SYNC_LOSS: u8 = 3;
     /// CLI usage error: unknown/missing/invalid flag or argument,
     /// unknown subcommand, bad flag value.
-    pub const USAGE: u8 = 4;
+    pub(crate) const USAGE: u8 = 4;
     /// Configuration error: config file not found, malformed TOML, or an
     /// invalid configuration value.
-    pub const CONFIG: u8 = 5;
+    pub(crate) const CONFIG: u8 = 5;
     /// Merge-incompatible inputs: a multi-file merge whose inputs cannot be
     /// ordered on a common absolute timeline (L1-EXIT-009 / L2-MRG-003).
-    pub const MERGE_INCOMPATIBLE: u8 = 6;
+    pub(crate) const MERGE_INCOMPATIBLE: u8 = 6;
 }
 
 /// A subcommand failure carrying the exit code it should map to. Lets the
