@@ -29,6 +29,17 @@ full release workflow.
   unstable); CI, the pre-commit hook, the conformance runner, and the
   trace-matrix generator were updated to match.
 
+### Documentation
+
+- **Per-implementation READMEs.** Added `rust/README.md` and `python/README.md`
+  holding the language-specific build, library-usage, development, and structure
+  sections. The root `README.md` is slimmed to the shared content (project
+  overview, CLI reference, configuration, error handling, supported formats) and
+  links both implementation READMEs from the overview, the new Building section,
+  Project Structure, and Development. `rust/README.md` also resolves the dangling
+  `readme = "README.md"` in `rust/Cargo.toml`; `python/README.md` remains the
+  package long-description referenced by `python/pyproject.toml`.
+
 ## [2.3.0] — 2026-06-23
 
 ### Added
