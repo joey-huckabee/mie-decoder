@@ -106,6 +106,7 @@ cargo cov-ci                                     # coverage gate (alias in rust/
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps   # rustdoc link check (CI-gated)
 cargo +1.88 check --all-targets                  # MSRV 1.88 floor (CI-gated)
 cargo deny check                                 # supply-chain audit (CI-gated; config rust/deny.toml)
+cargo semver-checks check-release --baseline-rev "$(git describe --tags --abbrev=0)" --release-type minor  # public-API break check (CI-gated)
 
 # Python (from repo root)
 poetry -C python run pytest                      # all tests
@@ -440,6 +441,7 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 | `rust-doc` | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` — fails on broken intra-doc links and other rustdoc lints in the doc-heavy crate | `ubuntu-latest` | Block merge |
 | `rust-msrv` | `cargo check --all-targets` on the pinned **1.88** toolchain — enforces the declared `rust-version` (the main `rust` job builds on stable) | `ubuntu-latest` | Block merge |
 | `cargo-deny` | `cargo deny check` — RustSec advisories, license allow-list, bans (duplicates/wildcards), and crates.io-only sources (config in `rust/deny.toml`) | `ubuntu-latest` | Block merge |
+| `cargo-semver-checks` | `cargo semver-checks check-release` vs the latest release tag (`baseline-rev`, `release-type: minor`) — fails a PR that makes a **breaking** public-API change without a major bump; additive changes pass | `ubuntu-latest` | Block merge |
 | `python` | `poetry sync` + `poetry run pytest`; `poetry check --strict --lock` + `poetry build` Linux/3.12-only | 5 versions × Linux (3.10–3.14), 2 versions × Windows (3.12, 3.14) | Block merge |
 | `mypy` | `poetry run mypy src` — strict type check, analyzed as Python 3.10 (config in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `pylint` | `poetry run pylint src/mie_decoder` — lints the package; curated disables + line length in `python/pyproject.toml` `[tool.pylint.*]` (gate fails below 10/10) | `ubuntu-latest` (3.12) | Block merge |

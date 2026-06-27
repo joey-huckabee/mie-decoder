@@ -179,6 +179,32 @@ jobs:
           manifest-path: rust/Cargo.toml
           command: check
 
+  cargo-semver-checks:
+    name: Rust SemVer (cargo-semver-checks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # full history + tags so the baseline tag resolves
+
+      - name: Determine baseline (latest release tag)
+        id: baseline
+        shell: bash
+        run: echo "rev=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+
+      - name: Run cargo-semver-checks
+        # Compares the crate's public API against the latest release tag and
+        # fails on a breaking change. release-type: minor lets additive changes
+        # pass (the crate version is static between releases here), so only a
+        # major/breaking API change without a major bump blocks the merge.
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: rust/Cargo.toml
+          baseline-rev: ${{ steps.baseline.outputs.rev }}
+          release-type: minor
+
   python:
     name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

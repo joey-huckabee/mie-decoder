@@ -15,6 +15,15 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **Rust public-API SemVer gate** (`cargo-semver-checks` CI job). Runs
+  `cargo semver-checks check-release` against the latest release tag
+  (`baseline-rev`, with `release-type: minor`), failing a PR that makes a
+  **breaking** public-API change to the crate without a major version bump;
+  additive changes pass. Completes the Rust CI tooling deferred in v2.4.0 — the
+  v2.4.0 tag (the first under the `rust/` layout) is the baseline.
+
 ## [2.4.0] — 2026-06-27
 
 ### Added
