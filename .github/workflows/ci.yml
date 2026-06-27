@@ -286,6 +286,34 @@ jobs:
         working-directory: python
         run: poetry run ruff format --check
 
+  vulture:
+    name: Python dead code (vulture)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: pipx install poetry==2.3.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: poetry
+          cache-dependency-path: python/poetry.lock
+
+      - name: Synchronize locked dependencies
+        run: poetry -C python sync --no-interaction --no-ansi
+
+      - name: Run vulture
+        # Finds unused (dead) code across the package + tests. Scan paths and
+        # intentional-name ignores (interface args, documented constants) are in
+        # python/pyproject.toml [tool.vulture]. Exits non-zero on any finding.
+        working-directory: python
+        run: poetry run vulture
+
   conformance:
     name: Rust/Python conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
