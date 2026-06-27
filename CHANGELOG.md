@@ -37,6 +37,13 @@ full release workflow.
   clean pass also removed several dead imports and added exception chaining
   (`raise ... from`) in `cli.py` / `config.py`. No behavior change (conformance
   unaffected).
+- **Ruff lint + format gate** (`ruff` dev dependency + a `ruff` CI job running
+  `ruff check` and `ruff format --check`). Covers the Python package **and
+  tests**; config in `python/pyproject.toml` `[tool.ruff]` (line length 100, to
+  match pylint). Adopting `ruff format` reformatted the package + tests to its
+  Black-style canonical form (mechanical, no behavior change — conformance
+  unaffected); `ruff check` also caught two real import bugs in the test suite
+  (a missing `from pathlib import Path` and an unused one).
 
 ### Changed
 

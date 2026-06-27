@@ -253,6 +253,39 @@ jobs:
         working-directory: python
         run: poetry run pylint src/mie_decoder
 
+  ruff:
+    name: Python lint + format (ruff)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: pipx install poetry==2.3.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: poetry
+          cache-dependency-path: python/poetry.lock
+
+      - name: Synchronize locked dependencies
+        run: poetry -C python sync --no-interaction --no-ansi
+
+      - name: Run ruff check
+        # Lints the package source + tests (config in python/pyproject.toml
+        # [tool.ruff]). working-directory: python so ruff picks up the config.
+        working-directory: python
+        run: poetry run ruff check
+
+      - name: Run ruff format --check
+        # Verifies the package + tests are ruff-formatted (Black-style, line
+        # length 100 to match the pylint gate). Run `ruff format` to fix.
+        working-directory: python
+        run: poetry run ruff format --check
+
   conformance:
     name: Rust/Python conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
