@@ -30,6 +30,15 @@ full release workflow.
   (`scripts/coverage.sh`), the conformance runner, and the trace-matrix
   generator were updated to match.
 
+- **Internal: decomposed the Python `_run_decode` CLI handler into focused
+  helpers** (override building/validation, reader opening, message-stream
+  building, writing, and the success/error exit-code classifiers), mirroring the
+  existing decomposition of `run_decode` in `rust/src/cli.rs` and cutting the
+  function's cognitive complexity well under the SonarCloud threshold. **No
+  behavior change** — exit codes, stderr, and decoded output are identical
+  (conformance unaffected); new direct unit tests (`python/tests/test_cli.py`)
+  raise `cli.py` coverage.
+
 ### Documentation
 
 - **Per-implementation READMEs.** Added `rust/README.md` and `python/README.md`
