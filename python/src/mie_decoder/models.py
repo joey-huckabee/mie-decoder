@@ -243,7 +243,9 @@ class IrigTimestamp:
             + self.microsecond
         )
 
-    def to_microseconds(self, standard_tick_rate_hz: float | None = None) -> int | None:
+    def to_microseconds(  # pylint: disable=unused-argument
+        self, standard_tick_rate_hz: float | None = None
+    ) -> int | None:
         """Absolute microseconds from a known epoch.
 
         Always returns the IRIG conversion. Defined with the same

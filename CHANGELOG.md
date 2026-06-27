@@ -29,6 +29,14 @@ full release workflow.
   the Rust crate and the Python package (both `build-mode: none`) and reports to
   GitHub code scanning. (CodeQL's Rust support is no-build only; macro-heavy
   files extract with reduced fidelity — a known upstream limitation.)
+- **Pylint lint gate** (`pylint` dev dependency + a `pylint` CI job). Lints the
+  Python package source (`src/mie_decoder`) and blocks merge below 10/10.
+  Configuration lives in `python/pyproject.toml` `[tool.pylint.*]` — curated
+  disables for the deliberate function-local-import pattern and the `too-many-*`
+  complexity family already covered by SonarCloud, plus line length. Reaching a
+  clean pass also removed several dead imports and added exception chaining
+  (`raise ... from`) in `cli.py` / `config.py`. No behavior change (conformance
+  unaffected).
 
 ### Changed
 

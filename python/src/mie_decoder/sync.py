@@ -82,9 +82,7 @@ from enum import Enum
 from typing import Final
 
 from mie_decoder.decode import (
-    MIN_RECORD_WORDS,
     MIN_RECORD_WORDS_STANDARD,
-    decode_irig_timestamp,
     decode_type_word,
     is_valid_message_type,
     read_u16,

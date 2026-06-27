@@ -222,6 +222,37 @@ jobs:
         working-directory: python
         run: poetry run mypy src
 
+  pylint:
+    name: Python lint (pylint)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: pipx install poetry==2.3.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: poetry
+          cache-dependency-path: python/poetry.lock
+
+      - name: Synchronize locked dependencies
+        run: poetry -C python sync --no-interaction --no-ansi
+
+      - name: Run pylint
+        # Lints the package source (src/mie_decoder). The config — curated
+        # disables (lazy imports, the too-many-* family already covered by
+        # SonarCloud, etc.) and max-line-length — lives in
+        # python/pyproject.toml's [tool.pylint.*]. working-directory: python so
+        # pylint picks up that config and resolves the package's imports. The
+        # gate fails on any message (pylint exits non-zero below 10/10).
+        working-directory: python
+        run: poetry run pylint src/mie_decoder
+
   conformance:
     name: Rust/Python conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

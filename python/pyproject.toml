@@ -22,6 +22,7 @@ packages = [{include = "mie_decoder", from = "src"}]
 pytest = "^8.0"
 pytest-cov = "^7.0"
 mypy = "^1.13"
+pylint = "^4.0.6"
 
 [build-system]
 requires = ["poetry-core"]
@@ -67,3 +68,36 @@ omit = ["*/__main__.py"]
 show_missing = true
 skip_covered = false
 fail_under = 88
+
+# Pylint lints the package source (src/mie_decoder). Genuine correctness/hygiene
+# checks stay on; checks that conflict with deliberate design choices or
+# duplicate SonarCloud are disabled below. Run: `poetry -C python run pylint src`.
+[tool.pylint.basic]
+# Keep pylint's default "good" short names and allow `tomllib` — the module
+# alias for the TOML backend (mirrors the stdlib module name; config.py binds
+# it to tomllib/tomli/None across Python versions).
+good-names = ["i", "j", "k", "ex", "Run", "_", "tomllib"]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint."messages control"]
+disable = [
+    # The codebase uses function-local imports on purpose, to avoid import
+    # cycles and keep CLI startup cheap (mirrors the Rust crate's structure).
+    "import-outside-toplevel",
+    # Size/complexity heuristics with low default thresholds. A binary decoder
+    # is legitimately branchy, and cognitive complexity is already gated by
+    # SonarCloud (python:S3776) — keeping these would be duplicate, lower-signal
+    # noise.
+    "too-many-branches",
+    "too-many-locals",
+    "too-many-return-statements",
+    "too-many-statements",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-instance-attributes",
+    "too-many-lines",
+    # `not (a <= x <= b)` parenthesization is kept for readability.
+    "superfluous-parens",
+]

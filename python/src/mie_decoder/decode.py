@@ -24,10 +24,8 @@ from mie_decoder.models import (
     MessageFormat,
     MessageType,
     StandardTimestamp,
-    Timestamp,
     TimestampFormat,
     TypeWord,
-    TIMESTAMP_WORD_COUNTS,
     VALID_MESSAGE_TYPES,
 )
 
@@ -605,7 +603,7 @@ def _min_payload_words(fmt: MessageFormat, command_word: CommandWord) -> int:
     helper. ``SPURIOUS_DATA`` returns 0 (capacity check skipped).
     """
     dwc = command_word.data_word_count
-    if fmt == MessageFormat.RECEIVE or fmt == MessageFormat.TRANSMIT:
+    if fmt in (MessageFormat.RECEIVE, MessageFormat.TRANSMIT):
         return dwc + 1
     if fmt == MessageFormat.RT_TO_RT:
         return dwc + 3

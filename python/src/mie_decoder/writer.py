@@ -333,7 +333,9 @@ class _AtomicCsvFile:
         try:
             # newline="" stops the csv module's terminator being
             # re-translated by the text layer, so output is LF-only.
-            self._stream: TextIO = open(
+            # The stream is owned by this object and closed in commit() /
+            # cleanup(), so a `with` block does not fit its lifecycle.
+            self._stream: TextIO = open(  # pylint: disable=consider-using-with
                 self._temp, "w", newline="", encoding="utf-8"
             )
         except OSError as exc:
@@ -342,6 +344,7 @@ class _AtomicCsvFile:
 
     @property
     def stream(self) -> TextIO:
+        """The underlying text stream (the open temp file)."""
         return self._stream
 
     def commit(self) -> None:
@@ -423,6 +426,7 @@ class _StreamingCsvRowWriter:
             raise MieWriterError(destination, exc) from exc
 
     def write_message(self, msg: MieMessage) -> None:
+        """Write one decoded message as a CSV row."""
         try:
             self._writer.writerow(message_to_row(msg))
         except BrokenPipeError:
@@ -433,6 +437,7 @@ class _StreamingCsvRowWriter:
 
     @property
     def rows_written(self) -> int:
+        """Number of data rows written so far."""
         return self._rows_written
 
 

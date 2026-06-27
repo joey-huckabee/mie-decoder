@@ -25,7 +25,6 @@ from mie_decoder.decode import (
     decode_command_word,
     decode_irig_timestamp,
     decode_type_word,
-    is_valid_message_type,
     read_u16,
 )
 from mie_decoder.exceptions import MieFileEmptyError, MieFileNotFoundError

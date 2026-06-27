@@ -124,8 +124,8 @@ def _parse_u8_list(values: list[str], flag: str) -> list[int]:
         s = tok.strip()
         try:
             n = int(s, 16) if s[:2].lower() == "0x" else int(s)
-        except ValueError:
-            raise ValueError(f"{flag} expected integer, got {tok!r}")
+        except ValueError as exc:
+            raise ValueError(f"{flag} expected integer, got {tok!r}") from exc
         if not (0 <= n <= 255):
             raise ValueError(f"{flag} value out of range (0-255): {n}")
         out.append(n)
@@ -273,21 +273,30 @@ def build_parser() -> argparse.ArgumentParser:
         action=_CommaSeparatedAppend,
         metavar="VAL",
         default=None,
-        help="Exclude messages by RT address. Comma-separated, repeatable. Merges with config file.",
+        help=(
+            "Exclude messages by RT address. Comma-separated, repeatable. "
+            "Merges with config file."
+        ),
     )
     decode_parser.add_argument(
         "--exclude-buses",
         action=_CommaSeparatedAppend,
         metavar="VAL",
         default=None,
-        help="Exclude messages by bus (A, B). Comma-separated, repeatable. Merges with config file.",
+        help=(
+            "Exclude messages by bus (A, B). Comma-separated, repeatable. "
+            "Merges with config file."
+        ),
     )
     decode_parser.add_argument(
         "--exclude-subaddresses",
         action=_CommaSeparatedAppend,
         metavar="VAL",
         default=None,
-        help="Exclude messages by subaddress. Comma-separated, repeatable. Merges with config file.",
+        help=(
+            "Exclude messages by subaddress. Comma-separated, repeatable. "
+            "Merges with config file."
+        ),
     )
     decode_parser.add_argument(
         "--include-types",
@@ -1129,11 +1138,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "decode":
         return _run_decode(args)
-    elif args.command == "count":
+    if args.command == "count":
         return _run_count(args)
-    elif args.command == "dump":
+    if args.command == "dump":
         return _run_dump(args)
-    else:
-        # No subcommand given — a usage error, not a runtime failure.
-        parser.print_help()
-        return EXIT_USAGE
+    # No subcommand given — a usage error, not a runtime failure.
+    parser.print_help()
+    return EXIT_USAGE

@@ -108,6 +108,7 @@ cargo cov-ci                                     # coverage gate (alias in rust/
 poetry -C python run pytest                      # all tests
 poetry -C python run pytest tests/test_e2e.py -k delta -v
 poetry -C python run mypy src                    # strict type check (CI-gated)
+poetry -C python run pylint src/mie_decoder      # lint (CI-gated, fails below 10/10)
 poetry -C python run pytest --cov               # coverage gate (fail_under=88 in pyproject.toml)
 poetry -C python run python ../tests/conformance/run.py
 
@@ -432,6 +433,7 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 | `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `rust/tests/integration.rs` + `rust/tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (84% line / 83% region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
 | `python` | `poetry sync` + `poetry run pytest`; `poetry check --strict --lock` + `poetry build` Linux/3.12-only | 5 versions × Linux (3.10–3.14), 2 versions × Windows (3.12, 3.14) | Block merge |
 | `mypy` | `poetry run mypy src` — strict type check, analyzed as Python 3.10 (config in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
+| `pylint` | `poetry run pylint src/mie_decoder` — lints the package; curated disables + line length in `python/pyproject.toml` `[tool.pylint.*]` (gate fails below 10/10) | `ubuntu-latest` (3.12) | Block merge |
 | `python-coverage` | `poetry run pytest --cov` — 88% combined line+branch floor (`fail_under` in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
