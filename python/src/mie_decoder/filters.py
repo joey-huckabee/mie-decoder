@@ -99,5 +99,6 @@ def apply_filters(
 
     logger.info(
         "Filter results: %d passed, %d excluded",
-        passed_count, excluded_count,
+        passed_count,
+        excluded_count,
     )

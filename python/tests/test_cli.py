@@ -48,9 +48,7 @@ class TestValidators:
 
     @pytest.mark.parametrize("value", [0, 11, -1])
     def test_int_range_rejects_out_of_range(self, value: int) -> None:
-        with pytest.raises(
-            ValueError, match=r"invalid --x: .*; valid range: \[1, 10\]"
-        ):
+        with pytest.raises(ValueError, match=r"invalid --x: .*; valid range: \[1, 10\]"):
             cli._validate_int_range(value, "--x", 1, 10)
 
     def test_positive_finite_accepts(self) -> None:
@@ -58,9 +56,7 @@ class TestValidators:
 
     @pytest.mark.parametrize("value", [0.0, -1.0, float("inf"), float("nan")])
     def test_positive_finite_rejects(self, value: float) -> None:
-        with pytest.raises(
-            ValueError, match="must be a finite value greater than 0"
-        ):
+        with pytest.raises(ValueError, match="must be a finite value greater than 0"):
             cli._validate_positive_finite(value, "--hz")
 
     def test_nonempty_accepts(self) -> None:
@@ -200,82 +196,47 @@ class TestClassifyDecodeError:
         assert cli._classify_decode_error(exc) == EXIT_MERGE_INCOMPATIBLE
         assert "Error:" in capsys.readouterr().err
 
-    def test_input_output_collision(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        assert (
-            cli._classify_decode_error(MieInputOutputCollisionError("p"))
-            == EXIT_RUNTIME
-        )
+    def test_input_output_collision(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli._classify_decode_error(MieInputOutputCollisionError("p")) == EXIT_RUNTIME
         assert "Error:" in capsys.readouterr().err
 
     def test_clobber_refused(self, capsys: pytest.CaptureFixture[str]) -> None:
-        assert (
-            cli._classify_decode_error(MieClobberRefusedError("p")) == EXIT_RUNTIME
-        )
+        assert cli._classify_decode_error(MieClobberRefusedError("p")) == EXIT_RUNTIME
         assert "Error:" in capsys.readouterr().err
 
     def test_no_valid_records(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli._classify_decode_error(MieNoValidRecordsError("p", 64)) == EXIT_NO_RECORDS
+        assert "Error:" in capsys.readouterr().err
+
+    def test_homogeneous_payload(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli._classify_decode_error(MieHomogeneousPayloadError("p", 0, 4)) == EXIT_NO_RECORDS
+        assert "Error:" in capsys.readouterr().err
+
+    def test_timestamp_format_mismatch(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert (
-            cli._classify_decode_error(MieNoValidRecordsError("p", 64))
+            cli._classify_decode_error(MieTimestampFormatMismatchError(0, 3, 2, 8))
             == EXIT_NO_RECORDS
         )
         assert "Error:" in capsys.readouterr().err
 
-    def test_homogeneous_payload(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        assert (
-            cli._classify_decode_error(MieHomogeneousPayloadError("p", 0, 4))
-            == EXIT_NO_RECORDS
-        )
+    def test_unrecoverable_sync_loss(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli._classify_decode_error(MieUnrecoverableSyncLossError(0x10, 3)) == EXIT_SYNC_LOSS
         assert "Error:" in capsys.readouterr().err
 
-    def test_timestamp_format_mismatch(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        assert (
-            cli._classify_decode_error(
-                MieTimestampFormatMismatchError(0, 3, 2, 8)
-            )
-            == EXIT_NO_RECORDS
-        )
-        assert "Error:" in capsys.readouterr().err
-
-    def test_unrecoverable_sync_loss(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        assert (
-            cli._classify_decode_error(MieUnrecoverableSyncLossError(0x10, 3))
-            == EXIT_SYNC_LOSS
-        )
-        assert "Error:" in capsys.readouterr().err
-
-    def test_broken_pipe_returns_ok_without_print(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_broken_pipe_returns_ok_without_print(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert cli._classify_decode_error(BrokenPipeError()) == EXIT_OK
         assert capsys.readouterr().err == ""
 
-    def test_writer_error_uses_distinct_message(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_writer_error_uses_distinct_message(self, capsys: pytest.CaptureFixture[str]) -> None:
         exc = MieWriterError("stdout", OSError("disk full"))
         assert cli._classify_decode_error(exc) == EXIT_RUNTIME
         assert "Error writing output" in capsys.readouterr().err
 
-    def test_non_monotonic_input(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        assert (
-            cli._classify_decode_error(MieNonMonotonicInputError(0, "p", 5, 4))
-            == EXIT_RUNTIME
-        )
+    def test_non_monotonic_input(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli._classify_decode_error(MieNonMonotonicInputError(0, "p", 5, 4)) == EXIT_RUNTIME
         assert "Error:" in capsys.readouterr().err
 
-    def test_generic_decoder_error_falls_through(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_generic_decoder_error_falls_through(self, capsys: pytest.CaptureFixture[str]) -> None:
         # A MieRecordError that is not one of the specific handled subtypes
         # hits the generic "Decode failed" arm (exit 1).
         assert cli._classify_decode_error(MieRecordError(0x20, "boom")) == EXIT_RUNTIME
@@ -315,10 +276,7 @@ class TestMergeOutputCollision:
 
     def test_no_collision_distinct_paths(self, tmp_path: Path) -> None:
         out = tmp_path / "out.csv"
-        assert (
-            cli._merge_output_collision(out, [tmp_path / "a.mie", tmp_path / "b.mie"])
-            is None
-        )
+        assert cli._merge_output_collision(out, [tmp_path / "a.mie", tmp_path / "b.mie"]) is None
 
 
 class TestCheckMergeOutputCollision:
@@ -329,7 +287,9 @@ class TestCheckMergeOutputCollision:
     def test_no_output_skips(self) -> None:
         args = SimpleNamespace(output=None)
         rc = cli._check_merge_output_collision(
-            args, [Path("a.mie"), Path("b.mie")], [object(), object()]  # type: ignore[arg-type]
+            args,
+            [Path("a.mie"), Path("b.mie")],
+            [object(), object()],  # type: ignore[arg-type]
         )
         assert rc is None
 
@@ -340,7 +300,9 @@ class TestCheckMergeOutputCollision:
         f.write_bytes(b"x")
         args = SimpleNamespace(output=f)
         rc = cli._check_merge_output_collision(
-            args, [tmp_path / "b.mie", f], [object(), object()]  # type: ignore[arg-type]
+            args,
+            [tmp_path / "b.mie", f],
+            [object(), object()],  # type: ignore[arg-type]
         )
         assert rc == EXIT_RUNTIME
         assert "Error:" in capsys.readouterr().err

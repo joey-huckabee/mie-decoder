@@ -95,9 +95,7 @@ def configure_logging(
         root_logger.removeHandler(handler)
 
     handler = logging.StreamHandler(target_stream)  # type: ignore[arg-type]
-    handler.setFormatter(
-        logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
-    )
+    handler.setFormatter(logging.Formatter(fmt=LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
 
     root_logger.setLevel(numeric_level)
     root_logger.addHandler(handler)

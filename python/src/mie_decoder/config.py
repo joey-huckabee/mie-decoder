@@ -50,31 +50,41 @@ _TYPE_NAME_MAP: dict[str, int] = {m.name.upper(): m.value for m in MessageType}
 #: Accepted logging.level values (case-insensitive). Mirrors the Rust
 #: log::Level::parse table so both implementations reject the same
 #: inputs at config load time.
-_VALID_LOG_LEVELS: frozenset[str] = frozenset({
-    "DEBUG", "INFO", "WARNING", "WARN", "ERROR", "CRITICAL", "OFF",
-})
+_VALID_LOG_LEVELS: frozenset[str] = frozenset(
+    {
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "WARN",
+        "ERROR",
+        "CRITICAL",
+        "OFF",
+    }
+)
 
 #: L2-CFG-009 schema membership. Any [section] key not in this set
 #: triggers an unknown-key WARN at load time.
-_KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset({
-    ("logging", "level"),
-    ("decode", "time_format"),
-    ("decode", "strict"),
-    ("decode", "error_mode"),
-    ("decode", "allow_partial"),
-    ("decode", "detect_records"),
-    ("decode", "lookahead_records"),
-    ("decode", "standard_tick_rate_hz"),
-    ("output", "format"),
-    ("output", "no_clobber"),
-    ("mux", "enabled"),
-    ("mux", "delimiter"),
-    ("mux", "field"),
-    ("filter", "exclude_types"),
-    ("filter", "exclude_rts"),
-    ("filter", "exclude_buses"),
-    ("filter", "exclude_subaddresses"),
-})
+_KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("logging", "level"),
+        ("decode", "time_format"),
+        ("decode", "strict"),
+        ("decode", "error_mode"),
+        ("decode", "allow_partial"),
+        ("decode", "detect_records"),
+        ("decode", "lookahead_records"),
+        ("decode", "standard_tick_rate_hz"),
+        ("output", "format"),
+        ("output", "no_clobber"),
+        ("mux", "enabled"),
+        ("mux", "delimiter"),
+        ("mux", "field"),
+        ("filter", "exclude_types"),
+        ("filter", "exclude_rts"),
+        ("filter", "exclude_buses"),
+        ("filter", "exclude_subaddresses"),
+    }
+)
 
 #: L2-DEC-015 valid range for ``decode.detect_records``. Values outside
 #: this range are rejected at config-load time with a clear error.
@@ -97,8 +107,7 @@ def _require_bool(section: str, key: str, value: object) -> bool:
     # here, no special-case needed.
     if not isinstance(value, bool):
         raise ValueError(
-            f"Invalid [{section}] {key}: expected boolean, got "
-            f"{type(value).__name__} ({value!r})"
+            f"Invalid [{section}] {key}: expected boolean, got {type(value).__name__} ({value!r})"
         )
     return value
 
@@ -115,15 +124,13 @@ def _require_rt_sa_range(  # pylint: disable=redefined-outer-name
     for v in values:
         if isinstance(v, bool) or not isinstance(v, int):
             raise ValueError(
-                f"Invalid filter.{field} entry: expected integer, got "
-                f"{type(v).__name__} ({v!r})"
+                f"Invalid filter.{field} entry: expected integer, got {type(v).__name__} ({v!r})"
             )
         if not (0 <= v <= 31):
-            raise ValueError(
-                f"filter.{field} value out of MIL-STD-1553 range [0, 31]: {v}"
-            )
+            raise ValueError(f"filter.{field} value out of MIL-STD-1553 range [0, 31]: {v}")
         out.add(v)
     return out
+
 
 #: Map of bus name strings to Bus enum values.
 _BUS_NAME_MAP: dict[str, Bus] = {"A": Bus.A, "B": Bus.B}
@@ -299,11 +306,7 @@ class DecoderConfig:
         new_fmt = kwargs.get("output_format") or self.output_format
         # bool overrides need an explicit None check; `or` would let a
         # config-file True be reset to False by an omitted CLI flag.
-        new_nc = (
-            kwargs["no_clobber"]
-            if kwargs.get("no_clobber") is not None
-            else self.no_clobber
-        )
+        new_nc = kwargs["no_clobber"] if kwargs.get("no_clobber") is not None else self.no_clobber
         new_ap = (
             kwargs["allow_partial"]
             if kwargs.get("allow_partial") is not None
@@ -325,15 +328,11 @@ class DecoderConfig:
             else self.standard_tick_rate_hz
         )
         new_mux_enabled = (
-            kwargs["mux_enabled"]
-            if kwargs.get("mux_enabled") is not None
-            else self.mux_enabled
+            kwargs["mux_enabled"] if kwargs.get("mux_enabled") is not None else self.mux_enabled
         )
         new_mux_delimiter = kwargs.get("mux_delimiter") or self.mux_delimiter
         new_mux_field = (
-            kwargs["mux_field"]
-            if kwargs.get("mux_field") is not None
-            else self.mux_field
+            kwargs["mux_field"] if kwargs.get("mux_field") is not None else self.mux_field
         )
 
         # Merge filter overrides — CLI adds to (not replaces) config file
@@ -344,15 +343,13 @@ class DecoderConfig:
             exclude_rts=self.filters.exclude_rts | set(kwargs.get("exclude_rts") or []),
             exclude_buses=self.filters.exclude_buses | set(kwargs.get("exclude_buses") or []),
             exclude_subaddresses=(
-                self.filters.exclude_subaddresses
-                | set(kwargs.get("exclude_subaddresses") or [])
+                self.filters.exclude_subaddresses | set(kwargs.get("exclude_subaddresses") or [])
             ),
             include_types=self.filters.include_types | set(kwargs.get("include_types") or []),
             include_rts=self.filters.include_rts | set(kwargs.get("include_rts") or []),
             include_buses=self.filters.include_buses | set(kwargs.get("include_buses") or []),
             include_subaddresses=(
-                self.filters.include_subaddresses
-                | set(kwargs.get("include_subaddresses") or [])
+                self.filters.include_subaddresses | set(kwargs.get("include_subaddresses") or [])
             ),
         )
 
@@ -423,10 +420,7 @@ def _parse_type_names(names: Sequence[object]) -> set[int]:
             result.add(code)
         else:
             valid = ", ".join(sorted(_TYPE_NAME_MAP.keys()))
-            raise ValueError(
-                f"Unknown message type name: {name!r}. "
-                f"Valid names: {valid}"
-            )
+            raise ValueError(f"Unknown message type name: {name!r}. Valid names: {valid}")
     return result
 
 
@@ -503,8 +497,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     log_level_raw = logging_section.get("level", "WARNING")
     if not isinstance(log_level_raw, str):
         raise ValueError(
-            f"Invalid [logging] level: expected string, got "
-            f"{type(log_level_raw).__name__}"
+            f"Invalid [logging] level: expected string, got {type(log_level_raw).__name__}"
         )
     log_level = log_level_raw.upper()
     if log_level not in _VALID_LOG_LEVELS:
@@ -516,10 +509,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     # Timestamp format
     tf_str = decode_section.get("time_format", "auto").lower()
     if tf_str not in _TIME_FORMAT_MAP:
-        raise ValueError(
-            f"Invalid time_format: {tf_str!r}. "
-            f"Valid: auto, irig, standard"
-        )
+        raise ValueError(f"Invalid time_format: {tf_str!r}. Valid: auto, irig, standard")
     time_format = _TIME_FORMAT_MAP[tf_str]
 
     # Strict mode (L2-CFG-010: TOML boolean only; no coercion).
@@ -528,9 +518,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     # Error mode
     em_str = decode_section.get("error_mode", "separate").lower()
     if em_str not in _ERROR_MODE_MAP:
-        raise ValueError(
-            f"Invalid error_mode: {em_str!r}. Valid: separate, inline"
-        )
+        raise ValueError(f"Invalid error_mode: {em_str!r}. Valid: separate, inline")
     error_mode = _ERROR_MODE_MAP[em_str]
 
     # Filters
@@ -553,13 +541,9 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     # the only supported value).
     output_format = output_section.get("format", "csv")
     if output_format != "csv":
-        raise ValueError(
-            f"Invalid output.format: {output_format!r}. Valid: csv"
-        )
+        raise ValueError(f"Invalid output.format: {output_format!r}. Valid: csv")
     # L2-WRT-017: refuse to overwrite existing destination.
-    no_clobber = _require_bool(
-        "output", "no_clobber", output_section.get("no_clobber", False)
-    )
+    no_clobber = _require_bool("output", "no_clobber", output_section.get("no_clobber", False))
     # L1-EXIT-004: --allow-partial / decode.allow_partial — turns
     # unrecoverable mid-file sync loss into a `.partial` commit + exit 0
     # instead of exit 3.
@@ -575,10 +559,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         raise ValueError(
             f"Invalid decode.detect_records: {detect_records_raw!r}; must be an integer"
         )
-    if (
-        detect_records_raw < DETECT_RECORDS_MIN
-        or detect_records_raw > DETECT_RECORDS_MAX
-    ):
+    if detect_records_raw < DETECT_RECORDS_MIN or detect_records_raw > DETECT_RECORDS_MAX:
         raise ValueError(
             f"Invalid decode.detect_records: {detect_records_raw}. "
             f"Valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]"
@@ -610,14 +591,11 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     if "standard_tick_rate_hz" in decode_section:
         raw_hz = decode_section["standard_tick_rate_hz"]
         if isinstance(raw_hz, bool) or not isinstance(raw_hz, (int, float)):
-            raise ValueError(
-                f"Invalid decode.standard_tick_rate_hz: {raw_hz!r}; must be a number"
-            )
+            raise ValueError(f"Invalid decode.standard_tick_rate_hz: {raw_hz!r}; must be a number")
         hz = float(raw_hz)
         if not math.isfinite(hz) or hz <= 0.0:
             raise ValueError(
-                f"Invalid decode.standard_tick_rate_hz: {hz}. "
-                f"Must be a finite value greater than 0"
+                f"Invalid decode.standard_tick_rate_hz: {hz}. Must be a finite value greater than 0"
             )
         standard_tick_rate_hz = hz
 
@@ -629,8 +607,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     mux_delimiter_raw = mux_section.get("delimiter", ".")
     if not isinstance(mux_delimiter_raw, str) or mux_delimiter_raw == "":
         raise ValueError(
-            f"Invalid mux.delimiter: {mux_delimiter_raw!r}; "
-            f"must be a non-empty string"
+            f"Invalid mux.delimiter: {mux_delimiter_raw!r}; must be a non-empty string"
         )
     mux_delimiter = mux_delimiter_raw
     mux_field_raw = mux_section.get("field", 4)

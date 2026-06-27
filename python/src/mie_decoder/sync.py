@@ -133,13 +133,16 @@ def validate_record(
     lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
 ) -> bool:
     """Return whether a valid MIE record starts at the given offset."""
-    return validate_record_detailed(
-        data,
-        offset,
-        file_len,
-        ts_format,
-        lookahead_records,
-    ) is None
+    return (
+        validate_record_detailed(
+            data,
+            offset,
+            file_len,
+            ts_format,
+            lookahead_records,
+        )
+        is None
+    )
 
 
 def validate_record_detailed(
@@ -282,17 +285,15 @@ def find_first_record(
         if validate_record(data, offset, file_len, ts_format, lookahead_records):
             if offset > 0:
                 logger.info(
-                    "File header detected: %d bytes before first record "
-                    "at offset 0x%X",
-                    offset, offset,
+                    "File header detected: %d bytes before first record at offset 0x%X",
+                    offset,
+                    offset,
                 )
             else:
                 logger.debug("First record at offset 0 (no header)")
             return offset
 
-    logger.warning(
-        "No valid record found in first %d bytes of file", scan_end
-    )
+    logger.warning("No valid record found in first %d bytes of file", scan_end)
     return None
 
 
@@ -323,10 +324,10 @@ def is_homogeneous_payload(
     total = HOMOGENEITY_SAMPLE_RECORDS * record_bytes
     if offset + total > len(data):
         return False
-    first = bytes(data[offset:offset + record_bytes])
+    first = bytes(data[offset : offset + record_bytes])
     for i in range(1, HOMOGENEITY_SAMPLE_RECORDS):
         rec_start = offset + i * record_bytes
-        other = bytes(data[rec_start:rec_start + record_bytes])
+        other = bytes(data[rec_start : rec_start + record_bytes])
         # Compare positions [0..2) (Type Word) and [8..record_bytes)
         # (Cmd + payload). Skip bytes 2..8 (IRIG timestamp triple).
         # For Standard-format records (4-byte timestamp), this skip
@@ -427,13 +428,15 @@ def recover_sync(
             skipped = candidate - offset
             logger.info(
                 "Sync recovered at offset 0x%X (skipped %d bytes from 0x%X)",
-                candidate, skipped, offset,
+                candidate,
+                skipped,
+                offset,
             )
             return candidate
 
     logger.error(
-        "Sync recovery failed — no valid record found within %d bytes "
-        "of offset 0x%X",
-        max_scan, offset,
+        "Sync recovery failed — no valid record found within %d bytes of offset 0x%X",
+        max_scan,
+        offset,
     )
     return None

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import pytest
 
@@ -213,4 +212,5 @@ class TestConfigureLogging:
         log = logging.getLogger(LOGGER_NAME)
         assert len(log.handlers) == 1
         import sys
+
         assert log.handlers[0].stream is sys.stderr  # type: ignore[attr-defined]

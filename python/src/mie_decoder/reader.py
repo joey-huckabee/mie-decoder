@@ -185,9 +185,7 @@ class MieFileReader:
         # L2-WRT-020: resolve the per-file MUX value once, from the file name.
         # Shared by reference across every message this reader yields.
         self._mux: str | None = (
-            mux_from_filename(self._path.name, mux_delimiter, mux_field)
-            if mux_enabled
-            else None
+            mux_from_filename(self._path.name, mux_delimiter, mux_field) if mux_enabled else None
         )
         if not self._path.exists():
             raise MieFileNotFoundError(str(self._path))
@@ -195,10 +193,12 @@ class MieFileReader:
         if self._file_size == 0:
             raise MieFileEmptyError(str(self._path))
         logger.debug(
-            "Initialized reader for %s (%d bytes, strict=%s, "
-            "time_format=%s, detect_records=%d)",
-            self._path, self._file_size, self._strict,
-            self._time_format.name, self._detect_records,
+            "Initialized reader for %s (%d bytes, strict=%s, time_format=%s, detect_records=%d)",
+            self._path,
+            self._file_size,
+            self._strict,
+            self._time_format.name,
+            self._detect_records,
         )
 
     @property
@@ -262,7 +262,8 @@ class MieFileReader:
 
                 # ── Find first record (header detection) ───────
                 start_offset = find_first_record(
-                    mm, file_len,
+                    mm,
+                    file_len,
                     ts_format=resolved_format,
                     lookahead_records=self._lookahead_records,
                 )
@@ -276,8 +277,11 @@ class MieFileReader:
                         MAX_SCAN_BYTES,
                         diagnose_header_scan_failure,
                     )
+
                     truncated = diagnose_header_scan_failure(
-                        mm, file_len, ts_format=resolved_format,
+                        mm,
+                        file_len,
+                        ts_format=resolved_format,
                     )
                     if truncated is not None:
                         offset_t, record_bytes, available = truncated
@@ -286,17 +290,19 @@ class MieFileReader:
                                 "First record after header detection is "
                                 "truncated at 0x%X: declared %d bytes, "
                                 "only %d available",
-                                offset_t, record_bytes, available,
+                                offset_t,
+                                record_bytes,
+                                available,
                             )
-                            raise MieFirstRecordTruncatedError(
-                                offset_t, record_bytes, available
-                            )
+                            raise MieFirstRecordTruncatedError(offset_t, record_bytes, available)
                         logger.warning(
                             "First record after header detection is "
                             "truncated at 0x%X: declared %d bytes, "
                             "only %d available — lenient mode terminates "
                             "cleanly with zero records",
-                            offset_t, record_bytes, available,
+                            offset_t,
+                            record_bytes,
+                            available,
                         )
                         return
 
@@ -304,9 +310,7 @@ class MieFileReader:
                     # to exit 2 (and so library callers can react)
                     # rather than silently yielding zero messages.
                     scan_bytes = min(file_len, MAX_SCAN_BYTES)
-                    logger.error(
-                        "No valid records found in %s", self._path.name
-                    )
+                    logger.error("No valid records found in %s", self._path.name)
                     raise MieNoValidRecordsError(str(self._path), scan_bytes)
 
                 # L2-SYN-018: reject pathological homogeneous-payload
@@ -319,16 +323,16 @@ class MieFileReader:
                     HOMOGENEITY_SAMPLE_RECORDS,
                     is_homogeneous_payload,
                 )
+
                 candidate_tw = decode_type_word(read_u16(mm, start_offset))
                 candidate_record_bytes = candidate_tw.word_count * 2
-                if is_homogeneous_payload(
-                    mm, start_offset, candidate_record_bytes
-                ):
+                if is_homogeneous_payload(mm, start_offset, candidate_record_bytes):
                     logger.error(
                         "Pathological homogeneous-payload input at "
                         "offset 0x%X in %s: %d consecutive candidate "
                         "records are byte-identical",
-                        start_offset, self._path.name,
+                        start_offset,
+                        self._path.name,
                         HOMOGENEITY_SAMPLE_RECORDS,
                     )
                     raise MieHomogeneousPayloadError(
@@ -343,7 +347,9 @@ class MieFileReader:
                 # re-detection. Skipped when time_format is explicit.
                 if resolved_format is None:
                     outcome = probe_timestamp_format(
-                        mm, start_offset, self._detect_records,
+                        mm,
+                        start_offset,
+                        self._detect_records,
                     )
                     resolved_format = outcome.format
                     if outcome.confidence == DetectionConfidence.DECISIVE:
@@ -413,7 +419,9 @@ class MieFileReader:
                     # are exactly the cases where forcing is the legitimate
                     # override. resolved_format stays the forced format.
                     outcome = probe_timestamp_format(
-                        mm, start_offset, self._detect_records,
+                        mm,
+                        start_offset,
+                        self._detect_records,
                     )
                     if (
                         outcome.confidence == DetectionConfidence.DECISIVE
@@ -483,24 +491,22 @@ class MieFileReader:
 
                         if self._strict:
                             if validation_failure == ValidationFailure.INVALID_WORD_COUNT:
-                                raise MieInvalidTypeWordError(
-                                    offset, type_raw, tw.word_count
-                                )
+                                raise MieInvalidTypeWordError(offset, type_raw, tw.word_count)
                             if validation_failure == ValidationFailure.RECORD_TRUNCATED:
                                 raise MieRecordTruncatedError(
                                     offset, record_bytes, file_len - offset
                                 )
                             if validation_failure == ValidationFailure.UNKNOWN_MESSAGE_TYPE:
-                                raise MieUnknownTypeWordError(
-                                    offset, type_raw, tw.message_type
-                                )
+                                raise MieUnknownTypeWordError(offset, type_raw, tw.message_type)
                             raise MiePayloadError(
                                 offset,
                                 f"{validation_failure} (raw_type=0x{type_raw:04X})",
                             )
 
                         recovered = recover_sync(
-                            mm, offset, file_len,
+                            mm,
+                            offset,
+                            file_len,
                             ts_format=resolved_format,
                             lookahead_records=self._lookahead_records,
                         )
@@ -515,18 +521,22 @@ class MieFileReader:
                             #   maps to exit 3 (or `.partial` + exit 0
                             #   with --allow-partial).
                             from mie_decoder.sync import MAX_SCAN_BYTES
+
                             bytes_remaining = file_len - offset
                             if bytes_remaining < MAX_SCAN_BYTES:
                                 logger.info(
                                     "Lenient mode: scan exhausted at EOF "
                                     "(offset 0x%X, %d bytes remain < %d "
                                     "scan window); treating as truncation",
-                                    offset, bytes_remaining, MAX_SCAN_BYTES,
+                                    offset,
+                                    bytes_remaining,
+                                    MAX_SCAN_BYTES,
                                 )
                                 break
                             logger.error(
                                 "Unrecoverable sync loss at 0x%X after %d messages",
-                                offset, msg_count,
+                                offset,
+                                msg_count,
                             )
                             raise MieUnrecoverableSyncLossError(offset, sync_losses)
 
@@ -543,13 +553,8 @@ class MieFileReader:
                             read_u16(mm, offset + 6),
                         )
                         if isinstance(timestamp, IrigTimestamp) and timestamp.freerun:
-                            logger.warning(
-                                "Freerun timestamp at 0x%X", offset
-                            )
-                        elif (
-                            isinstance(timestamp, IrigTimestamp)
-                            and not warned_irig_day
-                        ):
+                            logger.warning("Freerun timestamp at 0x%X", offset)
+                        elif isinstance(timestamp, IrigTimestamp) and not warned_irig_day:
                             # PRA-9: the IRIG day-of-year field has a known
                             # firmware-dependent decode discrepancy on some
                             # DDC cards; time-of-day fields are unaffected.
@@ -575,9 +580,7 @@ class MieFileReader:
                         raw_word_count = tw.word_count - 1 - ts_words
                         data_words: tuple[int, ...] = ()
                         if raw_word_count > 0:
-                            data_words = read_u16_array(
-                                mm, cmd_byte_offset, raw_word_count
-                            )
+                            data_words = read_u16_array(mm, cmd_byte_offset, raw_word_count)
 
                         error_code = (
                             ERROR_SPURIOUS_CONTINUATION
@@ -587,7 +590,8 @@ class MieFileReader:
 
                         logger.debug(
                             "SPURIOUS_DATA at 0x%X: %d raw words, %s",
-                            offset, raw_word_count,
+                            offset,
+                            raw_word_count,
                             "continuation" if prev_was_error else "standalone",
                         )
 
@@ -620,16 +624,25 @@ class MieFileReader:
                     # ── Errored record (bit 14 set) ───────────
                     if tw.error:
                         msg = _decode_error_record(
-                            mm, offset, tw, timestamp, cmd,
-                            cmd_byte_offset, ts_words, self._strict,
+                            mm,
+                            offset,
+                            tw,
+                            timestamp,
+                            cmd,
+                            cmd_byte_offset,
+                            ts_words,
+                            self._strict,
                         )
                         # Error records participate in DELTA tracking under
                         # the shared contract: the diagnostic value of
                         # knowing inter-arrival gaps to a flaky RT/MSG is
                         # higher than the cost of including anomaly rows.
                         delta = _compute_delta(
-                            delta_tracker, warned_ooo_keys,
-                            msg.delta_key, timestamp, offset,
+                            delta_tracker,
+                            warned_ooo_keys,
+                            msg.delta_key,
+                            timestamp,
+                            offset,
                             self._standard_tick_rate_hz,
                         )
                         msg = MieMessage(
@@ -661,7 +674,8 @@ class MieFileReader:
                     except ValueError as exc:
                         logger.warning(
                             "Cannot classify at 0x%X: %s — skipping",
-                            offset, exc,
+                            offset,
+                            exc,
                         )
                         offset += record_bytes
                         prev_was_error = False
@@ -671,7 +685,10 @@ class MieFileReader:
                     # aborts via MiePayloadError; lenient mode WARNs and
                     # skips the record.
                     inv = validate_structural_invariants(
-                        tw, cmd, msg_fmt, ts_words,
+                        tw,
+                        cmd,
+                        msg_fmt,
+                        ts_words,
                     )
                     if inv is not None:
                         if self._strict:
@@ -681,7 +698,8 @@ class MieFileReader:
                             )
                         logger.warning(
                             "L2-SYN structural invariant violation at 0x%X: %s; skipping record",
-                            offset, inv.detail,
+                            offset,
+                            inv.detail,
                         )
                         offset += record_bytes
                         prev_was_error = False
@@ -689,8 +707,12 @@ class MieFileReader:
 
                     logger.debug(
                         "Record at 0x%X: type=0x%02X fmt=%s RT%d SA%d %s",
-                        offset, tw.message_type, msg_fmt.name,
-                        cmd.rt, cmd.subaddress, cmd.direction.name,
+                        offset,
+                        tw.message_type,
+                        msg_fmt.name,
+                        cmd.rt,
+                        cmd.subaddress,
+                        cmd.direction.name,
                     )
 
                     # Bound payload reads to this record's byte range so a
@@ -703,7 +725,11 @@ class MieFileReader:
                     record_end = offset + record_bytes
                     payload_byte_offset = cmd_byte_offset + 2
                     cmd2, status, status2, data_words = _extract_payload(
-                        mm, payload_byte_offset, record_end, msg_fmt, cmd,
+                        mm,
+                        payload_byte_offset,
+                        record_end,
+                        msg_fmt,
+                        cmd,
                     )
 
                     # L2-SYN-023 / L2-SYN-027: post-extract Reject-class checks.
@@ -717,7 +743,8 @@ class MieFileReader:
                             )
                         logger.warning(
                             "L2-SYN structural invariant violation at 0x%X: %s; skipping record",
-                            offset, post_inv.detail,
+                            offset,
+                            post_inv.detail,
                         )
                         offset += record_bytes
                         prev_was_error = False
@@ -728,16 +755,18 @@ class MieFileReader:
                     for anomaly in detect_record_anomalies(tw, cmd, status):
                         logger.warning(
                             "L2-SYN anomaly at 0x%X: %s",
-                            offset, anomaly.detail,
+                            offset,
+                            anomaly.detail,
                         )
 
-                    direction_char = (
-                        "T" if cmd.direction == Direction.TRANSMIT else "R"
-                    )
+                    direction_char = "T" if cmd.direction == Direction.TRANSMIT else "R"
                     delta_key = f"{cmd.rt}:{cmd.subaddress}{direction_char}"
                     delta = _compute_delta(
-                        delta_tracker, warned_ooo_keys,
-                        delta_key, timestamp, offset,
+                        delta_tracker,
+                        warned_ooo_keys,
+                        delta_key,
+                        timestamp,
+                        offset,
                         self._standard_tick_rate_hz,
                     )
 
@@ -763,13 +792,15 @@ class MieFileReader:
                     if msg_count % 100_000 == 0:
                         logger.info(
                             "Decoded %d messages (0x%X / 0x%X)",
-                            msg_count, offset, file_len,
+                            msg_count,
+                            offset,
+                            file_len,
                         )
 
         logger.info(
-            "Decode complete: %d messages, %d sync recoveries, "
-            "format=%s, file=%s",
-            msg_count, sync_losses,
+            "Decode complete: %d messages, %d sync recoveries, format=%s, file=%s",
+            msg_count,
+            sync_losses,
             resolved_format.name if resolved_format else "unknown",
             self._path.name,
         )
@@ -798,7 +829,8 @@ def _decode_error_record(
             raise MieUnknownErrorCodeError(offset, error_code)
         logger.warning(
             "Unknown DDC error code 0x%04X at offset 0x%X",
-            error_code, offset,
+            error_code,
+            offset,
         )
 
     payload_words = tw.word_count - 1 - ts_words - 1 - 1
@@ -807,19 +839,22 @@ def _decode_error_record(
         data_words = read_u16_array(mm, cmd_byte_offset + 2, payload_words)
 
     try:
-        msg_fmt = classify_message_format(
-            tw.message_type, cmd, tw.word_count, ts_words
-        )
+        msg_fmt = classify_message_format(tw.message_type, cmd, tw.word_count, ts_words)
     except ValueError:
         msg_fmt = MessageFormat.RECEIVE
 
     from mie_decoder.models import DDC_ERROR_DESCRIPTIONS
+
     desc = DDC_ERROR_DESCRIPTIONS.get(error_code, "Unknown")
     logger.info(
-        "Error record at 0x%X: RT%d SA%d %s, code=0x%04X (%s), "
-        "%d payload words",
-        offset, cmd.rt, cmd.subaddress, cmd.direction.name,
-        error_code, desc, payload_words,
+        "Error record at 0x%X: RT%d SA%d %s, code=0x%04X (%s), %d payload words",
+        offset,
+        cmd.rt,
+        cmd.subaddress,
+        cmd.direction.name,
+        error_code,
+        desc,
+        payload_words,
     )
 
     return MieMessage(
@@ -871,7 +906,10 @@ def _compute_delta(
                 "Non-monotonic timestamp at 0x%X for RT/MSG %s: "
                 "prev_us=%d curr_us=%d (further out-of-order occurrences "
                 "for this key suppressed)",
-                offset, key, prev, curr_us,
+                offset,
+                key,
+                prev,
+                curr_us,
             )
         return None
     return (curr_us - prev) / 1_000_000.0

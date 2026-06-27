@@ -76,10 +76,8 @@ def hex_dump_raw(
 
     for i in range(0, len(chunk), 16):
         addr = start_offset + i
-        hex_part = " ".join(f"{b:02X}" for b in chunk[i:i + 16])
-        ascii_part = "".join(
-            chr(b) if 32 <= b < 127 else "." for b in chunk[i:i + 16]
-        )
+        hex_part = " ".join(f"{b:02X}" for b in chunk[i : i + 16])
+        ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk[i : i + 16])
         print(
             f"  {addr:08X}  {hex_part:<48s}  |{ascii_part}|",
             file=out,
@@ -141,7 +139,8 @@ def hex_dump_records(
             # (subject to the configured level), in addition to the inline note.
             logger.warning(
                 "dump: invalid word_count=%d at 0x%X; stopping record scan",
-                tw.word_count, offset,
+                tw.word_count,
+                offset,
             )
             break
 
@@ -155,7 +154,9 @@ def hex_dump_records(
             logger.warning(
                 "dump: truncated record at 0x%X (%d bytes needed, %d available); "
                 "stopping record scan",
-                offset, record_bytes, file_len - offset,
+                offset,
+                record_bytes,
+                file_len - offset,
             )
             break
 
@@ -170,7 +171,7 @@ def hex_dump_records(
 
         # Record header
         print(
-            f"{'─'*72}\n"
+            f"{'─' * 72}\n"
             f"  Record #{record_num}  @  0x{offset:08X}  "
             f"({record_bytes} bytes, {tw.word_count} words)\n"
             f"  Type: 0x{tw.raw:04X}  →  {type_name}  "
@@ -184,13 +185,11 @@ def hex_dump_records(
         )
 
         # Hex dump of the full record
-        record_data = data[offset:offset + record_bytes]
+        record_data = data[offset : offset + record_bytes]
         for i in range(0, len(record_data), 16):
             addr = offset + i
-            hex_part = " ".join(f"{b:02X}" for b in record_data[i:i + 16])
-            ascii_part = "".join(
-                chr(b) if 32 <= b < 127 else "." for b in record_data[i:i + 16]
-            )
+            hex_part = " ".join(f"{b:02X}" for b in record_data[i : i + 16])
+            ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in record_data[i : i + 16])
             print(
                 f"    {addr:08X}  {hex_part:<48s}  |{ascii_part}|",
                 file=out,
@@ -201,6 +200,6 @@ def hex_dump_records(
         record_num += 1
 
     print(
-        f"{'─'*72}\n{record_num} records dumped.",
+        f"{'─' * 72}\n{record_num} records dumped.",
         file=out,
     )

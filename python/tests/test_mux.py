@@ -25,10 +25,7 @@ def test_mux_from_filename() -> None:
     name = _OP_NAME
     # Default field 4 → recorder identity; other operator files match.
     assert mux_from_filename(name, ".", 4) == "aa"
-    assert (
-        mux_from_filename("full_loadout.draw.data.1553.s10.unused.mie_irig", ".", 4)
-        == "s10"
-    )
+    assert mux_from_filename("full_loadout.draw.data.1553.s10.unused.mie_irig", ".", 4) == "s10"
     # Negative index counts from the end (-3 == index 4 here).
     assert mux_from_filename(name, ".", -3) == "aa"
     assert mux_from_filename(name, ".", 0) == "full_loadout"

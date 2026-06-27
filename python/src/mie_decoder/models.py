@@ -177,13 +177,15 @@ ERROR_TOO_MANY_WORDS: Final[int] = 0x0140
 ERROR_UNKNOWN_DDC: Final[int] = 0x0150
 
 #: Set of all known DDC hardware error codes.
-KNOWN_DDC_ERROR_CODES: frozenset[int] = frozenset({
-    ERROR_MANCHESTER_PARITY,
-    ERROR_NO_RESPONSE,
-    ERROR_INVERTED_SYNC,
-    ERROR_TOO_MANY_WORDS,
-    ERROR_UNKNOWN_DDC,
-})
+KNOWN_DDC_ERROR_CODES: frozenset[int] = frozenset(
+    {
+        ERROR_MANCHESTER_PARITY,
+        ERROR_NO_RESPONSE,
+        ERROR_INVERTED_SYNC,
+        ERROR_TOO_MANY_WORDS,
+        ERROR_UNKNOWN_DDC,
+    }
+)
 
 #: Human-readable descriptions for DDC error codes.
 DDC_ERROR_DESCRIPTIONS: dict[int, str] = {
@@ -206,10 +208,12 @@ ERROR_SPURIOUS_CONTINUATION: Final[int] = 0x2000
 ERROR_SPURIOUS_STANDALONE: Final[int] = 0x2001
 
 #: Set of all known MIE-Decoder custom error codes.
-KNOWN_CUSTOM_ERROR_CODES: frozenset[int] = frozenset({
-    ERROR_SPURIOUS_CONTINUATION,
-    ERROR_SPURIOUS_STANDALONE,
-})
+KNOWN_CUSTOM_ERROR_CODES: frozenset[int] = frozenset(
+    {
+        ERROR_SPURIOUS_CONTINUATION,
+        ERROR_SPURIOUS_STANDALONE,
+    }
+)
 
 #: All known error codes (DDC + custom).
 ALL_KNOWN_ERROR_CODES: frozenset[int] = KNOWN_DDC_ERROR_CODES | KNOWN_CUSTOM_ERROR_CODES
@@ -238,10 +242,8 @@ class IrigTimestamp:
     def to_total_microseconds(self) -> int:
         """Convert to absolute microseconds from start of year."""
         return (
-            (self.day * 86_400 + self.hour * 3_600 + self.minute * 60 + self.second)
-            * 1_000_000
-            + self.microsecond
-        )
+            self.day * 86_400 + self.hour * 3_600 + self.minute * 60 + self.second
+        ) * 1_000_000 + self.microsecond
 
     def to_microseconds(  # pylint: disable=unused-argument
         self, standard_tick_rate_hz: float | None = None
@@ -267,10 +269,7 @@ class IrigTimestamp:
         range microsecond still gets a well-formed string.
         """
         micro = self.microsecond % 1_000_000
-        return (
-            f"{self.day}:{self.hour:02d}:{self.minute:02d}"
-            f":{self.second:02d}.{micro:06d}"
-        )
+        return f"{self.day}:{self.hour:02d}:{self.minute:02d}:{self.second:02d}.{micro:06d}"
 
 
 @dataclass(frozen=True, slots=True)
