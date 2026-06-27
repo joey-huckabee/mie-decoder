@@ -101,7 +101,7 @@ jobs:
 
       # --------------------------------------------------------------------------
       # Install Rust toolchain (stable) with LLVM tools for coverage support.
-      # This repo pins no rust-toolchain file; it tracks stable (MSRV 1.85).
+      # This repo pins no rust-toolchain file; it tracks stable (MSRV 1.88).
       # ---------------------------------------------------------------------------
       - name: Install Rust (stable + llvm-tools)
         uses: dtolnay/rust-toolchain@stable

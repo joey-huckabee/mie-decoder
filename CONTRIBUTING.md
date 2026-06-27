@@ -10,8 +10,8 @@ workflow, and commit conventions.
 
 ## Prerequisites
 
-- Rust toolchain ≥ 1.85 (`rustup toolchain install stable`). The crate
-  uses edition 2024.
+- Rust toolchain ≥ 1.88 (`rustup toolchain install stable`). The crate
+  uses edition 2024; the 1.88 floor comes from `memmap2`.
 - Python 3.10 or newer and Poetry for work under `python/`.
 - A Bash shell. On Windows, Git for Windows ships **Git Bash**, which
   Git invokes for hooks transparently — no extra setup.

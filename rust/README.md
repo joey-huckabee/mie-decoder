@@ -4,7 +4,8 @@ The Rust implementation of MIE-Decoder: a streaming, constant-memory decoder for
 DDC MIL-STD-1553 MIE binary recording files, with a hand-rolled CLI and a single
 native release binary.
 
-Edition 2024, MSRV 1.85. The crate has exactly one external dependency
+Edition 2024, MSRV 1.88 (`memmap2` requires ≥ 1.88; edition 2024 itself only
+floors at 1.85). The crate has exactly one external dependency
 (`memmap2`); argument parsing, CSV writing, TOML config, logging, and error
 types are all hand-rolled.
 
