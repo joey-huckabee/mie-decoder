@@ -26,8 +26,9 @@ full release workflow.
   change** — decoded output is byte-identical and the cross-implementation
   conformance contract is unaffected. Building from source now runs from the
   crate directory (`cd rust && cargo build`; cargo's `-C` flag is still
-  unstable); CI, the pre-commit hook, the conformance runner, and the
-  trace-matrix generator were updated to match.
+  unstable); CI, the pre-commit hook, the coverage wrapper
+  (`scripts/coverage.sh`), the conformance runner, and the trace-matrix
+  generator were updated to match.
 
 ### Documentation
 
