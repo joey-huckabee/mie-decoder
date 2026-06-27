@@ -33,7 +33,7 @@ import math
 import sys
 import time
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from mie_decoder import __version__
 from mie_decoder.exceptions import (
@@ -50,6 +50,14 @@ from mie_decoder.exceptions import (
     MieWriterError,
 )
 from mie_decoder.logger import configure_logging
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from mie_decoder.config import DecoderConfig
+    from mie_decoder.models import ErrorMode, MieMessage
+    from mie_decoder.reader import MieFileReader
+    from mie_decoder.writer import WriteOptions, WriteOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -562,6 +570,331 @@ def _merge_output_collision(output: Path, inputs: list[Path]) -> str | None:
     return None
 
 
+def _validate_int_range(value: int, flag: str, lo: int, hi: int) -> int:
+    """Return ``value`` if within ``[lo, hi]``, else raise ``ValueError``.
+
+    The bounds mirror the TOML load-time checks in ``config.load_config``;
+    validating the CLI value here (post-parse) keeps an out-of-range value a
+    usage error (the caller maps ``ValueError`` to EXIT_USAGE) rather than
+    argparse's default exit code 2.
+    """
+    if not (lo <= value <= hi):
+        raise ValueError(f"invalid {flag}: {value}; valid range: [{lo}, {hi}]")
+    return value
+
+
+def _validate_positive_finite(value: float, flag: str) -> float:
+    """Return ``value`` if finite and strictly positive, else raise
+    ``ValueError`` (L2-DEC-017 / L2-CLI-012)."""
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(
+            f"invalid {flag}: {value}; must be a finite value greater than 0"
+        )
+    return value
+
+
+def _validate_nonempty(value: str, flag: str) -> str:
+    """Return ``value`` if non-empty, else raise ``ValueError``."""
+    if value == "":
+        raise ValueError(f"invalid {flag}: must be a non-empty string")
+    return value
+
+
+def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
+    """Build the passthrough CLI overrides that need no validation.
+
+    A boolean flag flips a value on; its absence leaves the config value intact
+    (there is no "off" form on the CLI). ``--inline-errors`` flips error_mode to
+    INLINE; the default IS separate.
+    """
+    from mie_decoder.models import ErrorMode, TimestampFormat
+
+    overrides: dict[str, object] = {}
+    if args.time_format is not None:
+        tf_map = {
+            "auto": TimestampFormat.AUTO,
+            "irig": TimestampFormat.IRIG,
+            "standard": TimestampFormat.STANDARD,
+        }
+        overrides["time_format"] = tf_map[args.time_format]
+    if args.inline_errors:
+        overrides["error_mode"] = ErrorMode.INLINE
+    if args.no_clobber:
+        overrides["no_clobber"] = True
+    if args.allow_partial:
+        overrides["allow_partial"] = True
+    if args.strict is not None:
+        overrides["strict"] = args.strict
+    if args.format is not None:
+        overrides["output_format"] = args.format
+    if args.no_mux:
+        overrides["mux_enabled"] = False
+    if args.mux_field is not None:
+        overrides["mux_field"] = args.mux_field
+    return overrides
+
+
+def _filter_overrides(args: argparse.Namespace) -> dict[str, object]:
+    """Parse the ``--exclude-*`` / ``--include-*`` filter values.
+
+    types/buses parse via name-or-hex; rts/subaddresses via the u8 (0-255)
+    parser mirroring the Rust CLI. Any bad value raises ``ValueError`` (the
+    caller maps it to EXIT_USAGE). include_* are CLI-only (L3-PY-013).
+    """
+    from mie_decoder.config import _parse_bus_names, _parse_type_names
+
+    overrides: dict[str, object] = {}
+    if args.exclude_types is not None:
+        overrides["exclude_types"] = _parse_type_names(args.exclude_types)
+    if args.exclude_rts is not None:
+        overrides["exclude_rts"] = _parse_u8_list(args.exclude_rts, "--exclude-rts")
+    if args.exclude_buses is not None:
+        overrides["exclude_buses"] = _parse_bus_names(args.exclude_buses)
+    if args.exclude_subaddresses is not None:
+        overrides["exclude_subaddresses"] = _parse_u8_list(
+            args.exclude_subaddresses, "--exclude-subaddresses"
+        )
+    if args.include_types is not None:
+        overrides["include_types"] = _parse_type_names(args.include_types)
+    if args.include_rts is not None:
+        overrides["include_rts"] = _parse_u8_list(args.include_rts, "--include-rts")
+    if args.include_buses is not None:
+        overrides["include_buses"] = _parse_bus_names(args.include_buses)
+    if args.include_subaddresses is not None:
+        overrides["include_subaddresses"] = _parse_u8_list(
+            args.include_subaddresses, "--include-subaddresses"
+        )
+    return overrides
+
+
+def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
+    """Build overrides for the numeric/string args that carry range/format
+    checks, raising ``ValueError`` (usage) on an invalid value. The bounds
+    mirror the TOML load-time checks (L2-DEC-015 / L2-SYN-026 / L2-DEC-017 /
+    L2-CLI-012)."""
+    from mie_decoder.config import (
+        DETECT_RECORDS_MAX,
+        DETECT_RECORDS_MIN,
+        LOOKAHEAD_RECORDS_MAX,
+        LOOKAHEAD_RECORDS_MIN,
+    )
+
+    overrides: dict[str, object] = {}
+    if args.detect_records is not None:
+        overrides["detect_records"] = _validate_int_range(
+            args.detect_records,
+            "--detect-records",
+            DETECT_RECORDS_MIN,
+            DETECT_RECORDS_MAX,
+        )
+    if args.lookahead_records is not None:
+        overrides["lookahead_records"] = _validate_int_range(
+            args.lookahead_records,
+            "--lookahead-records",
+            LOOKAHEAD_RECORDS_MIN,
+            LOOKAHEAD_RECORDS_MAX,
+        )
+    if args.standard_tick_rate_hz is not None:
+        overrides["standard_tick_rate_hz"] = _validate_positive_finite(
+            args.standard_tick_rate_hz, "--standard-tick-rate-hz"
+        )
+    if args.mux_delimiter is not None:
+        overrides["mux_delimiter"] = _validate_nonempty(
+            args.mux_delimiter, "--mux-delimiter"
+        )
+    return overrides
+
+
+def _build_decode_overrides(args: argparse.Namespace) -> dict[str, object]:
+    """Assemble all CLI → config overrides, raising ``ValueError`` (which the
+    caller maps to EXIT_USAGE) on any invalid value."""
+    overrides: dict[str, object] = {}
+    overrides.update(_simple_overrides(args))
+    overrides.update(_filter_overrides(args))
+    overrides.update(_validated_numeric_overrides(args))
+    return overrides
+
+
+def _open_reader(path: Path, config: DecoderConfig) -> MieFileReader:
+    """Open one input file with reader options from ``config`` (mirrors
+    ``open_reader`` in ``rust/src/cli.rs``). Raises ``MieFileError`` on a
+    file/open failure (the caller maps it to EXIT_RUNTIME).
+    """
+    from mie_decoder.reader import MieFileReader
+
+    return MieFileReader(
+        path,
+        time_format=config.time_format,
+        strict=config.strict,
+        detect_records=config.detect_records,
+        lookahead_records=config.lookahead_records,
+        standard_tick_rate_hz=config.standard_tick_rate_hz,
+        mux_enabled=config.mux_enabled,
+        mux_delimiter=config.mux_delimiter,
+        mux_field=config.mux_field,
+    )
+
+
+def _check_merge_output_collision(
+    args: argparse.Namespace,
+    input_paths: list[Path],
+    readers: list[MieFileReader],
+) -> int | None:
+    """For a merge (>1 input) writing to a file, reject an output path that
+    resolves to one of the inputs (L2-WRT-014 across the set); a single input
+    uses the writer's own input/output check. Returns an exit code to
+    short-circuit on, or ``None`` to continue.
+    """
+    if len(readers) > 1 and args.output is not None:
+        collision = _merge_output_collision(args.output, input_paths)
+        if collision is not None:
+            logger.error("%s", collision)
+            print(f"Error: {collision}", file=sys.stderr)
+            return EXIT_RUNTIME
+    return None
+
+
+def _build_message_stream(
+    readers: list[MieFileReader], config: DecoderConfig
+) -> Iterator[MieMessage]:
+    """Build the decoded-message stream: a single filtered reader, or the
+    time-sorted k-way merge of several (global DELTA, L2-MRG-002/005).
+
+    ``merge_readers`` validates the input set eagerly, so an incompatible set
+    raises ``MieIncompatibleMergeInputsError`` here before any output.
+    """
+    from mie_decoder.filters import apply_filters
+    from mie_decoder.merge import merge_readers
+
+    if len(readers) == 1:
+        return apply_filters(readers[0], config.filters)
+    merged = merge_readers(
+        readers,
+        standard_tick_rate_hz=config.standard_tick_rate_hz,
+        allow_partial=config.allow_partial,
+        strict=config.strict,
+    )
+    return apply_filters(merged, config.filters)
+
+
+def _write_messages(
+    messages: Iterator[MieMessage],
+    output: Path | None,
+    error_mode: ErrorMode,
+    write_opts: WriteOptions,
+) -> WriteOutcome:
+    """Write the stream and log the outcome (mirrors ``write_messages`` in
+    ``rust/src/cli.rs``). Separate mode with a file output writes the split
+    CSVs; INLINE mode (or stdout, which cannot be split) writes one CSV."""
+    from mie_decoder.models import ErrorMode
+    from mie_decoder.writer import write_csv, write_csv_split
+
+    t0 = time.perf_counter()
+    if error_mode == ErrorMode.SEPARATE and output is not None:
+        outcome = write_csv_split(messages, output=output, opts=write_opts)
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "Wrote %d messages + %d errors to %s in %.3fs",
+            outcome.normal_count, outcome.error_count, output, elapsed,
+        )
+    else:
+        # INLINE mode, or stdout (can't split stdout).
+        outcome = write_csv(messages, output=output, opts=write_opts)
+        elapsed = time.perf_counter() - t0
+        dest = str(output) if output else "stdout"
+        logger.info(
+            "Wrote %d messages to %s in %.3fs",
+            outcome.normal_count, dest, elapsed,
+        )
+    return outcome
+
+
+def _classify_decode_error(exc: Exception) -> int:
+    """Map a decode-time exception to its exit code, emitting the same stderr
+    and exit-class log lines as before. Mirrors the error arms of
+    ``classify_decode_exit`` in ``rust/src/cli.rs``. Order matters: specific
+    types precede the ``MieDecoderError`` base.
+    """
+    if isinstance(exc, MieIncompatibleMergeInputsError):
+        # L1-EXIT-009 / L2-MRG-003: inputs cannot share an absolute timeline.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: merge-incompatible")
+        return EXIT_MERGE_INCOMPATIBLE
+    if isinstance(exc, (MieInputOutputCollisionError, MieClobberRefusedError)):
+        # File-safety preflight (L2-WRT-014/017). Generic runtime error.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+    if isinstance(exc, MieNoValidRecordsError):
+        # L1-EXIT-002 → no-records.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: no-records")
+        return EXIT_NO_RECORDS
+    if isinstance(exc, MieHomogeneousPayloadError):
+        # L2-SYN-018 + L1-EXIT-002: a single-byte pad, not an MIE recording —
+        # same exit class as NoValidRecords.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: no-records")
+        return EXIT_NO_RECORDS
+    if isinstance(exc, MieTimestampFormatMismatchError):
+        # L2-DEC-016 + L1-EXIT-002: ambiguous IRIG-vs-Standard probe — another
+        # "wrong file type" rejection. Only fires in strict mode.
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: no-records (timestamp-format-mismatch)")
+        return EXIT_NO_RECORDS
+    if isinstance(exc, MieUnrecoverableSyncLossError):
+        # L1-EXIT-004 → exit 3 (allow_partial would have been caught inside the
+        # writer and returned a WriteOutcome instead).
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info(
+            "decode exit class: partial-unrecoverable (sync_losses=%d); "
+            "pass --allow-partial to preserve the rows decoded so far",
+            exc.sync_losses,
+        )
+        return EXIT_SYNC_LOSS
+    if isinstance(exc, BrokenPipeError):
+        # L2-WRT-018 — usually handled inside the streaming writer; cover the
+        # edge case where it escapes.
+        logger.info("decode exit class: complete (broken-pipe on stdout)")
+        return EXIT_OK
+    if isinstance(exc, MieWriterError):
+        logger.error("Write failed: %s", exc)
+        print(f"Error writing output: {exc}", file=sys.stderr)
+        return EXIT_RUNTIME
+    if isinstance(exc, MieNonMonotonicInputError):
+        # L2-MRG-006: a strict-mode merge hit an input that is not internally
+        # time-sorted. Record-error class (exit 1).
+        logger.error("%s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        logger.info("decode exit class: non-monotonic-input (strict)")
+        return EXIT_RUNTIME
+    # Any remaining MieDecoderError (record errors, generic file errors).
+    logger.error("Decode failed: %s", exc)
+    print(f"Error: {exc}", file=sys.stderr)
+    return EXIT_RUNTIME
+
+
+def _classify_decode_success(
+    outcome: WriteOutcome, readers: list[MieFileReader]
+) -> int:
+    """Emit the L1-EXIT-005 exit-class summary for a successful run and return
+    EXIT_OK (mirrors the ``Ok`` arm of Rust ``classify_decode_exit``)."""
+    sync_losses = sum(r.sync_losses for r in readers)
+    if outcome.partial is not None:
+        cls = "partial-unrecoverable"
+    elif sync_losses > 0:
+        cls = "partial-recovered"
+    else:
+        cls = "complete"
+    logger.info("decode exit class: %s (sync_losses=%d)", cls, sync_losses)
+    return EXIT_OK
+
+
 def _run_decode(args: argparse.Namespace) -> int:
     """Execute the decode subcommand.
 
@@ -574,21 +907,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     Returns:
         Exit code: 0 on success, 1 on error.
     """
-    from mie_decoder.config import (
-        DETECT_RECORDS_MAX,
-        DETECT_RECORDS_MIN,
-        LOOKAHEAD_RECORDS_MAX,
-        LOOKAHEAD_RECORDS_MIN,
-        DecoderConfig,
-        load_config,
-        _parse_type_names,
-        _parse_bus_names,
-    )
-    from mie_decoder.filters import apply_filters
-    from mie_decoder.merge import merge_readers
-    from mie_decoder.reader import MieFileReader
-    from mie_decoder.writer import WriteOptions, write_csv, write_csv_split
-    from mie_decoder.models import ErrorMode, TimestampFormat
+    from mie_decoder.config import load_config
 
     # ── Load and merge configuration ───────────────────────────────
     try:
@@ -599,100 +918,11 @@ def _run_decode(args: argparse.Namespace) -> int:
 
     _apply_config_log_level(args, config.log_level)
 
-    # Build CLI overrides dict (only non-None values)
-    overrides: dict[str, object] = {}
-    if args.time_format is not None:
-        tf_map = {"auto": TimestampFormat.AUTO, "irig": TimestampFormat.IRIG, "standard": TimestampFormat.STANDARD}
-        overrides["time_format"] = tf_map[args.time_format]
-    # --inline-errors flips error_mode to INLINE; omitted leaves the
-    # config value (default SEPARATE) intact. A boolean flag has no
-    # "separate" form on the CLI — the default IS separate.
-    if args.inline_errors:
-        overrides["error_mode"] = ErrorMode.INLINE
-    # Filter overrides. types/buses parse via name-or-hex; rts/subaddresses
-    # via the u8 (0-255) parser mirroring the Rust CLI. Any bad value is a
-    # usage error (exit 4). include_* are CLI-only (L3-PY-013).
     try:
-        if args.exclude_types is not None:
-            overrides["exclude_types"] = _parse_type_names(args.exclude_types)
-        if args.exclude_rts is not None:
-            overrides["exclude_rts"] = _parse_u8_list(args.exclude_rts, "--exclude-rts")
-        if args.exclude_buses is not None:
-            overrides["exclude_buses"] = _parse_bus_names(args.exclude_buses)
-        if args.exclude_subaddresses is not None:
-            overrides["exclude_subaddresses"] = _parse_u8_list(
-                args.exclude_subaddresses, "--exclude-subaddresses"
-            )
-        if args.include_types is not None:
-            overrides["include_types"] = _parse_type_names(args.include_types)
-        if args.include_rts is not None:
-            overrides["include_rts"] = _parse_u8_list(args.include_rts, "--include-rts")
-        if args.include_buses is not None:
-            overrides["include_buses"] = _parse_bus_names(args.include_buses)
-        if args.include_subaddresses is not None:
-            overrides["include_subaddresses"] = _parse_u8_list(
-                args.include_subaddresses, "--include-subaddresses"
-            )
+        overrides = _build_decode_overrides(args)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    # CLI flag flips no_clobber on; absence leaves config value intact.
-    if args.no_clobber:
-        overrides["no_clobber"] = True
-    if args.allow_partial:
-        overrides["allow_partial"] = True
-    if args.detect_records is not None:
-        # L2-DEC-015: validate range at parse time so an out-of-range
-        # value surfaces before the config layer is even consulted.
-        # The TOML form is range-checked in config.load_config.
-        if not (DETECT_RECORDS_MIN <= args.detect_records <= DETECT_RECORDS_MAX):
-            print(
-                f"Error: invalid --detect-records: {args.detect_records}; "
-                f"valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]",
-                file=sys.stderr,
-            )
-            return EXIT_USAGE
-        overrides["detect_records"] = args.detect_records
-    if args.lookahead_records is not None:
-        # L2-SYN-026: parse-time range check mirrors the TOML
-        # load-time check in config.load_config.
-        if not (LOOKAHEAD_RECORDS_MIN <= args.lookahead_records <= LOOKAHEAD_RECORDS_MAX):
-            print(
-                f"Error: invalid --lookahead-records: {args.lookahead_records}; "
-                f"valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]",
-                file=sys.stderr,
-            )
-            return EXIT_USAGE
-        overrides["lookahead_records"] = args.lookahead_records
-    if args.standard_tick_rate_hz is not None:
-        # L2-DEC-017 / L2-CLI-012: parse-time validation mirrors the TOML
-        # load-time check in config.load_config — a finite, strictly-
-        # positive frequency.
-        hz = args.standard_tick_rate_hz
-        if not math.isfinite(hz) or hz <= 0.0:
-            print(
-                f"Error: invalid --standard-tick-rate-hz: {hz}; "
-                f"must be a finite value greater than 0",
-                file=sys.stderr,
-            )
-            return EXIT_USAGE
-        overrides["standard_tick_rate_hz"] = hz
-    if args.strict is not None:
-        overrides["strict"] = args.strict
-    if args.format is not None:
-        overrides["output_format"] = args.format
-    if args.no_mux:
-        overrides["mux_enabled"] = False
-    if args.mux_delimiter is not None:
-        if args.mux_delimiter == "":
-            print(
-                "Error: invalid --mux-delimiter: must be a non-empty string",
-                file=sys.stderr,
-            )
-            return EXIT_USAGE
-        overrides["mux_delimiter"] = args.mux_delimiter
-    if args.mux_field is not None:
-        overrides["mux_field"] = args.mux_field
 
     config = config.with_overrides(**overrides)
 
@@ -723,20 +953,7 @@ def _run_decode(args: argparse.Namespace) -> int:
 
     # ── Open a reader per input ────────────────────────────────────
     try:
-        readers = [
-            MieFileReader(
-                p,
-                time_format=config.time_format,
-                strict=config.strict,
-                detect_records=config.detect_records,
-                lookahead_records=config.lookahead_records,
-                standard_tick_rate_hz=config.standard_tick_rate_hz,
-                mux_enabled=config.mux_enabled,
-                mux_delimiter=config.mux_delimiter,
-                mux_field=config.mux_field,
-            )
-            for p in input_paths
-        ]
+        readers = [_open_reader(p, config) for p in input_paths]
     except MieFileError as exc:
         logger.error("Failed to open input file: %s", exc)
         print(f"Error: {exc}", file=sys.stderr)
@@ -745,15 +962,11 @@ def _run_decode(args: argparse.Namespace) -> int:
     for r in readers:
         logger.info("Opened %s (%d bytes)", r.path.name, r.file_size)
 
-    # For a merge, check the output against *every* input (L2-WRT-014 across
-    # the set) and disable the writer's single-path check; a single input uses
-    # the writer's own check via input_path.
-    if len(readers) > 1 and args.output is not None:
-        collision = _merge_output_collision(args.output, input_paths)
-        if collision is not None:
-            logger.error("%s", collision)
-            print(f"Error: {collision}", file=sys.stderr)
-            return EXIT_RUNTIME
+    collision_code = _check_merge_output_collision(args, input_paths, readers)
+    if collision_code is not None:
+        return collision_code
+
+    from mie_decoder.writer import WriteOptions
 
     write_opts = WriteOptions(
         input_path=input_paths[0] if len(readers) == 1 else None,
@@ -761,123 +974,21 @@ def _run_decode(args: argparse.Namespace) -> int:
         allow_partial=config.allow_partial,
     )
 
-    # ── Build the message stream: single reader, or time-sorted merge ──
-    # One input → today's path (per-file DELTA). Two or more → the k-way
-    # merge (global DELTA, L2-MRG-002/005). merge_readers validates eagerly,
-    # so an incompatible set raises here before any output (L2-MRG-003).
+    # ── Build the message stream and write it ──────────────────────
+    # One input → the single-file path (per-file DELTA); two or more → the
+    # time-sorted k-way merge (global DELTA, L2-MRG-002/005), which validates
+    # eagerly. Build- and write-time decode failures (and a broken pipe on
+    # stdout) map to exit codes via _classify_decode_error; a clean run is
+    # classified by the cumulative sync-loss count (L1-EXIT-005).
     try:
-        if len(readers) == 1:
-            messages = apply_filters(readers[0], config.filters)
-        else:
-            merged = merge_readers(
-                readers,
-                standard_tick_rate_hz=config.standard_tick_rate_hz,
-                allow_partial=config.allow_partial,
-                strict=config.strict,
-            )
-            messages = apply_filters(merged, config.filters)
-    except MieIncompatibleMergeInputsError as exc:
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: merge-incompatible")
-        return EXIT_MERGE_INCOMPATIBLE
-
-    try:
-        t0 = time.perf_counter()
-        if config.error_mode == ErrorMode.SEPARATE and args.output is not None:
-            outcome = write_csv_split(
-                messages, output=args.output, opts=write_opts,
-            )
-            elapsed = time.perf_counter() - t0
-            logger.info(
-                "Wrote %d messages + %d errors to %s in %.3fs",
-                outcome.normal_count, outcome.error_count, args.output, elapsed,
-            )
-        else:
-            # INLINE mode, or stdout (can't split stdout).
-            outcome = write_csv(messages, output=args.output, opts=write_opts)
-            elapsed = time.perf_counter() - t0
-            dest = str(args.output) if args.output else "stdout"
-            logger.info(
-                "Wrote %d messages to %s in %.3fs",
-                outcome.normal_count, dest, elapsed,
-            )
-    except (MieInputOutputCollisionError, MieClobberRefusedError) as exc:
-        # File-safety preflight (L2-WRT-014/017). Generic runtime error.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
-    except MieNoValidRecordsError as exc:
-        # L1-EXIT-002 → no-records.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: no-records")
-        return EXIT_NO_RECORDS
-    except MieHomogeneousPayloadError as exc:
-        # L2-SYN-018 + L1-EXIT-002: semantically a "wrong file type"
-        # rejection (single-byte pad, not an MIE recording), same
-        # exit-code class as NoValidRecords.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: no-records")
-        return EXIT_NO_RECORDS
-    except MieTimestampFormatMismatchError as exc:
-        # L2-DEC-016 + L1-EXIT-002: ambiguous timestamp format is
-        # semantically another "wrong file type" rejection — the
-        # probe could not confidently distinguish IRIG from Standard,
-        # so we treat the file the same way we'd treat an
-        # unrecognized stream. Same exit class (2) as NoValidRecords /
-        # HomogeneousPayload. Only fires in strict mode; lenient mode
-        # uses the chosen format and continues with a WARN.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: no-records (timestamp-format-mismatch)")
-        return EXIT_NO_RECORDS
-    except MieUnrecoverableSyncLossError as exc:
-        # L1-EXIT-004 → exit 3 (allow_partial would have caught this
-        # inside the writer and returned a WriteOutcome instead).
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info(
-            "decode exit class: partial-unrecoverable (sync_losses=%d); "
-            "pass --allow-partial to preserve the rows decoded so far",
-            exc.sync_losses,
+        messages = _build_message_stream(readers, config)
+        outcome = _write_messages(
+            messages, args.output, config.error_mode, write_opts
         )
-        return EXIT_SYNC_LOSS
-    except BrokenPipeError:
-        # L2-WRT-018 — already handled inside the streaming writer for
-        # stream destinations, but cover the edge case where it escapes.
-        logger.info("decode exit class: complete (broken-pipe on stdout)")
-        return EXIT_OK
-    except MieWriterError as exc:
-        logger.error("Write failed: %s", exc)
-        print(f"Error writing output: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
-    except MieNonMonotonicInputError as exc:
-        # L2-MRG-006: strict-mode merge hit an input that is not internally
-        # time-sorted. Record-error class (exit 1), same as other strict
-        # record failures. Lenient mode never reaches here (it only WARNs).
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: non-monotonic-input (strict)")
-        return EXIT_RUNTIME
-    except MieDecoderError as exc:
-        logger.error("Decode failed: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+    except (MieDecoderError, BrokenPipeError) as exc:
+        return _classify_decode_error(exc)
 
-    # L1-EXIT-005 exit-class summary. Distinguish complete from
-    # partial-recovered via the cumulative sync-loss count across all
-    # inputs, partial-committed via outcome.partial.
-    sync_losses = sum(r.sync_losses for r in readers)
-    if outcome.partial is not None:
-        cls = "partial-unrecoverable"
-    elif sync_losses > 0:
-        cls = "partial-recovered"
-    else:
-        cls = "complete"
-    logger.info("decode exit class: %s (sync_losses=%d)", cls, sync_losses)
-    return EXIT_OK
+    return _classify_decode_success(outcome, readers)
 
 
 def _run_count(args: argparse.Namespace) -> int:
