@@ -9,7 +9,7 @@ title MIE-Decoder v2.0 - Component Architecture (Rust + Python)
 ' ============================================================================
 '  Two implementations, one architecture
 ' ============================================================================
-' Every component named below exists in BOTH the Rust crate (src/*.rs) and
+' Every component named below exists in BOTH the Rust crate (rust/src/*.rs) and
 ' the Python package (python/src/mie_decoder/*.py). The conformance suite
 ' under tests/conformance/ holds them to byte-exact equivalence on CSV
 ' output. See docs/ARCHITECTURE.md section 1 for the full module correspondence.

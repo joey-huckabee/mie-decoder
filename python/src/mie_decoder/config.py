@@ -371,7 +371,7 @@ def _parse_type_names(names: Sequence[object]) -> set[int]:
 
     Each element is either a **string** (an enum name like ``"BC_TO_RT"`` or a
     hex code like ``"0x02"``) or an **integer** type code. Mirrors the Rust
-    ``parse_type_value`` (``src/config.rs``): integer and hex codes are bounded
+    ``parse_type_value`` (``rust/src/config.rs``): integer and hex codes are bounded
     to a ``u8`` (``0..=255``); anything else is rejected with a ``ValueError``
     (so the caller maps it to a config error / usage error, never a crash).
 
@@ -426,7 +426,7 @@ def _parse_bus_names(names: Sequence[object]) -> set[Bus]:
     """Parse bus identifiers into Bus enum values.
 
     Each element must be a **string** (``"A"`` or ``"B"``, case-insensitive) —
-    matching the Rust ``parse_bus_value`` (``src/config.rs``), which rejects a
+    matching the Rust ``parse_bus_value`` (``rust/src/config.rs``), which rejects a
     non-string entry rather than crashing. Comes from a TOML array (which may
     contain non-strings) or the CLI flag (always strings).
 

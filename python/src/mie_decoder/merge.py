@@ -11,7 +11,7 @@ freerun-leading, or mixed-format inputs are rejected up front
 (:class:`MieIncompatibleMergeInputsError`, CLI exit 6 — L2-MRG-003). DELTA is
 recomputed on the merged global timeline (L2-MRG-005).
 
-Mirrors ``src/merge.rs``; the heap is the standard-library :mod:`heapq` and the
+Mirrors ``rust/src/merge.rs``; the heap is the standard-library :mod:`heapq` and the
 ``--glob`` matcher is hand-rolled to the same single-directory ``*``/``?``
 semantics as Rust (L3-PY-014) — no new dependency.
 """

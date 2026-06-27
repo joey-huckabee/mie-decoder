@@ -290,6 +290,7 @@ Always tag new tests with `/// Requirements:` so the trace matrix credits them.
 Run locally with:
 
 ```bash
+cd rust
 cargo test --test cli                  # CLI suite only
 cargo test --test cli -- --nocapture   # also show stdout / stderr from the spawned binary
 cargo test --all-targets               # unit + integration + cli together (what CI runs)
@@ -455,6 +456,7 @@ Both implementations are gated. Rust uses `cargo-llvm-cov`; Python uses `pytest-
 The CI gate is `cargo cov-ci` (alias defined in `rust/.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 84 line / 83 region). After the gate passes, CI runs `cargo cov-lcov` and uploads `lcov.info` as the `rust-lcov` artifact.
 
 ```bash
+cd rust
 cargo cov-ci         # what CI runs
 cargo cov            # interactive HTML report
 cargo cov-lcov       # lcov.info for IDE coverage overlays
@@ -483,6 +485,7 @@ When coverage is consistently above the floor by >2pp, bump it. For Rust, edit t
 ### Rust crate
 
 ```bash
+cd rust
 cargo build --release
 ```
 

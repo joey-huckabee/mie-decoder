@@ -488,7 +488,7 @@ def _apply_config_log_level(args: argparse.Namespace, config_log_level: str) -> 
     user did not pass ``--log-level``, re-configure with the TOML
     value now. ``config_log_level`` falls back to ``"WARNING"`` when
     the file has no ``[logging]`` section, so this is a no-op in the
-    common case. Mirrors ``resolve_config`` in ``src/cli.rs``.
+    common case. Mirrors ``resolve_config`` in ``rust/src/cli.rs``.
     """
     if args.log_level is None:
         configure_logging(config_log_level)
@@ -696,7 +696,7 @@ def _run_decode(args: argparse.Namespace) -> int:
 
     config = config.with_overrides(**overrides)
 
-    # L2-CFG-010 mirror of the Rust runtime check (src/cli.rs): a config-file
+    # L2-CFG-010 mirror of the Rust runtime check (rust/src/cli.rs): a config-file
     # output.format is validated at load time (exit 5), but a --format override
     # is applied after load, so re-check here. Non-csv is a runtime error
     # (exit 1), matching the Rust CLI.

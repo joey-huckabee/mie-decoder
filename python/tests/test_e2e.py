@@ -1355,7 +1355,7 @@ class TestDeltaAndErrorRecords:
 class TestFuzzHarness:
     """L1-ROB-001: fuzz harness asserting no panic on arbitrary input bytes.
 
-    Mirrors the Rust harness in tests/integration.rs. Same seed and
+    Mirrors the Rust harness in rust/tests/integration.rs. Same seed and
     PRNG (xorshift64), same iteration count, same size band — so a
     failure in one impl is reproducible against the other.
     """
