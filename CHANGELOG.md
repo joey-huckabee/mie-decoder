@@ -15,6 +15,20 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **SonarCloud (SonarQube Cloud) analysis workflow**
+  (`.github/workflows/sonarcloud.yml`). On pushes/PRs to `main` it scans both
+  implementations — Rust coverage (LCOV via `cargo cov-lcov`) and Python
+  coverage (Cobertura XML via `pytest --cov`) feed the SonarCloud Quality Gate —
+  and exports BUG/VULNERABILITY findings to GitHub code scanning (SARIF). Project
+  identity and token come from `SONAR_*` repository secrets; the workflow is a
+  clean no-op when they are absent.
+- **CodeQL security-scan workflow** (`.github/workflows/codeql.yml`). Analyzes
+  the Rust crate and the Python package (both `build-mode: none`) and reports to
+  GitHub code scanning. (CodeQL's Rust support is no-build only; macro-heavy
+  files extract with reduced fidelity — a known upstream limitation.)
+
 ### Changed
 
 - **Repository layout: the Rust crate now lives under `rust/`, mirroring
