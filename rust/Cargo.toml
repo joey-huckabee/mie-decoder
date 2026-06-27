@@ -2,7 +2,7 @@
 name = "mie-decoder"
 version = "2.3.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Decoder for DDC MIL-STD-1553 MIE binary recording files"
 license = "MIT"
 authors = ["Joey"]

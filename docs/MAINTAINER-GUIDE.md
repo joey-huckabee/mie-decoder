@@ -10,7 +10,7 @@ This guide is for **maintainers**. End-user CLI usage belongs in [`docs/USER-GUI
 
 ```
 mie-decoder/
-├── rust/                   Rust crate (edition 2024, MSRV 1.85)
+├── rust/                   Rust crate (edition 2024, MSRV 1.88)
 │   ├── Cargo.toml / Cargo.lock
 │   ├── .cargo/config.toml  cargo-llvm-cov coverage aliases (cov / cov-lcov / cov-ci)
 │   ├── src/
@@ -104,7 +104,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo cov-ci                                     # coverage gate (alias in rust/.cargo/config.toml)
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps   # rustdoc link check (CI-gated)
-cargo +1.85 check --all-targets                  # MSRV 1.85 floor (CI-gated)
+cargo +1.88 check --all-targets                  # MSRV 1.88 floor (CI-gated)
 
 # Python (from repo root)
 poetry -C python run pytest                      # all tests
@@ -437,7 +437,7 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 |-----|---------------|-----------|--------------|
 | `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `rust/tests/integration.rs` + `rust/tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (84% line / 83% region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
 | `rust-doc` | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` — fails on broken intra-doc links and other rustdoc lints in the doc-heavy crate | `ubuntu-latest` | Block merge |
-| `rust-msrv` | `cargo check --all-targets` on the pinned **1.85** toolchain — enforces the declared `rust-version` (the main `rust` job builds on stable) | `ubuntu-latest` | Block merge |
+| `rust-msrv` | `cargo check --all-targets` on the pinned **1.88** toolchain — enforces the declared `rust-version` (the main `rust` job builds on stable) | `ubuntu-latest` | Block merge |
 | `python` | `poetry sync` + `poetry run pytest`; `poetry check --strict --lock` + `poetry build` Linux/3.12-only | 5 versions × Linux (3.10–3.14), 2 versions × Windows (3.12, 3.14) | Block merge |
 | `mypy` | `poetry run mypy src` — strict type check, analyzed as Python 3.10 (config in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `pylint` | `poetry run pylint src/mie_decoder` — lints the package; curated disables + line length in `python/pyproject.toml` `[tool.pylint.*]` (gate fails below 10/10) | `ubuntu-latest` (3.12) | Block merge |

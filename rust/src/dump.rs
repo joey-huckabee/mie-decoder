@@ -193,10 +193,10 @@ fn write_hex_dump_records<W: Write>(
         if min_end > file_len {
             break;
         }
-        if let Some(max) = max_records {
-            if record_num >= max {
-                break;
-            }
+        if let Some(max) = max_records
+            && record_num >= max
+        {
+            break;
         }
 
         let type_raw = match read_u16(data, offset) {

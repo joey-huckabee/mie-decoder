@@ -45,18 +45,18 @@ impl FilterConfig {
         if self.exclude_types.contains(&message_type) {
             return true;
         }
-        if let Some(rt) = rt {
-            if self.exclude_rts.contains(&rt) {
-                return true;
-            }
+        if let Some(rt) = rt
+            && self.exclude_rts.contains(&rt)
+        {
+            return true;
         }
         if self.exclude_buses.contains(&bus) {
             return true;
         }
-        if let Some(sa) = subaddress {
-            if self.exclude_subaddresses.contains(&sa) {
-                return true;
-            }
+        if let Some(sa) = subaddress
+            && self.exclude_subaddresses.contains(&sa)
+        {
+            return true;
         }
 
         // Positive filters: if active, value must be present.

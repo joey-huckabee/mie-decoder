@@ -54,11 +54,19 @@ full release workflow.
   `RUSTDOCFLAGS="-D warnings"`, failing on broken intra-doc links and other
   rustdoc lints. The initial pass fixed a broken intra-doc link in `reader.rs`.
 - **Rust MSRV gate** (`rust-msrv` CI job): `cargo check --all-targets` on a
-  pinned **1.85** toolchain, so the declared `rust-version` is actually enforced
-  (the main `rust` job builds on stable and would otherwise mask a >1.85 feature).
+  pinned **1.88** toolchain, so the declared `rust-version` is actually enforced
+  (the main `rust` job builds on stable and would otherwise mask a sub-MSRV
+  feature). Adding this gate surfaced that the MSRV claim was already untrue —
+  see Changed.
 
 ### Changed
 
+- **Rust MSRV raised from 1.85 to 1.88** (`rust-version` in `rust/Cargo.toml`).
+  The sole dependency `memmap2` (≥0.9.7, and the locked 0.9.10) uses `let`-chains
+  and so requires Rust 1.88, even though it under-declares its own MSRV as 1.63.
+  The crate had therefore not actually built on 1.85 for several `memmap2`
+  releases; 1.88 reflects the true floor. Edition 2024 itself still only requires
+  1.85, so the L3 "MSRV 1.85 or newer" requirement remains satisfied.
 - **Repository layout: the Rust crate now lives under `rust/`, mirroring
   `python/`.** The crate source (`src/`), integration tests
   (`tests/cli.rs`, `tests/integration.rs`), `Cargo.toml` / `Cargo.lock`, and the

@@ -894,10 +894,10 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
     // input the writer performs its own input/output collision check; for a
     // merge we check the output against *every* input here and disable the
     // writer's single-path check.
-    if readers.len() > 1 {
-        if let Some(out) = args.output.as_deref() {
-            check_output_collision(out, &input_paths)?;
-        }
+    if readers.len() > 1
+        && let Some(out) = args.output.as_deref()
+    {
+        check_output_collision(out, &input_paths)?;
     }
     let write_opts = WriteOptions {
         input_path: if readers.len() == 1 {

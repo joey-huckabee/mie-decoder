@@ -134,42 +134,41 @@ pub fn validate_record_detailed(
     // upper (offset+2), middle (offset+4), and lower (offset+6) words.
     if ts_format == Some(TimestampFormat::Irig)
         && offset.checked_add(8).is_some_and(|end| end <= file_len)
-    {
-        if let (Some(ts_upper), Some(ts_middle), Some(ts_lower)) = (
+        && let (Some(ts_upper), Some(ts_middle), Some(ts_lower)) = (
             read_u16(data, offset + 2),
             read_u16(data, offset + 4),
             read_u16(data, offset + 6),
-        ) {
-            let freerun = (ts_upper >> 15) & 1 == 1;
-            let day = (ts_upper >> 5) & 0x1FF; // bits 13-5
-            let hour = ts_upper & 0x1F;
-            let minute = (ts_middle >> 10) & 0x3F;
-            let second = (ts_middle >> 4) & 0x3F;
-            let microsecond_hi4 = u32::from(ts_middle & 0xF);
-            let microsecond_lo16 = u32::from(ts_lower);
-            let microsecond = (microsecond_hi4 << 16) | microsecond_lo16;
+        )
+    {
+        let freerun = (ts_upper >> 15) & 1 == 1;
+        let day = (ts_upper >> 5) & 0x1FF; // bits 13-5
+        let hour = ts_upper & 0x1F;
+        let minute = (ts_middle >> 10) & 0x3F;
+        let second = (ts_middle >> 4) & 0x3F;
+        let microsecond_hi4 = u32::from(ts_middle & 0xF);
+        let microsecond_lo16 = u32::from(ts_lower);
+        let microsecond = (microsecond_hi4 << 16) | microsecond_lo16;
 
-            if hour >= 24 {
-                return Err(ValidationFailure::IrigHourOutOfRange);
-            }
-            if minute >= 60 {
-                return Err(ValidationFailure::IrigMinuteOutOfRange);
-            }
-            if second >= 60 {
-                return Err(ValidationFailure::IrigSecondOutOfRange);
-            }
-            if microsecond > 999_999 {
-                return Err(ValidationFailure::IrigMicrosecondOutOfRange);
-            }
-            // L2-SYN-019: skip the day-of-year range check when
-            // freerun is set, because the card's free-running
-            // oscillator is not calendar-locked. Hour/minute/second/
-            // microsecond constraints still apply because those are
-            // a function of the counter modulus, not the external
-            // IRIG-B feed.
-            if !freerun && !(1..=366).contains(&day) {
-                return Err(ValidationFailure::IrigDayOutOfRange);
-            }
+        if hour >= 24 {
+            return Err(ValidationFailure::IrigHourOutOfRange);
+        }
+        if minute >= 60 {
+            return Err(ValidationFailure::IrigMinuteOutOfRange);
+        }
+        if second >= 60 {
+            return Err(ValidationFailure::IrigSecondOutOfRange);
+        }
+        if microsecond > 999_999 {
+            return Err(ValidationFailure::IrigMicrosecondOutOfRange);
+        }
+        // L2-SYN-019: skip the day-of-year range check when
+        // freerun is set, because the card's free-running
+        // oscillator is not calendar-locked. Hour/minute/second/
+        // microsecond constraints still apply because those are
+        // a function of the counter modulus, not the external
+        // IRIG-B feed.
+        if !freerun && !(1..=366).contains(&day) {
+            return Err(ValidationFailure::IrigDayOutOfRange);
         }
     }
 

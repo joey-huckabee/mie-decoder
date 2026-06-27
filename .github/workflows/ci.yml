@@ -130,7 +130,7 @@ jobs:
         run: cargo doc --no-deps --locked
 
   rust-msrv:
-    name: Rust MSRV (1.85)
+    name: Rust MSRV (1.88)
     runs-on: ubuntu-latest
     env:
       CARGO_TERM_COLOR: always
@@ -139,14 +139,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install MSRV toolchain (1.85)
+      - name: Install MSRV toolchain (1.88)
         # The main `rust` job builds on stable, which would silently accept a
-        # newer-than-1.85 std/language feature. This job pins the declared
+        # newer-than-MSRV std/language feature. This job pins the declared
         # rust-version (Cargo.toml) so the MSRV claim is actually enforced.
         shell: bash
         run: |
-          rustup toolchain install 1.85 --profile minimal --no-self-update
-          rustup default 1.85
+          rustup toolchain install 1.88 --profile minimal --no-self-update
+          rustup default 1.88
 
       - name: Cache Cargo dependencies
         uses: actions/cache@v5
@@ -158,7 +158,7 @@ jobs:
           restore-keys: |
             cargo-msrv-${{ runner.os }}-
 
-      - name: Check on MSRV (1.85)
+      - name: Check on MSRV (1.88)
         working-directory: rust
         run: cargo check --locked --all-targets
 
