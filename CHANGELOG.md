@@ -23,7 +23,8 @@ full release workflow.
   coverage (Cobertura XML via `pytest --cov`) feed the SonarCloud Quality Gate —
   and exports BUG/VULNERABILITY findings to GitHub code scanning (SARIF). Project
   identity and token come from `SONAR_*` repository secrets; the workflow is a
-  clean no-op when they are absent.
+  clean no-op when they are absent. A SonarCloud Quality Gate badge was added to
+  the root `README.md`.
 - **CodeQL security-scan workflow** (`.github/workflows/codeql.yml`). Analyzes
   the Rust crate and the Python package (both `build-mode: none`) and reports to
   GitHub code scanning. (CodeQL's Rust support is no-build only; macro-heavy
@@ -42,7 +43,8 @@ full release workflow.
   crate directory (`cd rust && cargo build`; cargo's `-C` flag is still
   unstable); CI, the pre-commit hook, the coverage wrapper
   (`scripts/coverage.sh`), the conformance runner, and the trace-matrix
-  generator were updated to match.
+  generator were updated to match, and documentation/source cross-references
+  that named root paths (`src/…`, `tests/…`) were re-rooted under `rust/`.
 
 - **Internal: decomposed the Python `_run_decode` CLI handler into focused
   helpers** (override building/validation, reader opening, message-stream
