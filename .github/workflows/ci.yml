@@ -93,6 +93,7 @@ jobs:
         with:
           name: rust-lcov
           path: rust/lcov.info
+          if-no-files-found: error
 
   rust-doc:
     name: Rust docs (rustdoc -D warnings)
@@ -160,7 +161,6 @@ jobs:
       - name: Check on MSRV (1.85)
         working-directory: rust
         run: cargo check --locked --all-targets
-          if-no-files-found: error
 
   python:
     name: Python ${{ matrix.python-version }} (${{ matrix.os }})
