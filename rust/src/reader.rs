@@ -34,8 +34,8 @@ use crate::sync::{
 };
 use crate::{log_debug, log_error, log_info, log_warn};
 
-/// Reader handle. Construct with [`new`]; iterate by calling `.iter()` or
-/// using `IntoIterator`.
+/// Reader handle. Construct with [`Self::new`]; iterate by calling `.iter()`
+/// or using `IntoIterator`.
 pub struct MieFileReader {
     path: PathBuf,
     mmap: Mmap,
@@ -974,7 +974,7 @@ impl<'a> Iterator for RecordIter<'a> {
             self.advance_after_yield(record_bytes);
             self.prev_was_error = false;
 
-            if self.msg_count > 0 && self.msg_count % 100_000 == 0 {
+            if self.msg_count > 0 && self.msg_count.is_multiple_of(100_000) {
                 log_info!(
                     "decoded {} messages (0x{:X} / 0x{:X})",
                     self.msg_count,

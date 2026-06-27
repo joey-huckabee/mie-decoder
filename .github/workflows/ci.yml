@@ -95,6 +95,73 @@ jobs:
           path: rust/lcov.info
           if-no-files-found: error
 
+  rust-doc:
+    name: Rust docs (rustdoc -D warnings)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: cargo-doc-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'rust/Cargo.toml', 'rust/.cargo/config.toml') }}
+          restore-keys: |
+            cargo-doc-${{ runner.os }}-
+
+      - name: Build docs with warnings denied
+        # Catches broken intra-doc links and other rustdoc lints in the
+        # doc-heavy crate. --no-deps documents only this crate (not memmap2).
+        working-directory: rust
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --locked
+
+  rust-msrv:
+    name: Rust MSRV (1.88)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install MSRV toolchain (1.88)
+        # The main `rust` job builds on stable, which would silently accept a
+        # newer-than-MSRV std/language feature. This job pins the declared
+        # rust-version (Cargo.toml) so the MSRV claim is actually enforced.
+        shell: bash
+        run: |
+          rustup toolchain install 1.88 --profile minimal --no-self-update
+          rustup default 1.88
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: cargo-msrv-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'rust/Cargo.toml', 'rust/.cargo/config.toml') }}
+          restore-keys: |
+            cargo-msrv-${{ runner.os }}-
+
+      - name: Check on MSRV (1.88)
+        working-directory: rust
+        run: cargo check --locked --all-targets
+
   python:
     name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

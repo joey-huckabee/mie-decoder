@@ -21,7 +21,7 @@ not a transliteration: its CLI was redesigned, its writer is streaming
 buffer. Maintain each implementation according to its own architecture while
 keeping shared format and CSV behavior aligned.
 
-Edition 2024, MSRV 1.85. The crate has exactly one external dependency: `memmap2`. Argument parsing, CSV writing, TOML config, logging, and error types are all hand-rolled — preserve this property when adding features.
+Edition 2024, MSRV 1.88 (`memmap2` requires ≥1.88; edition 2024 itself only floors at 1.85). The crate has exactly one external dependency: `memmap2`. Argument parsing, CSV writing, TOML config, logging, and error types are all hand-rolled — preserve this property when adding features.
 
 ## Common Commands
 
@@ -42,6 +42,8 @@ cargo test config::tests::parses_default_toml_from_disk        # Single unit tes
 
 # Lint
 cargo clippy --all-targets -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps    # doc-link check (CI-gated)
+cargo +1.88 check --all-targets                   # MSRV 1.88 floor (CI-gated)
 
 # Run the CLI
 cargo run --release -- decode path/to/recording.mie -o decoded.csv

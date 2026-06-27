@@ -298,28 +298,28 @@ impl<'a> MergedRecordIter<'a> {
                 // (capture order is chronological). A backward step means the
                 // merged output may be out of order for this file. Strict mode
                 // fails the batch; lenient mode WARNs once per file.
-                if let Some(prev) = self.prev_us[file_index] {
-                    if us < prev {
-                        if self.strict {
-                            self.pending_error = Some(MieError::NonMonotonicInput {
-                                file_index,
-                                path: self.paths[file_index].clone(),
-                                prev_us: prev,
-                                curr_us: us,
-                            });
-                        } else if !self.warned_backward[file_index] {
-                            self.warned_backward[file_index] = true;
-                            log_warn!(
-                                "merge: input #{} ({}) is not internally time-sorted: \
+                if let Some(prev) = self.prev_us[file_index]
+                    && us < prev
+                {
+                    if self.strict {
+                        self.pending_error = Some(MieError::NonMonotonicInput {
+                            file_index,
+                            path: self.paths[file_index].clone(),
+                            prev_us: prev,
+                            curr_us: us,
+                        });
+                    } else if !self.warned_backward[file_index] {
+                        self.warned_backward[file_index] = true;
+                        log_warn!(
+                            "merge: input #{} ({}) is not internally time-sorted: \
                                  timestamp stepped backward (prev_us={} curr_us={}) — merged \
                                  output may be out of order for this input \
                                  (further occurrences suppressed)",
-                                file_index,
-                                self.paths[file_index].display(),
-                                prev,
-                                us
-                            );
-                        }
+                            file_index,
+                            self.paths[file_index].display(),
+                            prev,
+                            us
+                        );
                     }
                 }
                 self.prev_us[file_index] = Some(us);
