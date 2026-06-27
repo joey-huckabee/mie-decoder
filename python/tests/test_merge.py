@@ -41,11 +41,7 @@ def rt15_record_at(
     upper = fr | ((day & 0x1FF) << 5) | (hour & 0x1F)
     middle = ((minute & 0x3F) << 10) | ((second & 0x3F) << 4) | ((micro >> 16) & 0xF)
     lower = micro & 0xFFFF
-    ts = (
-        upper.to_bytes(2, "little")
-        + middle.to_bytes(2, "little")
-        + lower.to_bytes(2, "little")
-    )
+    ts = upper.to_bytes(2, "little") + middle.to_bytes(2, "little") + lower.to_bytes(2, "little")
     return RECORD_RT15_SA11_RCV[:2] + ts + RECORD_RT15_SA11_RCV[8:]
 
 
@@ -133,9 +129,7 @@ def test_merge_warns_on_within_file_backward_step(
     with caplog.at_level(logging.WARNING, logger="mie_decoder.merge"):
         msgs = list(merge_readers([MieFileReader(fa)]))
     assert len(msgs) == 3, "lenient mode keeps all records despite the WARN"
-    backward_warns = [
-        r for r in caplog.records if "not internally time-sorted" in r.getMessage()
-    ]
+    backward_warns = [r for r in caplog.records if "not internally time-sorted" in r.getMessage()]
     assert len(backward_warns) == 1, "exactly one backward-step WARN per file"
 
 
@@ -288,7 +282,9 @@ def test_cli_manifest_missing_is_runtime_error(tmp_path: Path) -> None:
     from mie_decoder.cli import EXIT_RUNTIME, main
 
     out = tmp_path / "o.csv"
-    assert main(["decode", "--manifest", str(tmp_path / "nope.txt"), "-o", str(out)]) == EXIT_RUNTIME
+    assert (
+        main(["decode", "--manifest", str(tmp_path / "nope.txt"), "-o", str(out)]) == EXIT_RUNTIME
+    )
 
 
 @pytest.mark.requirement("L1-ROB-001")
@@ -325,9 +321,7 @@ def test_merge_allow_partial_writes_partial_on_file_failure(tmp_path: Path) -> N
     merged = merge_readers(readers, allow_partial=True)
 
     out = tmp_path / "out.csv"
-    outcome = write_csv(
-        merged, output=out, opts=WriteOptions(allow_partial=True)
-    )
+    outcome = write_csv(merged, output=out, opts=WriteOptions(allow_partial=True))
     assert outcome.partial is not None
     assert outcome.normal_count == 3  # A:100 + B:200 + A:300 before B's loss
     assert (tmp_path / "out.csv.partial").exists()

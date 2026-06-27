@@ -202,9 +202,7 @@ class TestDecoderConfig:
     @pytest.mark.requirement("L2-CFG-004")
     def test_overrides_merge_filters(self) -> None:
         """CLI filters should merge with config file filters."""
-        config = DecoderConfig(
-            filters=FilterConfig(exclude_types={0x20})
-        )
+        config = DecoderConfig(filters=FilterConfig(exclude_types={0x20}))
         updated = config.with_overrides(exclude_types={0x01})
         assert updated.filters.exclude_types == {0x20, 0x01}
 
@@ -228,7 +226,7 @@ class TestLoadConfig:
         cfg_file.write_text(
             '[logging]\nlevel = "DEBUG"\n\n'
             '[filter]\nexclude_types = ["SPURIOUS_DATA"]\n'
-            'exclude_rts = [31]\n'
+            "exclude_rts = [31]\n"
         )
         config = load_config(cfg_file)
         assert config.log_level == "DEBUG"
@@ -317,9 +315,9 @@ class TestApplyFilters:
         # RT/subaddress filters never match a None Command Word: the
         # spurious record passes through (and does not raise).
         assert list(apply_filters([spurious], FilterConfig(exclude_rts={15}))) == [spurious]
-        assert list(
-            apply_filters([spurious], FilterConfig(exclude_subaddresses={11}))
-        ) == [spurious]
+        assert list(apply_filters([spurious], FilterConfig(exclude_subaddresses={11}))) == [
+            spurious
+        ]
         # But type and bus filters still apply to it.
         assert list(apply_filters([spurious], FilterConfig(exclude_types={0x20}))) == []
         assert list(apply_filters([spurious], FilterConfig(exclude_buses={Bus.A}))) == []
@@ -379,13 +377,9 @@ class TestApplyFilters:
             file_offset=0,
         )
         normal = _make_msg(rt=15, sa=11)
-        result = list(
-            apply_filters([spurious, normal], FilterConfig(include_rts={15}))
-        )
+        result = list(apply_filters([spurious, normal], FilterConfig(include_rts={15})))
         assert result == [normal]
-        result = list(
-            apply_filters([spurious, normal], FilterConfig(include_subaddresses={11}))
-        )
+        result = list(apply_filters([spurious, normal], FilterConfig(include_subaddresses={11})))
         assert result == [normal]
 
     @pytest.mark.requirement("L3-PY-013")
@@ -423,11 +417,16 @@ class TestCliFilters:
 
         out = tmp_path / "filtered.csv"
         # Exclude RT_TO_BC (type 0x04) — should remove 3rd record
-        rc = main([
-            "decode", str(tmp_mie_file),
-            "-o", str(out),
-            "--exclude-types", "RT_TO_BC",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--exclude-types",
+                "RT_TO_BC",
+            ]
+        )
         assert rc == 0
         lines = out.read_text().strip().split("\n")
         assert len(lines) == 3  # header + 2 data rows
@@ -438,11 +437,16 @@ class TestCliFilters:
 
         out = tmp_path / "rt_filtered.csv"
         # All records are RT 15, so excluding it should leave 0 data rows
-        rc = main([
-            "decode", str(tmp_mie_file),
-            "-o", str(out),
-            "--exclude-rts", "15",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--exclude-rts",
+                "15",
+            ]
+        )
         assert rc == 0
         lines = out.read_text().strip().split("\n")
         assert len(lines) == 1  # header only, no data rows
@@ -454,11 +458,16 @@ class TestCliFilters:
         cfg = tmp_path / "test.toml"
         cfg.write_text('[filter]\nexclude_types = ["RT_TO_BC"]\n')
         out = tmp_path / "cfg_filtered.csv"
-        rc = main([
-            "--config", str(cfg),  # global: before the subcommand
-            "decode", str(tmp_mie_file),
-            "-o", str(out),
-        ])
+        rc = main(
+            [
+                "--config",
+                str(cfg),  # global: before the subcommand
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+            ]
+        )
         assert rc == 0
         lines = out.read_text().strip().split("\n")
         assert len(lines) == 3  # header + 2 (RT_TO_BC excluded)
@@ -471,10 +480,16 @@ class TestCliFilters:
         from mie_decoder.cli import main
 
         out = tmp_path / "inc.csv"
-        rc = main([
-            "decode", str(tmp_mie_file), "-o", str(out),
-            "--include-subaddresses", "11",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--include-subaddresses",
+                "11",
+            ]
+        )
         assert rc == 0
         lines = out.read_text().strip().split("\n")
         assert len(lines) == 2  # header + the single SA11 record
@@ -484,10 +499,16 @@ class TestCliFilters:
         from mie_decoder.cli import main
 
         out = tmp_path / "inc_comma.csv"
-        rc = main([
-            "decode", str(tmp_mie_file), "-o", str(out),
-            "--include-subaddresses", "11,22",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--include-subaddresses",
+                "11,22",
+            ]
+        )
         assert rc == 0
         lines = out.read_text().strip().split("\n")
         assert len(lines) == 4  # header + all 3 records (SA11 + SA22 x2)
@@ -498,11 +519,18 @@ class TestCliFilters:
 
         out = tmp_path / "inc_rep.csv"
         # Equivalent to the comma form above.
-        rc = main([
-            "decode", str(tmp_mie_file), "-o", str(out),
-            "--include-subaddresses", "11",
-            "--include-subaddresses", "22",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--include-subaddresses",
+                "11",
+                "--include-subaddresses",
+                "22",
+            ]
+        )
         assert rc == 0
         lines = out.read_text().strip().split("\n")
         assert len(lines) == 4
@@ -514,10 +542,16 @@ class TestCliFilters:
         from mie_decoder.cli import main
 
         out = tmp_path / "inc_none.csv"
-        rc = main([
-            "decode", str(tmp_mie_file), "-o", str(out),
-            "--include-rts", "30",  # fixture is all RT15
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--include-rts",
+                "30",  # fixture is all RT15
+            ]
+        )
         assert rc == 0
         lines = out.read_text().strip().split("\n")
         assert len(lines) == 1  # header only
@@ -527,10 +561,16 @@ class TestCliFilters:
         from mie_decoder.cli import main
 
         out = tmp_path / "bad.csv"
-        rc = main([
-            "decode", str(tmp_mie_file), "-o", str(out),
-            "--exclude-rts", "notanumber",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--exclude-rts",
+                "notanumber",
+            ]
+        )
         assert rc == 4  # EXIT_USAGE
         assert not out.exists()
 
@@ -541,12 +581,14 @@ class TestErrorModeConfig:
     @pytest.mark.requirement("L2-CFG-001")
     def test_default_is_separate(self) -> None:
         from mie_decoder.models import ErrorMode
+
         config = DecoderConfig()
         assert config.error_mode == ErrorMode.SEPARATE
 
     @pytest.mark.requirement("L2-CFG-001")
     def test_override_to_inline(self) -> None:
         from mie_decoder.models import ErrorMode
+
         config = DecoderConfig()
         updated = config.with_overrides(error_mode=ErrorMode.INLINE)
         assert updated.error_mode == ErrorMode.INLINE
@@ -554,6 +596,7 @@ class TestErrorModeConfig:
     @pytest.mark.requirement("L2-ERR-011")
     def test_load_from_toml(self, tmp_path: Path) -> None:
         from mie_decoder.models import ErrorMode
+
         cfg = tmp_path / "em.toml"
         cfg.write_text('[decode]\nerror_mode = "inline"\n')
         config = load_config(cfg)
@@ -580,9 +623,7 @@ class TestErrorModeConfig:
         )
 
         mie = tmp_path / "with_error.mie"
-        mie.write_bytes(
-            normal_record_rt15_sa11_us(100) + errored_record_rt15_sa11_us(16100)
-        )
+        mie.write_bytes(normal_record_rt15_sa11_us(100) + errored_record_rt15_sa11_us(16100))
         out = tmp_path / "inline.csv"
         rc = main(["decode", str(mie), "-o", str(out), "--inline-errors"])
         assert rc == 0
@@ -617,7 +658,7 @@ class TestSchemaValidation:
     @pytest.mark.requirement("L2-CFG-010")
     def test_unknown_log_level_rejected(self, tmp_path: Path) -> None:
         cfg = tmp_path / "bad.toml"
-        cfg.write_text("[logging]\nlevel = \"NOPE\"\n")
+        cfg.write_text('[logging]\nlevel = "NOPE"\n')
         with pytest.raises(ValueError, match="logging"):
             load_config(cfg)
 
@@ -625,21 +666,21 @@ class TestSchemaValidation:
     def test_known_log_levels_accepted_case_insensitively(self, tmp_path: Path) -> None:
         for level in ["DEBUG", "info", "Warning", "WARN", "error", "CRITICAL"]:
             cfg = tmp_path / f"l_{level}.toml"
-            cfg.write_text(f"[logging]\nlevel = \"{level}\"\n")
+            cfg.write_text(f'[logging]\nlevel = "{level}"\n')
             config = load_config(cfg)
             assert config.log_level == level.upper()
 
     @pytest.mark.requirement("L2-CFG-010")
     def test_unknown_output_format_rejected(self, tmp_path: Path) -> None:
         cfg = tmp_path / "bad_fmt.toml"
-        cfg.write_text("[output]\nformat = \"json\"\n")
+        cfg.write_text('[output]\nformat = "json"\n')
         with pytest.raises(ValueError, match="output.format"):
             load_config(cfg)
 
     @pytest.mark.requirement("L2-CFG-010")
     def test_output_format_csv_accepted(self, tmp_path: Path) -> None:
         cfg = tmp_path / "ok_fmt.toml"
-        cfg.write_text("[output]\nformat = \"csv\"\n")
+        cfg.write_text('[output]\nformat = "csv"\n')
         config = load_config(cfg)
         assert config.output_format == "csv"
 
@@ -649,6 +690,7 @@ class TestSchemaValidation:
         # tomllib at parse time (TypeError), so we test the dataclass
         # path instead.
         from mie_decoder.config import _require_bool
+
         with pytest.raises(ValueError, match="expected boolean"):
             _require_bool("decode", "strict", "yes")
 
@@ -677,7 +719,7 @@ class TestSchemaValidation:
     @pytest.mark.requirement("L2-DEC-017")
     def test_standard_tick_rate_hz_default_is_none(self, tmp_path: Path) -> None:
         cfg = tmp_path / "std.toml"
-        cfg.write_text("[decode]\ntime_format = \"standard\"\n")
+        cfg.write_text('[decode]\ntime_format = "standard"\n')
         config = load_config(cfg)
         assert config.standard_tick_rate_hz is None
 
@@ -707,13 +749,14 @@ class TestSchemaValidation:
 
     @pytest.mark.requirement("L2-CFG-009")
     def test_unknown_top_level_key_is_warned_not_rejected(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         cfg = tmp_path / "unknown.toml"
-        cfg.write_text(
-            "[output]\nformat = \"csv\"\nunknown_thing = true\n"
-        )
+        cfg.write_text('[output]\nformat = "csv"\nunknown_thing = true\n')
         import logging
+
         with caplog.at_level(logging.WARNING, logger="mie_decoder.config"):
             config = load_config(cfg)
         assert config.output_format == "csv"
@@ -722,18 +765,19 @@ class TestSchemaValidation:
 
     @pytest.mark.requirement("L2-CFG-009")
     def test_unknown_filter_key_warned_not_rejected(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         # Common typo: exclude_subdresses (missing "ad").
         cfg = tmp_path / "typo.toml"
         cfg.write_text("[filter]\nexclude_subdresses = [0]\n")
         import logging
+
         with caplog.at_level(logging.WARNING, logger="mie_decoder.config"):
             config = load_config(cfg)
         assert config.filters.exclude_subaddresses == set()
-        assert any(
-            "exclude_subdresses" in rec.getMessage() for rec in caplog.records
-        )
+        assert any("exclude_subdresses" in rec.getMessage() for rec in caplog.records)
 
 
 class TestSharedDefaultConfig:
@@ -744,9 +788,7 @@ class TestSharedDefaultConfig:
 
     @pytest.mark.requirement("L2-CFG-001")
     def test_loads_shared_default_toml(self) -> None:
-        default_toml = (
-            Path(__file__).resolve().parents[2] / "config" / "default.toml"
-        )
+        default_toml = Path(__file__).resolve().parents[2] / "config" / "default.toml"
         if not default_toml.exists():
             pytest.skip("config/default.toml not present in this checkout")
         cfg = load_config(default_toml)

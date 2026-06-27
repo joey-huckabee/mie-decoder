@@ -156,6 +156,7 @@ class TestMieFileReader:
         from mie_decoder.exceptions import MieDecoderError
 
         from tests.conftest import RECORD_RT15_SA11_RCV
+
         bad_record = b"\x03\x00" + b"\x00" * 18  # type 0x03, wc=0
         fpath = tmp_path / "bad_record.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV * 2 + bad_record)
@@ -163,9 +164,7 @@ class TestMieFileReader:
             list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
 
     @pytest.mark.requirement("L2-DEC-009")
-    def test_payload_extraction_does_not_overrun_into_next_record(
-        self, tmp_path: Path
-    ) -> None:
+    def test_payload_extraction_does_not_overrun_into_next_record(self, tmp_path: Path) -> None:
         """L2-DEC-009: payload extraction is bounded by the Type Word's
         declared extent and never consumes bytes from the following record.
         A Command Word declaring more data words than `word_count` can hold
@@ -205,9 +204,7 @@ class TestMieFileReader:
     @pytest.mark.requirement("L2-DEC-009")
     @pytest.mark.requirement("L1-ROB-001")
     @pytest.mark.requirement("L2-SYN-027")
-    def test_rt_to_rt_cmd2_overclaim_does_not_overrun(
-        self, tmp_path: Path
-    ) -> None:
+    def test_rt_to_rt_cmd2_overclaim_does_not_overrun(self, tmp_path: Path) -> None:
         """L2-DEC-009 / L1-ROB-001 / L2-SYN-027: an RT-to-RT record whose
         *second* Command Word over-declares ``data_word_count`` must not read
         past the Type Word's declared extent — the regression behind the
@@ -234,12 +231,12 @@ class TestMieFileReader:
         # 0x7961 declares dwc=1 (small → passes the Cmd1-based capacity check);
         # Cmd2 0x797E declares dwc=30 (the over-claim). R2: a valid record.
         r1 = (
-            b"\x08\x0a"                      # Type: wc=10, type=0x08 (RT_TO_RT)
-            + b"\x0f\x18\x26\xdb\x21\xf6"    # IRIG timestamp (3 words)
-            + b"\x61\x79"                    # Cmd1 0x7961 (RT15 R SA11 dwc=1)
-            + b"\x7e\x79"                    # Cmd2 0x797E (RT15 R SA11 dwc=30)
-            + b"\x00\x00"                    # tx_status
-            + bytes(6)                       # 3 padding words → total 10 words
+            b"\x08\x0a"  # Type: wc=10, type=0x08 (RT_TO_RT)
+            + b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
+            + b"\x61\x79"  # Cmd1 0x7961 (RT15 R SA11 dwc=1)
+            + b"\x7e\x79"  # Cmd2 0x797E (RT15 R SA11 dwc=30)
+            + b"\x00\x00"  # tx_status
+            + bytes(6)  # 3 padding words → total 10 words
         )
         assert len(r1) == 20
         data = r1 + RECORD_RT15_SA11_RCV
@@ -260,9 +257,7 @@ class TestMieFileReader:
         assert messages[0].command_word.rt == 15
 
     @pytest.mark.requirement("L2-SYN-027")
-    def test_rt_to_rt_cmd_word_count_mismatch_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    def test_rt_to_rt_cmd_word_count_mismatch_rejected(self, tmp_path: Path) -> None:
         """L2-SYN-027: an RT-to-RT record whose Cmd1 and Cmd2 disagree on
         ``data_word_count`` is rejected end-to-end — even when the record is
         large enough that neither the L2-SYN-022 capacity check nor the
@@ -280,13 +275,13 @@ class TestMieFileReader:
         # payload + rx_status, so neither the capacity check nor the
         # record-bounded reads fire — only the Cmd1/Cmd2 mismatch is at fault.
         r1 = (
-            b"\x08\x0d"                      # Type: wc=13, type=0x08 (RT_TO_RT)
-            + b"\x0f\x18\x26\xdb\x21\xf6"    # IRIG timestamp (3 words)
-            + b"\x63\x79"                    # Cmd1 0x7963 (RT15 R SA11 dwc=3)
-            + b"\x65\x79"                    # Cmd2 0x7965 (RT15 R SA11 dwc=5)
-            + b"\x00\x00"                    # tx_status
-            + bytes(10)                      # 5 data words
-            + b"\x00\x00"                    # rx_status → total 13 words = 26 B
+            b"\x08\x0d"  # Type: wc=13, type=0x08 (RT_TO_RT)
+            + b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
+            + b"\x63\x79"  # Cmd1 0x7963 (RT15 R SA11 dwc=3)
+            + b"\x65\x79"  # Cmd2 0x7965 (RT15 R SA11 dwc=5)
+            + b"\x00\x00"  # tx_status
+            + bytes(10)  # 5 data words
+            + b"\x00\x00"  # rx_status → total 13 words = 26 B
         )
         assert len(r1) == 26
         data = r1 + RECORD_RT15_SA11_RCV
@@ -318,9 +313,7 @@ class TestMieFileReader:
         with caplog.at_level(logging.WARNING, logger="mie_decoder.reader"):
             messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
         assert len(messages) == 3
-        day_warns = [
-            r for r in caplog.records if "day-of-year" in r.getMessage()
-        ]
+        day_warns = [r for r in caplog.records if "day-of-year" in r.getMessage()]
         assert len(day_warns) == 1, (
             "day-of-year advisory should fire exactly once per decode, got "
             f"{[w.getMessage() for w in day_warns]}"
@@ -335,9 +328,7 @@ class TestMieFileReader:
         assert messages[2].file_offset == 72 + 34  # 36*2 + 17*2
 
     @pytest.mark.requirement("L2-RDR-004")
-    def test_first_record_truncation_strict_raises_distinct_error(
-        self, tmp_path: Path
-    ) -> None:
+    def test_first_record_truncation_strict_raises_distinct_error(self, tmp_path: Path) -> None:
         """L2-RDR-004: a file containing a structurally-valid Type Word
         whose declared extent runs past EOF SHALL surface a distinct
         error class in strict mode (MieFirstRecordTruncatedError, NOT
@@ -393,15 +384,11 @@ class TestMieFileReader:
 
         fpath = tmp_path / "forced_match.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV * 2)
-        messages = list(
-            MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG)
-        )
+        messages = list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
         assert len(messages) == 2
 
     @pytest.mark.requirement("L2-RDR-004")
-    def test_first_record_truncation_lenient_terminates_clean(
-        self, tmp_path: Path
-    ) -> None:
+    def test_first_record_truncation_lenient_terminates_clean(self, tmp_path: Path) -> None:
         """L2-RDR-004: lenient mode SHALL terminate cleanly with zero
         records emitted on first-record truncation."""
         from tests.conftest import RECORD_RT15_SA11_RCV
@@ -449,15 +436,15 @@ class TestCsvWriter:
         row = next(reader)
 
         assert row[0] == "192:15:54:50.456225"  # TIME_STAMP
-        assert row[1] == "15"                    # RT
-        assert row[2] == "11R"                   # MSG
-        assert row[3] == "0400"                  # WD01
-        assert row[35] == "7800"                 # STAT (index 3+32)
-        assert row[36] == "797E"                 # CMD
-        assert row[39] == "A"                    # BUS
-        assert row[40] == "0.000000"             # DELTA
-        assert row[41] == ""                     # ERROR (normal message)
-        assert row[42] == ""                     # ERROR_CODE (normal message)
+        assert row[1] == "15"  # RT
+        assert row[2] == "11R"  # MSG
+        assert row[3] == "0400"  # WD01
+        assert row[35] == "7800"  # STAT (index 3+32)
+        assert row[36] == "797E"  # CMD
+        assert row[39] == "A"  # BUS
+        assert row[40] == "0.000000"  # DELTA
+        assert row[41] == ""  # ERROR (normal message)
+        assert row[42] == ""  # ERROR_CODE (normal message)
 
     @pytest.mark.requirement("L2-WRT-002")
     def test_csv_data_word_padding(self, tmp_mie_file: Path) -> None:
@@ -517,9 +504,7 @@ class TestAtomicWriteSafety:
         assert paths_refer_to_same_file(a, b) is False
 
     @pytest.mark.requirement("L2-WRT-014")
-    def test_write_csv_rejects_input_output_collision(
-        self, tmp_mie_file: Path
-    ) -> None:
+    def test_write_csv_rejects_input_output_collision(self, tmp_mie_file: Path) -> None:
         """L2-WRT-014: refuse to write CSV over the input file."""
         from mie_decoder.exceptions import MieInputOutputCollisionError
         from mie_decoder.writer import WriteOptions
@@ -553,9 +538,7 @@ class TestAtomicWriteSafety:
         assert out.read_text(encoding="utf-8") == "EXISTING\n"
 
     @pytest.mark.requirement("L2-WRT-017")
-    def test_write_csv_overwrites_by_default(
-        self, tmp_mie_file: Path, tmp_path: Path
-    ) -> None:
+    def test_write_csv_overwrites_by_default(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         """No-clobber off (default): existing destination is replaced."""
         out = tmp_path / "out.csv"
         out.write_text("OLD\n", encoding="utf-8")
@@ -565,23 +548,16 @@ class TestAtomicWriteSafety:
         assert text.startswith("TIME_STAMP,RT,MSG,")
 
     @pytest.mark.requirement("L3-WRT-001")
-    def test_write_csv_to_file_cleans_up_temp(
-        self, tmp_mie_file: Path, tmp_path: Path
-    ) -> None:
+    def test_write_csv_to_file_cleans_up_temp(self, tmp_mie_file: Path, tmp_path: Path) -> None:
         """L3-WRT-001: after a successful write, no temp file should remain."""
         out = tmp_path / "out.csv"
         write_csv(MieFileReader(tmp_mie_file), output=out)
         # Temp pattern: <output>.mie-decoder.tmp.<pid>
-        leftovers = [
-            p for p in tmp_path.iterdir()
-            if p.name.startswith("out.csv.mie-decoder.tmp.")
-        ]
+        leftovers = [p for p in tmp_path.iterdir() if p.name.startswith("out.csv.mie-decoder.tmp.")]
         assert leftovers == [], f"unexpected temp file(s): {leftovers}"
 
     @pytest.mark.requirement("L2-WRT-014")
-    def test_write_csv_split_rejects_input_output_collision(
-        self, tmp_mie_file: Path
-    ) -> None:
+    def test_write_csv_split_rejects_input_output_collision(self, tmp_mie_file: Path) -> None:
         from mie_decoder.exceptions import MieInputOutputCollisionError
         from mie_decoder.writer import WriteOptions, write_csv_split
 
@@ -603,9 +579,7 @@ class TestAtomicWriteSafety:
 
     @pytest.mark.requirement("L2-SYN-011")
     @pytest.mark.requirement("L1-EXIT-004")
-    def test_lenient_unrecoverable_sync_loss_raises(
-        self, tmp_path: Path
-    ) -> None:
+    def test_lenient_unrecoverable_sync_loss_raises(self, tmp_path: Path) -> None:
         """L1-EXIT-004: lenient-mode mid-file sync loss (not truncation) raises."""
         from mie_decoder.exceptions import MieUnrecoverableSyncLossError
         from tests.conftest import RECORD_RT15_SA11_RCV
@@ -623,9 +597,7 @@ class TestAtomicWriteSafety:
 
     @pytest.mark.requirement("L3-WRT-002")
     @pytest.mark.requirement("L1-EXIT-004")
-    def test_write_csv_with_allow_partial_commits_dot_partial(
-        self, tmp_path: Path
-    ) -> None:
+    def test_write_csv_with_allow_partial_commits_dot_partial(self, tmp_path: Path) -> None:
         """allow_partial converts UnrecoverableSyncLoss to a .partial file
         and a non-None WriteOutcome.partial."""
         from mie_decoder.writer import WriteOptions
@@ -658,14 +630,16 @@ class TestAtomicWriteSafety:
         from mie_decoder.cli import main
 
         out = tmp_path / "out.csv"
-        rc = main([
-            "decode",
-            str(tmp_mie_file),
-            "-o",
-            str(out),
-            "--detect-records",
-            "2",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--detect-records",
+                "2",
+            ]
+        )
         assert rc == 0
         assert out.exists()
 
@@ -679,14 +653,16 @@ class TestAtomicWriteSafety:
         from mie_decoder.cli import main
 
         out = tmp_path / "out.csv"
-        rc = main([
-            "decode",
-            str(tmp_mie_file),
-            "-o",
-            str(out),
-            "--detect-records",
-            "999",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--detect-records",
+                "999",
+            ]
+        )
         assert rc != 0
         captured = capsys.readouterr()
         assert "--detect-records" in captured.err and "999" in captured.err
@@ -703,14 +679,16 @@ class TestAtomicWriteSafety:
         from mie_decoder.cli import main
 
         out = tmp_path / "out.csv"
-        rc = main([
-            "decode",
-            str(tmp_mie_file),
-            "-o",
-            str(out),
-            "--standard-tick-rate-hz",
-            "0",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(tmp_mie_file),
+                "-o",
+                str(out),
+                "--standard-tick-rate-hz",
+                "0",
+            ]
+        )
         assert rc == 4
         captured = capsys.readouterr()
         assert "--standard-tick-rate-hz" in captured.err
@@ -734,25 +712,33 @@ class TestAtomicWriteSafety:
 
         fixture = (
             Path(__file__).resolve().parents[2]
-            / "tests" / "conformance" / "inputs" / "standard-timestamps.hex"
+            / "tests"
+            / "conformance"
+            / "inputs"
+            / "standard-timestamps.hex"
         )
         # Same hex-fixture parse as tests/conformance/run.py:read_hex —
         # strip per-line `#` comments, join, decode (fromhex ignores
         # whitespace).
-        hex_text = "".join(
-            line.split("#", 1)[0] for line in fixture.read_text().splitlines()
-        )
+        hex_text = "".join(line.split("#", 1)[0] for line in fixture.read_text().splitlines())
         data = bytes.fromhex(hex_text)
         rec = tmp_path / "standard.mie"
         rec.write_bytes(data)
 
         # Calibrated: DELTA populated.
         out = tmp_path / "calibrated.csv"
-        rc = main([
-            "decode", str(rec), "-o", str(out),
-            "--time-format", "standard",
-            "--standard-tick-rate-hz", "1000000",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(rec),
+                "-o",
+                str(out),
+                "--time-format",
+                "standard",
+                "--standard-tick-rate-hz",
+                "1000000",
+            ]
+        )
         assert rc == 0
         rows = list(_csv.DictReader(out.read_text().splitlines()))
         assert rows[0]["DELTA"] == "0.000000"
@@ -760,10 +746,16 @@ class TestAtomicWriteSafety:
 
         # Uncalibrated: DELTA empty (unchanged historical behavior).
         out2 = tmp_path / "uncalibrated.csv"
-        rc = main([
-            "decode", str(rec), "-o", str(out2),
-            "--time-format", "standard",
-        ])
+        rc = main(
+            [
+                "decode",
+                str(rec),
+                "-o",
+                str(out2),
+                "--time-format",
+                "standard",
+            ]
+        )
         assert rc == 0
         rows2 = list(_csv.DictReader(out2.read_text().splitlines()))
         assert rows2[0]["DELTA"] == ""
@@ -784,9 +776,7 @@ class TestAtomicWriteSafety:
 
     @pytest.mark.requirement("L2-CLI-011")
     @pytest.mark.requirement("L1-EXIT-004")
-    def test_cli_unrecoverable_default_returns_exit_3(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cli_unrecoverable_default_returns_exit_3(self, tmp_path: Path) -> None:
         """CLI maps MieUnrecoverableSyncLossError to exit code 3 (L1-EXIT-004)."""
         from mie_decoder.cli import main
         from tests.conftest import RECORD_RT15_SA11_RCV
@@ -802,9 +792,7 @@ class TestAtomicWriteSafety:
 
     @pytest.mark.requirement("L2-CLI-011")
     @pytest.mark.requirement("L1-EXIT-004")
-    def test_cli_unrecoverable_allow_partial_returns_exit_0(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cli_unrecoverable_allow_partial_returns_exit_0(self, tmp_path: Path) -> None:
         """--allow-partial converts exit 3 into exit 0 + .partial file."""
         from mie_decoder.cli import main
         from tests.conftest import RECORD_RT15_SA11_RCV
@@ -878,8 +866,7 @@ class TestCliEndToEnd:
             rc = main(["--log-level", "INFO", "decode", str(tmp_mie_file), "-o", str(out)])
         assert rc == 0
         summary_lines = [
-            r.getMessage() for r in caplog.records
-            if "decode exit class:" in r.getMessage()
+            r.getMessage() for r in caplog.records if "decode exit class:" in r.getMessage()
         ]
         assert summary_lines, (
             "expected at least one `decode exit class:` summary line; "
@@ -906,8 +893,7 @@ class TestCliEndToEnd:
             rc = main(["--log-level", "INFO", "decode", str(bad), "-o", str(out)])
         assert rc == 2
         summary_lines = [
-            r.getMessage() for r in caplog.records
-            if "decode exit class:" in r.getMessage()
+            r.getMessage() for r in caplog.records if "decode exit class:" in r.getMessage()
         ]
         assert any("no-records" in line for line in summary_lines), (
             f"expected `no-records` in summary; got {summary_lines}"
@@ -919,6 +905,7 @@ class TestCliEndToEnd:
         from mie_decoder.cli import main
 
         import sys
+
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
@@ -941,7 +928,9 @@ class TestCliEndToEnd:
         assert out.exists()
 
     @pytest.mark.requirement("L3-PY-010")
-    def test_cli_count_subcommand(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_cli_count_subcommand(
+        self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """The `count` subcommand prints the integer count to stdout and a
         human-readable status line to stderr."""
         from mie_decoder.cli import main
@@ -1001,19 +990,22 @@ class TestCliEndToEnd:
         out = tmp_path / "decoded.csv"
 
         with caplog.at_level(logging.INFO, logger="mie_decoder"):
-            rc = main([
-                "--config", str(config_path),  # global: before subcommand
-                "decode",
-                str(tmp_mie_file),
-                "-o", str(out),
-            ])
+            rc = main(
+                [
+                    "--config",
+                    str(config_path),  # global: before subcommand
+                    "decode",
+                    str(tmp_mie_file),
+                    "-o",
+                    str(out),
+                ]
+            )
 
         assert rc == 0
         # `decode exit class:` is INFO-level; it appears only if the
         # mie_decoder logger is effectively at INFO or finer.
         summary_lines = [
-            r.getMessage() for r in caplog.records
-            if "decode exit class:" in r.getMessage()
+            r.getMessage() for r in caplog.records if "decode exit class:" in r.getMessage()
         ]
         assert summary_lines, (
             "expected `decode exit class:` (INFO) line after TOML set "
@@ -1041,19 +1033,21 @@ class TestCliEndToEnd:
         out = tmp_path / "decoded.csv"
 
         with caplog.at_level(logging.DEBUG, logger="mie_decoder"):
-            rc = main([
-                "--log-level", "ERROR",
-                "--config", str(config_path),  # both global: before subcommand
-                "decode",
-                str(tmp_mie_file),
-                "-o", str(out),
-            ])
+            rc = main(
+                [
+                    "--log-level",
+                    "ERROR",
+                    "--config",
+                    str(config_path),  # both global: before subcommand
+                    "decode",
+                    str(tmp_mie_file),
+                    "-o",
+                    str(out),
+                ]
+            )
 
         assert rc == 0
-        info_lines = [
-            r.getMessage() for r in caplog.records
-            if r.levelno < logging.ERROR
-        ]
+        info_lines = [r.getMessage() for r in caplog.records if r.levelno < logging.ERROR]
         assert not info_lines, (
             f"CLI --log-level ERROR should suppress all sub-ERROR records "
             f"even when TOML set level=DEBUG; got: {info_lines}"
@@ -1082,12 +1076,16 @@ class TestCliEndToEnd:
         old_stdout = sys.stdout
         sys.stdout = buf
         try:
-            rc = main([
-                "--config", str(config_path),  # global: before subcommand
-                "dump",
-                str(tmp_mie_file),
-                "--records", "1",
-            ])
+            rc = main(
+                [
+                    "--config",
+                    str(config_path),  # global: before subcommand
+                    "dump",
+                    str(tmp_mie_file),
+                    "--records",
+                    "1",
+                ]
+            )
         finally:
             sys.stdout = old_stdout
 
@@ -1119,9 +1117,7 @@ class TestCliEndToEnd:
         assert logging.getLogger("mie_decoder").getEffectiveLevel() > logging.CRITICAL
 
     @pytest.mark.requirement("L2-CLI-004")
-    def test_cli_log_level_accepts_full_set_case_insensitively(
-        self, tmp_mie_file: Path
-    ) -> None:
+    def test_cli_log_level_accepts_full_set_case_insensitively(self, tmp_mie_file: Path) -> None:
         """--log-level accepts the same 7 levels as the config file, in any
         case (parity with the Rust CLI) — WARN, OFF, and lowercase spellings
         included. A bogus level is a usage error (exit 4)."""
@@ -1157,6 +1153,7 @@ class TestCliEndToEnd:
         from mie_decoder.cli import main
 
         import sys
+
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
@@ -1175,6 +1172,7 @@ class TestCliEndToEnd:
         from mie_decoder.cli import main
 
         import sys
+
         buf = io.StringIO()
         old_stdout = sys.stdout
         sys.stdout = buf
@@ -1250,7 +1248,7 @@ class TestDeltaAndErrorRecords:
 
         normal = normal_record_rt15_sa11_us(456_225)
         errored = errored_record_rt15_sa11_us(456_484)  # +0.000259 s
-        anchor = normal_record_rt15_sa11_us(456_500)    # for look-ahead
+        anchor = normal_record_rt15_sa11_us(456_500)  # for look-ahead
         fpath = tmp_path / "errored_delta.mie"
         fpath.write_bytes(normal + errored + anchor)
         messages = list(MieFileReader(fpath))
@@ -1263,7 +1261,9 @@ class TestDeltaAndErrorRecords:
 
     @pytest.mark.requirement("L2-RDR-017")
     def test_non_monotonic_timestamp_warns_once_per_key(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """L2-RDR-017: when a record's timestamp is older than the prior
         message for the same RT/MSG key, DELTA SHALL be empty and a WARN
@@ -1282,10 +1282,7 @@ class TestDeltaAndErrorRecords:
         assert messages[0].delta == 0.0
         assert messages[1].delta is None
         assert messages[2].delta is None
-        warns = [
-            r for r in caplog.records
-            if "non-monotonic" in r.getMessage().lower()
-        ]
+        warns = [r for r in caplog.records if "non-monotonic" in r.getMessage().lower()]
         assert len(warns) == 1, (
             f"expected exactly one non-monotonic WARN per key; got "
             f"{[w.getMessage() for w in warns]}"
@@ -1294,7 +1291,8 @@ class TestDeltaAndErrorRecords:
     @pytest.mark.requirement("L2-RDR-018")
     @pytest.mark.requirement("L2-ERR-005")
     def test_spurious_data_empty_delta_and_continuation_code(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """L2-RDR-018: SPURIOUS_DATA records have no RT/MSG key, SHALL have
         an empty DELTA, and SHALL NOT update any per-key cursor.
@@ -1328,7 +1326,8 @@ class TestDeltaAndErrorRecords:
 
     @pytest.mark.requirement("L2-SYN-017")
     def test_error_and_spurious_records_pass_validation(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """L2-SYN-017: valid error records and SPURIOUS_DATA records SHALL
         remain eligible record boundaries during validation and recovery —
@@ -1404,7 +1403,8 @@ class TestFuzzHarness:
 
     @pytest.mark.requirement("L1-ROB-001")
     def test_arbitrary_bytes_never_raise_unexpected_exceptions(
-        self, tmp_path,
+        self,
+        tmp_path,
     ) -> None:
         from mie_decoder.exceptions import MieDecoderError
         from mie_decoder.reader import MieFileReader
@@ -1431,7 +1431,7 @@ class TestFuzzHarness:
                 j = 0
                 while j + 8 <= size:
                     state, r = self._xorshift64(state)
-                    payload[j:j + 8] = r.to_bytes(8, "little")
+                    payload[j : j + 8] = r.to_bytes(8, "little")
                     j += 8
                 while j < size:
                     state, r = self._xorshift64(state)
@@ -1482,7 +1482,8 @@ class TestFuzzHarness:
     @pytest.mark.requirement("L1-ROB-001")
     @pytest.mark.requirement("L2-CLI-009")
     def test_dump_arbitrary_bytes_never_raise_unexpected_exceptions(
-        self, tmp_path,
+        self,
+        tmp_path,
     ) -> None:
         """L1-ROB-001 for the ``dump`` subcommand: the record-aware and raw
         hex dumps must tolerate arbitrary bytes — only a documented
@@ -1525,7 +1526,7 @@ class TestFuzzHarness:
                 j = 0
                 while j + 8 <= size:
                     state, r = self._xorshift64(state)
-                    payload[j:j + 8] = r.to_bytes(8, "little")
+                    payload[j : j + 8] = r.to_bytes(8, "little")
                     j += 8
                 while j < size:
                     state, r = self._xorshift64(state)
@@ -1579,8 +1580,7 @@ class TestDumpDiagnostics:
         assert "!! Truncated record" in out.getvalue()
         # ...and the same anomaly surfaced through the logger.
         assert any(
-            r.levelno == logging.WARNING
-            and "truncated record" in r.getMessage().lower()
+            r.levelno == logging.WARNING and "truncated record" in r.getMessage().lower()
             for r in caplog.records
         ), [r.getMessage() for r in caplog.records]
 
@@ -1594,9 +1594,7 @@ class TestSeparateModeCommitOrder:
     """
 
     @pytest.mark.requirement("L2-WRT-019")
-    def test_errors_commit_failure_leaves_main_not_orphan_errors(
-        self, tmp_path: Path
-    ) -> None:
+    def test_errors_commit_failure_leaves_main_not_orphan_errors(self, tmp_path: Path) -> None:
         """If the errors-file commit fails, the already-committed main CSV
         remains and no orphan errors file (or temp) is left behind."""
         import dataclasses

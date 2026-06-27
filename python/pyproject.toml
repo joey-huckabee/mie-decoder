@@ -23,6 +23,7 @@ pytest = "^8.0"
 pytest-cov = "^7.0"
 mypy = "^1.13"
 pylint = "^4.0.6"
+ruff = "^0.15.20"
 
 [build-system]
 requires = ["poetry-core"]
@@ -101,3 +102,10 @@ disable = [
     # `not (a <= x <= b)` parenthesization is kept for readability.
     "superfluous-parens",
 ]
+
+# Ruff formats and lints the Python package + tests. Line length matches the
+# pylint gate (100); the default lint ruleset (E/F) is kept and the formatter
+# owns code style. Run: `poetry -C python run ruff format` / `ruff check`.
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -414,9 +414,7 @@ class _StreamingCsvRowWriter:
 
     def __init__(self, stream: TextIO, destination: str) -> None:
         self._destination = destination
-        self._writer = csv.DictWriter(
-            stream, fieldnames=CSV_HEADER, lineterminator="\n"
-        )
+        self._writer = csv.DictWriter(stream, fieldnames=CSV_HEADER, lineterminator="\n")
         self._rows_written = 0
         try:
             self._writer.writeheader()
@@ -500,7 +498,10 @@ def write_csv(
             logger.warning(
                 "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
                 "wrote %d rows to %s (--allow-partial)",
-                offset, sync_losses, count, partial_path,
+                offset,
+                sync_losses,
+                count,
+                partial_path,
             )
             return WriteOutcome(
                 normal_count=count,
@@ -573,9 +574,7 @@ def write_csv_split(
     if opts is None:
         opts = WriteOptions()
     output_path = Path(output)
-    error_path = output_path.with_name(
-        f"{output_path.stem}_errors{output_path.suffix}"
-    )
+    error_path = output_path.with_name(f"{output_path.stem}_errors{output_path.suffix}")
 
     _preflight_output(output_path, opts)
     # The errors-file path also needs the no-clobber check; the
@@ -599,9 +598,7 @@ def write_csv_split(
                 if msg.error_label:
                     if error_writer is None:
                         errors_atomic = _AtomicCsvFile(error_path)
-                        error_writer = _StreamingCsvRowWriter(
-                            errors_atomic.stream, str(error_path)
-                        )
+                        error_writer = _StreamingCsvRowWriter(errors_atomic.stream, str(error_path))
                     error_writer.write_message(msg)
                 else:
                     main_writer.write_message(msg)
@@ -621,14 +618,10 @@ def write_csv_split(
             logger.info("Wrote %d normal messages to %s", normal_count, output_path)
             if errors_atomic is not None:
                 errors_atomic.commit()
-                logger.info(
-                    "Wrote %d error/spurious messages to %s", error_count, error_path
-                )
+                logger.info("Wrote %d error/spurious messages to %s", error_count, error_path)
             else:
                 logger.info("No error/spurious messages — error file not created")
-            return WriteOutcome(
-                normal_count=normal_count, error_count=error_count, partial=None
-            )
+            return WriteOutcome(normal_count=normal_count, error_count=error_count, partial=None)
 
         # Partial path: commit each file as .partial (errors first, then
         # main, mirroring the Rust writer).
@@ -640,7 +633,11 @@ def write_csv_split(
         logger.warning(
             "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
             "wrote %d normal + %d error rows as partial to %s (--allow-partial)",
-            offset, sync_losses, normal_count, error_count, main_partial,
+            offset,
+            sync_losses,
+            normal_count,
+            error_count,
+            main_partial,
         )
         return WriteOutcome(
             normal_count=normal_count,

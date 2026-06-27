@@ -62,14 +62,10 @@ def test_conformance_manifest_has_cases_with_oracles() -> None:
         if case.get("expected_exit", 0) == 0:
             assert "expected" in case, f"case {name!r} missing 'expected'"
             oracle = expected_dir / Path(case["expected"]).name
-            assert oracle.is_file(), (
-                f"oracle for case {name!r} missing at {oracle}"
-            )
+            assert oracle.is_file(), f"oracle for case {name!r} missing at {oracle}"
         for spec in specs:
             fixture = inputs_dir / Path(spec).name
-            assert fixture.is_file(), (
-                f"input fixture for case {name!r} missing at {fixture}"
-            )
+            assert fixture.is_file(), f"input fixture for case {name!r} missing at {fixture}"
 
 
 @pytest.mark.requirement("L2-CONF-005")

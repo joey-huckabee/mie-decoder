@@ -33,7 +33,7 @@ class TestValidateRecord:
     @pytest.mark.requirement("L2-SYN-001")
     def test_invalid_type_at_offset(self) -> None:
         """Random data should not validate."""
-        data = b"\xFF\xFF" * 40
+        data = b"\xff\xff" * 40
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
     @pytest.mark.requirement("L2-SYN-003")
@@ -55,7 +55,7 @@ class TestValidateRecord:
         succeeds) with the given timestamp word values. wc=5, type=0x02,
         Cmd raw 0x283E. Two records of 10 bytes each = 20 bytes."""
         type_raw = 0x0502  # type=0x02, bus A, wc=5, error=0
-        cmd_raw = 0x283E   # rt=5, dir=Recv, sa=1, dwc=30
+        cmd_raw = 0x283E  # rt=5, dir=Recv, sa=1, dwc=30
         rec = (
             type_raw.to_bytes(2, "little")
             + upper.to_bytes(2, "little")
@@ -204,10 +204,7 @@ class TestValidateRecord:
             ),
         ]
         for data, expected in cases:
-            assert (
-                validate_record_detailed(data, 0, len(data), TimestampFormat.IRIG)
-                == expected
-            )
+            assert validate_record_detailed(data, 0, len(data), TimestampFormat.IRIG) == expected
 
 
 class TestFindFirstRecord:
@@ -231,7 +228,7 @@ class TestFindFirstRecord:
     @pytest.mark.requirement("L2-SYN-008")
     def test_all_garbage(self) -> None:
         """File with no valid records should return None."""
-        data = b"\xFF\xFF" * 100
+        data = b"\xff\xff" * 100
         offset = find_first_record(data, len(data), TimestampFormat.IRIG)
         assert offset is None
 
@@ -253,7 +250,7 @@ class TestFindFirstRecord:
 
         # Build a header using 0xFF bytes (type 0x7F = invalid)
         # so find_first_record will skip past it
-        header = b"\xFF\x00" * 36  # 72 bytes, type 0x7F each word
+        header = b"\xff\x00" * 36  # 72 bytes, type 0x7F each word
         fpath = tmp_path / "s4_sim.mie"
         fpath.write_bytes(header + multi_record_data)
         messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
@@ -266,7 +263,7 @@ class TestRecoverSync:
     @pytest.mark.requirement("L2-SYN-009")
     def test_recovery_after_garbage(self, single_receive_record: bytes) -> None:
         """Should find a valid record after a gap of garbage."""
-        garbage = b"\xFF\xFF" * 10  # 20 bytes of garbage
+        garbage = b"\xff\xff" * 10  # 20 bytes of garbage
         data = garbage + single_receive_record * 2
         recovered = recover_sync(data, 0, len(data), TimestampFormat.IRIG)
         assert recovered == 20
@@ -274,7 +271,7 @@ class TestRecoverSync:
     @pytest.mark.requirement("L2-SYN-011")
     def test_no_recovery_possible(self) -> None:
         """Should return None when no valid record exists."""
-        data = b"\xFF\xFF" * 100
+        data = b"\xff\xff" * 100
         recovered = recover_sync(data, 0, len(data), TimestampFormat.IRIG)
         assert recovered is None
 
@@ -288,7 +285,7 @@ class TestRecoverSync:
 
         # 2 good records, corruption, 2 more good records
         good = single_receive_record * 2
-        corruption = b"\xFF\xFF" * 10
+        corruption = b"\xff\xff" * 10
         data = good + corruption + single_receive_record * 2
         fpath = tmp_path / "corrupt.mie"
         fpath.write_bytes(data)
@@ -313,7 +310,7 @@ class TestRecoverSync:
         from mie_decoder.reader import MieFileReader
 
         block = single_receive_record * 2  # two records pass look-ahead
-        garbage = b"\xFF" * 16
+        garbage = b"\xff" * 16
         data = block + garbage + block + garbage + block
         fpath = tmp_path / "multi_recover.mie"
         fpath.write_bytes(data)
@@ -403,7 +400,7 @@ class TestSyncBoundsAndLogging:
         from mie_decoder.sync import MAX_SCAN_BYTES, find_first_record
         from tests.conftest import RECORD_RT15_SA11_RCV
 
-        garbage = b"\xFF" * (MAX_SCAN_BYTES + 1024)
+        garbage = b"\xff" * (MAX_SCAN_BYTES + 1024)
         # Two valid records past the cap so look-ahead would succeed if
         # the scanner reached them — but it shouldn't.
         data = garbage + RECORD_RT15_SA11_RCV * 2
@@ -426,10 +423,7 @@ class TestSyncBoundsAndLogging:
         with caplog.at_level(logging.INFO, logger="mie_decoder.sync"):
             offset = find_first_record(data, len(data), TimestampFormat.IRIG)
         assert offset == 24
-        info_msgs = [
-            r.getMessage() for r in caplog.records
-            if r.levelno == logging.INFO
-        ]
+        info_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
         assert any("header" in m.lower() for m in info_msgs), (
             f"expected INFO log naming the header; got {info_msgs}"
         )
@@ -439,9 +433,7 @@ class TestSyncBoundsAndLogging:
         )
 
     @pytest.mark.requirement("L2-SYN-018")
-    def test_homogeneous_payload_input_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    def test_homogeneous_payload_input_rejected(self, tmp_path: Path) -> None:
         """L2-SYN-018: a file of pure 0x20-fill parses as a SPURIOUS_DATA
         Type Word (msg_type=0x20, wc=32) and passes basic validation,
         but every "record" is byte-identical to its successor. The reader
@@ -482,6 +474,7 @@ class TestSyncBoundsAndLogging:
             RECORD_RT15_SA22_RCV,
             RECORD_RT15_SA22_XMT,
         )
+
         # Pack four real records with varying types and lengths. The
         # candidate's record_bytes (72) doesn't divide evenly into the
         # combined stream, so chunks at offset 72, 144, 216 differ in
@@ -511,21 +504,15 @@ class TestSyncBoundsAndLogging:
         from mie_decoder.reader import MieFileReader
 
         good = single_receive_record * 2
-        corruption = b"\xFF\xFF" * 10
+        corruption = b"\xff\xff" * 10
         data = good + corruption + single_receive_record * 2
         fpath = tmp_path / "sync_logging.mie"
         fpath.write_bytes(data)
         with caplog.at_level(logging.INFO, logger="mie_decoder.reader"):
             messages = list(MieFileReader(fpath))
         assert len(messages) >= 1
-        warn_msgs = [
-            r.getMessage() for r in caplog.records
-            if r.levelno >= logging.WARNING
-        ]
-        info_msgs = [
-            r.getMessage() for r in caplog.records
-            if r.levelno == logging.INFO
-        ]
+        warn_msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        info_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
         assert any("sync" in m.lower() for m in warn_msgs), (
             f"expected WARN about sync loss; got warns={warn_msgs}"
         )

@@ -43,9 +43,7 @@ def test_decoder_entry_point_is_a_typed_callable() -> None:
     sig = inspect.signature(MieFileReader)
     assert sig.parameters, "entry point should take at least an input path"
     unannotated = [
-        name
-        for name, p in sig.parameters.items()
-        if p.annotation is inspect.Parameter.empty
+        name for name, p in sig.parameters.items() if p.annotation is inspect.Parameter.empty
     ]
     assert not unannotated, f"untyped constructor parameters: {unannotated}"
 

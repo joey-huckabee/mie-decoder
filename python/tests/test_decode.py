@@ -7,6 +7,7 @@ cross-referenced against vendor-generated CSV output.
 from __future__ import annotations
 
 import struct
+from pathlib import Path
 
 import pytest
 
@@ -208,7 +209,7 @@ class TestReadU16:
     @pytest.mark.requirement("L2-DEC-008")
     def test_read_array_at_offset(self) -> None:
         """Read array starting at a non-zero offset."""
-        data = b"\xFF\xFF" + struct.pack("<2H", 0x1234, 0x5678)
+        data = b"\xff\xff" + struct.pack("<2H", 0x1234, 0x5678)
         result = read_u16_array(data, 2, 2)
         assert result == (0x1234, 0x5678)
 
@@ -312,26 +313,16 @@ class TestClassifyMessageFormat:
     def test_mode_code_rx_data_standard(self) -> None:
         """Standard (ts=2): RX data at WC=6 → MODE_CODE_RX_DATA (was no-data)."""
         cmd = decode_command_word(0x7801)  # RT15, R, SA0
-        assert (
-            classify_message_format(0x01, cmd, 6, 2)
-            == self.MessageFormat.MODE_CODE_RX_DATA
-        )
-        assert (
-            classify_message_format(0x01, cmd, 5, 2)
-            == self.MessageFormat.MODE_CODE_NO_DATA
-        )
+        assert classify_message_format(0x01, cmd, 6, 2) == self.MessageFormat.MODE_CODE_RX_DATA
+        assert classify_message_format(0x01, cmd, 5, 2) == self.MessageFormat.MODE_CODE_NO_DATA
 
     @pytest.mark.requirement("L2-MSG-004")
     def test_mode_code_bcast_data_standard(self) -> None:
         """Standard (ts=2): broadcast data at WC=5 → BCAST_DATA (was no-data)."""
         cmd = decode_command_word(0xF801)  # RT31, R, SA0
+        assert classify_message_format(0x01, cmd, 5, 2) == self.MessageFormat.MODE_CODE_BCAST_DATA
         assert (
-            classify_message_format(0x01, cmd, 5, 2)
-            == self.MessageFormat.MODE_CODE_BCAST_DATA
-        )
-        assert (
-            classify_message_format(0x01, cmd, 4, 2)
-            == self.MessageFormat.MODE_CODE_BCAST_NO_DATA
+            classify_message_format(0x01, cmd, 4, 2) == self.MessageFormat.MODE_CODE_BCAST_NO_DATA
         )
 
     @pytest.mark.requirement("L2-MSG-001")
@@ -348,6 +339,7 @@ class TestDecodeStandardTimestamp:
     @pytest.mark.requirement("L2-DEC-007")
     def test_basic_decode(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
+
         ts = decode_standard_timestamp(0x0001, 0x86A0)
         assert ts.raw_value == 0x000186A0
         assert ts.raw_value == 100000
@@ -357,24 +349,28 @@ class TestDecodeStandardTimestamp:
     @pytest.mark.requirement("L2-DEC-007")
     def test_zero(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
+
         ts = decode_standard_timestamp(0x0000, 0x0000)
         assert ts.raw_value == 0
 
     @pytest.mark.requirement("L2-DEC-007")
     def test_max_value(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
+
         ts = decode_standard_timestamp(0xFFFF, 0xFFFF)
         assert ts.raw_value == 0xFFFFFFFF
 
     @pytest.mark.requirement("L2-DEC-007")
     def test_format(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
+
         ts = decode_standard_timestamp(0x0001, 0x86A0)
         assert ts.format() == "0x000186A0"
 
     @pytest.mark.requirement("L2-DEC-007")
     def test_raw_ticks_returns_counter_value(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
+
         ts = decode_standard_timestamp(0x0001, 0x86A0)
         # Raw 32-bit counter value. Tick rate is card-dependent and not
         # encoded in the file, so this is not microseconds.
@@ -384,6 +380,7 @@ class TestDecodeStandardTimestamp:
     @pytest.mark.requirement("L2-DEC-017")
     def test_to_microseconds_returns_none(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
+
         ts = decode_standard_timestamp(0x0001, 0x86A0)
         # Uncalibrated (no tick rate) Standard timestamps have no known
         # microsecond basis under the shared DELTA contract; callers must
@@ -398,6 +395,7 @@ class TestDecodeStandardTimestamp:
     @pytest.mark.requirement("L2-DEC-017")
     def test_to_microseconds_calibrated(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
+
         ts = decode_standard_timestamp(0x0001, 0x86A0)  # 100000 ticks
         # At 1 MHz, one tick == one microsecond.
         assert ts.to_microseconds(1_000_000.0) == 100000
@@ -405,6 +403,7 @@ class TestDecodeStandardTimestamp:
     @pytest.mark.requirement("L2-DEC-017")
     def test_to_microseconds_rounds_half_away_from_zero(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
+
         # 3 ticks at 2 MHz = 1.5 us -> rounds up to 2 (half-away-from-zero,
         # matching the Rust f64::round). 1 tick = 0.5 us -> 1.
         three = decode_standard_timestamp(0x0000, 0x0003)
@@ -466,6 +465,7 @@ class TestStructuralInvariants:
     @staticmethod
     def _tw(message_type: int, word_count: int):
         from mie_decoder.models import Bus, TypeWord
+
         return TypeWord(
             message_type=message_type,
             bus=Bus.A,
@@ -477,6 +477,7 @@ class TestStructuralInvariants:
     @staticmethod
     def _cmd(direction, dwc: int):
         from mie_decoder.models import CommandWord
+
         return CommandWord(
             rt=15,
             direction=direction,
@@ -489,9 +490,12 @@ class TestStructuralInvariants:
     def test_canonical_bc_to_rt_passes(self) -> None:
         from mie_decoder.decode import validate_structural_invariants
         from mie_decoder.models import Direction, MessageFormat
+
         result = validate_structural_invariants(
-            self._tw(0x02, 36), self._cmd(Direction.RECEIVE, 30),
-            MessageFormat.RECEIVE, 3,
+            self._tw(0x02, 36),
+            self._cmd(Direction.RECEIVE, 30),
+            MessageFormat.RECEIVE,
+            3,
         )
         assert result is None
 
@@ -499,21 +503,28 @@ class TestStructuralInvariants:
     def test_canonical_rt_to_bc_passes(self) -> None:
         from mie_decoder.decode import validate_structural_invariants
         from mie_decoder.models import Direction, MessageFormat
+
         result = validate_structural_invariants(
-            self._tw(0x04, 36), self._cmd(Direction.TRANSMIT, 30),
-            MessageFormat.TRANSMIT, 3,
+            self._tw(0x04, 36),
+            self._cmd(Direction.TRANSMIT, 30),
+            MessageFormat.TRANSMIT,
+            3,
         )
         assert result is None
 
     @pytest.mark.requirement("L2-SYN-020")
     def test_bc_to_rt_with_transmit_cmd_rejected(self) -> None:
         from mie_decoder.decode import (
-            WhichInvariant, validate_structural_invariants,
+            WhichInvariant,
+            validate_structural_invariants,
         )
         from mie_decoder.models import Direction, MessageFormat
+
         result = validate_structural_invariants(
-            self._tw(0x02, 36), self._cmd(Direction.TRANSMIT, 30),
-            MessageFormat.RECEIVE, 3,
+            self._tw(0x02, 36),
+            self._cmd(Direction.TRANSMIT, 30),
+            MessageFormat.RECEIVE,
+            3,
         )
         assert result is not None
         assert result.kind == WhichInvariant.DIRECTION_BC_TO_RT
@@ -521,12 +532,16 @@ class TestStructuralInvariants:
     @pytest.mark.requirement("L2-SYN-021")
     def test_rt_to_bc_with_receive_cmd_rejected(self) -> None:
         from mie_decoder.decode import (
-            WhichInvariant, validate_structural_invariants,
+            WhichInvariant,
+            validate_structural_invariants,
         )
         from mie_decoder.models import Direction, MessageFormat
+
         result = validate_structural_invariants(
-            self._tw(0x04, 36), self._cmd(Direction.RECEIVE, 30),
-            MessageFormat.TRANSMIT, 3,
+            self._tw(0x04, 36),
+            self._cmd(Direction.RECEIVE, 30),
+            MessageFormat.TRANSMIT,
+            3,
         )
         assert result is not None
         assert result.kind == WhichInvariant.DIRECTION_RT_TO_BC
@@ -534,13 +549,17 @@ class TestStructuralInvariants:
     @pytest.mark.requirement("L2-SYN-022")
     def test_capacity_short_rejected(self) -> None:
         from mie_decoder.decode import (
-            WhichInvariant, validate_structural_invariants,
+            WhichInvariant,
+            validate_structural_invariants,
         )
         from mie_decoder.models import Direction, MessageFormat
+
         # wc=5 too small for Receive with dwc=30 (needs 1+3+1+31=36)
         result = validate_structural_invariants(
-            self._tw(0x02, 5), self._cmd(Direction.RECEIVE, 30),
-            MessageFormat.RECEIVE, 3,
+            self._tw(0x02, 5),
+            self._cmd(Direction.RECEIVE, 30),
+            MessageFormat.RECEIVE,
+            3,
         )
         assert result is not None
         assert result.kind == WhichInvariant.WORD_COUNT_CAPACITY
@@ -549,10 +568,13 @@ class TestStructuralInvariants:
     def test_capacity_exact_accepted(self) -> None:
         from mie_decoder.decode import validate_structural_invariants
         from mie_decoder.models import Direction, MessageFormat
+
         # wc=36 is exactly minimum for Receive with dwc=30
         result = validate_structural_invariants(
-            self._tw(0x02, 36), self._cmd(Direction.RECEIVE, 30),
-            MessageFormat.RECEIVE, 3,
+            self._tw(0x02, 36),
+            self._cmd(Direction.RECEIVE, 30),
+            MessageFormat.RECEIVE,
+            3,
         )
         assert result is None
 
@@ -560,10 +582,13 @@ class TestStructuralInvariants:
     def test_spurious_skips_capacity_check(self) -> None:
         from mie_decoder.decode import validate_structural_invariants
         from mie_decoder.models import Direction, MessageFormat
+
         # SpuriousData has variable payload — capacity check skipped
         result = validate_structural_invariants(
-            self._tw(0x20, 5), self._cmd(Direction.RECEIVE, 0),
-            MessageFormat.SPURIOUS_DATA, 3,
+            self._tw(0x20, 5),
+            self._cmd(Direction.RECEIVE, 0),
+            MessageFormat.SPURIOUS_DATA,
+            3,
         )
         assert result is None
 
@@ -571,15 +596,20 @@ class TestStructuralInvariants:
     def test_mode_code_directions_not_constrained(self) -> None:
         from mie_decoder.decode import validate_structural_invariants
         from mie_decoder.models import Direction, MessageFormat
+
         tw = self._tw(0x01, 7)
         # Mode codes accept either direction.
         for dir_ in (Direction.TRANSMIT, Direction.RECEIVE):
             fmt = (
-                MessageFormat.MODE_CODE_TX_DATA if dir_ == Direction.TRANSMIT
+                MessageFormat.MODE_CODE_TX_DATA
+                if dir_ == Direction.TRANSMIT
                 else MessageFormat.MODE_CODE_RX_DATA
             )
             result = validate_structural_invariants(
-                tw, self._cmd(dir_, 1), fmt, 3,
+                tw,
+                self._cmd(dir_, 1),
+                fmt,
+                3,
             )
             assert result is None, f"unexpected violation for {dir_}: {result}"
 
@@ -590,15 +620,20 @@ class TestPostExtractInvariants:
     @staticmethod
     def _cmd(direction, raw: int = 0):
         from mie_decoder.models import CommandWord
+
         return CommandWord(
-            rt=5, direction=direction, subaddress=10,
-            data_word_count=3, raw=raw,
+            rt=5,
+            direction=direction,
+            subaddress=10,
+            data_word_count=3,
+            raw=raw,
         )
 
     @pytest.mark.requirement("L2-SYN-023")
     def test_rt_to_rt_cmd2_receive_passes(self) -> None:
         from mie_decoder.decode import validate_post_extract_invariants
         from mie_decoder.models import Direction, MessageFormat
+
         # Cmd1 and Cmd2 agree on data_word_count (both 3, L2-SYN-027) and
         # Cmd2 is Receive (L2-SYN-023) → no violation.
         result = validate_post_extract_invariants(
@@ -611,9 +646,12 @@ class TestPostExtractInvariants:
     @pytest.mark.requirement("L2-SYN-023")
     def test_rt_to_rt_cmd2_transmit_rejected(self) -> None:
         from mie_decoder.decode import (
-            InvariantSeverity, WhichInvariant, validate_post_extract_invariants,
+            InvariantSeverity,
+            WhichInvariant,
+            validate_post_extract_invariants,
         )
         from mie_decoder.models import Direction, MessageFormat
+
         result = validate_post_extract_invariants(
             MessageFormat.RT_TO_RT,
             self._cmd(Direction.TRANSMIT),
@@ -626,9 +664,11 @@ class TestPostExtractInvariants:
     @pytest.mark.requirement("L2-SYN-023")
     def test_rt_to_rt_broadcast_also_checked(self) -> None:
         from mie_decoder.decode import (
-            WhichInvariant, validate_post_extract_invariants,
+            WhichInvariant,
+            validate_post_extract_invariants,
         )
         from mie_decoder.models import Direction, MessageFormat
+
         result = validate_post_extract_invariants(
             MessageFormat.RT_TO_RT_BROADCAST,
             self._cmd(Direction.TRANSMIT),
@@ -641,34 +681,54 @@ class TestPostExtractInvariants:
     def test_non_rt_to_rt_is_noop(self) -> None:
         from mie_decoder.decode import validate_post_extract_invariants
         from mie_decoder.models import Direction, MessageFormat
+
         # No cmd2 for non-RT-to-RT
-        assert validate_post_extract_invariants(
-            MessageFormat.RECEIVE, self._cmd(Direction.TRANSMIT), None,
-        ) is None
+        assert (
+            validate_post_extract_invariants(
+                MessageFormat.RECEIVE,
+                self._cmd(Direction.TRANSMIT),
+                None,
+            )
+            is None
+        )
         # Even with stray Cmd2 (shouldn't happen), no enforcement
-        assert validate_post_extract_invariants(
-            MessageFormat.RECEIVE,
-            self._cmd(Direction.TRANSMIT),
-            self._cmd(Direction.TRANSMIT),
-        ) is None
+        assert (
+            validate_post_extract_invariants(
+                MessageFormat.RECEIVE,
+                self._cmd(Direction.TRANSMIT),
+                self._cmd(Direction.TRANSMIT),
+            )
+            is None
+        )
 
     @pytest.mark.requirement("L2-SYN-027")
     def test_rt_to_rt_cmd_word_count_mismatch_rejected(self) -> None:
         from mie_decoder.decode import (
-            InvariantSeverity, WhichInvariant, validate_post_extract_invariants,
+            InvariantSeverity,
+            WhichInvariant,
+            validate_post_extract_invariants,
         )
         from mie_decoder.models import (
-            CommandWord, Direction, MessageFormat,
+            CommandWord,
+            Direction,
+            MessageFormat,
         )
+
         # Cmd2 direction is valid (Receive) so L2-SYN-023 passes, but Cmd1
         # and Cmd2 disagree on data_word_count → L2-SYN-027 rejects.
         cmd1 = CommandWord(
-            rt=5, direction=Direction.TRANSMIT, subaddress=10,
-            data_word_count=3, raw=0x2961,
+            rt=5,
+            direction=Direction.TRANSMIT,
+            subaddress=10,
+            data_word_count=3,
+            raw=0x2961,
         )
         cmd2 = CommandWord(
-            rt=7, direction=Direction.RECEIVE, subaddress=10,
-            data_word_count=5, raw=0x3945,
+            rt=7,
+            direction=Direction.RECEIVE,
+            subaddress=10,
+            data_word_count=5,
+            raw=0x3945,
         )
         for fmt in (MessageFormat.RT_TO_RT, MessageFormat.RT_TO_RT_BROADCAST):
             result = validate_post_extract_invariants(fmt, cmd1, cmd2)
@@ -683,22 +743,31 @@ class TestRecordAnomalies:
     @staticmethod
     def _tw(raw: int, message_type: int = 0x02, wc: int = 36):
         from mie_decoder.models import Bus, TypeWord
+
         return TypeWord(
-            message_type=message_type, bus=Bus.A, word_count=wc,
-            error=False, raw=raw,
+            message_type=message_type,
+            bus=Bus.A,
+            word_count=wc,
+            error=False,
+            raw=raw,
         )
 
     @staticmethod
     def _cmd(rt: int = 15):
         from mie_decoder.models import CommandWord, Direction
+
         return CommandWord(
-            rt=rt, direction=Direction.RECEIVE, subaddress=11,
-            data_word_count=30, raw=0,
+            rt=rt,
+            direction=Direction.RECEIVE,
+            subaddress=11,
+            data_word_count=30,
+            raw=0,
         )
 
     @pytest.mark.requirement("L2-SYN-024")
     def test_status_rt_match_no_violation(self) -> None:
         from mie_decoder.decode import detect_record_anomalies
+
         # RT=15 in Cmd; Status raw 0x7800 → bits 15-11 = 15
         anomalies = detect_record_anomalies(self._tw(0x2402), self._cmd(15), 0x7800)
         assert anomalies == []
@@ -706,8 +775,11 @@ class TestRecordAnomalies:
     @pytest.mark.requirement("L2-SYN-024")
     def test_status_rt_mismatch_anomaly(self) -> None:
         from mie_decoder.decode import (
-            InvariantSeverity, WhichInvariant, detect_record_anomalies,
+            InvariantSeverity,
+            WhichInvariant,
+            detect_record_anomalies,
         )
+
         # Cmd RT=15, Status 0x2800 → status RT=5
         anomalies = detect_record_anomalies(self._tw(0x2402), self._cmd(15), 0x2800)
         assert len(anomalies) == 1
@@ -717,14 +789,18 @@ class TestRecordAnomalies:
     @pytest.mark.requirement("L2-SYN-024")
     def test_no_status_no_violation(self) -> None:
         from mie_decoder.decode import detect_record_anomalies
+
         anomalies = detect_record_anomalies(self._tw(0x2402), self._cmd(15), None)
         assert anomalies == []
 
     @pytest.mark.requirement("L2-SYN-025")
     def test_type_word_reserved_bit_anomaly(self) -> None:
         from mie_decoder.decode import (
-            InvariantSeverity, WhichInvariant, detect_record_anomalies,
+            InvariantSeverity,
+            WhichInvariant,
+            detect_record_anomalies,
         )
+
         anomalies = detect_record_anomalies(self._tw(0x8402), self._cmd(15), None)
         assert len(anomalies) == 1
         assert anomalies[0].kind == WhichInvariant.TYPE_WORD_RESERVED_BIT
@@ -733,6 +809,7 @@ class TestRecordAnomalies:
     @pytest.mark.requirement("L2-SYN-025")
     def test_multiple_anomalies_can_fire_on_one_record(self) -> None:
         from mie_decoder.decode import detect_record_anomalies
+
         # Both status RT mismatch AND TW bit 15 set: 2 anomalies
         anomalies = detect_record_anomalies(self._tw(0xA402), self._cmd(15), 0x2800)
         assert len(anomalies) == 2

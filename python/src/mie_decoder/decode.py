@@ -289,11 +289,7 @@ def probe_timestamp_format(
             break
         offset = next_offset
 
-    fmt = (
-        TimestampFormat.IRIG
-        if irig_score >= std_score
-        else TimestampFormat.STANDARD
-    )
+    fmt = TimestampFormat.IRIG if irig_score >= std_score else TimestampFormat.STANDARD
     max_score = max(irig_score, std_score)
     margin = abs(irig_score - std_score)
     if max_score < _CONFIDENCE_FLOOR or margin < _MIN_MARGIN:
@@ -487,9 +483,7 @@ def classify_message_format(
     raise ValueError(f"Cannot classify message_type=0x{message_type:02X}")
 
 
-def _classify_mode_code(
-    cmd: CommandWord, word_count: int, timestamp_words: int
-) -> MessageFormat:
+def _classify_mode_code(cmd: CommandWord, word_count: int, timestamp_words: int) -> MessageFormat:
     """Sub-classify a Mode Command (type 0x01) into one of five formats.
 
     Combines Command Word fields with the record word count. The data-vs-no-data

@@ -274,8 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="VAL",
         default=None,
         help=(
-            "Exclude messages by RT address. Comma-separated, repeatable. "
-            "Merges with config file."
+            "Exclude messages by RT address. Comma-separated, repeatable. Merges with config file."
         ),
     )
     decode_parser.add_argument(
@@ -284,8 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="VAL",
         default=None,
         help=(
-            "Exclude messages by bus (A, B). Comma-separated, repeatable. "
-            "Merges with config file."
+            "Exclude messages by bus (A, B). Comma-separated, repeatable. Merges with config file."
         ),
     )
     decode_parser.add_argument(
@@ -294,8 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="VAL",
         default=None,
         help=(
-            "Exclude messages by subaddress. Comma-separated, repeatable. "
-            "Merges with config file."
+            "Exclude messages by subaddress. Comma-separated, repeatable. Merges with config file."
         ),
     )
     decode_parser.add_argument(
@@ -524,13 +521,9 @@ def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
     """
     from mie_decoder.merge import MAX_MERGE_FILES, expand_glob, read_manifest
 
-    methods = sum(
-        [bool(args.inputs), args.manifest is not None, args.glob is not None]
-    )
+    methods = sum([bool(args.inputs), args.manifest is not None, args.glob is not None])
     if methods == 0:
-        raise ValueError(
-            "decode requires an input file (positional, --manifest, or --glob)"
-        )
+        raise ValueError("decode requires an input file (positional, --manifest, or --glob)")
     if methods > 1:
         raise ValueError(
             "decode accepts only one input method: positional paths, "
@@ -543,9 +536,7 @@ def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
         except UnicodeDecodeError as exc:
             # A non-text manifest is a runtime input error (exit 1), matching
             # the Rust reader's read_to_string failure — not a usage error.
-            raise OSError(
-                f"manifest {args.manifest} is not valid UTF-8 text"
-            ) from exc
+            raise OSError(f"manifest {args.manifest} is not valid UTF-8 text") from exc
     elif args.glob is not None:
         paths = expand_glob(args.glob)
     else:
@@ -596,9 +587,7 @@ def _validate_positive_finite(value: float, flag: str) -> float:
     """Return ``value`` if finite and strictly positive, else raise
     ``ValueError`` (L2-DEC-017 / L2-CLI-012)."""
     if not math.isfinite(value) or value <= 0.0:
-        raise ValueError(
-            f"invalid {flag}: {value}; must be a finite value greater than 0"
-        )
+        raise ValueError(f"invalid {flag}: {value}; must be a finite value greater than 0")
     return value
 
 
@@ -708,9 +697,7 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
             args.standard_tick_rate_hz, "--standard-tick-rate-hz"
         )
     if args.mux_delimiter is not None:
-        overrides["mux_delimiter"] = _validate_nonempty(
-            args.mux_delimiter, "--mux-delimiter"
-        )
+        overrides["mux_delimiter"] = _validate_nonempty(args.mux_delimiter, "--mux-delimiter")
     return overrides
 
 
@@ -804,7 +791,10 @@ def _write_messages(
         elapsed = time.perf_counter() - t0
         logger.info(
             "Wrote %d messages + %d errors to %s in %.3fs",
-            outcome.normal_count, outcome.error_count, output, elapsed,
+            outcome.normal_count,
+            outcome.error_count,
+            output,
+            elapsed,
         )
     else:
         # INLINE mode, or stdout (can't split stdout).
@@ -813,7 +803,9 @@ def _write_messages(
         dest = str(output) if output else "stdout"
         logger.info(
             "Wrote %d messages to %s in %.3fs",
-            outcome.normal_count, dest, elapsed,
+            outcome.normal_count,
+            dest,
+            elapsed,
         )
     return outcome
 
@@ -888,9 +880,7 @@ def _classify_decode_error(exc: Exception) -> int:
     return EXIT_RUNTIME
 
 
-def _classify_decode_success(
-    outcome: WriteOutcome, readers: list[MieFileReader]
-) -> int:
+def _classify_decode_success(outcome: WriteOutcome, readers: list[MieFileReader]) -> int:
     """Emit the L1-EXIT-005 exit-class summary for a successful run and return
     EXIT_OK (mirrors the ``Ok`` arm of Rust ``classify_decode_exit``)."""
     sync_losses = sum(r.sync_losses for r in readers)
@@ -941,8 +931,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     # (exit 1), matching the Rust CLI.
     if config.output_format != "csv":
         print(
-            f"Error: output format {config.output_format!r} not yet "
-            f"supported (only 'csv')",
+            f"Error: output format {config.output_format!r} not yet supported (only 'csv')",
             file=sys.stderr,
         )
         return EXIT_RUNTIME
@@ -991,9 +980,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     # classified by the cumulative sync-loss count (L1-EXIT-005).
     try:
         messages = _build_message_stream(readers, config)
-        outcome = _write_messages(
-            messages, args.output, config.error_mode, write_opts
-        )
+        outcome = _write_messages(messages, args.output, config.error_mode, write_opts)
     except (MieDecoderError, BrokenPipeError) as exc:
         return _classify_decode_error(exc)
 

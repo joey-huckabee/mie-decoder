@@ -136,9 +136,7 @@ def _check_mergeable(msg: MieMessage, file_index: int, path: Path) -> None:
         )
 
 
-def _apply_global_delta(
-    msg: MieMessage, tick: float | None, tracker: dict[str, int]
-) -> MieMessage:
+def _apply_global_delta(msg: MieMessage, tick: float | None, tracker: dict[str, int]) -> MieMessage:
     """Recompute DELTA on the merged global timeline (L2-MRG-005). The stream
     is timestamp-sorted, so per-key gaps are non-negative."""
     key = msg.delta_key
@@ -199,7 +197,9 @@ def merge_readers(
             if allow_partial:
                 logger.warning(
                     "merge: skipping input #%d (%s): %s",
-                    idx, readers[idx].path, exc,
+                    idx,
+                    readers[idx].path,
+                    exc,
                 )
                 continue
             raise
@@ -210,8 +210,16 @@ def merge_readers(
         seqs[idx] = 1
 
     return _merge_drain(
-        readers, iters, seqs, counter, heap, standard_tick_rate_hz,
-        allow_partial, strict, prev_us, warned,
+        readers,
+        iters,
+        seqs,
+        counter,
+        heap,
+        standard_tick_rate_hz,
+        allow_partial,
+        strict,
+        prev_us,
+        warned,
     )
 
 
@@ -240,9 +248,7 @@ def _merge_drain(
             continue  # file exhausted
         except MieUnrecoverableSyncLossError as exc:
             if allow_partial:
-                logger.warning(
-                    "merge: input #%d truncated at its failure point: %s", idx, exc
-                )
+                logger.warning("merge: input #%d truncated at its failure point: %s", idx, exc)
                 pending_terminal = exc  # defer until the heap drains
                 continue
             raise
@@ -254,9 +260,7 @@ def _merge_drain(
         prev = prev_us[idx]
         if prev is not None and curr < prev:
             if strict:
-                raise MieNonMonotonicInputError(
-                    idx, str(readers[idx].path), prev, curr
-                )
+                raise MieNonMonotonicInputError(idx, str(readers[idx].path), prev, curr)
             if not warned[idx]:
                 warned[idx] = True
                 logger.warning(
@@ -264,7 +268,10 @@ def _merge_drain(
                     "timestamp stepped backward (prev_us=%d curr_us=%d) — "
                     "merged output may be out of order for this input "
                     "(further occurrences suppressed)",
-                    idx, readers[idx].path, prev, curr,
+                    idx,
+                    readers[idx].path,
+                    prev,
+                    curr,
                 )
         prev_us[idx] = curr
         seq = seqs[idx]

@@ -186,9 +186,7 @@ class MieNonMonotonicInputError(MieDecoderError):
         curr_us: Microsecond key of the backward-stepping record.
     """
 
-    def __init__(
-        self, file_index: int, path: str, prev_us: int, curr_us: int
-    ) -> None:
+    def __init__(self, file_index: int, path: str, prev_us: int, curr_us: int) -> None:
         self.file_index = file_index
         self.path = path
         self.prev_us = prev_us
@@ -237,8 +235,7 @@ class MieInvalidTypeWordError(MieRecordError):
         self.word_count = word_count
         super().__init__(
             offset,
-            f"Invalid Type Word 0x{raw_type_word:04X} with word_count={word_count} "
-            f"(minimum is 5)",
+            f"Invalid Type Word 0x{raw_type_word:04X} with word_count={word_count} (minimum is 5)",
         )
 
 
@@ -294,8 +291,7 @@ class MieRecordTruncatedError(MieRecordError):
         self.available_bytes = available_bytes
         super().__init__(
             offset,
-            f"Record requires {record_bytes} bytes but only "
-            f"{available_bytes} bytes remain in file",
+            f"Record requires {record_bytes} bytes but only {available_bytes} bytes remain in file",
         )
 
 
