@@ -44,6 +44,12 @@ full release workflow.
   Black-style canonical form (mechanical, no behavior change — conformance
   unaffected); `ruff check` also caught two real import bugs in the test suite
   (a missing `from pathlib import Path` and an unused one).
+- **Vulture dead-code gate** (`vulture` dev dependency + a `vulture` CI job).
+  Scans the package **and tests** together (so test-only usage counts); config
+  in `python/pyproject.toml` `[tool.vulture]`. The initial pass removed a genuinely
+  unused test fixture (`single_transmit_record`) and ignores three intentional
+  names — the argparse `option_string` interface arg and the documented module
+  constants `MAX_RECORD_BYTES` / `ALL_KNOWN_ERROR_CODES`. No behavior change.
 
 ### Changed
 

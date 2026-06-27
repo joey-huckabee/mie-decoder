@@ -204,12 +204,6 @@ def single_receive_record() -> bytes:
 
 
 @pytest.fixture
-def single_transmit_record() -> bytes:
-    """A single RT15 SA22 Transmit record (72 bytes)."""
-    return RECORD_RT15_SA22_XMT
-
-
-@pytest.fixture
 def multi_record_data() -> bytes:
     """Three consecutive records of different types."""
     return RECORD_RT15_SA11_RCV + RECORD_RT15_SA22_RCV + RECORD_RT15_SA22_XMT
