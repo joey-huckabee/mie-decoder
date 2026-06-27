@@ -58,6 +58,16 @@ full release workflow.
   (the main `rust` job builds on stable and would otherwise mask a sub-MSRV
   feature). Adding this gate surfaced that the MSRV claim was already untrue —
   see Changed.
+- **Rust supply-chain gate** (`cargo-deny` CI job): `cargo deny check` over the
+  dependency tree — RustSec advisories, a license allow-list (MIT / Apache-2.0),
+  duplicate/wildcard bans, and crates.io-only sources (config in
+  `rust/deny.toml`). Its first run flagged a live advisory (see Security).
+
+### Security
+
+- **Upgraded `memmap2` 0.9.10 → 0.9.11** to resolve `RUSTSEC-2026-0186` (unsound
+  unchecked pointer offset in `memmap2`, fixed upstream in 0.9.11), surfaced by
+  the new `cargo-deny` gate. No API or behavior change (conformance unaffected).
 
 ### Changed
 

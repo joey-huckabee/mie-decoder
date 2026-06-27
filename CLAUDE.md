@@ -44,6 +44,7 @@ cargo test config::tests::parses_default_toml_from_disk        # Single unit tes
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps    # doc-link check (CI-gated)
 cargo +1.88 check --all-targets                   # MSRV 1.88 floor (CI-gated)
+cargo deny check                                  # supply-chain audit: advisories/licenses (CI-gated)
 
 # Run the CLI
 cargo run --release -- decode path/to/recording.mie -o decoded.csv
