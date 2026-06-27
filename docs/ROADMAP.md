@@ -181,17 +181,6 @@ most recent dated section in `CHANGELOG.md` is the live queue. Future work
 accumulates here; when ready to cut a release, follow the version-bump
 checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 
-**Tooling follow-up — add the `cargo-semver-checks` CI gate.** Deferred until
-this release: no release tag yet has the crate under `rust/` (the layout move is
-unreleased) and the crate isn't on crates.io, so there is no clean same-path API
-baseline to diff against. Once *this* release is tagged with the crate under
-`rust/`, add a `cargo-semver-checks` job (`obi1kenobi/cargo-semver-checks-action@v2`,
-`manifest-path: rust/Cargo.toml`, `baseline-rev` = the latest release tag via
-`git describe --tags --abbrev=0` with `fetch-depth: 0`). That yields a clean
-"no unversioned public-API break since the last release" gate with no
-false failures. The other Rust CI tooling (rustdoc `-D warnings`, MSRV 1.88,
-cargo-deny, the `[lints]` table) is already in place.
-
 ## Planned
 
 | Version | Feature |
