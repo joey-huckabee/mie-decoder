@@ -2,6 +2,14 @@
 
 ## Release status
 
+**v2.4.0 — joint Rust + Python cut, 2026-06-27.** A maintenance / infrastructure
+release with **no decoder behavior change** (output is byte-identical to v2.3.0;
+conformance unaffected): a security fix for `memmap2` (RUSTSEC-2026-0186 →
+0.9.11), the MSRV correction (1.85 → 1.88, the true floor `memmap2` requires),
+the Rust crate's move under `rust/`, and a full sweep of CI quality gates
+(SonarCloud, CodeQL, pylint, ruff, vulture, rustdoc, MSRV, cargo-deny, and an
+in-tree `[lints]` table). See `CHANGELOG.md` for the full list.
+
 **v2.3.0 — joint Rust + Python cut, 2026-06-23.** Adds **MUX-from-filename**
 (L2-WRT-020): the long-empty `MUX` CSV column is now populated from a
 configurable field of each input's file name (basename split on a delimiter,

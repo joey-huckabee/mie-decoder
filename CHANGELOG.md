@@ -15,6 +15,8 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-06-27
+
 ### Added
 
 - **SonarCloud (SonarQube Cloud) analysis workflow**
@@ -1155,7 +1157,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.0.1...v2.1.0
