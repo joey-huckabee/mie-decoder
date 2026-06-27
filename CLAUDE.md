@@ -13,8 +13,8 @@ validation.
 Both implementations ship together as a joint cut from a single
 repository tag; future releases may diverge via impl-prefixed tags
 (`rust-vX.Y.Z`, `python-vX.Y.Z`). The Rust
-implementation lives at the repository root; the Python
-implementation lives at `python/`. See `CHANGELOG.md` for the release
+implementation lives under `rust/`; the Python
+implementation lives under `python/`. See `CHANGELOG.md` for the release
 history and `git tag` for the current version. The Rust implementation was a clean rewrite,
 not a transliteration: its CLI was redesigned, its writer is streaming
 (constant memory), and its data-words container is an inline `[u16; 32]`
@@ -26,7 +26,8 @@ Edition 2024, MSRV 1.85. The crate has exactly one external dependency: `memmap2
 ## Common Commands
 
 ```bash
-# Build
+# Build (Rust commands run from the rust/ crate directory)
+cd rust
 cargo build               # Dev build
 cargo build --release     # Optimized
 
@@ -47,7 +48,8 @@ cargo run --release -- decode path/to/recording.mie -o decoded.csv
 cargo run --release -- count path/to/recording.mie
 cargo run --release -- dump path/to/recording.mie --records 10
 
-# Python setup, test, and CLI
+# Python setup, test, and CLI (run from the repo root)
+cd ..
 poetry -C python sync
 poetry -C python run pytest
 poetry -C python run mypy src    # strict type check (CI-gated)

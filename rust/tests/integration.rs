@@ -15,7 +15,7 @@ use mie_decoder::writer::write_csv;
 /// Requirements: L3-RS-013
 ///
 /// The crate root re-exports the public decode entry point and core types
-/// via `pub use` (src/lib.rs), so downstream crates can name them without
+/// via `pub use` (rust/src/lib.rs), so downstream crates can name them without
 /// the internal module path. Each helper accepts a *module-path* type but
 /// is bound to a function pointer over the *crate-root* path; that binding
 /// compiles only if the root path resolves AND is the same type as the

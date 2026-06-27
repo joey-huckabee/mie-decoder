@@ -55,9 +55,11 @@ jobs:
       # sync/invariant WARNs; dump: scan-stop anomaly WARNs, L2-CLI-013) stream
       # live; otherwise output is captured and shown only on failure.
       - name: Reader fuzz harness (burn-in)
+        working-directory: rust
         run: cargo test --locked --test integration fuzz_arbitrary_bytes_never_panic -- $NOCAPTURE
 
       - name: Dump fuzz harness (burn-in)
+        working-directory: rust
         run: cargo test --locked --test integration dump_arbitrary_bytes_never_panics -- $NOCAPTURE
 
   fuzz-python:

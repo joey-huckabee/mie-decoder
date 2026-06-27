@@ -13,7 +13,7 @@
 #     3. Merge conflict markers in staged blobs
 #     4. Large staged files (> 1 MB)
 #     5. *.mie binary recordings
-#     6. Cargo.lock parity with Cargo.toml
+#     6. rust/Cargo.lock parity with rust/Cargo.toml
 #     7. shellcheck on .githooks/* and scripts/* (if shellcheck installed)
 #
 #   Trace-matrix parity (runs if Rust source, Python tests, the spec
@@ -125,14 +125,14 @@ step "Cargo.lock parity with Cargo.toml"
 toml_staged=0
 lock_staged=0
 for file in "${STAGED[@]}"; do
-    [[ "$file" == "Cargo.toml" ]] && toml_staged=1
-    [[ "$file" == "Cargo.lock" ]] && lock_staged=1
+    [[ "$file" == "rust/Cargo.toml" ]] && toml_staged=1
+    [[ "$file" == "rust/Cargo.lock" ]] && lock_staged=1
 done
 if (( toml_staged == 1 && lock_staged == 0 )); then
     # Confirm worktree Cargo.lock is in sync. `--locked` makes cargo
     # refuse to update the lock; `--offline` avoids network.
-    if ! cargo metadata --locked --offline --format-version 1 >/dev/null 2>&1; then
-        fail "Cargo.toml staged but Cargo.lock is out of sync. Run \`cargo update --workspace\` (or just \`cargo build\`) and stage Cargo.lock."
+    if ! ( cd rust && cargo metadata --locked --offline --format-version 1 ) >/dev/null 2>&1; then
+        fail "rust/Cargo.toml staged but rust/Cargo.lock is out of sync. Run \`(cd rust && cargo update --workspace)\` (or just \`cd rust && cargo build\`) and stage rust/Cargo.lock."
     fi
 fi
 
@@ -187,20 +187,20 @@ if (( need_cargo == 0 )); then
 fi
 
 # ── 9. cargo fmt --check ──────────────────────────────────────────────
-step "cargo fmt --check"
-if ! cargo fmt --check; then
-    fail "formatting issues — run 'cargo fmt' to fix, then re-stage"
+step "cd rust && cargo fmt --check"
+if ! ( cd rust && cargo fmt --check ); then
+    fail "formatting issues — run 'cd rust && cargo fmt' to fix, then re-stage"
 fi
 
 # ── 10. cargo clippy --all-targets -- -D warnings ─────────────────────
-step "cargo clippy --all-targets -- -D warnings"
-if ! cargo clippy --all-targets -- -D warnings; then
+step "cd rust && cargo clippy --all-targets -- -D warnings"
+if ! ( cd rust && cargo clippy --all-targets -- -D warnings ); then
     fail "clippy lint failed — fix warnings or justify with #[allow(...)]"
 fi
 
 # ── 11. cargo test ────────────────────────────────────────────────────
-step "cargo test --all-targets"
-if ! cargo test --all-targets; then
+step "cd rust && cargo test --all-targets"
+if ! ( cd rust && cargo test --all-targets ); then
     fail "tests failed"
 fi
 

@@ -127,7 +127,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rust-bin",
         type=Path,
-        help="Use this Rust binary instead of target/debug/mie-decoder.",
+        help="Use this Rust binary instead of rust/target/debug/mie-decoder.",
     )
     parser.add_argument(
         "--python-bin",
@@ -281,7 +281,7 @@ def prepare_rust_bin(args: argparse.Namespace) -> None:
         args.rust_bin = args.rust_bin.resolve()
     else:
         suffix = ".exe" if sys.platform == "win32" else ""
-        args.rust_bin = ROOT / "target" / "debug" / f"mie-decoder{suffix}"
+        args.rust_bin = ROOT / "rust" / "target" / "debug" / f"mie-decoder{suffix}"
 
     if args.rust_bin.exists():
         return
@@ -291,7 +291,7 @@ def prepare_rust_bin(args: argparse.Namespace) -> None:
     print("BUILD Rust CLI", flush=True)
     result = subprocess.run(
         ["cargo", "build", "--quiet", "--locked", "--bin", "mie-decoder"],
-        cwd=ROOT,
+        cwd=ROOT / "rust",
         check=False,
         timeout=120,
     )

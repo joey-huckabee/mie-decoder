@@ -59,7 +59,7 @@ def mux_from_filename(file_name: str, delimiter: str, field: int) -> str | None:
 
     Returns ``None`` (-> empty MUX) when the index is out of range, the selected
     field is empty after trimming, or ``delimiter`` is empty. Mirrors the Rust
-    ``mux_from_filename`` (src/decode.rs).
+    ``mux_from_filename`` (rust/src/decode.rs).
     """
     if not delimiter:
         return None

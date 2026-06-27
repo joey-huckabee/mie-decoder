@@ -2,7 +2,7 @@
 # scripts/coverage.sh — local coverage convenience wrapper.
 #
 # Equivalent to running `cargo cov` directly (the alias defined in
-# .cargo/config.toml). Forwards any extra arguments through to
+# rust/.cargo/config.toml). Forwards any extra arguments through to
 # cargo-llvm-cov, e.g.:
 #
 #     bash scripts/coverage.sh                  # HTML, opens browser
@@ -12,5 +12,6 @@
 # For lcov.info output:         cargo cov-lcov
 
 set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
+# The crate (and its .cargo/ aliases) live under rust/, so run from there.
+cd "$(git rev-parse --show-toplevel)/rust"
 exec cargo cov "$@"

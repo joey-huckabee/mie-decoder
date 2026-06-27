@@ -127,7 +127,7 @@ class TestParseTypeNames:
     @pytest.mark.requirement("L2-CFG-007")
     def test_integer_codes_accepted(self) -> None:
         # A TOML array may carry bare integers; accept them bounded to u8,
-        # matching the Rust parse_type_value (src/config.rs). Previously this
+        # matching the Rust parse_type_value (rust/src/config.rs). Previously this
         # crashed with an AttributeError on .strip().
         result = _parse_type_names([0x02, 32, "RT_TO_BC"])
         assert result == {0x02, 0x20, 0x04}

@@ -50,17 +50,20 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'rust/Cargo.toml', 'rust/.cargo/config.toml') }}
           restore-keys: |
             cargo-${{ runner.os }}-
 
       - name: Check formatting
+        working-directory: rust
         run: cargo fmt --check
 
       - name: Run Clippy
+        working-directory: rust
         run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Run Rust tests
+        working-directory: rust
         run: cargo test --locked --all-targets
 
       - name: Install cargo-llvm-cov
@@ -76,10 +79,12 @@ jobs:
 
       - name: Enforce Rust coverage gate
         if: runner.os == 'Linux'
+        working-directory: rust
         run: cargo cov-ci --locked
 
       - name: Generate Rust LCOV report
         if: runner.os == 'Linux'
+        working-directory: rust
         run: cargo cov-lcov --locked
 
       - name: Upload Rust LCOV report
@@ -87,7 +92,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: rust-lcov
-          path: lcov.info
+          path: rust/lcov.info
           if-no-files-found: error
 
   python:
@@ -263,7 +268,7 @@ jobs:
 
       - name: Run cross-implementation conformance suite
         # run.py already handles the .exe suffix on Windows when
-        # locating target/debug/mie-decoder, so the same invocation
+        # locating rust/target/debug/mie-decoder, so the same invocation
         # works on both runners.
         run: python tests/conformance/run.py
 

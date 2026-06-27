@@ -1,6 +1,6 @@
 """Tests for the multi-file time-sorted merge (L1-MRG / L2-MRG).
 
-Mirrors the Rust `tests/integration.rs` merge tests so both implementations
+Mirrors the Rust `rust/tests/integration.rs` merge tests so both implementations
 exercise the same behavior.
 """
 

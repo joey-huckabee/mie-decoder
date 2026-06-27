@@ -742,7 +742,7 @@ class TestProbeTimestampFormat:
     """Tests for the L2-DEC-015 multi-record probe and L2-DEC-016
     confidence classification.
 
-    Mirrors src/decode.rs::tests::probe_*. Same fixture (the canonical
+    Mirrors rust/src/decode.rs::tests::probe_*. Same fixture (the canonical
     72-byte RT15 SA11 receive record); same threshold semantics.
     """
 

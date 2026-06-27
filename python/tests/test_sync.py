@@ -537,7 +537,7 @@ class TestSyncBoundsAndLogging:
 class TestNRecordLookahead:
     """L2-SYN-026 N-record configurable look-ahead.
 
-    Mirrors src/sync.rs::tests::validate_lookahead_*.
+    Mirrors rust/src/sync.rs::tests::validate_lookahead_*.
     """
 
     @staticmethod

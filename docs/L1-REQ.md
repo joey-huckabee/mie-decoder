@@ -8,7 +8,7 @@ L1 requirements define **what** the product must do at the highest level of abst
 
 ## Scope
 
-This document covers the active two-implementation release (Rust at the repository root, Python under `python/`). Items explicitly out of scope are recorded in the **Non-Requirements** section below. Items deferred to future releases are recorded in `docs/ROADMAP.md` rather than in this document.
+This document covers the active two-implementation release (Rust under `rust/`, Python under `python/`). Items explicitly out of scope are recorded in the **Non-Requirements** section below. Items deferred to future releases are recorded in `docs/ROADMAP.md` rather than in this document.
 
 ## Conventions
 

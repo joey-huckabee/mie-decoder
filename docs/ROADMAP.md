@@ -438,7 +438,7 @@ for reference only (`PRA-N`).
 - **Resolution (extended the generator — option b).** The "L1 → L2" table
   gained a **Test Artifacts** column that renders direct L1 markers, so
   `L1-ROB-001` now visibly lists `fuzz_arbitrary_bytes_never_panic`, the
-  `src/dump.rs` no-panic tests, and the Python fuzz test. The coverage
+  `rust/src/dump.rs` no-panic tests, and the Python fuzz test. The coverage
   summary now folds the Test-verifiable **L1 leaves** (L1s with no L2
   decomposition) into the denominator — composite L1s remain excluded so
   they are not double-counted against their already-counted L2/L3
@@ -484,7 +484,7 @@ large-recording deployments).*
   of the default run). A new scheduled workflow `.github/workflows/fuzz.yml`
   runs the burn-in daily (and on manual `workflow_dispatch`) at 25 000
   iterations per implementation. The `L1-SYN-002` cumulative bound is now
-  asserted by `tests/integration.rs::recovery_scan_is_forward_only_and_bounded`
+  asserted by `rust/tests/integration.rs::recovery_scan_is_forward_only_and_bounded`
   and `python/tests/test_sync.py::test_recovery_scan_forward_only_and_bounded`,
   which exercise repeated recoveries and check that decoded record offsets
   advance strictly forward (never re-traversing already-scanned bytes),
@@ -521,9 +521,9 @@ large-recording deployments).*
 *Severity: Low (cosmetic).*
 - **Concern.** A few module/doc comments framed current behavior with
   dated qualifiers.
-- **Evidence.** ~~`src/cli.rs` and `src/filter.rs` described the CLI
+- **Evidence.** ~~`rust/src/cli.rs` and `rust/src/filter.rs` described the CLI
   surface as a "v2 redesign"; `python/src/mie_decoder/writer.py` and
-  `config.py` (and `src/config.rs`) annotated the intentionally-empty
+  `config.py` (and `rust/src/config.rs`) annotated the intentionally-empty
   vendor columns and the CSV-only output format as "empty in v1.0" /
   "csv for v1.0" / "only csv in v1".~~ All cleared: the "v2 redesign"
   anchors were removed from both Rust module docs, and the "v1.0"/"in v1"
@@ -603,8 +603,8 @@ stale. Current work is tracked in the queued-release and robustness sections.
 `find_first_record` is None (`python/src/mie_decoder/reader.py:203-207`)
 — a non-MIE file becomes a successful empty decode with exit 0. Rust
 surfaces `MieError::NoValidRecords` as the first iterator item
-(`src/reader.rs:138-149`). On unrecoverable mid-file sync loss, both
-implementations log ERROR and stop with exit 0 (`src/reader.rs:320-329`;
+(`rust/src/reader.rs:138-149`). On unrecoverable mid-file sync loss, both
+implementations log ERROR and stop with exit 0 (`rust/src/reader.rs:320-329`;
 `python/src/mie_decoder/reader.py:267-273`). The CSV writer reports
 success even when zero rows were emitted.
 
@@ -663,7 +663,7 @@ the conformance plumbing.
 
 **Severity:** High.
 
-**Status quo.** `src/writer.rs:155` calls `File::create(path)` before
+**Status quo.** `rust/src/writer.rs:155` calls `File::create(path)` before
 consuming the iterator; if decode errors after the header is written,
 the file is left header-only or partial. Stdout case has the same
 issue. Python (`python/src/mie_decoder/writer.py:283-301`) builds rows
@@ -729,7 +729,7 @@ Should land first or at the same time as Item 2. **Effort: 2-3 days.**
 **Severity:** High.
 
 **Status quo.** `sync::validate_record` checks hour/minute/second only
-(`src/sync.rs:62-74`); day and microseconds are unchecked. A garbage
+(`rust/src/sync.rs:62-74`); day and microseconds are unchecked. A garbage
 record whose bit pattern happens to encode `day=400` or
 `microsecond=1_500_000` passes validation. `IrigTimestamp::format` then
 emits `400:15:54:50.1500000` — seven-digit microseconds break the
@@ -757,11 +757,11 @@ confuse downstream parsers expecting fixed-width fields.
   than six).
 
 **Implementation surface.**
-- *Rust:* `src/sync.rs::validate_record` — extend the IRIG block
+- *Rust:* `rust/src/sync.rs::validate_record` — extend the IRIG block
   (currently lines 62-74). Add day check; compute `microsecond` from
   middle+lower and check `< 1_000_000`. `find_first_record` and
   `recover_sync` already share `validate_record` so no further edits
-  there. Add defensive clamp/warn in `src/decode.rs::decode_irig_timestamp`.
+  there. Add defensive clamp/warn in `rust/src/decode.rs::decode_irig_timestamp`.
 - *Python:* `python/src/mie_decoder/sync.py::validate_record` — same
   additions. `python/src/mie_decoder/decode.py::decode_irig_timestamp`
   — same defensive clamp.
@@ -824,7 +824,7 @@ explicitly carved out in the requirement; otherwise we'll generate
 false negatives on real recordings.
 
 **Implementation surface.**
-- *Rust:* `src/decode.rs::classify_message_format` already returns a
+- *Rust:* `rust/src/decode.rs::classify_message_format` already returns a
   per-format enum; add a
   `validate_structural_invariants(tw, cmd, payload_words) -> Result<(), InvariantViolation>`
   companion that the reader calls between classification and yielding.
@@ -853,12 +853,12 @@ into two PRs: (a) capacity + direction invariants (highest value);
 
 **Status quo.** Concrete divergences confirmed against source:
 - *Log level validation:* Rust rejects unknown `logging.level` at parse
-  time (`src/config.rs:148`, regression-fixed; see test at
-  `src/config.rs:580-593`). Python accepts any string
+  time (`rust/src/config.rs:148`, regression-fixed; see test at
+  `rust/src/config.rs:580-593`). Python accepts any string
   (`python/src/mie_decoder/config.py:272`) and silently drops it at
   apply time.
 - *Output format validation:* Both implementations accept any string
-  for `output.format` and store it (`src/config.rs:165-167`,
+  for `output.format` and store it (`rust/src/config.rs:165-167`,
   `python/.../config.py:308`). Rust documents "csv expected"; neither
   validates.
 - *Strict boolean coercion:* Python uses
@@ -869,7 +869,7 @@ into two PRs: (a) capacity + direction invariants (highest value);
   `strict="no"`, Python coerces to True. Rust's `with_overrides`
   requires `Option<bool>` so this is type-enforced.
 - *RT/subaddress range:* Python `set(filter_section.get("exclude_rts", []))`
-  — no range check. Rust `parse_int_u8` (`src/config.rs:276`) only
+  — no range check. Rust `parse_int_u8` (`rust/src/config.rs:276`) only
   checks u8 range (0-255), not 1553's 0-31. Both can accept
   `exclude_rts = [99]` and silently never match any record.
 - *Unknown TOML keys:* Both implementations ignore unknown keys
@@ -991,7 +991,7 @@ Items 4 and 5 produce more. **Effort for the rest: 2-3 days.**
 
 **Severity:** Medium.
 
-**Status quo.** Both readers use mmap (`src/reader.rs:82` via memmap2;
+**Status quo.** Both readers use mmap (`rust/src/reader.rs:82` via memmap2;
 `python/src/mie_decoder/reader.py:195` via `mmap.ACCESS_READ`).
 Concurrent file modification during decode is undefined: on POSIX,
 truncating a mapped file can produce SIGBUS on subsequent access; on
@@ -1144,7 +1144,7 @@ The CLI maps it to exit 3 per L1-EXIT-004. Captured here for history.
 
 `L2-SYN-011` says recovery "SHALL report when no valid record is found
 within the scan window." In strict mode the reader returns
-`Err(MieError)`. In lenient mode (`src/reader.rs:302–330`) the iterator
+`Err(MieError)`. In lenient mode (`rust/src/reader.rs:302–330`) the iterator
 just returns `None` and stops; the only "report" is a stderr
 `log_error!` line — not an `Err` item, not an exit code.
 
@@ -1202,7 +1202,7 @@ The ROADMAP "Stronger timestamp-format auto-detection" backlog item
 the *current* behavior either:
 
 - Whether detection is file-level (current behavior: locked on the
-  first record at `src/reader.rs:114–118` / `src/decode.rs:215`) or
+  first record at `rust/src/reader.rs:114–118` / `rust/src/decode.rs:215`) or
   could be per-record.
 - The tie-break rule (current: IRIG wins, hardcoded comment "more
   common in flight test recordings").
@@ -1233,7 +1233,7 @@ word count, fits-in-file, IRIG range) SHALL be authoritative."
 Captured here for history.
 
 `L2-SYN-005` says look-ahead is done "when look-ahead bytes are
-available." The code (`src/sync.rs:78–89`) treats "<2 bytes remaining"
+available." The code (`rust/src/sync.rs:78–89`) treats "<2 bytes remaining"
 as "skip check 6 and accept." That's correct, but `available` is fuzzy
 — does a partial next Type Word count?
 
@@ -1272,11 +1272,11 @@ test_e2e.py::test_spurious_data_empty_delta_and_continuation_code
 exercises the L2-ERR-005 continuation code path. Captured here for
 history.
 
-Verified in `src/reader.rs:419`: `prev_was_error` is set at the reader,
+Verified in `rust/src/reader.rs:419`: `prev_was_error` is set at the reader,
 before filtering — so a SPURIOUS following a filtered-out error is
 still correctly classified as `0x2000` continuation.
 
-**However:** the classification-failure path at `src/reader.rs:433`
+**However:** the classification-failure path at `rust/src/reader.rs:433`
 resets `prev_was_error = false`. If a corrupt-but-passable record sits
 between an error and a spurious, the spurious gets mislabeled as
 `0x2001` (standalone) instead of `0x2000` (continuation). This is a
@@ -1302,7 +1302,7 @@ and extension (or empty if the destination has no extension).
 Examples: `out.csv` → `out_errors.csv`; `out` → `out_errors`;
 `data.bar.csv` → `data.bar_errors.csv`." Captured here for history.
 
-`src/writer.rs:255–267` and `python/src/mie_decoder/writer.py:276–278`
+`rust/src/writer.rs:255–267` and `python/src/mie_decoder/writer.py:276–278`
 both produce:
 - `foo.csv` → `foo_errors.csv`
 - `foo` → `foo_errors`
@@ -1346,7 +1346,7 @@ flagging it.
 Five small items surfaced during the audit. All five are now
 resolved; status tagged per item for history.
 
-- **Concurrent file modification under mmap** (`src/reader.rs:82`,
+- **Concurrent file modification under mmap** (`rust/src/reader.rs:82`,
   Python `mmap.ACCESS_READ`): undefined on POSIX if truncated
   mid-decode. **Status: Resolved** via L1-EXIT-006 (which pins the
   operational contract that the input file SHALL NOT be modified
@@ -1597,18 +1597,18 @@ they drift.
 
 | # | Table | Source of truth | Target Doc |
 |---|-------|-----------------|------------|
-| T1 | Type Word message type codes (7 rows × code/name/short description/format) | `src/models.rs::MessageType` | `MIE-FORMAT.md` |
-| T2 | All 10 MIL-STD-1553 transaction formats + SPURIOUS_DATA, with which Type Word(s) map to each | `src/decode.rs::classify_message_format` | `MIE-FORMAT.md` |
-| T3 | DDC hardware error codes (0x01xx) with hex / symbolic name / description | `src/models.rs` constants | `ERROR-CATALOG.md`, `MIE-FORMAT.md` |
-| T4 | Decoder error codes (0x20xx) with origin (decoder-assigned, not hardware) | `src/models.rs` constants | `ERROR-CATALOG.md`, `MIE-FORMAT.md` |
+| T1 | Type Word message type codes (7 rows × code/name/short description/format) | `rust/src/models.rs::MessageType` | `MIE-FORMAT.md` |
+| T2 | All 10 MIL-STD-1553 transaction formats + SPURIOUS_DATA, with which Type Word(s) map to each | `rust/src/decode.rs::classify_message_format` | `MIE-FORMAT.md` |
+| T3 | DDC hardware error codes (0x01xx) with hex / symbolic name / description | `rust/src/models.rs` constants | `ERROR-CATALOG.md`, `MIE-FORMAT.md` |
+| T4 | Decoder error codes (0x20xx) with origin (decoder-assigned, not hardware) | `rust/src/models.rs` constants | `ERROR-CATALOG.md`, `MIE-FORMAT.md` |
 | T5 | CSV columns with format spec (width, padding, encoding) and source binary field | `docs/FIELDS.md` | `MIE-FORMAT.md` (extended) |
 | T6 | Empty-column rationale (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`) | `docs/FIELDS.md` + ROADMAP commitments | `VENDOR-CSV-DIFFS.md` |
-| T7 | Config TOML keys: key / type / range / unknown handling / CLI equivalent | `src/config.rs`, `python/.../config.py` | `CONFIG-REFERENCE.md` |
-| T8 | CLI flags: flag / argument type / per-subcommand applicability / config equivalent | `src/cli.rs`, `python/.../cli.py` | `CONFIG-REFERENCE.md` |
+| T7 | Config TOML keys: key / type / range / unknown handling / CLI equivalent | `rust/src/config.rs`, `python/.../config.py` | `CONFIG-REFERENCE.md` |
+| T8 | CLI flags: flag / argument type / per-subcommand applicability / config equivalent | `rust/src/cli.rs`, `python/.../cli.py` | `CONFIG-REFERENCE.md` |
 | T9 | Exit codes (after Team Review Item 2 lands): code / class / meaning / when to expect | `L1-EXIT-002` through `L1-EXIT-005` | `ERROR-CATALOG.md`, `USER-GUIDE.md` |
-| T10 | `MieError` variants (Rust) and exception classes (Python), keyed by `MieErrorKind` discriminant | `src/error.rs`, `python/.../exceptions.py` | `ERROR-CATALOG.md` |
-| T11 | Logging levels (DEBUG/INFO/WARNING/ERROR/CRITICAL) with what each produces | `src/log.rs` + `python/.../logger.py` + `docs/ARCHITECTURE.md` | `USER-GUIDE.md` |
-| T12 | Validation heuristics (five checks + look-ahead) with order, cost, and what each rejects | `src/sync.rs` | `MAINTAINER-GUIDE.md` |
+| T10 | `MieError` variants (Rust) and exception classes (Python), keyed by `MieErrorKind` discriminant | `rust/src/error.rs`, `python/.../exceptions.py` | `ERROR-CATALOG.md` |
+| T11 | Logging levels (DEBUG/INFO/WARNING/ERROR/CRITICAL) with what each produces | `rust/src/log.rs` + `python/.../logger.py` + `docs/ARCHITECTURE.md` | `USER-GUIDE.md` |
+| T12 | Validation heuristics (five checks + look-ahead) with order, cost, and what each rejects | `rust/src/sync.rs` | `MAINTAINER-GUIDE.md` |
 | T13 | Conformance fixture catalog: name / input / expected / args / requirements covered | `tests/conformance/manifest.json` + `docs/TRACE-MATRIX.md` | `MAINTAINER-GUIDE.md` |
 | T14 | Cross-impl divergence registry: documented behaviors that differ between Rust and Python (e.g., Rust include filters per `L3-RS-010`) | `docs/L3-REQ.md` (L3-PY-* and L3-RS-* sections) | `MAINTAINER-GUIDE.md` |
 | T15 | DELTA contract decision matrix: timestamp basis × record type → DELTA value (per `L2-RDR-016 through L2-RDR-019`) | `docs/L2-REQ.md` (L2-RDR-016 through L2-RDR-019) | `MIE-FORMAT.md` |
@@ -1722,8 +1722,8 @@ The initiative is complete when:
 3. Every table in the catalog above is present and accurate
    against current code (spot-check 3 cells per table against
    source of truth).
-   **Status: ✅ Met.** Tables traced back to `src/models.rs`,
-   `src/decode.rs`, and the L1/L2/L3 spec docs during writing.
+   **Status: ✅ Met.** Tables traced back to `rust/src/models.rs`,
+   `rust/src/decode.rs`, and the L1/L2/L3 spec docs during writing.
 4. Every worked example produces the expected output when the CLI
    invocation is run against the documented input — verified by
    either adding the example as a conformance fixture or by a

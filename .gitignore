@@ -36,7 +36,7 @@ __pycache__/
 # Sample binary recordings
 *.mie
 
-# Coverage artifacts (HTML reports go under target/, ignored by /target)
+# Coverage artifacts (HTML reports go under rust/target/, ignored by `target`)
 lcov.info
 
 # Python coverage artifacts (pytest-cov / coverage.py)

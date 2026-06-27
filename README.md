@@ -6,10 +6,10 @@ MIE-Decoder reads proprietary binary files produced by Data Device Corporation (
 
 MIE-Decoder is maintained in two implementations:
 
-- **Rust** — streaming CSV writer (constant memory), hand-rolled
-  CLI, single native release binary.
-- **Python** — the Python package and CLI, maintained in
-  [`python/`](python/).
+- **Rust** — streaming CSV writer (constant memory), hand-rolled CLI, single
+  native release binary. See [`rust/README.md`](rust/README.md).
+- **Python** — the Python package and CLI. See
+  [`python/README.md`](python/README.md).
 
 Both implementations ship together as a joint cut from a single
 repository tag. Future releases may diverge via impl-prefixed tags
@@ -18,14 +18,17 @@ documentation, the vendor-compatible CSV behavior, and a byte-exact
 cross-implementation conformance suite (`tests/conformance/`). See
 [`CHANGELOG.md`](CHANGELOG.md) for the release history.
 
-## Rust Build
+## Building
 
-```bash
-cargo build --release
-# binary lands at target/release/mie-decoder
-```
+Build, install, and library-usage instructions live with each implementation:
 
-The crate has exactly one external dependency (`memmap2`); everything else — argument parsing, CSV writing, TOML config, logging, error types — is hand-rolled.
+- **Rust** — [`rust/README.md`](rust/README.md): native release binary, crate /
+  library API, `cargo` workflow.
+- **Python** — [`python/README.md`](python/README.md): `mie-decoder` CLI plus the
+  importable `mie_decoder` package, Poetry workflow.
+
+The CLI surface, configuration schema, and CSV output documented below are
+shared by both implementations.
 
 ## Quick Start
 
@@ -182,32 +185,9 @@ mie-decoder decode rec.mie -o decoded.csv --time-format standard --standard-tick
 mie-decoder --log-level DEBUG decode rec.mie -o decoded.csv
 ```
 
-## Library Usage
-
-```rust
-use mie_decoder::{
-    filter::{FilterConfig, FilterIterExt},
-    reader::MieFileReader,
-    writer::write_csv,
-};
-
-let reader = MieFileReader::new("recording.mie")?;
-
-// Basic iteration
-for msg in reader.iter() {
-    let msg = msg?;
-    println!("{} RT{:?} {}", msg.timestamp.format(), msg.rt(), msg.msg_label());
-}
-
-// With filtering, streaming straight to CSV
-let reader = MieFileReader::new("recording.mie")?;
-let filters = FilterConfig {
-    exclude_types: vec![0x20], // skip spurious
-    ..Default::default()
-};
-let messages = reader.iter().filter_messages(filters);
-write_csv(messages, Some(std::path::Path::new("decoded.csv")))?;
-```
+Library usage (the Rust crate API and the Python `mie_decoder` package) is
+documented in each implementation's README — [`rust/README.md`](rust/README.md)
+and [`python/README.md`](python/README.md).
 
 ## Error Handling
 
@@ -293,20 +273,7 @@ All 10 MIL-STD-1553 message formats plus SPURIOUS_DATA:
 ## Project Structure
 
 ```
-src/
-├── lib.rs           Library entry point and re-exports
-├── bin/mie-decoder  Binary entry point
-├── cli.rs           Hand-rolled argparse + dispatch
-├── config.rs        Hand-rolled TOML loader, DecoderConfig
-├── decode.rs        Pure decoders + format classifier
-├── dump.rs          Hex dump (raw + record-aware)
-├── error.rs         MieError enum + Display/Error impls
-├── filter.rs        FilterConfig + Iterator adapter
-├── log.rs           Tiny stderr logger
-├── models.rs        Data structures, enums, error codes
-├── reader.rs        mmap-backed iterator with sync recovery
-├── sync.rs          Pure validation + recovery helpers
-└── writer.rs        Streaming CSV writer
+rust/                Rust crate (single dependency: memmap2) — see rust/README.md
 
 config/
 └── default.toml     Fully commented reference configuration
@@ -328,9 +295,9 @@ docs/
 └── diagrams/           PlantUML sources and rendered SVGs
 
 tests/
-└── integration.rs   End-to-end tests with byte-exact fixtures
+└── conformance/     Cross-implementation suite (Rust ↔ Python oracle)
 
-python/              Maintained Python package and CLI
+python/              Python package and CLI — see python/README.md
 ```
 
 ## Roadmap
@@ -339,24 +306,12 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Development
 
-Rust:
+Per-implementation development commands (build, test, lint, coverage) live in
+[`rust/README.md`](rust/README.md) and [`python/README.md`](python/README.md);
+[`CONTRIBUTING.md`](CONTRIBUTING.md) and
+[`docs/MAINTAINER-GUIDE.md`](docs/MAINTAINER-GUIDE.md) cover the full workflow.
 
-```bash
-cargo test                  # All unit + integration tests
-cargo test --test integration -- multi_record_stream   # One integration test
-cargo build --release       # Release binary at target/release/mie-decoder
-cargo clippy --all-targets  # Lint (if installed)
-```
-
-Python:
-
-```bash
-poetry -C python sync
-poetry -C python run pytest
-poetry -C python run mie-decoder --help
-```
-
-Shared Rust/Python behavior:
+Shared Rust/Python conformance suite:
 
 ```bash
 python tests/conformance/run.py

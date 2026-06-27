@@ -1140,7 +1140,7 @@ mod tests {
     // ── L2-DEC-015 / L2-DEC-016 probe tests ──────────────────────────
 
     /// Canonical 72-byte RT15 SA11 Receive record under IRIG framing.
-    /// Byte-exact with the fixture used by tests/integration.rs.
+    /// Byte-exact with the fixture used by rust/tests/integration.rs.
     ///
     /// What matters about the values: the layout scores perfectly
     /// under IRIG (T/R: +2, WC: +2, range: +1 = +5 per record) and

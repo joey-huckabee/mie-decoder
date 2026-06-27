@@ -25,7 +25,7 @@ const BIN: &str = env!("CARGO_BIN_EXE_mie-decoder");
 // ── Fixtures ─────────────────────────────────────────────────────────
 
 /// One valid 72-byte RT15 SA11 receive record. Byte-exact with the
-/// `record_rt15_sa11_rcv` fixture in `tests/integration.rs` —
+/// `record_rt15_sa11_rcv` fixture in `rust/tests/integration.rs` —
 /// duplicated here so the CLI suite has no link-time dependency on
 /// the integration suite.
 fn one_valid_record() -> Vec<u8> {
