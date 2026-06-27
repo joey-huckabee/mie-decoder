@@ -34,8 +34,8 @@ use crate::sync::{
 };
 use crate::{log_debug, log_error, log_info, log_warn};
 
-/// Reader handle. Construct with [`new`]; iterate by calling `.iter()` or
-/// using `IntoIterator`.
+/// Reader handle. Construct with [`Self::new`]; iterate by calling `.iter()`
+/// or using `IntoIterator`.
 pub struct MieFileReader {
     path: PathBuf,
     mmap: Mmap,

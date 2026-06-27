@@ -50,6 +50,12 @@ full release workflow.
   unused test fixture (`single_transmit_record`) and ignores three intentional
   names — the argparse `option_string` interface arg and the documented module
   constants `MAX_RECORD_BYTES` / `ALL_KNOWN_ERROR_CODES`. No behavior change.
+- **Rust rustdoc gate** (`rust-doc` CI job): `cargo doc --no-deps` with
+  `RUSTDOCFLAGS="-D warnings"`, failing on broken intra-doc links and other
+  rustdoc lints. The initial pass fixed a broken intra-doc link in `reader.rs`.
+- **Rust MSRV gate** (`rust-msrv` CI job): `cargo check --all-targets` on a
+  pinned **1.85** toolchain, so the declared `rust-version` is actually enforced
+  (the main `rust` job builds on stable and would otherwise mask a >1.85 feature).
 
 ### Changed
 
