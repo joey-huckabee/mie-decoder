@@ -62,6 +62,12 @@ full release workflow.
   dependency tree — RustSec advisories, a license allow-list (MIT / Apache-2.0),
   duplicate/wildcard bans, and crates.io-only sources (config in
   `rust/deny.toml`). Its first run flagged a live advisory (see Security).
+- **Rust `[lints]` table** in `rust/Cargo.toml`, so lint policy is enforced on a
+  plain `cargo build` / `cargo clippy`, not just via CI flags:
+  `unsafe_op_in_unsafe_fn` and `clippy::undocumented_unsafe_blocks` (the latter
+  promotes the repo's `// SAFETY:` convention from a pre-commit grep to a real
+  lint), plus `unreachable_pub`. Enforcing `unreachable_pub` tightened six
+  crate-internal exit-code constants in `cli.rs` from `pub` to `pub(crate)`.
 
 ### Security
 

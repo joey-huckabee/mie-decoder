@@ -19,6 +19,24 @@ path = "src/bin/mie-decoder.rs"
 [dependencies]
 memmap2 = "0.9"
 
+# Lint policy lives here so plain `cargo build` / `cargo clippy` enforce it, not
+# just the CI flags. All three pass clean today; they formalize practices the
+# crate already follows (the CI `clippy -- -D warnings` gate still applies on
+# top of these).
+[lints.rust]
+# Require an explicit `unsafe {}` block for unsafe operations inside an
+# `unsafe fn` (warn-by-default in edition 2024; denied here).
+unsafe_op_in_unsafe_fn = "deny"
+# Flag `pub` items that aren't reachable from the crate root — they should be
+# `pub(crate)`. Keeps the public API surface intentional.
+unreachable_pub = "deny"
+
+[lints.clippy]
+# Every `unsafe {}` block must carry a `// SAFETY:` comment. Promotes the
+# repo's existing SAFETY-comment convention (also grep-checked by the
+# pre-commit hook) from a heuristic to a real lint.
+undocumented_unsafe_blocks = "deny"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
