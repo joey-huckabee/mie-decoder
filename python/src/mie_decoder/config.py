@@ -103,7 +103,9 @@ def _require_bool(section: str, key: str, value: object) -> bool:
     return value
 
 
-def _require_rt_sa_range(field: str, values: object) -> set[int]:
+def _require_rt_sa_range(  # pylint: disable=redefined-outer-name
+    field: str, values: object
+) -> set[int]:
     """Validate a list of RT or subaddress values: each must be an int
     in [0, 31] per the L2-CFG schema reference.
     """
@@ -341,11 +343,17 @@ class DecoderConfig:
             exclude_types=self.filters.exclude_types | set(kwargs.get("exclude_types") or []),
             exclude_rts=self.filters.exclude_rts | set(kwargs.get("exclude_rts") or []),
             exclude_buses=self.filters.exclude_buses | set(kwargs.get("exclude_buses") or []),
-            exclude_subaddresses=self.filters.exclude_subaddresses | set(kwargs.get("exclude_subaddresses") or []),
+            exclude_subaddresses=(
+                self.filters.exclude_subaddresses
+                | set(kwargs.get("exclude_subaddresses") or [])
+            ),
             include_types=self.filters.include_types | set(kwargs.get("include_types") or []),
             include_rts=self.filters.include_rts | set(kwargs.get("include_rts") or []),
             include_buses=self.filters.include_buses | set(kwargs.get("include_buses") or []),
-            include_subaddresses=self.filters.include_subaddresses | set(kwargs.get("include_subaddresses") or []),
+            include_subaddresses=(
+                self.filters.include_subaddresses
+                | set(kwargs.get("include_subaddresses") or [])
+            ),
         )
 
         return DecoderConfig(
@@ -408,8 +416,8 @@ def _parse_type_names(names: Sequence[object]) -> set[int]:
         elif upper.startswith("0X"):
             try:
                 code = int(upper, 16)
-            except ValueError:
-                raise ValueError(f"Invalid hex type code: {name!r}")
+            except ValueError as exc:
+                raise ValueError(f"Invalid hex type code: {name!r}") from exc
             if not (0 <= code <= 255):
                 raise ValueError(f"Invalid hex type code: {name!r}")
             result.add(code)

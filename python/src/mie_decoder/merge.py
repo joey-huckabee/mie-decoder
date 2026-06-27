@@ -269,7 +269,9 @@ def _merge_drain(
         prev_us[idx] = curr
         seq = seqs[idx]
         seqs[idx] = seq + 1
-        heapq.heappush(heap, (curr, idx, seq, next(counter), nxt))
+        # next() on the infinite itertools.count() tiebreak never raises.
+        tiebreak = next(counter)  # pylint: disable=stop-iteration-return
+        heapq.heappush(heap, (curr, idx, seq, tiebreak, nxt))
 
     # An --allow-partial deferred failure surfaces here so the writer commits a
     # `.partial` after all good records are written.

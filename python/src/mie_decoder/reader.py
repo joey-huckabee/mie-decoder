@@ -43,14 +43,11 @@ from pathlib import Path
 from typing import Iterator
 
 from mie_decoder.decode import (
-    MIN_RECORD_BYTES,
     MIN_RECORD_BYTES_STANDARD,
-    MIN_RECORD_WORDS,
     DEFAULT_DETECT_RECORDS,
     DEFAULT_MUX_DELIMITER,
     DEFAULT_MUX_ENABLED,
     DEFAULT_MUX_FIELD,
-    MIN_RECORD_WORDS_STANDARD,
     DetectionConfidence,
     classify_message_format,
     mux_from_filename,
@@ -80,7 +77,6 @@ from mie_decoder.exceptions import (
     MieUnrecoverableSyncLossError,
 )
 from mie_decoder.models import (
-    ALL_KNOWN_ERROR_CODES,
     CommandWord,
     Direction,
     ERROR_SPURIOUS_CONTINUATION,
