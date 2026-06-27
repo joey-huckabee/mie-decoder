@@ -1,14 +1,12 @@
 # ----------------------------------------
 # CodeQL Security Scan
 # ----------------------------------------
-# Builds a CodeQL database and reports findings to GitHub code scanning
-# (Security tab). Rust is supported only with build-mode: none (no autobuild),
-# so CodeQL extracts the database directly from source — the crate's location
-# under rust/ needs no special handling.
-#
-# To also scan the Python implementation, add a second matrix entry:
-#   - language: python
-#     build-mode: none
+# Builds a CodeQL database per language and reports findings to GitHub code
+# scanning (Security tab). Both the Rust crate (under rust/) and the Python
+# package are scanned. Rust is supported only with build-mode: none (no
+# autobuild/manual); Python needs no build either — so CodeQL extracts each
+# database directly from source and the rust/ crate location needs no special
+# handling.
 # ----------------------------------------
 
 name: CodeQL Security Scan
@@ -45,6 +43,9 @@ jobs:
         include:
           # Rust is only supported with build-mode: none (no autobuild/manual).
           - language: rust
+            build-mode: none
+          # Python needs no build either; none extracts directly from source.
+          - language: python
             build-mode: none
 
     steps:
