@@ -15,6 +15,23 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.5.1] — 2026-06-28
+
+### Fixed
+
+- **Duplicate collapsing no longer faults or over-collapses on a lenient
+  non-monotonic merge input** (`--collapse-duplicates`). When an input file is
+  not internally time-sorted (L2-MRG-006) the merged stream can step backward;
+  the dedup window's one-sided `us - survivor_us` gap then underflowed —
+  **panicking the Rust CLI in debug builds (exit 101)** in `merge.rs` — and, in
+  Python, bypassed the window check so a record could collapse against a survivor
+  far outside `--collapse-window-us`. The window comparison now uses the
+  **absolute** time distance (with saturating eviction in Rust), so collapsing is
+  panic-free and never drops a row outside the window; on such known-bad order it
+  is best-effort. Sorted input is unaffected (byte-identical output). Pinned by
+  new Rust + Python regression tests and a cross-impl conformance case
+  (`L2-MRG-007`).
+
 ## [2.5.0] — 2026-06-27
 
 ### Added
@@ -1185,7 +1202,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.1...HEAD
+[2.5.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.2.0...v2.3.0
