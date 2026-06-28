@@ -15,6 +15,36 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.5.2] — 2026-06-28
+
+### Fixed
+
+- **`merge --allow-partial` now writes a `.partial` for a per-file failure
+  detected at *open* or *priming*, not only mid-file** (L2-MRG-004). Previously a
+  bad input whose first record was unreadable / non-MIE (e.g. all-0xFF) was
+  skipped during priming **without** arming the deferred-partial state, so a
+  `good.mie + bad.mie --allow-partial` merge wrote a normal `out.csv` (no
+  `.partial`) and reported success — silently losing the signal that an input had
+  been dropped. An input that fails at *open* (empty / unreadable / missing)
+  likewise aborted the batch even under `--allow-partial`. Both now drop the
+  offending input with a WARN naming it, complete the merge from the rest, and
+  commit the combined output as `<output>.partial` (and `<stem>_errors.partial`
+  in separate mode), exit 0 — uniform with the existing mid-file behavior. New
+  Rust + Python regression and CLI tests plus a cross-impl conformance case
+  (`merge-allow-partial-priming`, which also implements the previously-declared
+  `expected_partial` oracle in the conformance runner) pin it.
+
+### Documentation
+
+- **New `docs/DATA-SCENARIOS.md`** — a plain-language, scenario-indexed reference
+  for how the tool handles every data condition (clean / error / spurious
+  records, IRIG / Standard / freerun timestamps, empty / truncated / non-MIE
+  files, multi-file merge including per-file `--allow-partial` and duplicate
+  collapsing, output modes, filters, MUX), each with its CSV / log / exit
+  outcome, plus a glossary that defines the jargon (including "oracle"). Linked
+  from the docs index and USER-GUIDE.md; cross-references ERROR-CATALOG.md and
+  MIE-FORMAT.md.
+
 ## [2.5.1] — 2026-06-28
 
 ### Fixed
@@ -1202,7 +1232,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.1...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.2...HEAD
+[2.5.2]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.3.0...v2.4.0
