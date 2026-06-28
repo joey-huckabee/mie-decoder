@@ -61,6 +61,7 @@ poetry -C python run pylint src/mie_decoder    # lint (CI-gated, must stay 10/10
 poetry -C python run ruff check                # ruff lint (CI-gated)
 poetry -C python run ruff format               # auto-format (CI runs ruff format --check)
 poetry -C python run vulture                   # dead-code scan (CI-gated)
+poetry -C python run bandit -r src/mie_decoder # security scan / SAST (CI-gated)
 poetry -C python run mie-decoder --help
 poetry -P python build
 

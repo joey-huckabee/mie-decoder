@@ -23,6 +23,10 @@ full release workflow.
   **breaking** public-API change to the crate without a major version bump;
   additive changes pass. Completes the Rust CI tooling deferred in v2.4.0 — the
   v2.4.0 tag (the first under the `rust/` layout) is the baseline.
+- **Bandit security gate** (`bandit` dev dependency + a `bandit` CI job). Runs
+  `bandit -r src/mie_decoder` — security static analysis (SAST) over the Python
+  package source — and blocks merge on any finding at the default
+  severity/confidence. The initial scan is clean (no issues across the package).
 
 ## [2.4.0] — 2026-06-27
 

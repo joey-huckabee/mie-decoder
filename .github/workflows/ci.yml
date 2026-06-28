@@ -424,6 +424,34 @@ jobs:
         working-directory: python
         run: poetry run vulture
 
+  bandit:
+    name: Python security (bandit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Poetry
+        run: pipx install poetry==2.3.4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: poetry
+          cache-dependency-path: python/poetry.lock
+
+      - name: Synchronize locked dependencies
+        run: poetry -C python sync --no-interaction --no-ansi
+
+      - name: Run bandit
+        # Security static analysis (SAST) over the package source. Scans
+        # src/mie_decoder only — not tests, whose asserts bandit's B101 would
+        # flag. Exits non-zero on any finding at the default severity/confidence.
+        working-directory: python
+        run: poetry run bandit -r src/mie_decoder
+
   conformance:
     name: Rust/Python conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
