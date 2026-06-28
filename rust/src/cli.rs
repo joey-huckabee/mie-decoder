@@ -19,7 +19,7 @@ use crate::log::{self, Level};
 use crate::models::{ErrorMode, TimestampFormat};
 use crate::reader::{MieFileReader, ReaderOptions};
 use crate::writer::{WriteOptions, write_csv, write_csv_split};
-use crate::{log_error, log_info};
+use crate::{log_error, log_info, log_warn};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -919,10 +919,28 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
 
     // Open a reader per resolved input file (L2-MRG-001). `input_paths` was
     // resolved above, before `with_overrides` consumed the filter fields.
-    let readers: Vec<MieFileReader> = input_paths
-        .iter()
-        .map(|p| open_reader(p, &cfg))
-        .collect::<Result<_, _>>()?;
+    // Under --allow-partial a *merge* tolerates a per-file OPEN failure (an
+    // empty / unreadable / missing input): it drops that input with a WARN and
+    // commits the batch as `.partial` (L2-MRG-004), mirroring how a priming-time
+    // or mid-file failure is handled. A single-input decode is unaffected.
+    let merge_requested = input_paths.len() > 1;
+    let mut readers: Vec<MieFileReader> = Vec::with_capacity(input_paths.len());
+    let mut open_dropped = false;
+    for p in &input_paths {
+        match open_reader(p, &cfg) {
+            Ok(r) => readers.push(r),
+            Err(e) if merge_requested && cfg.allow_partial => {
+                log_warn!(
+                    "merge: input {} could not be opened; truncating it from the \
+                     merge (--allow-partial): {}",
+                    p.display(),
+                    e.message
+                );
+                open_dropped = true;
+            }
+            Err(e) => return Err(e),
+        }
+    }
     for r in &readers {
         log_info!("opened {} ({} bytes)", r.path().display(), r.file_size());
     }
@@ -932,16 +950,14 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
     // input the writer performs its own input/output collision check; for a
     // merge we check the output against *every* input here and disable the
     // writer's single-path check.
-    if readers.len() > 1
-        && let Some(out) = args.output.as_deref()
-    {
+    if merge_requested && let Some(out) = args.output.as_deref() {
         check_output_collision(out, &input_paths)?;
     }
     let write_opts = WriteOptions {
-        input_path: if readers.len() == 1 {
-            input_paths.first().cloned()
-        } else {
+        input_path: if merge_requested {
             None
+        } else {
+            input_paths.first().cloned()
         },
         no_clobber: cfg.no_clobber,
         allow_partial: cfg.allow_partial,
@@ -950,7 +966,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
     // One input → the existing single-file path (unchanged, monomorphized,
     // per-file DELTA). Two or more → the time-sorted k-way merge with global
     // DELTA (L2-MRG-002 / L2-MRG-005). Both feed the same generic writer.
-    let write_result = if readers.len() == 1 {
+    let write_result = if !merge_requested {
         let messages = readers[0].iter().filter_messages(cfg.filters.clone());
         write_messages(messages, args.output.as_deref(), cfg.error_mode, write_opts)
     } else {
@@ -965,8 +981,15 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
                 // Clone the suppressed-duplicate counter before the iterator is
                 // consumed by the writer, then report it after (L2-MRG-007).
                 let collapsed = merged.collapsed_handle();
+                // An input dropped at open time surfaces a terminal after the
+                // good rows so the writer commits a `.partial` (L2-MRG-004).
+                let open_tail =
+                    open_dropped.then_some(Err(crate::error::MieError::UnrecoverableSyncLoss {
+                        offset: 0,
+                        sync_losses: 0,
+                    }));
                 let result = write_messages(
-                    merged.filter_messages(cfg.filters.clone()),
+                    merged.filter_messages(cfg.filters.clone()).chain(open_tail),
                     args.output.as_deref(),
                     cfg.error_mode,
                     write_opts,

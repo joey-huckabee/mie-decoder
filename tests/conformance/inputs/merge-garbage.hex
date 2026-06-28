@@ -1,0 +1,5 @@
+# merge fixture: a non-MIE input (256 bytes of 0xFF) whose first record
+# cannot be found - a *priming-time* failure. Paired with merge-a.hex under
+# --allow-partial it must be truncated from the merge and the combined output
+# committed as a .partial (L2-MRG-004), exit 0.
+ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff

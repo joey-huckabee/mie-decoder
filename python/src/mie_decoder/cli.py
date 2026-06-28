@@ -777,18 +777,26 @@ def _check_merge_output_collision(
 
 
 def _build_message_stream(
-    readers: list[MieFileReader], config: DecoderConfig
+    readers: list[MieFileReader],
+    config: DecoderConfig,
+    *,
+    merge_requested: bool = False,
+    open_dropped: bool = False,
 ) -> Iterator[MieMessage]:
     """Build the decoded-message stream: a single filtered reader, or the
     time-sorted k-way merge of several (global DELTA, L2-MRG-002/005).
 
-    ``merge_readers`` validates the input set eagerly, so an incompatible set
-    raises ``MieIncompatibleMergeInputsError`` here before any output.
+    ``merge_requested`` routes by the *requested* input count (not the surviving
+    reader count) so an --allow-partial merge that dropped an input at open time
+    still uses the merge path. ``open_dropped`` appends a terminal after the good
+    rows so the writer commits a `.partial` (L2-MRG-004). ``merge_readers``
+    validates the input set eagerly, so an incompatible set raises
+    ``MieIncompatibleMergeInputsError`` here before any output.
     """
     from mie_decoder.filters import apply_filters
     from mie_decoder.merge import merge_readers
 
-    if len(readers) == 1:
+    if not merge_requested:
         return apply_filters(readers[0], config.filters)
     merged = merge_readers(
         readers,
@@ -798,7 +806,18 @@ def _build_message_stream(
         collapse_duplicates=config.collapse_duplicates,
         collapse_window_us=config.collapse_window_us,
     )
-    return apply_filters(merged, config.filters)
+    stream = apply_filters(merged, config.filters)
+    if open_dropped:
+        return _append_open_terminal(stream)
+    return stream
+
+
+def _append_open_terminal(stream: Iterator[MieMessage]) -> Iterator[MieMessage]:
+    """Yield from ``stream`` then raise an unrecoverable-sync-loss terminal so the
+    writer commits a `.partial` (L2-MRG-004). Used when a merge dropped an input
+    at open time — that file contributed nothing (truncated at offset 0)."""
+    yield from stream
+    raise MieUnrecoverableSyncLossError(0, 0)
 
 
 def _write_messages(
@@ -978,12 +997,29 @@ def _run_decode(args: argparse.Namespace) -> int:
         return EXIT_RUNTIME
 
     # ── Open a reader per input ────────────────────────────────────
-    try:
-        readers = [_open_reader(p, config) for p in input_paths]
-    except MieFileError as exc:
-        logger.error("Failed to open input file: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+    # Under --allow-partial a *merge* tolerates a per-file OPEN failure (an
+    # empty / unreadable / missing input): it drops that input with a WARN and
+    # commits the batch as `.partial` (L2-MRG-004), mirroring a priming-time or
+    # mid-file failure. A single-input decode is unaffected.
+    merge_requested = len(input_paths) > 1
+    readers: list[MieFileReader] = []
+    open_dropped = False
+    for p in input_paths:
+        try:
+            readers.append(_open_reader(p, config))
+        except MieFileError as exc:
+            if merge_requested and config.allow_partial:
+                logger.warning(
+                    "merge: input %s could not be opened; truncating it from the "
+                    "merge (--allow-partial): %s",
+                    p,
+                    exc,
+                )
+                open_dropped = True
+            else:
+                logger.error("Failed to open input file: %s", exc)
+                print(f"Error: {exc}", file=sys.stderr)
+                return EXIT_RUNTIME
 
     for r in readers:
         logger.info("Opened %s (%d bytes)", r.path.name, r.file_size)
@@ -995,7 +1031,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     from mie_decoder.writer import WriteOptions
 
     write_opts = WriteOptions(
-        input_path=input_paths[0] if len(readers) == 1 else None,
+        input_path=None if merge_requested else input_paths[0],
         no_clobber=config.no_clobber,
         allow_partial=config.allow_partial,
     )
@@ -1007,7 +1043,9 @@ def _run_decode(args: argparse.Namespace) -> int:
     # stdout) map to exit codes via _classify_decode_error; a clean run is
     # classified by the cumulative sync-loss count (L1-EXIT-005).
     try:
-        messages = _build_message_stream(readers, config)
+        messages = _build_message_stream(
+            readers, config, merge_requested=merge_requested, open_dropped=open_dropped
+        )
         outcome = _write_messages(messages, args.output, config.error_mode, write_opts)
     except (MieDecoderError, BrokenPipeError) as exc:
         return _classify_decode_error(exc)

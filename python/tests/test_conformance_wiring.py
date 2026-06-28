@@ -58,10 +58,13 @@ def test_conformance_manifest_has_cases_with_oracles() -> None:
         # A case has either a single 'input' or a multi-file merge 'inputs'.
         specs = case.get("inputs") or ([case["input"]] if "input" in case else None)
         assert specs, f"case {name!r} missing 'input' or 'inputs'"
-        # Negative cases (expected_exit != 0) may not have an oracle.
+        # Negative cases (expected_exit != 0) may not have an oracle. Positive
+        # cases carry one: a main-output 'expected', or an 'expected_partial' for
+        # an --allow-partial case (whose output lands at <output>.partial).
         if case.get("expected_exit", 0) == 0:
-            assert "expected" in case, f"case {name!r} missing 'expected'"
-            oracle = expected_dir / Path(case["expected"]).name
+            oracle_key = "expected" if "expected" in case else "expected_partial"
+            assert oracle_key in case, f"case {name!r} missing 'expected'/'expected_partial'"
+            oracle = expected_dir / Path(case[oracle_key]).name
             assert oracle.is_file(), f"oracle for case {name!r} missing at {oracle}"
         for spec in specs:
             fixture = inputs_dir / Path(spec).name

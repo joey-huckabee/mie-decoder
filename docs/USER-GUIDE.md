@@ -519,6 +519,7 @@ The constant-memory guarantee is tracked as `L3-PY-012` (Python) / `L3-RS-012` (
 
 - **Hit a column you don't recognize?** [`MIE-FORMAT.md`](MIE-FORMAT.md) is the per-column reference (binary layout + CSV format).
 - **Hit an exit code or error message you don't recognize?** [`ERROR-CATALOG.md`](ERROR-CATALOG.md) covers every variant with operator guidance.
+- **Want to know how the tool handles a specific kind of input** (empty / corrupt / non-MIE file, odd timestamps, a bad input inside a merge, …)**?** [`DATA-SCENARIOS.md`](DATA-SCENARIOS.md) maps every data condition to its CSV / log / exit outcome in plain language.
 - **Setting up site or campaign config?** [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md) is the normative TOML schema.
 - **Modifying the decoder itself?** [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) covers the development workflows.
 - **Curious how decoding works under the hood?** [`ARCHITECTURE.md`](ARCHITECTURE.md) walks the reader/sync/writer pipeline.

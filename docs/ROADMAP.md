@@ -2,6 +2,11 @@
 
 ## Release status
 
+**v2.5.2 — patch, 2026-06-28.** Fixes `merge --allow-partial` to write a
+`.partial` when a per-file failure is detected at *open* or *priming* (not only
+mid-file) — fully meeting L2-MRG-004. Adds `docs/DATA-SCENARIOS.md`, a
+plain-language map of every data scenario the tool handles. See `CHANGELOG.md`.
+
 **v2.5.1 — patch, 2026-06-28.** Fixes `--collapse-duplicates` on a lenient
 non-monotonic merge input (L2-MRG-006): the dedup window now compares timestamps
 by **absolute** distance, so a backward-stepping merged stream no longer panics

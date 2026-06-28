@@ -228,6 +228,73 @@ fn merge_incompatible_inputs_exit_6() {
     );
 }
 
+/// Requirements: L2-MRG-004
+///
+/// A merge `decode` where one input fails at *priming* (a non-MIE first record)
+/// under `--allow-partial` writes the combined output as `<out>.partial`, leaves
+/// the plain `<out>` absent, and exits 0. Regression for the reported symptom
+/// (pre-fix: a plain `out.csv` + exit 0, no `.partial`).
+#[test]
+fn merge_allow_partial_priming_writes_dot_partial() {
+    let tmp = TempDir::new();
+    let mut good = one_valid_record();
+    good.extend(one_valid_record());
+    let g = tmp.write("good.mie", &good);
+    let b = tmp.write("bad.mie", &vec![0xFFu8; 4096]); // non-MIE first record
+    let output = tmp.path().join("merged.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        g.as_os_str(),
+        b.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+        std::ffi::OsStr::new("--allow-partial"),
+    ]);
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "--allow-partial downgrades the priming failure to exit 0"
+    );
+    let partial = PathBuf::from(format!("{}.partial", output.display()));
+    assert!(
+        partial.exists(),
+        "the combined output must be committed as .partial"
+    );
+    assert!(!output.exists(), "the plain output must NOT be written");
+}
+
+/// Requirements: L2-MRG-004
+///
+/// A merge where one input fails at *open* (an empty 0-byte file) under
+/// `--allow-partial` likewise writes a `.partial` and exits 0 — the per-file
+/// failure is tolerated whether it occurs at open, priming, or mid-file.
+#[test]
+fn merge_allow_partial_open_failure_writes_dot_partial() {
+    let tmp = TempDir::new();
+    let mut good = one_valid_record();
+    good.extend(one_valid_record());
+    let g = tmp.write("good.mie", &good);
+    let e = tmp.write("empty.mie", b""); // 0-byte → fails at open
+    let output = tmp.path().join("merged.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        g.as_os_str(),
+        e.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+        std::ffi::OsStr::new("--allow-partial"),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+    let partial = PathBuf::from(format!("{}.partial", output.display()));
+    assert!(
+        partial.exists(),
+        "an open-failure merge must commit a .partial"
+    );
+    assert!(!output.exists());
+}
+
 /// Requirements: L2-WRT-014
 #[test]
 fn no_clobber_refuses_to_overwrite_existing_output() {

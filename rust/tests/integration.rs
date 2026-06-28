@@ -1115,6 +1115,145 @@ fn merge_allow_partial_writes_partial_on_file_failure() {
     let _ = std::fs::remove_file(&partial);
 }
 
+/// L2-MRG-004: a *priming-time* failure — an input whose **first** record is
+/// unreadable / non-MIE (here 4 KB of 0xFF) — under `--allow-partial` must arm
+/// the deferred terminal so the writer commits a `.partial`, exactly like a
+/// mid-file failure. Regression: pre-fix the priming failure was skipped
+/// silently and a plain `.csv` was written with `outcome.partial == None`.
+/// Requirements: L2-MRG-004
+#[test]
+fn merge_allow_partial_writes_partial_on_priming_failure() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::writer::{WriteOptions, write_csv};
+
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 300, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&a);
+    let fb = TempFile::new(&vec![0xFFu8; 4096]); // no valid first record
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+
+    let merged = MergedRecordIter::new(&readers, None, true, false).unwrap();
+    let out = TempFile::new(b"");
+    let opts = WriteOptions {
+        input_path: None,
+        no_clobber: false,
+        allow_partial: true,
+    };
+    let outcome = write_csv(merged, Some(out.path()), opts).unwrap();
+    assert!(
+        outcome.partial.is_some(),
+        "--allow-partial must commit a .partial when an input fails to prime"
+    );
+    assert_eq!(
+        outcome.normal_count, 2,
+        "A's two good records reach the writer"
+    );
+    let partial = std::path::PathBuf::from(format!("{}.partial", out.path().display()));
+    assert!(partial.exists(), "the .partial output file should exist");
+    let _ = std::fs::remove_file(&partial);
+}
+
+/// L2-MRG-004: without `--allow-partial`, a priming-time failure fails the batch
+/// (the error surfaces from `new()`); no `.partial` is produced.
+/// Requirements: L2-MRG-004
+#[test]
+fn merge_no_allow_partial_priming_failure_fails_batch() {
+    use mie_decoder::merge::MergedRecordIter;
+
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 300, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&a);
+    let fb = TempFile::new(&vec![0xFFu8; 4096]);
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let result = MergedRecordIter::new(&readers, None, false, false);
+    assert!(
+        result.is_err(),
+        "a bad input fails the batch without --allow-partial"
+    );
+}
+
+/// L2-MRG-004: with `--allow-partial`, a merge in which **every** input fails to
+/// prime still completes and commits an (empty) `.partial`.
+/// Requirements: L2-MRG-004
+#[test]
+fn merge_allow_partial_all_inputs_bad() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::writer::{WriteOptions, write_csv};
+
+    let fa = TempFile::new(&vec![0xFFu8; 4096]);
+    let fb = TempFile::new(&vec![0xFFu8; 4096]);
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let merged = MergedRecordIter::new(&readers, None, true, false).unwrap();
+    let out = TempFile::new(b"");
+    let opts = WriteOptions {
+        input_path: None,
+        no_clobber: false,
+        allow_partial: true,
+    };
+    let outcome = write_csv(merged, Some(out.path()), opts).unwrap();
+    assert!(
+        outcome.partial.is_some(),
+        "an all-bad merge still commits a .partial under --allow-partial"
+    );
+    assert_eq!(outcome.normal_count, 0, "no good rows survived");
+    let partial = std::path::PathBuf::from(format!("{}.partial", out.path().display()));
+    assert!(partial.exists());
+    let _ = std::fs::remove_file(&partial);
+}
+
+/// L2-MRG-004: the priming-time terminal survives the drain even when a later
+/// input is good — a bad **first** input (file index 0) plus a good second
+/// input still yields a `.partial` carrying the good rows.
+/// Requirements: L2-MRG-004
+#[test]
+fn merge_allow_partial_bad_input_then_good() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::writer::{WriteOptions, write_csv};
+
+    let good = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 300, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&vec![0xFFu8; 4096]); // index 0: bad
+    let fb = TempFile::new(&good); // index 1: good
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let merged = MergedRecordIter::new(&readers, None, true, false).unwrap();
+    let out = TempFile::new(b"");
+    let opts = WriteOptions {
+        input_path: None,
+        no_clobber: false,
+        allow_partial: true,
+    };
+    let outcome = write_csv(merged, Some(out.path()), opts).unwrap();
+    assert!(
+        outcome.partial.is_some(),
+        "a bad first input still forces a .partial"
+    );
+    assert_eq!(outcome.normal_count, 2, "the good input's rows are kept");
+    let partial = std::path::PathBuf::from(format!("{}.partial", out.path().display()));
+    assert!(partial.exists());
+    let _ = std::fs::remove_file(&partial);
+}
+
 /// L2-MRG-006: an input whose records step backward in time (not internally
 /// time-sorted) is a data-quality anomaly. In lenient mode the merge WARNs and
 /// still emits every record (never re-sorts), so all records survive.

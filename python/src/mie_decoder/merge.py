@@ -249,6 +249,10 @@ def merge_readers(
     # Heap items: (us, file_index, seq, tiebreak_counter, msg). The unique
     # counter guarantees msg is never compared.
     heap: list[tuple[int, int, int, int, MieMessage]] = []
+    # A priming-time failure under allow_partial arms this terminal so the writer
+    # commits a `.partial` (L2-MRG-004), exactly like a mid-file failure. The file
+    # contributed no records (truncated at offset 0).
+    priming_terminal: MieUnrecoverableSyncLossError | None = None
 
     # Prime + validate eagerly (before any output).
     for idx, it in enumerate(iters):
@@ -259,11 +263,13 @@ def merge_readers(
         except MieDecoderError as exc:
             if allow_partial:
                 logger.warning(
-                    "merge: skipping input #%d (%s): %s",
+                    "merge: input #%d (%s) could not be read; truncating it "
+                    "from the merge (--allow-partial): %s",
                     idx,
                     readers[idx].path,
                     exc,
                 )
+                priming_terminal = MieUnrecoverableSyncLossError(0, 0)
                 continue
             raise
         _check_mergeable(msg, idx, readers[idx].path)
@@ -285,6 +291,7 @@ def merge_readers(
         prev_us,
         warned,
         dedup,
+        priming_terminal,
     )
 
 
@@ -300,11 +307,15 @@ def _merge_drain(
     prev_us: list[int | None],
     warned: list[bool],
     dedup: _DedupWindow | None,
+    pending_terminal: MieUnrecoverableSyncLossError | None = None,
 ) -> Iterator[MieMessage]:
     """Drain the primed heap: pop the min, optionally collapse cross-recorder
-    duplicates, recompute global DELTA, advance the file that record came from."""
+    duplicates, recompute global DELTA, advance the file that record came from.
+
+    ``pending_terminal`` carries a priming-time --allow-partial failure (set in
+    ``merge_readers``); a mid-file failure may overwrite it. Either is raised
+    after the heap drains so the writer commits a `.partial` (L2-MRG-004)."""
     tracker: dict[str, int] = {}
-    pending_terminal: MieUnrecoverableSyncLossError | None = None
     collapsed = 0
     while heap:
         us, idx, _, _, msg = heapq.heappop(heap)
