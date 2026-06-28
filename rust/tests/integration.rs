@@ -1266,3 +1266,81 @@ fn merge_collapse_within_window() {
     let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
     assert_eq!(msgs.len(), 1, "within-window clock skew collapses");
 }
+
+/// L2-MRG-006 + L2-MRG-007: collapsing must not panic on a lenient non-monotonic
+/// input. A within-file backward timestamp step makes the merged stream step
+/// backward, so the dedup window's eviction must not underflow `us - buf_us`.
+/// Regression for the debug-build "attempt to subtract with overflow" panic.
+/// Requirements: L2-MRG-006, L2-MRG-007
+#[test]
+fn merge_collapse_survives_lenient_non_monotonic() {
+    use mie_decoder::merge::MergedRecordIter;
+
+    // One file whose microsecond keys step 100 → 200 → 150 (backward at the
+    // third record), with collapsing enabled.
+    let a = [
+        rt15_record_at(192, 15, 54, 50, 100, false),
+        rt15_record_at(192, 15, 54, 50, 200, false),
+        rt15_record_at(192, 15, 54, 50, 150, false),
+    ]
+    .concat();
+    let fa = TempFile::new(&a);
+    let readers = vec![MieFileReader::new(fa.path()).unwrap()];
+
+    // Pre-fix this panicked computing 150 - 200 in the window eviction.
+    let merged = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .collapse(true, 0);
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    // Single file → nothing is cross-recorder → every record survives.
+    assert_eq!(
+        msgs.len(),
+        3,
+        "lenient non-monotonic + collapse keeps all rows without panicking"
+    );
+}
+
+/// L2-MRG-006 + L2-MRG-007: after a backward timestamp step the stream is no
+/// longer monotonic, so a record must only collapse against a survivor within
+/// the window in ABSOLUTE time — a one-sided `us - buf_us` would match a
+/// survivor far outside `collapse_window_us`. Regression for the over-collapse
+/// (and the underflow panic) on non-monotonic input.
+/// Requirements: L2-MRG-006, L2-MRG-007
+#[test]
+fn merge_collapse_no_over_collapse_after_backward_step() {
+    use mie_decoder::merge::MergedRecordIter;
+    use std::sync::atomic::Ordering;
+
+    // File A: one record at 1000µs. File B non-monotonic: 1002µs then 10µs.
+    // Merged order by absolute time: A@1000, B@1002, B@10 (backward at the end).
+    let fa = TempFile::new(&rt15_record_at(192, 15, 54, 50, 1000, false));
+    let b = [
+        rt15_record_at(192, 15, 54, 50, 1002, false),
+        rt15_record_at(192, 15, 54, 50, 10, false),
+    ]
+    .concat();
+    let fb = TempFile::new(&b);
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+
+    // window = 5µs: B@1002 is a genuine cross-recorder duplicate of A@1000
+    // (2µs apart) and collapses; B@10 is 990µs from A@1000 — far outside the
+    // window — so it must be KEPT, not collapsed against it.
+    let merged = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .collapse(true, 5);
+    let collapsed = merged.collapsed_handle();
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    assert_eq!(
+        msgs.len(),
+        2,
+        "the far backward record is kept, not over-collapsed"
+    );
+    assert_eq!(
+        collapsed.load(Ordering::Relaxed),
+        1,
+        "only the in-window duplicate (B@1002) collapses"
+    );
+}

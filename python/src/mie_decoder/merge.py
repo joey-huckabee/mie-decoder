@@ -173,12 +173,15 @@ def _dedup_key(msg: MieMessage) -> tuple[object, ...]:
 
 
 class _DedupWindow:
-    """Sliding time-window de-duplicator over the time-sorted merged stream
-    (L2-MRG-007). Holds the survivors emitted in the last ``window_us``
-    microseconds as ``(us, file_index, key)``; since the stream is sorted, older
-    survivors can never match a later record and are evicted from the front, so
-    resident memory stays bounded by the window (not the record count). Mirrors
-    ``DedupWindow`` in ``rust/src/merge.rs``."""
+    """Sliding time-window de-duplicator over the merged stream (L2-MRG-007).
+    Holds the survivors emitted within ``window_us`` microseconds as
+    ``(us, file_index, key)``; in a sorted stream older survivors can never match
+    a later record and are evicted from the front, so resident memory stays
+    bounded by the window (not the record count). Matching uses the **absolute**
+    time distance, so a lenient non-monotonic input (L2-MRG-006) that steps
+    backward neither raises nor collapses records outside the window — collapse
+    is best-effort on such "known bad" order. Mirrors ``DedupWindow`` in
+    ``rust/src/merge.rs``."""
 
     def __init__(self, window_us: int) -> None:
         self._window_us = window_us
@@ -189,11 +192,24 @@ class _DedupWindow:
         survivor from a *different* input within the window — the same bus
         transaction witnessed by another recorder. Same-file identical content is
         never a duplicate; a non-duplicate is recorded as a survivor."""
+        # Evict survivors too old to fall within the window of the current (or,
+        # in a sorted stream, any later) record. Under lenient non-monotonic
+        # input (L2-MRG-006) a backward step makes ``us - survivor_us`` negative,
+        # which simply leaves those (future-relative) survivors in place.
         while self._survivors and us - self._survivors[0][0] > self._window_us:
             self._survivors.popleft()
         key = _dedup_key(msg)
-        for _, file_idx, survivor_key in self._survivors:
-            if file_idx != file_index and survivor_key == key:
+        # A survivor matches only if it is within the window in ABSOLUTE time:
+        # the merged stream may step backward, so the distance must be
+        # order-independent (abs), never a one-sided subtraction. In a sorted
+        # stream every retained survivor has ``us - survivor_us <= window``, so
+        # this is identical to the previous behavior.
+        for survivor_us, file_idx, survivor_key in self._survivors:
+            if (
+                file_idx != file_index
+                and abs(survivor_us - us) <= self._window_us
+                and survivor_key == key
+            ):
                 return True
         self._survivors.append((us, file_index, key))
         return False

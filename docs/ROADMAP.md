@@ -2,6 +2,12 @@
 
 ## Release status
 
+**v2.5.1 — patch, 2026-06-28.** Fixes `--collapse-duplicates` on a lenient
+non-monotonic merge input (L2-MRG-006): the dedup window now compares timestamps
+by **absolute** distance, so a backward-stepping merged stream no longer panics
+the Rust CLI (debug underflow) or over-collapses in Python. Sorted input is
+byte-identical. See `CHANGELOG.md`.
+
 **v2.5.0 — joint Rust + Python cut, 2026-06-27.** Adds **cross-recorder duplicate
 collapsing** to the multi-file merge (L1-MRG-003 / L2-MRG-007):
 `--collapse-duplicates` optionally folds the same bus transaction witnessed by
