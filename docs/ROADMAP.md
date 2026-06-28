@@ -2,6 +2,13 @@
 
 ## Release status
 
+**v2.5.3 — patch, 2026-06-28.** Fixes transmit mode codes carrying no data word
+(MIL-STD-1553 mode codes 0–15) being silently dropped from the CSV in lenient
+mode; they now classify as `MODE_CODE_NO_DATA` and are written (empty `WD*`).
+Adds end-to-end cross-impl conformance coverage for **all 11** decoded message
+formats and folds the message-types reference into MIE-FORMAT §6. See
+`CHANGELOG.md`.
+
 **v2.5.2 — patch, 2026-06-28.** Fixes `merge --allow-partial` to write a
 `.partial` when a per-file failure is detected at *open* or *priming* (not only
 mid-file) — fully meeting L2-MRG-004. Adds `docs/DATA-SCENARIOS.md`, a
