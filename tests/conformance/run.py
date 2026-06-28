@@ -160,6 +160,7 @@ def run_command(
     case_name: str,
     implementation: str,
     expected_exit: int = 0,
+    read_path: Path | None = None,
 ) -> tuple[bytes | None, str]:
     """Run one implementation's CLI and assert its exit code matches.
 
@@ -212,9 +213,12 @@ def run_command(
         # Stdout-comparison mode (e.g. `count`). Encode to bytes so the
         # comparison helpers downstream can treat all payloads uniformly.
         return result.stdout.encode("utf-8"), result.stderr
-    if not output.exists():
-        raise RuntimeError(f"{case_name}: {implementation} did not create {output}")
-    return output.read_bytes(), result.stderr
+    # An --allow-partial decode lands its output at ``<output>.partial`` rather
+    # than ``<output>``; ``read_path`` points the comparison at the real artifact.
+    read_target = read_path if read_path is not None else output
+    if not read_target.exists():
+        raise RuntimeError(f"{case_name}: {implementation} did not create {read_target}")
+    return read_target.read_bytes(), result.stderr
 
 
 def rust_command(
@@ -480,12 +484,21 @@ def main() -> int:
                 rust_output = temp / f"{name}-rust.csv"
                 python_output = temp / f"{name}-python.csv"
 
+            # An --allow-partial case commits to ``<output>.partial``; read that
+            # artifact for the comparison and oracle against ``expected_partial``.
+            partial_oracle = case.get("expected_partial")
+            rust_read = Path(f"{rust_output}.partial") if partial_oracle and rust_output else None
+            python_read = (
+                Path(f"{python_output}.partial") if partial_oracle and python_output else None
+            )
+
             rust, rust_stderr = run_command(
                 rust_command(args, case, sources, rust_output),
                 rust_output,
                 name,
                 "Rust",
                 expected_exit=expected_exit,
+                read_path=rust_read,
             )
             python, python_stderr = run_command(
                 python_command(args, case, sources, python_output),
@@ -493,6 +506,7 @@ def main() -> int:
                 name,
                 "Python",
                 expected_exit=expected_exit,
+                read_path=python_read,
             )
 
             if expected_exit != 0:
@@ -519,7 +533,7 @@ def main() -> int:
                             f"{stderr_needle!r}\n--- stderr ---\n{captured}"
                         )
 
-            expected_path = SUITE / case["expected"]
+            expected_path = SUITE / (case.get("expected_partial") or case["expected"])
             if args.update_expected:
                 expected_path.parent.mkdir(parents=True, exist_ok=True)
                 expected_path.write_bytes(rust)

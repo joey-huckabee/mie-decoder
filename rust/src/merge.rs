@@ -309,6 +309,10 @@ impl<'a> MergedRecordIter<'a> {
         let mut heap = BinaryHeap::new();
         let mut next_seq = vec![0u64; readers.len()];
         let mut prev_us = vec![None; readers.len()];
+        // A priming-time failure under `allow_partial` arms this terminal so the
+        // writer commits a `.partial` (L2-MRG-004), exactly like a mid-file
+        // failure. The file contributed no records (truncated at offset 0).
+        let mut pending_terminal: Option<MieError> = None;
 
         for (idx, iter) in iters.iter_mut().enumerate() {
             match iter.next() {
@@ -327,11 +331,16 @@ impl<'a> MergedRecordIter<'a> {
                 Some(Err(e)) => {
                     if allow_partial {
                         log_warn!(
-                            "merge: skipping input #{} ({}): {}",
+                            "merge: input #{} ({}) could not be read; truncating it \
+                             from the merge (--allow-partial): {}",
                             idx,
                             readers[idx].path().display(),
                             e
                         );
+                        pending_terminal = Some(MieError::UnrecoverableSyncLoss {
+                            offset: 0,
+                            sync_losses: 0,
+                        });
                     } else {
                         return Err(e);
                     }
@@ -356,7 +365,7 @@ impl<'a> MergedRecordIter<'a> {
             paths,
             delta_tracker: HashMap::new(),
             pending_error: None,
-            pending_terminal: None,
+            pending_terminal,
             dedup: None,
             collapsed: Arc::new(AtomicU64::new(0)),
         })

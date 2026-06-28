@@ -319,6 +319,19 @@
       "expected_stderr_contains": "not internally time-sorted"
     },
     {
+      "name": "merge-allow-partial-priming",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-garbage.hex"
+      ],
+      "args": [
+        "--allow-partial",
+        "--inline-errors"
+      ],
+      "expected_partial": "expected/merge-allow-partial-priming.csv.partial",
+      "expected_stderr_contains": "could not be read; truncating it from the merge"
+    },
+    {
       "name": "config-exclude-types-int",
       "input": "inputs/basic-multi-record.hex",
       "expected": "expected/config-filter.csv",

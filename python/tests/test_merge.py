@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from mie_decoder.exceptions import (
+    MieDecoderError,
     MieIncompatibleMergeInputsError,
     MieNonMonotonicInputError,
 )
@@ -239,6 +240,43 @@ def test_cli_merge_strict_flag_exits_1_on_backward_step(tmp_path: Path) -> None:
     assert main(["decode", str(fn), str(fa), "-o", str(out2)]) == EXIT_OK
 
 
+@pytest.mark.requirement("L2-MRG-004")
+def test_cli_merge_allow_partial_priming_writes_dot_partial(tmp_path: Path) -> None:
+    """A merge `decode` where one input fails at *priming* (a non-MIE first
+    record) under `--allow-partial` writes the combined output as
+    ``<out>.partial``, leaves the plain ``<out>`` absent, and exits 0. Mirrors
+    the Rust `merge_allow_partial_priming_writes_dot_partial`."""
+    from mie_decoder.cli import EXIT_OK, main
+
+    good = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    fg = tmp_path / "good.mie"
+    fb = tmp_path / "bad.mie"
+    fg.write_bytes(good)
+    fb.write_bytes(b"\xff" * 4096)  # non-MIE first record
+    out = tmp_path / "merged.csv"
+    assert main(["decode", str(fg), str(fb), "-o", str(out), "--allow-partial"]) == EXIT_OK
+    assert (tmp_path / "merged.csv.partial").exists()
+    assert not out.exists()
+
+
+@pytest.mark.requirement("L2-MRG-004")
+def test_cli_merge_allow_partial_open_failure_writes_dot_partial(tmp_path: Path) -> None:
+    """A merge where one input fails at *open* (an empty 0-byte file) under
+    `--allow-partial` likewise writes a ``.partial`` and exits 0 — the per-file
+    failure is tolerated whether it occurs at open, priming, or mid-file."""
+    from mie_decoder.cli import EXIT_OK, main
+
+    good = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    fg = tmp_path / "good.mie"
+    fe = tmp_path / "empty.mie"
+    fg.write_bytes(good)
+    fe.write_bytes(b"")  # 0-byte → fails at open
+    out = tmp_path / "merged.csv"
+    assert main(["decode", str(fg), str(fe), "-o", str(out), "--allow-partial"]) == EXIT_OK
+    assert (tmp_path / "merged.csv.partial").exists()
+    assert not out.exists()
+
+
 # ── CLI bad-input / cap / robustness (L2-MRG-001, L1-ROB-001) ──────────────
 
 
@@ -324,6 +362,86 @@ def test_merge_allow_partial_writes_partial_on_file_failure(tmp_path: Path) -> N
     outcome = write_csv(merged, output=out, opts=WriteOptions(allow_partial=True))
     assert outcome.partial is not None
     assert outcome.normal_count == 3  # A:100 + B:200 + A:300 before B's loss
+    assert (tmp_path / "out.csv.partial").exists()
+
+
+@pytest.mark.requirement("L2-MRG-004")
+def test_merge_allow_partial_writes_partial_on_priming_failure(tmp_path: Path) -> None:
+    """L2-MRG-004: a *priming-time* failure — an input whose first record is
+    unreadable / non-MIE (4 KB of 0xFF) — under allow_partial must arm the
+    deferred terminal so the writer commits a ``.partial``. Regression: pre-fix
+    the priming failure was skipped silently and a plain ``.csv`` was written
+    with ``outcome.partial is None``."""
+    from mie_decoder.writer import WriteOptions, write_csv
+
+    a = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(a)
+    fb.write_bytes(b"\xff" * 4096)  # no valid first record
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    merged = merge_readers(readers, allow_partial=True)
+
+    out = tmp_path / "out.csv"
+    outcome = write_csv(merged, output=out, opts=WriteOptions(allow_partial=True))
+    assert outcome.partial is not None, "priming failure must commit a .partial"
+    assert outcome.normal_count == 2  # A's two good records
+    assert (tmp_path / "out.csv.partial").exists()
+
+
+@pytest.mark.requirement("L2-MRG-004")
+def test_merge_no_allow_partial_priming_failure_raises(tmp_path: Path) -> None:
+    """L2-MRG-004: without allow_partial, a priming-time failure fails the batch
+    (the error surfaces when the generator is consumed)."""
+    a = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(a)
+    fb.write_bytes(b"\xff" * 4096)
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    with pytest.raises(MieDecoderError):
+        list(merge_readers(readers, allow_partial=False))
+
+
+@pytest.mark.requirement("L2-MRG-004")
+def test_merge_allow_partial_all_inputs_bad(tmp_path: Path) -> None:
+    """L2-MRG-004: a merge where every input fails to prime still commits an
+    (empty) ``.partial`` under allow_partial."""
+    from mie_decoder.writer import WriteOptions, write_csv
+
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(b"\xff" * 4096)
+    fb.write_bytes(b"\xff" * 4096)
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    merged = merge_readers(readers, allow_partial=True)
+
+    out = tmp_path / "out.csv"
+    outcome = write_csv(merged, output=out, opts=WriteOptions(allow_partial=True))
+    assert outcome.partial is not None
+    assert outcome.normal_count == 0
+    assert (tmp_path / "out.csv.partial").exists()
+
+
+@pytest.mark.requirement("L2-MRG-004")
+def test_merge_allow_partial_bad_input_then_good(tmp_path: Path) -> None:
+    """L2-MRG-004: a bad first input (index 0) plus a good second input still
+    yields a ``.partial`` carrying the good rows — the priming terminal survives
+    the drain."""
+    from mie_decoder.writer import WriteOptions, write_csv
+
+    good = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(b"\xff" * 4096)  # index 0: bad
+    fb.write_bytes(good)  # index 1: good
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    merged = merge_readers(readers, allow_partial=True)
+
+    out = tmp_path / "out.csv"
+    outcome = write_csv(merged, output=out, opts=WriteOptions(allow_partial=True))
+    assert outcome.partial is not None
+    assert outcome.normal_count == 2
     assert (tmp_path / "out.csv.partial").exists()
 
 
