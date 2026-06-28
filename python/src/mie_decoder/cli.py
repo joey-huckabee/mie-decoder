@@ -438,6 +438,26 @@ def build_parser() -> argparse.ArgumentParser:
             "(default 4). Mirrors the mux.field config key."
         ),
     )
+    decode_parser.add_argument(
+        "--collapse-duplicates",
+        action="store_true",
+        default=None,
+        help=(
+            "Collapse the same bus transaction witnessed by multiple recorders "
+            "into one row (multi-file merge only). Off by default. Mirrors "
+            "[merge] collapse_duplicates = true."
+        ),
+    )
+    decode_parser.add_argument(
+        "--collapse-window-us",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Timestamp tolerance in microseconds for collapsing (default 0 = "
+            "exact match). Mirrors the merge.collapse_window_us config key."
+        ),
+    )
 
     # ── count subcommand ───────────────────────────────────────────
     # Its own subcommand, matching the Rust CLI (`count <INPUT>`).
@@ -629,6 +649,8 @@ def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
         overrides["mux_enabled"] = False
     if args.mux_field is not None:
         overrides["mux_field"] = args.mux_field
+    if args.collapse_duplicates:
+        overrides["collapse_duplicates"] = True
     return overrides
 
 
@@ -698,6 +720,10 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
         )
     if args.mux_delimiter is not None:
         overrides["mux_delimiter"] = _validate_nonempty(args.mux_delimiter, "--mux-delimiter")
+    if args.collapse_window_us is not None:
+        if args.collapse_window_us < 0:
+            raise ValueError("--collapse-window-us must be a non-negative integer")
+        overrides["collapse_window_us"] = args.collapse_window_us
     return overrides
 
 
@@ -769,6 +795,8 @@ def _build_message_stream(
         standard_tick_rate_hz=config.standard_tick_rate_hz,
         allow_partial=config.allow_partial,
         strict=config.strict,
+        collapse_duplicates=config.collapse_duplicates,
+        collapse_window_us=config.collapse_window_us,
     )
     return apply_filters(merged, config.filters)
 

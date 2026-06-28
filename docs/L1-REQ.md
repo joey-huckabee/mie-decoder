@@ -349,6 +349,14 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 
 **Verification Method**: Test (T)
 
+### L1-MRG-003
+
+**Statement**: Each implementation SHALL offer, behind an explicit opt-in, collapsing of duplicate messages witnessed by multiple recorders in a multi-file merge: the same bus transaction captured by more than one input within a configurable time tolerance SHALL be emitted once. The opt-in SHALL be off by default, so default output never drops a row. Collapsing SHALL apply only across distinct inputs (recorders); identical messages from a single input SHALL NOT be collapsed.
+
+**Rationale**: Multiple recorders on one 1553 bus witness the same transactions, so an overlapping recorder set inflates the merged message count with rows that each represent one physical bus event. Optionally collapsing those cross-recorder duplicates restores an accurate event count for analysis. Keeping it opt-in and loss-free by default guarantees no analyst is surprised by silently dropped data; restricting collapsing to cross-recorder duplicates preserves genuinely repeated traffic from a single recorder.
+
+**Verification Method**: Test (T)
+
 ---
 
 ## Non-Requirements

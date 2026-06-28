@@ -79,6 +79,8 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
         ("mux", "enabled"),
         ("mux", "delimiter"),
         ("mux", "field"),
+        ("merge", "collapse_duplicates"),
+        ("merge", "collapse_window_us"),
         ("filter", "exclude_types"),
         ("filter", "exclude_rts"),
         ("filter", "exclude_buses"),
@@ -287,6 +289,12 @@ class DecoderConfig:
     mux_delimiter: str = "."
     mux_field: int = 4
 
+    #: L2-MRG-007: collapse the same bus transaction witnessed by multiple
+    #: recorders into one row, in a multi-file merge. Off by default (loss-free).
+    #: collapse_window_us is the timestamp tolerance in microseconds (0 = exact).
+    collapse_duplicates: bool = False
+    collapse_window_us: int = 0
+
     def with_overrides(self, **kwargs: Any) -> DecoderConfig:
         """Return a new config with specified fields overridden.
 
@@ -334,6 +342,16 @@ class DecoderConfig:
         new_mux_field = (
             kwargs["mux_field"] if kwargs.get("mux_field") is not None else self.mux_field
         )
+        new_collapse_duplicates = (
+            kwargs["collapse_duplicates"]
+            if kwargs.get("collapse_duplicates") is not None
+            else self.collapse_duplicates
+        )
+        new_collapse_window_us = (
+            kwargs["collapse_window_us"]
+            if kwargs.get("collapse_window_us") is not None
+            else self.collapse_window_us
+        )
 
         # Merge filter overrides — CLI adds to (not replaces) config file
         # filters. include_* are CLI-only (no config-file key), matching
@@ -368,6 +386,8 @@ class DecoderConfig:
             mux_enabled=new_mux_enabled,
             mux_delimiter=new_mux_delimiter,
             mux_field=new_mux_field,
+            collapse_duplicates=new_collapse_duplicates,
+            collapse_window_us=new_collapse_window_us,
         )
 
 
@@ -615,6 +635,25 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         raise ValueError(f"Invalid mux.field: {mux_field_raw!r}; must be an integer")
     mux_field = mux_field_raw
 
+    # L2-MRG-007: cross-recorder duplicate collapsing (multi-file merge).
+    merge_section = data.get("merge", {})
+    if not isinstance(merge_section, dict):
+        merge_section = {}
+    collapse_duplicates = _require_bool(
+        "merge", "collapse_duplicates", merge_section.get("collapse_duplicates", False)
+    )
+    collapse_window_us_raw = merge_section.get("collapse_window_us", 0)
+    if (
+        isinstance(collapse_window_us_raw, bool)
+        or not isinstance(collapse_window_us_raw, int)
+        or collapse_window_us_raw < 0
+    ):
+        raise ValueError(
+            f"Invalid merge.collapse_window_us: {collapse_window_us_raw!r}; "
+            "must be a non-negative integer"
+        )
+    collapse_window_us = collapse_window_us_raw
+
     # L2-CFG-009: WARN on unknown keys so typos surface to the operator
     # instead of being silently dropped. Non-fatal so forward-compatible
     # additions don't break older configs.
@@ -640,6 +679,8 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         mux_enabled=mux_enabled,
         mux_delimiter=mux_delimiter,
         mux_field=mux_field,
+        collapse_duplicates=collapse_duplicates,
+        collapse_window_us=collapse_window_us,
     )
 
     logger.debug("Loaded config: %s", config)

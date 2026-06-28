@@ -56,6 +56,8 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `mux.enabled` | bool | `true` | `--no-mux` (sets `false`) | L2-WRT-020 |
 | `mux.delimiter` | string | `"."` | `--mux-delimiter` | L2-WRT-020 |
 | `mux.field` | int | `4` | `--mux-field` | L2-WRT-020 |
+| `merge.collapse_duplicates` | bool | `false` | `--collapse-duplicates` | L2-MRG-007 |
+| `merge.collapse_window_us` | int | `0` | `--collapse-window-us` | L2-MRG-007 |
 | `filter.exclude_types` | array | `[]` | `--exclude-types` (additive) | L2-CFG-006, L2-CFG-007 |
 | `filter.exclude_rts` | array | `[]` | `--exclude-rts` (additive) | L2-CFG-006 |
 | `filter.exclude_buses` | array | `[]` | `--exclude-buses` (additive) | L2-CFG-006 |
@@ -247,6 +249,24 @@ Separator the file's basename is split on. **Validation:** must be a non-empty s
 
 ---
 
+## `[merge]`
+
+Cross-recorder duplicate collapsing for the multi-file merge (L2-MRG-007). When several recorders on the same 1553 bus witness the same transaction, the merge can collapse those duplicate rows into one. **Off by default — the default never drops a row.** Applies only to a multi-file merge; a single-file decode is unaffected. A "duplicate" is the same wire content (Type / Command / Status Words, data words, error word) seen by a **different** input file within `collapse_window_us` microseconds; identical content from the same file is never collapsed.
+
+### `collapse_duplicates`
+
+**Type:** bool · **Default:** `false` · **CLI:** `--collapse-duplicates`
+
+Enable cross-recorder duplicate collapsing.
+
+### `collapse_window_us`
+
+**Type:** int · **Default:** `0` · **CLI:** `--collapse-window-us`
+
+Timestamp tolerance in microseconds: two recorders' copies of the same event collapse when their timestamps differ by at most this much. `0` requires an exact-microsecond match (the safest setting — never over-collapses); widen it for recorders whose IRIG clocks are not perfectly synced. **Validation:** non-negative integer (a negative value is rejected at load time).
+
+---
+
 ## `[filter]`
 
 Filtering happens after decoding and before CSV output. Filtered messages are silently dropped — they do not appear in the output CSV and are not counted in `count`.
@@ -348,10 +368,11 @@ configuration-file key**:
   section for the exclude-side keys).
 - **Multi-file merge inputs** — the multiple positionals, `--manifest`, and
   `--glob` that select a set of recordings to merge (L2-MRG-001). Whether to
-  merge, and which files, is a per-invocation decision, so there is no
-  `[merge]` config section. The merge honors the existing `[decode]` /
-  `[filter]` / `[output]` keys (e.g. `strict`, `allow_partial`,
-  `standard_tick_rate_hz`, filters) applied uniformly across all inputs.
+  merge, and which files, is a per-invocation decision, so those input-selection
+  options are CLI-only. The merge honors the existing `[decode]` / `[filter]` /
+  `[output]` keys (e.g. `strict`, `allow_partial`, `standard_tick_rate_hz`,
+  filters) applied uniformly across all inputs, plus the `[merge]` section above
+  for cross-recorder duplicate collapsing (L2-MRG-007).
 
 ---
 

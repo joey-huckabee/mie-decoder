@@ -283,3 +283,33 @@ delimiter = "."
 # (e.g. -3 selects the third-from-last field). An out-of-range index leaves
 # MUX empty. Overridden by --mux-field. Default: 4
 field = 4
+
+[merge]
+# ──────────────────────────────────────────────────────────────────────────
+# Cross-recorder duplicate collapsing (L2-MRG-007).
+#
+# On a MIL-STD-1553 bus, multiple recorders can witness the SAME transaction
+# (they all listen to the same wire). In a multi-file merge the decoder
+# normally emits both rows — adjacent, tiebroken by input order — which
+# inflates the merged message count when recorders overlap. Collapsing
+# suppresses those cross-recorder duplicates, keeping one row per bus event.
+#
+# A "duplicate" is the same wire content (Type / Command / Status Words, data
+# words, error word) seen by a DIFFERENT input file within collapse_window_us
+# microseconds. Identical records from the SAME file are never collapsed (real
+# periodic traffic), and a single-file decode is unaffected.
+#
+# This is OFF by default — the default never drops a row. Applies only to a
+# multi-file merge.
+# ──────────────────────────────────────────────────────────────────────────
+
+# Enable cross-recorder duplicate collapsing. Overridden by
+# --collapse-duplicates. Default: false
+collapse_duplicates = false
+
+# Timestamp tolerance in microseconds: two recorders' copies of the same event
+# collapse when their timestamps differ by at most this much. 0 means an exact
+# microsecond match (the safest setting); widen it for recorders whose IRIG
+# clocks are not perfectly synced. Overridden by --collapse-window-us.
+# Default: 0
+collapse_window_us = 0

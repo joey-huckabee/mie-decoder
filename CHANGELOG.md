@@ -17,6 +17,19 @@ full release workflow.
 
 ### Added
 
+- **Cross-recorder duplicate collapsing in the multi-file merge** (opt-in,
+  `--collapse-duplicates` / `[merge] collapse_duplicates`, both implementations).
+  When several recorders witness the same MIL-STD-1553 transaction, the merge can
+  now collapse those duplicate rows into one instead of inflating the message
+  count. A duplicate is the same wire content (Type / Command / Status Words,
+  data words, error word) seen by a **different** input within
+  `--collapse-window-us` microseconds (default `0` = exact-µs match; widen it for
+  recorders whose clocks differ slightly). Same-recorder repeats and single-file
+  decodes are unaffected; de-duplication runs before the global-DELTA stage so
+  DELTA reflects the deduped timeline, and the suppressed count is logged.
+  **Off by default — the default never drops a row.** Adds a `[merge]` config
+  section; specified by `L1-MRG-003` / `L2-MRG-007` and pinned by cross-impl
+  conformance fixtures.
 - **Rust public-API SemVer gate** (`cargo-semver-checks` CI job). Runs
   `cargo semver-checks check-release` against the latest release tag
   (`baseline-rev`, with `release-type: minor`), failing a PR that makes a

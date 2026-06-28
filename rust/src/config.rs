@@ -34,6 +34,12 @@ pub const DETECT_RECORDS_MAX: usize = 32;
 pub const LOOKAHEAD_RECORDS_MIN: usize = 1;
 pub const LOOKAHEAD_RECORDS_MAX: usize = 32;
 
+/// Internal config state, assembled from the TOML loader and CLI overrides and
+/// consumed within the crate / binary. **Not** part of the crate's stable public
+/// API — that surface is the `pub use` re-exports in `lib.rs` — so it is
+/// `#[doc(hidden)]` and excluded from SemVer checks (its field set grows as
+/// decode options are added; see the `cargo-semver-checks` note in Cargo.toml).
+#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct DecoderConfig {
     pub log_level: String,
@@ -83,6 +89,13 @@ pub struct DecoderConfig {
     pub mux_enabled: bool,
     pub mux_delimiter: String,
     pub mux_field: i64,
+    /// L2-MRG-007: collapse the same bus transaction witnessed by multiple
+    /// recorders into one row, in a multi-file merge. Off by default (loss-free);
+    /// `[merge] collapse_duplicates = true` / `--collapse-duplicates` enables it.
+    pub collapse_duplicates: bool,
+    /// Timestamp tolerance in microseconds for collapsing (0 = exact-µs match).
+    /// Widen it for recorders whose IRIG clocks differ slightly.
+    pub collapse_window_us: u64,
 }
 
 impl Default for DecoderConfig {
@@ -102,13 +115,17 @@ impl Default for DecoderConfig {
             mux_enabled: DEFAULT_MUX_ENABLED,
             mux_delimiter: DEFAULT_MUX_DELIMITER.to_string(),
             mux_field: DEFAULT_MUX_FIELD,
+            collapse_duplicates: false,
+            collapse_window_us: 0,
         }
     }
 }
 
 /// Override container: every field is optional and only applied if `Some`.
 /// Filter overrides MERGE into the existing set rather than replacing it,
-/// matching the Python `with_overrides` semantics.
+/// matching the Python `with_overrides` semantics. Internal plumbing — not part
+/// of the stable public API; `#[doc(hidden)]` and excluded from SemVer checks.
+#[doc(hidden)]
 #[derive(Debug, Default, Clone)]
 pub struct ConfigOverrides {
     pub log_level: Option<String>,
@@ -124,6 +141,8 @@ pub struct ConfigOverrides {
     pub mux_enabled: Option<bool>,
     pub mux_delimiter: Option<String>,
     pub mux_field: Option<i64>,
+    pub collapse_duplicates: Option<bool>,
+    pub collapse_window_us: Option<i64>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -176,6 +195,14 @@ impl DecoderConfig {
         }
         if let Some(v) = ov.mux_field {
             self.mux_field = v;
+        }
+        if let Some(v) = ov.collapse_duplicates {
+            self.collapse_duplicates = v;
+        }
+        if let Some(v) = ov.collapse_window_us {
+            // CLI / config-load validation already rejects negatives; clamp
+            // defensively so the cast can never wrap.
+            self.collapse_window_us = v.max(0) as u64;
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);

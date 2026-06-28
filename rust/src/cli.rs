@@ -81,6 +81,11 @@ DECODE OPTIONS:
   --mux-delimiter D                     MUX field separator (default '.')
   --mux-field N                         0-based MUX field index; negative
                                         counts from the end (default 4)
+  --collapse-duplicates                 Collapse the same bus transaction seen
+                                        by multiple recorders into one row
+                                        (multi-file merge only). Default: off
+  --collapse-window-us N                Timestamp tolerance in microseconds for
+                                        collapsing (default 0 = exact match)
   --exclude-types VAL                   Comma-separated names or 0xNN
   --exclude-rts VAL                     Comma-separated RT addresses
   --exclude-buses VAL                   Comma-separated A|B
@@ -144,6 +149,10 @@ struct DecodeArgs {
     mux_delimiter: Option<String>,
     /// `--mux-field <N>`: 0-based field index (negative = from end) for MUX.
     mux_field: Option<i64>,
+    /// `--collapse-duplicates`: collapse cross-recorder duplicate messages.
+    collapse_duplicates: bool,
+    /// `--collapse-window-us <N>`: timestamp tolerance (µs) for collapsing.
+    collapse_window_us: Option<i64>,
 
     exclude_types: Vec<u8>,
     exclude_rts: Vec<u8>,
@@ -480,6 +489,18 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--mux-field=") => {
                 args.mux_field = Some(parse_mux_field(&s["--mux-field=".len()..])?);
             }
+            "--collapse-duplicates" => args.collapse_duplicates = true,
+            "--collapse-window-us" => {
+                args.collapse_window_us = Some(parse_collapse_window_us(&next_value(
+                    "--collapse-window-us",
+                    iter,
+                )?)?);
+            }
+            s if s.starts_with("--collapse-window-us=") => {
+                args.collapse_window_us = Some(parse_collapse_window_us(
+                    &s["--collapse-window-us=".len()..],
+                )?);
+            }
             "--manifest" => {
                 args.manifest = Some(PathBuf::from(next_value("--manifest", iter)?));
             }
@@ -769,6 +790,15 @@ fn parse_mux_field(s: &str) -> Result<i64, String> {
         .map_err(|_| format!("invalid --mux-field: {s:?}; must be an integer"))
 }
 
+fn parse_collapse_window_us(s: &str) -> Result<i64, String> {
+    match s.trim().parse::<i64>() {
+        Ok(n) if n >= 0 => Ok(n),
+        _ => Err(format!(
+            "invalid --collapse-window-us: {s:?}; must be a non-negative integer"
+        )),
+    }
+}
+
 // ── Subcommand runners ────────────────────────────────────────────────
 
 /// Apply a log-level string. Returns Err on an unrecognized name so the
@@ -861,6 +891,14 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
         mux_enabled: if args.no_mux { Some(false) } else { None },
         mux_delimiter: args.mux_delimiter.clone(),
         mux_field: args.mux_field,
+        // Cross-recorder duplicate collapsing (L2-MRG-007); absence leaves the
+        // config value (CLI > config > default).
+        collapse_duplicates: if args.collapse_duplicates {
+            Some(true)
+        } else {
+            None
+        },
+        collapse_window_us: args.collapse_window_us,
         exclude_types: args.exclude_types,
         exclude_rts: args.exclude_rts,
         exclude_buses: args.exclude_buses,
@@ -922,12 +960,23 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
             cfg.allow_partial,
             cfg.strict,
         ) {
-            Ok(merged) => write_messages(
-                merged.filter_messages(cfg.filters.clone()),
-                args.output.as_deref(),
-                cfg.error_mode,
-                write_opts,
-            ),
+            Ok(merged) => {
+                let merged = merged.collapse(cfg.collapse_duplicates, cfg.collapse_window_us);
+                // Clone the suppressed-duplicate counter before the iterator is
+                // consumed by the writer, then report it after (L2-MRG-007).
+                let collapsed = merged.collapsed_handle();
+                let result = write_messages(
+                    merged.filter_messages(cfg.filters.clone()),
+                    args.output.as_deref(),
+                    cfg.error_mode,
+                    write_opts,
+                );
+                let n = collapsed.load(std::sync::atomic::Ordering::Relaxed);
+                if n > 0 {
+                    log_info!("merge: collapsed {n} duplicate message(s) across recorders");
+                }
+                result
+            }
             // Incompatible inputs (L2-MRG-003) and prime-time file failures
             // surface here, before any output. Route through the same
             // classifier so each maps to its proper exit code.

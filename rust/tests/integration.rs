@@ -1178,3 +1178,91 @@ fn merge_strict_fails_on_within_file_backward_step() {
         "strict mode should surface a NonMonotonicInput error"
     );
 }
+
+/// L2-MRG-007: the same bus transaction witnessed by two recorders — identical
+/// wire content at the same microsecond in two *different* input files —
+/// collapses to a single row under `--collapse-duplicates`, and the suppressed
+/// count is reported.
+/// Requirements: L1-MRG-003, L2-MRG-007, L3-RS-015
+#[test]
+fn merge_collapse_cross_recorder_duplicate() {
+    use mie_decoder::merge::MergedRecordIter;
+    use std::sync::atomic::Ordering;
+
+    let rec = rt15_record_at(192, 15, 54, 50, 100, false);
+    let fa = TempFile::new(&rec);
+    let fb = TempFile::new(&rec); // identical content + timestamp, different file
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let merged = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .collapse(true, 0);
+    let collapsed = merged.collapsed_handle();
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    assert_eq!(
+        msgs.len(),
+        1,
+        "the second recorder's duplicate is collapsed"
+    );
+    assert_eq!(collapsed.load(Ordering::Relaxed), 1);
+}
+
+/// L2-MRG-007: identical content at *different* timestamps (beyond the window)
+/// is real periodic traffic, not a cross-recorder duplicate — both rows survive.
+/// Requirements: L2-MRG-007
+#[test]
+fn merge_collapse_keeps_different_time() {
+    use mie_decoder::merge::MergedRecordIter;
+
+    let fa = TempFile::new(&rt15_record_at(192, 15, 54, 50, 100, false));
+    let fb = TempFile::new(&rt15_record_at(192, 15, 54, 50, 300, false));
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let merged = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .collapse(true, 0);
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    assert_eq!(msgs.len(), 2, "distinct timestamps are distinct events");
+}
+
+/// L2-MRG-007: identical records from the *same* recorder (same input file) are
+/// never collapsed — collapsing is strictly cross-recorder.
+/// Requirements: L2-MRG-007
+#[test]
+fn merge_collapse_same_file_not_collapsed() {
+    use mie_decoder::merge::MergedRecordIter;
+
+    let rec = rt15_record_at(192, 15, 54, 50, 100, false);
+    let body = [rec.clone(), rec].concat(); // two identical records, one file
+    let fa = TempFile::new(&body);
+    let readers = vec![MieFileReader::new(fa.path()).unwrap()];
+    let merged = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .collapse(true, 0);
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    assert_eq!(msgs.len(), 2, "same-recorder duplicates are kept");
+}
+
+/// L2-MRG-007: with a non-zero window, near-simultaneous identical content from
+/// two recorders whose clocks differ slightly collapses (3µs skew, 5µs window).
+/// Requirements: L2-MRG-007
+#[test]
+fn merge_collapse_within_window() {
+    use mie_decoder::merge::MergedRecordIter;
+
+    let fa = TempFile::new(&rt15_record_at(192, 15, 54, 50, 100, false));
+    let fb = TempFile::new(&rt15_record_at(192, 15, 54, 50, 103, false));
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let merged = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .collapse(true, 5);
+    let msgs: Vec<_> = merged.collect::<Result<_, _>>().unwrap();
+    assert_eq!(msgs.len(), 1, "within-window clock skew collapses");
+}

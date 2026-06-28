@@ -312,6 +312,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 |-------|-------------|----------------|--------|
 | L1-MRG-001 | L2-MRG-001, L2-MRG-002, L2-MRG-004, L2-MRG-006 | `python/tests/test_merge.py::test_merge_orders_records_across_files_by_absolute_time`<br>`rust/tests/integration.rs::merge_orders_records_across_files_by_absolute_time` | Implemented |
 | L1-MRG-002 | L2-MRG-003 | `python/tests/test_merge.py::test_merge_rejects_freerun_leading_input`<br>`python/tests/test_merge.py::test_merge_rejects_standard_format_input`<br>`rust/tests/integration.rs::merge_rejects_freerun_leading_input`<br>`rust/tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
+| L1-MRG-003 | L2-MRG-007 | `python/tests/test_merge.py::test_merge_collapse_cross_recorder_duplicate`<br>`rust/tests/integration.rs::merge_collapse_cross_recorder_duplicate` | Implemented |
 
 **L2 -> L3 -> Verification Artifacts**
 
@@ -322,6 +323,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-MRG-003 | _(none)_ | `python/tests/test_merge.py::test_cli_merge_incompatible_exits_6`<br>`python/tests/test_merge.py::test_merge_rejects_freerun_leading_input`<br>`python/tests/test_merge.py::test_merge_rejects_standard_format_input`<br>`rust/tests/cli.rs::merge_incompatible_inputs_exit_6`<br>`rust/tests/integration.rs::merge_rejects_freerun_leading_input`<br>`rust/tests/integration.rs::merge_rejects_standard_format_input` | Implemented |
 | L2-MRG-004 | _(none)_ | `python/tests/test_merge.py::test_merge_allow_partial_writes_partial_on_file_failure`<br>`rust/tests/integration.rs::merge_allow_partial_writes_partial_on_file_failure` | Implemented |
 | L2-MRG-006 | _(none)_ | `python/tests/test_merge.py::test_cli_merge_strict_flag_exits_1_on_backward_step`<br>`python/tests/test_merge.py::test_merge_strict_fails_on_within_file_backward_step`<br>`python/tests/test_merge.py::test_merge_warns_on_within_file_backward_step`<br>`rust/tests/integration.rs::merge_strict_fails_on_within_file_backward_step`<br>`rust/tests/integration.rs::merge_warns_on_within_file_backward_step` | Implemented |
+| L2-MRG-007 | L3-PY-015, L3-RS-015 | `python/tests/test_merge.py::test_merge_collapse_cross_recorder_duplicate`<br>`python/tests/test_merge.py::test_merge_collapse_keeps_different_time`<br>`python/tests/test_merge.py::test_merge_collapse_same_file_not_collapsed`<br>`python/tests/test_merge.py::test_merge_collapse_within_window`<br>`rust/tests/integration.rs::merge_collapse_cross_recorder_duplicate`<br>`rust/tests/integration.rs::merge_collapse_keeps_different_time`<br>`rust/tests/integration.rs::merge_collapse_same_file_not_collapsed`<br>`rust/tests/integration.rs::merge_collapse_within_window` | Implemented |
 
 ---
 
@@ -344,20 +346,20 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | CONF | 1 | 6 | 0 | 3 | 0 | 5 | 0 |
 | EXIT | 9 | 0 | 0 | 0 | 0 | 0 | 0 |
 | ROB | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| MRG | 2 | 6 | 0 | 6 | 0 | 6 | 0 |
+| MRG | 3 | 7 | 0 | 7 | 0 | 7 | 0 |
 | RDR | 0 | 15 | 0 | 14 | 0 | 15 | 0 |
 | MSG | 0 | 4 | 0 | 4 | 0 | 4 | 0 |
 | WRT | 0 | 15 | 2 | 15 | 2 | 15 | 2 |
 | FLT | 0 | 2 | 0 | 2 | 0 | 2 | 0 |
-| PY | 0 | 0 | 14 | 0 | 10 | 0 | 14 |
-| RS | 0 | 0 | 13 | 0 | 8 | 0 | 13 |
-| **Total** | **29** | **121** | **29** | **116** | **20** | **120** | **29** |
+| PY | 0 | 0 | 15 | 0 | 11 | 0 | 15 |
+| RS | 0 | 0 | 14 | 0 | 9 | 0 | 14 |
+| **Total** | **30** | **122** | **31** | **117** | **22** | **121** | **31** |
 
 The countable requirement set is every L2 and L3 requirement plus the 7 Test-verifiable L1 *leaf* requirement(s) (L1s with no L2 decomposition, e.g. `L1-ROB-001`, where the test markers attach directly). Composite L1s are verified transitively through their L2/L3 children, which are counted individually above.
 
-**Tested by at least one test marker**: 143 of 157 (91.1%).
+**Tested by at least one test marker**: 146 of 160 (91.2%).
 
-**Verified (Test or declared Inspection/Analysis/Demonstration)**: 156 of 157 (99.4%).
+**Verified (Test or declared Inspection/Analysis/Demonstration)**: 159 of 160 (99.4%).
 
 ### Orphan check
 

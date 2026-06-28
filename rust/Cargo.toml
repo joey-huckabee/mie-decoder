@@ -8,6 +8,15 @@ license = "MIT"
 authors = ["Joey"]
 readme = "README.md"
 
+# cargo-semver-checks lint policy. `DecoderConfig` and `ConfigOverrides`
+# (src/config.rs) are internal config plumbing — nothing outside the crate
+# constructs them, and the stable public API is the `lib.rs` re-exports. They are
+# `#[doc(hidden)]` so their growing field set is excluded from the SemVer
+# contract; this `allow` accepts the one-time doc-hidden transition in v2.5.0
+# (the gate still guards the real public API). See L1-MRG-003 / L2-MRG-007.
+[package.metadata.cargo-semver-checks.lints]
+struct_now_doc_hidden = "allow"
+
 [lib]
 name = "mie_decoder"
 path = "src/lib.rs"

@@ -104,6 +104,7 @@ time-sorted CSV (streaming, constant memory in the record count):
 mie-decoder decode a.mie b.mie c.mie -o merged.csv   # positionals
 mie-decoder decode --manifest files.txt -o merged.csv  # one path per line
 mie-decoder decode --glob 'recordings/*.mie' -o merged.csv  # tool-expanded
+mie-decoder decode a.mie b.mie -o m.csv --collapse-duplicates  # de-dup overlapping recorders
 ```
 
 The three input methods are mutually exclusive. Records are ordered by
@@ -114,6 +115,12 @@ output with exit code 6. A single input behaves exactly as before; up to
 `--strict` / lenient / `--allow-partial` policy as a single decode
 (`--allow-partial` writes the combined `.partial` output). Rust and
 Python produce byte-identical merged output.
+
+When several recorders on the same bus overlap, add **`--collapse-duplicates`**
+to merge each transaction's duplicate rows into one instead of inflating the
+count (off by default, so the default never drops a row). `--collapse-window-us
+N` sets the timestamp tolerance for recorders whose clocks differ slightly
+(default `0` = exact match). See the [User Guide](docs/USER-GUIDE.md).
 
 #### MUX from the file name
 
