@@ -397,3 +397,36 @@ def test_merge_collapse_within_window(tmp_path: Path) -> None:
     readers = [MieFileReader(fa), MieFileReader(fb)]
     msgs = list(merge_readers(readers, collapse_duplicates=True, collapse_window_us=5))
     assert len(msgs) == 1, "within-window clock skew collapses"
+
+
+@pytest.mark.requirement("L2-MRG-006")
+@pytest.mark.requirement("L2-MRG-007")
+def test_merge_collapse_survives_lenient_non_monotonic(tmp_path: Path) -> None:
+    # A within-file backward timestamp step (100 → 200 → 150) makes the merged
+    # stream step backward; collapsing must handle the negative gap gracefully.
+    a = (
+        rt15_record_at(192, 15, 54, 50, 100)
+        + rt15_record_at(192, 15, 54, 50, 200)
+        + rt15_record_at(192, 15, 54, 50, 150)
+    )
+    fa = tmp_path / "a.mie"
+    fa.write_bytes(a)
+    msgs = list(merge_readers([MieFileReader(fa)], collapse_duplicates=True))
+    # Single file → nothing is cross-recorder → every record survives.
+    assert len(msgs) == 3, "lenient non-monotonic + collapse keeps all rows"
+
+
+@pytest.mark.requirement("L2-MRG-006")
+@pytest.mark.requirement("L2-MRG-007")
+def test_merge_collapse_no_over_collapse_after_backward_step(tmp_path: Path) -> None:
+    # File A: one record at 1000µs. File B non-monotonic: 1002µs then 10µs.
+    # Merged order by absolute time: A@1000, B@1002, B@10 (backward at the end).
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(rt15_record_at(192, 15, 54, 50, 1000))
+    fb.write_bytes(rt15_record_at(192, 15, 54, 50, 1002) + rt15_record_at(192, 15, 54, 50, 10))
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    # window 5µs: B@1002 collapses into A@1000 (2µs apart); B@10 is 990µs away —
+    # outside the window — so it must be kept, not over-collapsed.
+    msgs = list(merge_readers(readers, collapse_duplicates=True, collapse_window_us=5))
+    assert len(msgs) == 2, "the far backward record is kept, not over-collapsed"

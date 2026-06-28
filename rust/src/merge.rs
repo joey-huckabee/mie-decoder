@@ -203,11 +203,14 @@ impl DedupKey {
     }
 }
 
-/// Sliding time-window de-duplicator over the time-sorted merged stream
-/// (L2-MRG-007). Holds the survivors emitted in the last `window_us`
-/// microseconds as `(us, file_index, key)`; since the stream is sorted, older
-/// survivors can never match a later record and are evicted from the front, so
-/// resident memory stays bounded by the window (not the record count).
+/// Sliding time-window de-duplicator over the merged stream (L2-MRG-007). Holds
+/// the survivors emitted within `window_us` microseconds as `(us, file_index,
+/// key)`; in a sorted stream older survivors can never match a later record and
+/// are evicted from the front, so resident memory stays bounded by the window
+/// (not the record count). Matching uses the **absolute** time distance, so a
+/// lenient non-monotonic input (L2-MRG-006) that steps backward neither panics
+/// nor collapses records that lie outside the window — collapse is best-effort
+/// on such "known bad" order.
 struct DedupWindow {
     window_us: u64,
     survivors: VecDeque<(u64, usize, DedupKey)>,
@@ -226,19 +229,26 @@ impl DedupWindow {
     /// transaction witnessed by another recorder. Same-file identical content is
     /// never a duplicate. A non-duplicate is recorded as a survivor.
     fn is_duplicate(&mut self, us: u64, file_index: usize, msg: &MieMessage) -> bool {
+        // Evict survivors that can no longer fall within the window of the
+        // current (or, in a sorted stream, any later) record. `saturating_sub`
+        // keeps this safe under lenient non-monotonic input (L2-MRG-006): a
+        // record whose timestamp steps backward must not underflow `us - buf_us`.
         while let Some(&(buf_us, _, _)) = self.survivors.front() {
-            if us - buf_us > self.window_us {
+            if us.saturating_sub(buf_us) > self.window_us {
                 self.survivors.pop_front();
             } else {
                 break;
             }
         }
         let key = DedupKey::of(msg);
-        if self
-            .survivors
-            .iter()
-            .any(|(_, fi, k)| *fi != file_index && *k == key)
-        {
+        // A survivor matches only if it is within the window in ABSOLUTE time
+        // (`abs_diff`): the merged stream may step backward (non-monotonic
+        // input), so the distance must be order-independent, never a one-sided
+        // subtraction. In a sorted stream every retained survivor already has
+        // `us - buf_us <= window`, so this is identical to the prior behavior.
+        if self.survivors.iter().any(|(buf_us, fi, k)| {
+            *fi != file_index && buf_us.abs_diff(us) <= self.window_us && *k == key
+        }) {
             return true;
         }
         self.survivors.push_back((us, file_index, key));

@@ -294,6 +294,19 @@
       ]
     },
     {
+      "name": "merge-collapse-non-monotonic",
+      "inputs": [
+        "inputs/merge-non-monotonic.hex",
+        "inputs/merge-a.hex"
+      ],
+      "expected": "expected/merge-non-monotonic-within-file.csv",
+      "expected_stderr_contains": "not internally time-sorted",
+      "args": [
+        "--collapse-duplicates",
+        "--inline-errors"
+      ]
+    },
+    {
       "name": "merge-non-monotonic-strict",
       "inputs": [
         "inputs/merge-non-monotonic.hex",
