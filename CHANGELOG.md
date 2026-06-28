@@ -15,6 +15,16 @@ full release workflow.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`MIE-FORMAT.md` §6 now opens with an at-a-glance index of all 11 decoded
+  message formats** — each format's source Type Word code, its identification
+  rule, and a link to its per-format byte-shape subsection — plus a note on the
+  two-layer (raw type code → decoded format) classification and how a flagged
+  error record layers on top of any format. Consolidates a standalone
+  message-types reference into the format authority (the raw type-code table
+  already lived in §4.1 and the `0x01xx` / `0x20xx` error-code tables in §7).
+
 ## [2.5.2] — 2026-06-28
 
 ### Fixed
