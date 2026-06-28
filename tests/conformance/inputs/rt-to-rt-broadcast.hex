@@ -1,0 +1,3 @@
+# RT_TO_RT_BROADCAST (Type 0x18): one RT transmits, all RTs listen, no
+# receive-status word. Type + TS + Cmd1(tx) + Cmd2(rx,RT31) + TxStatus + Data[2].
+18090f1820db6400e22de2f900281111222218090f1820db2c01e22de2f9002811112222

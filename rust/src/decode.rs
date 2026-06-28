@@ -415,14 +415,21 @@ fn classify_mode_code(cmd: &CommandWord, word_count: u16, timestamp_words: u16) 
         };
     }
 
-    // Non-broadcast mode codes always have a status word.
-    if cmd.direction == Direction::Transmit {
-        return MessageFormat::ModeCodeTxData;
-    }
-    //   RX with data: Type + TS + ModeCmd + Data + Status = timestamp_words + 4
-    //   RX no data:   Type + TS + ModeCmd        + Status = timestamp_words + 3
+    // Non-broadcast mode codes always carry a Status Word; a data word is
+    // present only on the longer records (1553 mode codes 0–15 carry none,
+    // 16–31 carry one — L2-MSG-004). A mode code WITHOUT a data word — transmit
+    // or receive — is Type + TS + ModeCmd + Status = timestamp_words + 3 and
+    // classifies as `ModeCodeNoData` (its wire shape is ModeCmd + Status either
+    // way; the `CMD` column preserves the direction). With a data word it is
+    // `ModeCodeTxData` (Status + Data) or `ModeCodeRxData` (Data + Status).
+    //   With data: Type + TS + ModeCmd + Data + Status = timestamp_words + 4
+    //   No data:   Type + TS + ModeCmd        + Status = timestamp_words + 3
     if word_count >= timestamp_words + 4 {
-        MessageFormat::ModeCodeRxData
+        if cmd.direction == Direction::Transmit {
+            MessageFormat::ModeCodeTxData
+        } else {
+            MessageFormat::ModeCodeRxData
+        }
     } else {
         MessageFormat::ModeCodeNoData
     }
@@ -815,11 +822,16 @@ mod tests {
         );
     }
 
-    /// Requirements: L2-MSG-001
+    /// A transmit mode code is `ModeCodeTxData` only when the record is long
+    /// enough to carry a data word (word_count >= timestamp_words + 4); without
+    /// one it is `ModeCodeNoData` — the wire shape is ModeCmd + Status either
+    /// way, and the `CMD` column preserves the direction. Regression: a no-data
+    /// transmit mode code (1553 mode codes 0–15 — "transmit status word", etc.)
+    /// was previously forced to `ModeCodeTxData`, failed the L2-SYN-022 capacity
+    /// check, and was silently dropped from the CSV in lenient mode.
+    /// Requirements: L2-MSG-001, L2-MSG-004
     #[test]
-    fn classify_mode_code_tx_data() {
-        // Transmit mode codes are classified by direction, independent of the
-        // word count / timestamp size.
+    fn classify_mode_code_tx_data_vs_no_data() {
         let cmd = CommandWord {
             rt: 5,
             direction: Direction::Transmit,
@@ -827,13 +839,24 @@ mod tests {
             data_word_count: 1,
             raw: 0,
         };
+        // IRIG (3 timestamp words): boundary at WC 6/7.
         assert_eq!(
             classify_message_format(0x01, &cmd, 7, 3).unwrap(),
             MessageFormat::ModeCodeTxData
         );
         assert_eq!(
+            classify_message_format(0x01, &cmd, 6, 3).unwrap(),
+            MessageFormat::ModeCodeNoData,
+            "a transmit mode code with no data word must be NoData, not dropped"
+        );
+        // Standard (2 timestamp words): boundary shifts down to WC 5/6.
+        assert_eq!(
             classify_message_format(0x01, &cmd, 6, 2).unwrap(),
             MessageFormat::ModeCodeTxData
+        );
+        assert_eq!(
+            classify_message_format(0x01, &cmd, 5, 2).unwrap(),
+            MessageFormat::ModeCodeNoData
         );
     }
 

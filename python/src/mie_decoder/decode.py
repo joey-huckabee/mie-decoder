@@ -523,15 +523,18 @@ def _classify_mode_code(cmd: CommandWord, word_count: int, timestamp_words: int)
             return MessageFormat.MODE_CODE_BCAST_DATA
         return MessageFormat.MODE_CODE_BCAST_NO_DATA
 
-    # Non-broadcast mode codes always have a status word.
-    if cmd.direction == Direction.TRANSMIT:
-        # RT transmits: ModeCmd → Status → DataWord
-        return MessageFormat.MODE_CODE_TX_DATA
-
-    # RT receives or no data:
-    # With data:    ModeCmd → DataWord → Status = timestamp_words + 4
-    # Without data: ModeCmd → Status            = timestamp_words + 3
+    # Non-broadcast mode codes always carry a Status Word; a data word is present
+    # only on the longer records (1553 mode codes 0–15 carry none, 16–31 carry
+    # one). A mode code WITHOUT a data word — transmit or receive — is
+    # Type + TS + ModeCmd + Status = timestamp_words + 3 and classifies as
+    # MODE_CODE_NO_DATA (its wire shape is ModeCmd + Status either way; the CMD
+    # column preserves the direction). With a data word it is TX_DATA
+    # (Status → Data) or RX_DATA (Data → Status).
+    #   With data: Type + TS + ModeCmd + Data + Status = timestamp_words + 4
+    #   No data:   Type + TS + ModeCmd        + Status = timestamp_words + 3
     if word_count >= timestamp_words + 4:
+        if cmd.direction == Direction.TRANSMIT:
+            return MessageFormat.MODE_CODE_TX_DATA
         return MessageFormat.MODE_CODE_RX_DATA
 
     return MessageFormat.MODE_CODE_NO_DATA

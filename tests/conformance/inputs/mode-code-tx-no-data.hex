@@ -1,0 +1,4 @@
+# A non-broadcast TRANSMIT mode code with NO data word (mode code 2,
+# 'transmit status word'): Type + TS + ModeCmd + Status. Regression for the
+# misclassification that dropped these from the CSV (now MODE_CODE_NO_DATA).
+01060f1820db6400022c002801060f1820db2c01022c0028

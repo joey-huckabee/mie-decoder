@@ -201,7 +201,7 @@ Identification happens in two layers: the raw Type Word message-type code (§4.1
 | `RT_TO_RT_BROADCAST` | `BROADCAST_RT_TO_RT` (`0x18`) | One RT transmits, all RTs listen; no receive-status word | §6.5 |
 | `MODE_CODE_TX_DATA` | `MODE_COMMAND` (`0x01`) | Non-broadcast mode code, T/R = Transmit, one data word | §6.6 |
 | `MODE_CODE_RX_DATA` | `MODE_COMMAND` (`0x01`) | Non-broadcast mode code, T/R = Receive, one data word | §6.7 |
-| `MODE_CODE_NO_DATA` | `MODE_COMMAND` (`0x01`) | Non-broadcast mode code, no data word | §6.8 |
+| `MODE_CODE_NO_DATA` | `MODE_COMMAND` (`0x01`) | Non-broadcast mode code, no data word (either direction) | §6.8 |
 | `MODE_CODE_BCAST_NO_DATA` | `MODE_COMMAND` (`0x01`) | RT address 31, no data word | §6.9 |
 | `MODE_CODE_BCAST_DATA` | `MODE_COMMAND` (`0x01`) | RT address 31, one data word | §6.10 |
 | `SPURIOUS_DATA` | `SPURIOUS_DATA` (`0x20`) | No Command / Status structure; `RT`, `MSG`, `CMD`, `STAT` left empty | §6.11 |
@@ -288,7 +288,7 @@ The BC issues a mode code that includes one data word (e.g., "synchronize with d
 
 ### 6.8 Mode Code No Data — `0x01`, no data words
 
-Mode codes that carry no data (e.g., "reset RT", "synchronize without data"). RT acknowledges with Status only.
+Mode codes that carry no data (e.g., "reset RT", "synchronize without data", "transmit status word"). RT acknowledges with Status only. This shape is **direction-independent**: a no-data mode code lands here whether T/R is Receive *or* Transmit (the `CMD` column preserves the direction). Only a mode code long enough to carry a data word becomes `Tx with data` / `Rx with data` — a record that is classified `ModeCodeTxData` but lacks the data word is too short for the L2-SYN-022 capacity check, which is why a no-data transmit mode code must classify here (it was previously dropped, see CHANGELOG).
 
 ```
 ┌──────┬─────┬─────┬────────┐

@@ -15,6 +15,30 @@ full release workflow.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Transmit mode codes carrying no data word are no longer dropped from the
+  CSV.** A non-broadcast transmit mode code (the common MIL-STD-1553 mode codes
+  0–15 — "transmit status word", "transmitter shutdown", "reset remote
+  terminal", …) was unconditionally classified `MODE_CODE_TX_DATA`, which expects
+  a Status **and** a data word; with no data word the record was too short for
+  the L2-SYN-022 word-count capacity check and was **silently skipped in lenient
+  mode** (the default), so these messages never reached the output. A no-data
+  mode code now classifies as `MODE_CODE_NO_DATA` regardless of direction (the
+  wire shape is `ModeCmd + Status` either way; the `CMD` column preserves the
+  direction) and is written with empty `WD*` columns. Fixed in both
+  implementations; the requirement `L2-MSG-004` (which had specified the buggy
+  "classified by direction independent of word count") is corrected.
+
+### Tests
+
+- **End-to-end, cross-implementation conformance coverage for all 11 decoded
+  message formats** (previously 4 had none: `RECEIVE_BROADCAST`,
+  `RT_TO_RT_BROADCAST`, `MODE_CODE_BCAST_NO_DATA`, `MODE_CODE_BCAST_DATA`, plus an
+  IRIG `MODE_CODE_RX_DATA` and the headline no-data-transmit regression). Every
+  raw Type Word type / decoded format is now proven to decode to a byte-identical
+  CSV row in both the Rust and Python CLIs.
+
 ### Documentation
 
 - **`MIE-FORMAT.md` §6 now opens with an at-a-glance index of all 11 decoded
