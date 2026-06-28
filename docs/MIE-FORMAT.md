@@ -190,6 +190,24 @@ When both formats score equally, **IRIG wins** (L2-DEC-012). Flight-test recordi
 
 MIE-Decoder classifies every record into one of 11 formats (L2-MSG-001). The Type Word's message type code plus the Command Word's `data_word_count` and broadcast bit determine which.
 
+Identification happens in two layers: the raw Type Word message-type code (§4.1) selects a family, and the Command Word's direction, `data_word_count`, and broadcast bit then pin the exact format. The 11 decoded formats, their source Type Word code, and how each is identified — the per-format byte shapes follow in §6.1–§6.11:
+
+| Decoded format | Source type | How it is identified | Shape |
+|---|---|---|---|
+| `RECEIVE` | `BC_TO_RT` (`0x02`) | BC→RT; Command direction must be Receive | §6.1 |
+| `TRANSMIT` | `RT_TO_BC` (`0x04`) | RT→BC; Command direction must be Transmit | §6.2 |
+| `RT_TO_RT` | `RT_TO_RT` (`0x08`) | Two Command Words: transmit-RT status, data, then receive-RT status | §6.3 |
+| `RECEIVE_BROADCAST` | `BROADCAST_BC_TO_RT` (`0x10`) | Broadcast data from the BC; no Status Word | §6.4 |
+| `RT_TO_RT_BROADCAST` | `BROADCAST_RT_TO_RT` (`0x18`) | One RT transmits, all RTs listen; no receive-status word | §6.5 |
+| `MODE_CODE_TX_DATA` | `MODE_COMMAND` (`0x01`) | Non-broadcast mode code, T/R = Transmit, one data word | §6.6 |
+| `MODE_CODE_RX_DATA` | `MODE_COMMAND` (`0x01`) | Non-broadcast mode code, T/R = Receive, one data word | §6.7 |
+| `MODE_CODE_NO_DATA` | `MODE_COMMAND` (`0x01`) | Non-broadcast mode code, no data word (either direction) | §6.8 |
+| `MODE_CODE_BCAST_NO_DATA` | `MODE_COMMAND` (`0x01`) | RT address 31, no data word | §6.9 |
+| `MODE_CODE_BCAST_DATA` | `MODE_COMMAND` (`0x01`) | RT address 31, one data word | §6.10 |
+| `SPURIOUS_DATA` | `SPURIOUS_DATA` (`0x20`) | No Command / Status structure; `RT`, `MSG`, `CMD`, `STAT` left empty | §6.11 |
+
+A record can additionally be flagged as an **error record** (Type Word bit 14 set) on top of any format above — it is not a separate message type. See §7 for the error-record lifecycle and the `0x01xx` / `0x20xx` code tables.
+
 In every shape below, "TS" denotes the timestamp triple (3 words for IRIG, 2 for Standard). "Cmd" is the Command Word; "Status" is the Status Word; "Cmd2" is the second Command Word for RT-to-RT formats; "Data[N]" is N data words.
 
 ### 6.1 Receive — BC→RT (`0x02`)
@@ -270,7 +288,7 @@ The BC issues a mode code that includes one data word (e.g., "synchronize with d
 
 ### 6.8 Mode Code No Data — `0x01`, no data words
 
-Mode codes that carry no data (e.g., "reset RT", "synchronize without data"). RT acknowledges with Status only.
+Mode codes that carry no data (e.g., "reset RT", "synchronize without data", "transmit status word"). RT acknowledges with Status only. This shape is **direction-independent**: a no-data mode code lands here whether T/R is Receive *or* Transmit (the `CMD` column preserves the direction). Only a mode code long enough to carry a data word becomes `Tx with data` / `Rx with data` — a record that is classified `ModeCodeTxData` but lacks the data word is too short for the L2-SYN-022 capacity check, which is why a no-data transmit mode code must classify here (it was previously dropped, see CHANGELOG).
 
 ```
 ┌──────┬─────┬─────┬────────┐

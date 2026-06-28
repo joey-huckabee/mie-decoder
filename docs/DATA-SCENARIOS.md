@@ -162,6 +162,11 @@ words appear on the wire. The full byte-level shape of each is in
 | 6–10 | **Mode codes** (5 shapes) | Bus housekeeping (with/without data, unicast/broadcast) | mode-code subaddress; data word only if present |
 | 11 | **SPURIOUS_DATA** | Orphan data words (see [§6](#6-error--spurious-data-scenarios)) | `RT`/`MSG`/`CMD`/`STAT` empty |
 
+Records that carry **no data words** (mode codes 0–15 in either direction, and
+broadcast mode codes) are still written — one CSV row with the `TIME_STAMP`,
+`RT`, `MSG`, `CMD` and (where present) `STAT` populated and the `WD*` columns
+left empty. A message is never dropped just for lacking data words.
+
 A record can additionally be flagged as an **error record** (Type Word bit 14) —
 that's a property layered on top of any of the above; see next.
 

@@ -15,6 +15,42 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.5.3] — 2026-06-28
+
+### Fixed
+
+- **Transmit mode codes carrying no data word are no longer dropped from the
+  CSV.** A non-broadcast transmit mode code (the common MIL-STD-1553 mode codes
+  0–15 — "transmit status word", "transmitter shutdown", "reset remote
+  terminal", …) was unconditionally classified `MODE_CODE_TX_DATA`, which expects
+  a Status **and** a data word; with no data word the record was too short for
+  the L2-SYN-022 word-count capacity check and was **silently skipped in lenient
+  mode** (the default), so these messages never reached the output. A no-data
+  mode code now classifies as `MODE_CODE_NO_DATA` regardless of direction (the
+  wire shape is `ModeCmd + Status` either way; the `CMD` column preserves the
+  direction) and is written with empty `WD*` columns. Fixed in both
+  implementations; the requirement `L2-MSG-004` (which had specified the buggy
+  "classified by direction independent of word count") is corrected.
+
+### Tests
+
+- **End-to-end, cross-implementation conformance coverage for all 11 decoded
+  message formats** (previously 4 had none: `RECEIVE_BROADCAST`,
+  `RT_TO_RT_BROADCAST`, `MODE_CODE_BCAST_NO_DATA`, `MODE_CODE_BCAST_DATA`, plus an
+  IRIG `MODE_CODE_RX_DATA` and the headline no-data-transmit regression). Every
+  raw Type Word type / decoded format is now proven to decode to a byte-identical
+  CSV row in both the Rust and Python CLIs.
+
+### Documentation
+
+- **`MIE-FORMAT.md` §6 now opens with an at-a-glance index of all 11 decoded
+  message formats** — each format's source Type Word code, its identification
+  rule, and a link to its per-format byte-shape subsection — plus a note on the
+  two-layer (raw type code → decoded format) classification and how a flagged
+  error record layers on top of any format. Consolidates a standalone
+  message-types reference into the format authority (the raw type-code table
+  already lived in §4.1 and the `0x01xx` / `0x20xx` error-code tables in §7).
+
 ## [2.5.2] — 2026-06-28
 
 ### Fixed
@@ -1232,7 +1268,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.2...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.3...HEAD
+[2.5.3]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.4.0...v2.5.0

@@ -1,0 +1,3 @@
+# RECEIVE_BROADCAST (Type 0x10): BC -> all RTs, RT address 31, no status
+# word. Type + TS + Cmd + Data[2].
+10070f1820db6400e2f91111222210070f1820db2c01e2f911112222

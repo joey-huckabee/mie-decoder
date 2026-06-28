@@ -105,6 +105,60 @@
       ]
     },
     {
+      "name": "mode-code-tx-no-data",
+      "input": "inputs/mode-code-tx-no-data.hex",
+      "expected": "expected/mode-code-tx-no-data.csv",
+      "args": [
+        "--time-format",
+        "irig"
+      ]
+    },
+    {
+      "name": "mode-code-rx-data-irig",
+      "input": "inputs/mode-code-rx-data.hex",
+      "expected": "expected/mode-code-rx-data.csv",
+      "args": [
+        "--time-format",
+        "irig"
+      ]
+    },
+    {
+      "name": "mode-code-bcast-no-data",
+      "input": "inputs/mode-code-bcast-no-data.hex",
+      "expected": "expected/mode-code-bcast-no-data.csv",
+      "args": [
+        "--time-format",
+        "irig"
+      ]
+    },
+    {
+      "name": "mode-code-bcast-data",
+      "input": "inputs/mode-code-bcast-data.hex",
+      "expected": "expected/mode-code-bcast-data.csv",
+      "args": [
+        "--time-format",
+        "irig"
+      ]
+    },
+    {
+      "name": "receive-broadcast",
+      "input": "inputs/receive-broadcast.hex",
+      "expected": "expected/receive-broadcast.csv",
+      "args": [
+        "--time-format",
+        "irig"
+      ]
+    },
+    {
+      "name": "rt-to-rt-broadcast",
+      "input": "inputs/rt-to-rt-broadcast.hex",
+      "expected": "expected/rt-to-rt-broadcast.csv",
+      "args": [
+        "--time-format",
+        "irig"
+      ]
+    },
+    {
       "name": "errors-separate",
       "input": "inputs/errors-inline.hex",
       "expected": "expected/errors-separate.csv",

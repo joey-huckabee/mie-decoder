@@ -271,12 +271,21 @@ class TestClassifyMessageFormat:
         assert fmt == self.MessageFormat.RT_TO_RT_BROADCAST
 
     @pytest.mark.requirement("L2-MSG-001")
-    def test_mode_code_tx_data(self) -> None:
-        """0x01 with non-broadcast RT, T/R=1 → MODE_CODE_TX_DATA."""
-        # RT15, Transmit, SA0 (mode code), mode code number in WC
-        cmd = decode_command_word(0x7C01)  # RT15, T, SA0, WC=1
-        fmt = classify_message_format(0x01, cmd, 7, 3)
-        assert fmt == self.MessageFormat.MODE_CODE_TX_DATA
+    @pytest.mark.requirement("L2-MSG-004")
+    def test_mode_code_tx_data_vs_no_data(self) -> None:
+        """0x01 non-broadcast transmit: TX_DATA only when the record is long
+        enough for a data word (WC >= ts+4); without one it is NO_DATA (the wire
+        shape is ModeCmd + Status either way, and the CMD column preserves the
+        direction). Regression: a no-data transmit mode code (1553 mode codes
+        0-15) was forced to TX_DATA, failed the word-count capacity check, and
+        was silently dropped from the CSV in lenient mode."""
+        cmd = decode_command_word(0x7C01)  # RT15, Transmit, SA0 (mode code)
+        # IRIG (ts=3): boundary at WC 6/7.
+        assert classify_message_format(0x01, cmd, 7, 3) == self.MessageFormat.MODE_CODE_TX_DATA
+        assert classify_message_format(0x01, cmd, 6, 3) == self.MessageFormat.MODE_CODE_NO_DATA
+        # Standard (ts=2): boundary at WC 5/6.
+        assert classify_message_format(0x01, cmd, 6, 2) == self.MessageFormat.MODE_CODE_TX_DATA
+        assert classify_message_format(0x01, cmd, 5, 2) == self.MessageFormat.MODE_CODE_NO_DATA
 
     @pytest.mark.requirement("L2-MSG-001")
     def test_mode_code_rx_data(self) -> None:

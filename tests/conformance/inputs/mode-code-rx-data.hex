@@ -1,0 +1,3 @@
+# A non-broadcast RECEIVE mode code WITH a data word, IRIG timestamp
+# (the existing rx-data fixture is Standard-only): ModeCmd + Data + Status.
+01070f1820db640010283412002801070f1820db2c01102834120028

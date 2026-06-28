@@ -1,0 +1,3 @@
+# A broadcast mode code WITH a data word (Type 0x01, RT 31, mode code 16):
+# Type + TS + ModeCmd + Data. No status.
+01060f1820db640010f8333301060f1820db2c0110f83333
