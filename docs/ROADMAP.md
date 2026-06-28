@@ -2,6 +2,14 @@
 
 ## Release status
 
+**v2.5.0 — joint Rust + Python cut, 2026-06-27.** Adds **cross-recorder duplicate
+collapsing** to the multi-file merge (L1-MRG-003 / L2-MRG-007):
+`--collapse-duplicates` optionally folds the same bus transaction witnessed by
+multiple recorders into one row (off by default, loss-free; timestamp tolerance
+via `--collapse-window-us`). Both implementations stay byte-identical, pinned by
+new cross-impl conformance fixtures. Otherwise additive — existing output is
+unchanged. See `CHANGELOG.md` for the full list.
+
 **v2.4.0 — joint Rust + Python cut, 2026-06-27.** A maintenance / infrastructure
 release with **no decoder behavior change** (output is byte-identical to v2.3.0;
 conformance unaffected): a security fix for `memmap2` (RUSTSEC-2026-0186 →
