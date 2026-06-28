@@ -96,6 +96,9 @@ The Python package SHALL provide include filters equivalent to the Rust crate (`
 **L3-PY-014** · Parent: L2-MRG-002 · Verification: T
 The Python multi-file merge SHALL be implemented in `mie_decoder/merge.py` using the standard-library `heapq` as the k-way merge heap (no new dependency). The global-DELTA stage SHALL overwrite each message's `delta` via `dataclasses.replace` on the frozen `MieMessage`. The `--glob` expansion SHALL be constrained to the single-directory `*`/`?` filename semantics shared with Rust (`L3-RS-014`) and sorted lexicographically, so the resolved input set is byte-identical across implementations. The file-count cap `MAX_MERGE_FILES` SHALL match the Rust constant.
 
+**L3-PY-015** · Parent: L2-MRG-007 · Verification: T
+The Python cross-recorder collapsing SHALL be implemented in `mie_decoder/merge.py` as a `_DedupWindow` helper (a `collections.deque` of `(microseconds, file_index, content-key)` survivors) driven inside `_merge_drain` before the global-DELTA stage. The content key SHALL be a tuple of the decoded Type Word, Command/Status Words, Error Word, and `data_words`. The suppressed-duplicate count SHALL be logged at INFO once the merged stream is drained. The `merge.collapse_duplicates` / `merge.collapse_window_us` config keys and the `--collapse-duplicates` / `--collapse-window-us` CLI flags SHALL match the Rust surface (`L3-RS-015`).
+
 ---
 
 ## L3-RS: Rust implementation technology
@@ -140,3 +143,6 @@ The Rust crate SHALL re-export its public decode entry point (`MieFileReader`) a
 
 **L3-RS-014** · Parent: L2-MRG-002 · Verification: T
 The Rust multi-file merge SHALL be implemented in `rust/src/merge.rs` using `std::collections::BinaryHeap` (with `std::cmp::Reverse` for min-heap behavior) as the k-way merge heap — no new external dependency (preserving `L3-RS-002`). The `--glob` expansion SHALL be a hand-rolled single-directory `*`/`?` filename matcher (no `**`, no brace expansion) reading one directory via `std::fs`, sorted lexicographically, identical to the Python semantics (`L3-PY-014`). The file-count cap SHALL be the named constant `MAX_MERGE_FILES`, shared in value with Python.
+
+**L3-RS-015** · Parent: L2-MRG-007 · Verification: T
+The Rust cross-recorder collapsing SHALL be implemented in `rust/src/merge.rs` as a `DedupWindow` (a `VecDeque` of `(microseconds, file_index, DedupKey)` survivors) driven inside `MergedRecordIter::next` before the global-DELTA stage — no new dependency. `DedupKey` SHALL derive `PartialEq`/`Eq` over the Type Word, Command/Status Words, Error Word, and the data-word slice. The suppressed-duplicate count SHALL be exposed via an `Arc<AtomicU64>` handle the CLI reads after the run. The `merge.collapse_duplicates` / `merge.collapse_window_us` config keys and the `--collapse-duplicates` / `--collapse-window-us` CLI flags SHALL match the Python surface (`L3-PY-015`).

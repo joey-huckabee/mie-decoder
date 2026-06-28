@@ -82,6 +82,8 @@ def _decode_ns(**overrides: object) -> argparse.Namespace:
         "no_mux": False,
         "mux_field": None,
         "mux_delimiter": None,
+        "collapse_duplicates": None,
+        "collapse_window_us": None,
         "detect_records": None,
         "lookahead_records": None,
         "standard_tick_rate_hz": None,

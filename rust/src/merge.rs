@@ -15,14 +15,16 @@
 //! and the `--glob` matcher is hand-rolled (L3-RS-014, preserving L3-RS-002).
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::error::{MieError, MieResult};
 use crate::log_warn;
-use crate::models::{MieMessage, Timestamp};
+use crate::models::{CommandWord, MieMessage, Timestamp, TypeWord};
 use crate::reader::{MieFileReader, RecordIter};
 
 /// Maximum number of input files a single merge invocation may process.
@@ -169,6 +171,81 @@ fn check_mergeable(msg: &MieMessage, file_index: usize, path: &Path) -> MieResul
     }
 }
 
+// ── Cross-recorder duplicate collapsing (L2-MRG-007) ─────────────────────────
+
+/// Content identity of a message for cross-recorder de-duplication: the bits a
+/// recorder reads off the wire — Type Word (message type, bus, word count, error
+/// flag, raw), Command/Status Words, Error Word, and the valid data words.
+/// Timestamp, file offset, MUX, and DELTA are intentionally excluded — the
+/// timestamp drives the window (not equality), and the rest are per-recorder.
+#[derive(PartialEq, Eq)]
+struct DedupKey {
+    type_word: TypeWord,
+    command_word: Option<CommandWord>,
+    command_word_2: Option<CommandWord>,
+    status_word: Option<u16>,
+    status_word_2: Option<u16>,
+    error_word: Option<u16>,
+    data_words: Vec<u16>,
+}
+
+impl DedupKey {
+    fn of(msg: &MieMessage) -> Self {
+        Self {
+            type_word: msg.type_word,
+            command_word: msg.command_word,
+            command_word_2: msg.command_word_2,
+            status_word: msg.status_word,
+            status_word_2: msg.status_word_2,
+            error_word: msg.error_word,
+            data_words: msg.data_words.as_slice().to_vec(),
+        }
+    }
+}
+
+/// Sliding time-window de-duplicator over the time-sorted merged stream
+/// (L2-MRG-007). Holds the survivors emitted in the last `window_us`
+/// microseconds as `(us, file_index, key)`; since the stream is sorted, older
+/// survivors can never match a later record and are evicted from the front, so
+/// resident memory stays bounded by the window (not the record count).
+struct DedupWindow {
+    window_us: u64,
+    survivors: VecDeque<(u64, usize, DedupKey)>,
+}
+
+impl DedupWindow {
+    fn new(window_us: u64) -> Self {
+        Self {
+            window_us,
+            survivors: VecDeque::new(),
+        }
+    }
+
+    /// Returns true if `msg` (at `us`, from `file_index`) duplicates a recent
+    /// survivor from a **different** input within the window — i.e. the same bus
+    /// transaction witnessed by another recorder. Same-file identical content is
+    /// never a duplicate. A non-duplicate is recorded as a survivor.
+    fn is_duplicate(&mut self, us: u64, file_index: usize, msg: &MieMessage) -> bool {
+        while let Some(&(buf_us, _, _)) = self.survivors.front() {
+            if us - buf_us > self.window_us {
+                self.survivors.pop_front();
+            } else {
+                break;
+            }
+        }
+        let key = DedupKey::of(msg);
+        if self
+            .survivors
+            .iter()
+            .any(|(_, fi, k)| *fi != file_index && *k == key)
+        {
+            return true;
+        }
+        self.survivors.push_back((us, file_index, key));
+        false
+    }
+}
+
 /// Streaming k-way merge over per-file readers. Yields the same item type as a
 /// single reader (`MieResult<MieMessage>`) so the writer consumes it unchanged.
 pub struct MergedRecordIter<'a> {
@@ -197,6 +274,13 @@ pub struct MergedRecordIter<'a> {
     /// Error to surface once the heap drains (an `--allow-partial` deferred
     /// unrecoverable loss — lets the writer commit a `.partial`).
     pending_terminal: Option<MieError>,
+    /// Cross-recorder duplicate collapsing (L2-MRG-007). `Some` when enabled via
+    /// `--collapse-duplicates`; `None` keeps every row (the default).
+    dedup: Option<DedupWindow>,
+    /// Count of records suppressed as cross-recorder duplicates, for the CLI's
+    /// end-of-run summary. Shared so the CLI can read it after the iterator is
+    /// consumed by the writer (mirrors the `sync_losses` `AtomicU64` pattern).
+    collapsed: Arc<AtomicU64>,
 }
 
 impl<'a> MergedRecordIter<'a> {
@@ -263,7 +347,24 @@ impl<'a> MergedRecordIter<'a> {
             delta_tracker: HashMap::new(),
             pending_error: None,
             pending_terminal: None,
+            dedup: None,
+            collapsed: Arc::new(AtomicU64::new(0)),
         })
+    }
+
+    /// Enable cross-recorder duplicate collapsing on this merge (L2-MRG-007),
+    /// builder-style so `new` keeps a stable signature. `enabled == false` (the
+    /// default) is a no-op; `window_us` is the timestamp tolerance.
+    pub fn collapse(mut self, enabled: bool, window_us: u64) -> Self {
+        self.dedup = enabled.then(|| DedupWindow::new(window_us));
+        self
+    }
+
+    /// A shared handle to the suppressed-duplicate counter (L2-MRG-007). The CLI
+    /// clones this before the iterator is consumed by the writer, then reads it
+    /// afterward for the end-of-run summary.
+    pub fn collapsed_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.collapsed)
     }
 
     /// Recompute DELTA on the merged global timeline (L2-MRG-005). The stream
@@ -358,17 +459,27 @@ impl Iterator for MergedRecordIter<'_> {
     type Item = MieResult<MieMessage>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(e) = self.pending_error.take() {
-            return Some(Err(e));
-        }
-        match self.heap.pop() {
-            Some(Reverse(entry)) => {
-                let file_index = entry.file_index;
-                let msg = self.apply_global_delta(entry.msg);
-                self.advance(file_index);
-                Some(Ok(msg))
+        loop {
+            if let Some(e) = self.pending_error.take() {
+                return Some(Err(e));
             }
-            None => self.pending_terminal.take().map(Err),
+            let Some(Reverse(entry)) = self.heap.pop() else {
+                return self.pending_terminal.take().map(Err);
+            };
+            let file_index = entry.file_index;
+            // Collapse cross-recorder duplicates *before* the global-DELTA stage
+            // (L2-MRG-007): a suppressed duplicate must not advance the per-key
+            // DELTA tracker, so DELTA is measured across the deduped timeline.
+            if let Some(dedup) = self.dedup.as_mut()
+                && dedup.is_duplicate(entry.us, file_index, &entry.msg)
+            {
+                self.collapsed.fetch_add(1, AtomicOrdering::Relaxed);
+                self.advance(file_index);
+                continue;
+            }
+            let msg = self.apply_global_delta(entry.msg);
+            self.advance(file_index);
+            return Some(Ok(msg));
         }
     }
 }

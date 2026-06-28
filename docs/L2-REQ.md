@@ -917,6 +917,13 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 **Rationale**: The k-way merge (L2-MRG-002) is only correct if each input is itself chronological; a file made non-monotonic by sync-loss recovery or a day/year rollover otherwise produces silently out-of-order merged rows. Detection mirrors the existing within-file non-monotonic-DELTA advisory (L2-RDR-017): WARN, never re-sort (re-sorting would defeat the streaming O(k) memory guarantee). Strict mode escalates to a failure because a backward step inside one recorder's own file is the same class of data-integrity anomaly that strict mode already rejects at the record level. The one-time-per-input WARN cadence avoids log flooding on a badly corrupted input.
 **Verification Method**: Test (T)
 
+#### L2-MRG-007
+
+**Parent**: L1-MRG-003
+**Statement**: When cross-recorder duplicate collapsing is enabled (the `merge.collapse_duplicates` config key / `--collapse-duplicates` flag, off by default), the merge SHALL suppress a record whose wire content matches a recently-emitted record from a **different** input within `merge.collapse_window_us` microseconds (`--collapse-window-us`, default `0` = exact-microsecond match). "Wire content" SHALL be the decoded Type Word, Command Word(s), Status Word(s), Error Word, and data words — excluding the timestamp, file offset, MUX, and DELTA. The first record of a duplicate set in heap order SHALL survive. Identical content from the **same** input SHALL NOT be collapsed, and a single-input decode SHALL be unaffected. De-duplication SHALL run **before** the global-DELTA stage (L2-MRG-005) so DELTA is computed over the surviving stream, and SHALL retain only the survivors within the time window (resident memory bounded by the window, preserving the L2-MRG-002 streaming guarantee).
+**Rationale**: Recorders on a shared bus see the same transactions; collapsing the cross-recorder copies of one event restores an accurate count. A content key over the wire fields (not the timestamp) recognises the same transaction even when recorder clocks differ slightly; the window absorbs that skew, with an exact-match default that can never over-collapse genuinely distinct traffic. Requiring a *different* input distinguishes "one event seen twice" from a single recorder's own repeated periodic traffic. Running before DELTA keeps inter-arrival gaps measured across the deduped timeline; the bounded window keeps the merge streaming.
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-CONF: Cross-implementation conformance

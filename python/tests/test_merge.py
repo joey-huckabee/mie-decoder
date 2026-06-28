@@ -343,3 +343,57 @@ def test_read_manifest_tolerates_arbitrary_bytes(tmp_path: Path) -> None:
         except UnicodeDecodeError:
             continue  # non-UTF8 is a documented failure, not a crash
         assert isinstance(result, list)
+
+
+@pytest.mark.requirement("L1-MRG-003")
+@pytest.mark.requirement("L2-MRG-007")
+@pytest.mark.requirement("L3-PY-015")
+def test_merge_collapse_cross_recorder_duplicate(tmp_path: Path) -> None:
+    # The same bus transaction (identical wire content at the same µs) recorded
+    # by two recorders collapses to a single row under collapse_duplicates.
+    rec = rt15_record_at(192, 15, 54, 50, 100)
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(rec)
+    fb.write_bytes(rec)  # identical content + timestamp, different file
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    msgs = list(merge_readers(readers, collapse_duplicates=True))
+    assert len(msgs) == 1, "the second recorder's duplicate is collapsed"
+
+
+@pytest.mark.requirement("L2-MRG-007")
+def test_merge_collapse_keeps_different_time(tmp_path: Path) -> None:
+    # Identical content at different timestamps (beyond the window) is real
+    # periodic traffic, not a duplicate — both rows survive.
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(rt15_record_at(192, 15, 54, 50, 100))
+    fb.write_bytes(rt15_record_at(192, 15, 54, 50, 300))
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    msgs = list(merge_readers(readers, collapse_duplicates=True))
+    assert len(msgs) == 2, "distinct timestamps are distinct events"
+
+
+@pytest.mark.requirement("L2-MRG-007")
+def test_merge_collapse_same_file_not_collapsed(tmp_path: Path) -> None:
+    # Identical records from the same recorder (same input file) are never
+    # collapsed — collapsing is strictly cross-recorder.
+    rec = rt15_record_at(192, 15, 54, 50, 100)
+    fa = tmp_path / "a.mie"
+    fa.write_bytes(rec + rec)  # two identical records, one file
+    readers = [MieFileReader(fa)]
+    msgs = list(merge_readers(readers, collapse_duplicates=True))
+    assert len(msgs) == 2, "same-recorder duplicates are kept"
+
+
+@pytest.mark.requirement("L2-MRG-007")
+def test_merge_collapse_within_window(tmp_path: Path) -> None:
+    # With a non-zero window, near-simultaneous identical content from two
+    # recorders whose clocks differ slightly collapses (3µs skew, 5µs window).
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(rt15_record_at(192, 15, 54, 50, 100))
+    fb.write_bytes(rt15_record_at(192, 15, 54, 50, 103))
+    readers = [MieFileReader(fa), MieFileReader(fb)]
+    msgs = list(merge_readers(readers, collapse_duplicates=True, collapse_window_us=5))
+    assert len(msgs) == 1, "within-window clock skew collapses"

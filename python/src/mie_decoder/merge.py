@@ -23,6 +23,7 @@ import heapq
 import itertools
 import logging
 import os
+from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -154,12 +155,58 @@ def _apply_global_delta(msg: MieMessage, tick: float | None, tracker: dict[str, 
     return dataclasses.replace(msg, delta=None)
 
 
+def _dedup_key(msg: MieMessage) -> tuple[object, ...]:
+    """Content identity of a message for cross-recorder de-duplication
+    (L2-MRG-007): the bits a recorder reads off the wire — Type Word, Command /
+    Status Words, Error Word, and the data words. Timestamp, file offset, MUX,
+    and DELTA are intentionally excluded — the timestamp drives the window (not
+    equality), and the rest are per-recorder. Mirrors ``DedupKey`` in Rust."""
+    return (
+        msg.type_word,
+        msg.command_word,
+        msg.command_word_2,
+        msg.status_word,
+        msg.status_word_2,
+        msg.error_word,
+        msg.data_words,
+    )
+
+
+class _DedupWindow:
+    """Sliding time-window de-duplicator over the time-sorted merged stream
+    (L2-MRG-007). Holds the survivors emitted in the last ``window_us``
+    microseconds as ``(us, file_index, key)``; since the stream is sorted, older
+    survivors can never match a later record and are evicted from the front, so
+    resident memory stays bounded by the window (not the record count). Mirrors
+    ``DedupWindow`` in ``rust/src/merge.rs``."""
+
+    def __init__(self, window_us: int) -> None:
+        self._window_us = window_us
+        self._survivors: deque[tuple[int, int, tuple[object, ...]]] = deque()
+
+    def is_duplicate(self, us: int, file_index: int, msg: MieMessage) -> bool:
+        """True if ``msg`` (at ``us``, from ``file_index``) duplicates a recent
+        survivor from a *different* input within the window — the same bus
+        transaction witnessed by another recorder. Same-file identical content is
+        never a duplicate; a non-duplicate is recorded as a survivor."""
+        while self._survivors and us - self._survivors[0][0] > self._window_us:
+            self._survivors.popleft()
+        key = _dedup_key(msg)
+        for _, file_idx, survivor_key in self._survivors:
+            if file_idx != file_index and survivor_key == key:
+                return True
+        self._survivors.append((us, file_index, key))
+        return False
+
+
 def merge_readers(
     readers: list[MieFileReader],
     *,
     standard_tick_rate_hz: float | None = None,
     allow_partial: bool = False,
     strict: bool = False,
+    collapse_duplicates: bool = False,
+    collapse_window_us: int = 0,
 ) -> Iterator[MieMessage]:
     """Stream a time-sorted k-way merge over ``readers``.
 
@@ -209,6 +256,7 @@ def merge_readers(
         heapq.heappush(heap, (us, idx, 0, next(counter), msg))
         seqs[idx] = 1
 
+    dedup = _DedupWindow(collapse_window_us) if collapse_duplicates else None
     return _merge_drain(
         readers,
         iters,
@@ -220,6 +268,7 @@ def merge_readers(
         strict,
         prev_us,
         warned,
+        dedup,
     )
 
 
@@ -234,14 +283,22 @@ def _merge_drain(
     strict: bool,
     prev_us: list[int | None],
     warned: list[bool],
+    dedup: _DedupWindow | None,
 ) -> Iterator[MieMessage]:
-    """Drain the primed heap: pop the min, recompute global DELTA, advance the
-    file that record came from."""
+    """Drain the primed heap: pop the min, optionally collapse cross-recorder
+    duplicates, recompute global DELTA, advance the file that record came from."""
     tracker: dict[str, int] = {}
     pending_terminal: MieUnrecoverableSyncLossError | None = None
+    collapsed = 0
     while heap:
-        _, idx, _, _, msg = heapq.heappop(heap)
-        yield _apply_global_delta(msg, tick, tracker)
+        us, idx, _, _, msg = heapq.heappop(heap)
+        # Collapse cross-recorder duplicates before the global-DELTA stage
+        # (L2-MRG-007): a suppressed duplicate must not advance the per-key DELTA
+        # tracker, so DELTA is measured across the deduped timeline.
+        if dedup is not None and dedup.is_duplicate(us, idx, msg):
+            collapsed += 1
+        else:
+            yield _apply_global_delta(msg, tick, tracker)
         try:
             nxt = next(iters[idx])
         except StopIteration:
@@ -280,6 +337,8 @@ def _merge_drain(
         tiebreak = next(counter)  # pylint: disable=stop-iteration-return
         heapq.heappush(heap, (curr, idx, seq, tiebreak, nxt))
 
+    if collapsed:
+        logger.info("merge: collapsed %d duplicate message(s) across recorders", collapsed)
     # An --allow-partial deferred failure surfaces here so the writer commits a
     # `.partial` after all good records are written.
     if pending_terminal is not None:

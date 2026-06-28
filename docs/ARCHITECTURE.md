@@ -531,6 +531,16 @@ The heap is the easy part; the constraints come from the MIE timestamp model
   gaps reflect one unified timeline (L2-MRG-005); the sorted stream makes
   per-key gaps non-negative. (A future recorder-context convention may switch
   identified recorders to per-file DELTA — see ROADMAP.)
+- **Cross-recorder collapsing (opt-in).** With `--collapse-duplicates`
+  (L2-MRG-007), the merge suppresses a record whose wire content (Type /
+  Command / Status Words, error word, data words — not the timestamp, MUX, or
+  DELTA) matches a recently-emitted record from a **different** input within
+  `--collapse-window-us` µs. It runs **before** the Global DELTA stage so a
+  dropped duplicate never poisons the per-key tracker, and holds only the
+  survivors inside the window (`VecDeque` / `deque`), so resident memory stays
+  bounded by the window — preserving the O(k) streaming guarantee. Off by
+  default; a file never collapses against itself; a single-file decode is
+  unaffected (L3-RS-015 / L3-PY-015).
 - **Per-file failure** reuses the single-file `--strict` / lenient /
   `--allow-partial` policy across the batch; `--allow-partial` truncates a
   failed file, finishes from the rest, and the writer commits a combined

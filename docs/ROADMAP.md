@@ -224,16 +224,22 @@ remains distant-future. None has a committed version yet.
     scheme, a hand-rolled wildcard locator (reusing the `--glob` matcher) could
     be added without a new dependency. Not needed for the current convention.
 
-- **De-duplication of the same bus transaction seen by multiple recorders.**
-  *Near-term — next-release candidate (investigate).* Multiple recorders on the
-  same 1553 bus can witness the *same* transaction; the merge currently emits
-  **both** rows (adjacent, tiebroken by file index) with no de-duplication, so an
-  overlapping recorder set inflates the merged message count. Investigate whether
-  the tool should detect and optionally collapse such duplicates (and on what
-  identity — timestamp + Command Word + payload?), almost certainly behind an
-  explicit opt-in flag so the default stays loss-free. Interacts with recorder
-  identity above (knowing the source recorder is what makes a "duplicate across
-  recorders" meaningful).
+- **De-duplication of the same bus transaction seen by multiple recorders —
+  shipped (L1-MRG-003 / L2-MRG-007).** The merge now optionally collapses
+  cross-recorder duplicates behind `--collapse-duplicates` / `[merge]
+  collapse_duplicates` (off by default, loss-free; window via
+  `--collapse-window-us`). See `CHANGELOG.md`. Future refinements, none built yet:
+  - **Witness annotation** — an optional column recording how many / which
+    recorders saw a collapsed event (changes the CSV schema, so it would be its
+    own opt-in).
+  - **Clock-skew alignment** — estimate / correct a per-recorder time offset
+    rather than relying on a fixed `--collapse-window-us` tolerance.
+  - **Survivor-selection policy** — prefer the cleanest copy (e.g. the non-error
+    read) rather than always keeping the first in heap order.
+  - **`count` subcommand** — a deduped count mode (collapsing applies to the
+    `decode` CSV path today).
+  - Interacts with the per-recorder DELTA / identity-tiebreak items above
+    (recorder identity is also surfaced by MUX-from-filename, L2-WRT-020).
 
   *(Within-file monotonicity detection — formerly listed here — **shipped** as
   L2-MRG-006; see `CHANGELOG.md` `[Unreleased]`.)*

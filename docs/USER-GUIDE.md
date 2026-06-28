@@ -350,6 +350,38 @@ What to expect:
 
 Both implementations produce byte-identical merged output.
 
+### Collapsing duplicate messages across recorders
+
+On a 1553 bus every recorder hears the same wire, so recordings from
+**overlapping recorders** capture the same transactions — and a plain merge
+emits every copy, inflating the message count. Add `--collapse-duplicates` to
+fold each transaction's cross-recorder copies into a single row:
+
+```bash
+mie-decoder decode recorder-1.mie recorder-2.mie -o session.csv --collapse-duplicates
+```
+
+This is **opt-in and loss-free by default** — without the flag, every row is
+kept. Two records are "the same message" when their *wire content* matches (the
+Type Word, Command/Status Words, error word, and data words — the timestamp,
+file name/MUX, and DELTA are ignored) **and** they come from **different input
+files** within a timestamp tolerance. Identical traffic from one recorder (real
+periodic messages) is never collapsed, and a single-file decode is unaffected.
+
+Recorders rarely timestamp the same event to the exact microsecond, so set the
+tolerance to match your recorders' clock sync with `--collapse-window-us N`
+(microseconds; default `0` = exact match):
+
+```bash
+mie-decoder decode --glob 'recorders/*.mie' -o session.csv \
+  --collapse-duplicates --collapse-window-us 200
+```
+
+The first copy in time order survives; the rest are suppressed and the count is
+logged (`merge: collapsed N duplicate message(s)…`). DELTA is recomputed on the
+deduped timeline. Both flags have config-file equivalents in a `[merge]`
+section (`collapse_duplicates`, `collapse_window_us`).
+
 ### Labeling output by recorder (MUX from the file name)
 
 If your recordings are named so a field identifies the source or recorder, the

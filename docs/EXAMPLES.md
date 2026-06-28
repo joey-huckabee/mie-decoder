@@ -482,6 +482,19 @@ inputs:
 mie-decoder decode run-a.mie run-b.mie -o rt15.csv --include-rts 15 --inline-errors
 ```
 
+If several recorders overlap (they all heard the same bus), collapse each
+transaction's duplicate rows into one with `--collapse-duplicates` — off by
+default, so you opt in only when you want it:
+
+```bash
+# Two recorders on the same bus → one row per transaction, not two.
+mie-decoder decode recorder-1.mie recorder-2.mie -o session.csv --collapse-duplicates
+
+# Recorders whose IRIG clocks drift a little: allow a 200µs tolerance.
+mie-decoder decode --manifest recorders.txt -o session.csv \
+  --collapse-duplicates --collapse-window-us 200
+```
+
 The Python CLI accepts the identical commands and produces byte-identical
 output. Merge only IRIG recordings from the same calendar year; see
 [`USER-GUIDE.md`](USER-GUIDE.md) §6 for the full contract.

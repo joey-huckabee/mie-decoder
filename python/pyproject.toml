@@ -103,6 +103,9 @@ disable = [
     "too-many-lines",
     # `not (a <= x <= b)` parenthesization is kept for readability.
     "superfluous-parens",
+    # Single-responsibility helper classes (e.g. the merge dedup window) are
+    # legitimately one-method; this check is noise for them.
+    "too-few-public-methods",
 ]
 
 # Ruff formats and lints the Python package + tests. Line length matches the
