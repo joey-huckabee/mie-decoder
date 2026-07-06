@@ -653,8 +653,8 @@ mod tests {
         assert_eq!(mux_from_filename(name, ".", 4).as_deref(), Some("aa"));
         // Other operator files at the same index.
         assert_eq!(
-            mux_from_filename("full_loadout.draw.data.1553.s10.unused.mie_irig", ".", 4).as_deref(),
-            Some("s10")
+            mux_from_filename("full_loadout.draw.data.1553.bb.unused.mie_irig", ".", 4).as_deref(),
+            Some("bb")
         );
         // Negative index counts from the end (-3 == index 4 here).
         assert_eq!(mux_from_filename(name, ".", -3).as_deref(), Some("aa"));

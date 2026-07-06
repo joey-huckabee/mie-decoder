@@ -436,7 +436,7 @@
       ],
       "input_names": [
         "full_loadout.draw.data.1553.aa.unused.mie_irig",
-        "full_loadout.draw.data.1553.gun.unused.mie_irig"
+        "full_loadout.draw.data.1553.bb.unused.mie_irig"
       ],
       "expected": "expected/mux-merge-per-file.csv",
       "args": [

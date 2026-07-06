@@ -9,12 +9,11 @@ Synchronization Strategy:
 
     1. **Initial Alignment (Header Detection):**
        Before decoding begins, the reader must find the first valid
-       record. Some files start immediately with records (e.g., the
-       ``aa`` file), while others have a proprietary header (e.g.,
-       the ``s4`` file with embedded ASCII identifiers like equipment
-       names). The :func:`find_first_record` function scans from offset
-       0 looking for the first position that passes multi-point
-       validation.
+       record. Some files start immediately with records, while others
+       carry leading non-record bytes (e.g. a proprietary header with
+       embedded ASCII identifiers like equipment names). The
+       :func:`find_first_record` function scans from offset 0 looking
+       for the first position that passes multi-point validation.
 
     2. **Continuous Validation:**
        At each record boundary during iteration, :func:`validate_record`

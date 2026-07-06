@@ -251,7 +251,7 @@ class TestFindFirstRecord:
         # Build a header using 0xFF bytes (type 0x7F = invalid)
         # so find_first_record will skip past it
         header = b"\xff\x00" * 36  # 72 bytes, type 0x7F each word
-        fpath = tmp_path / "s4_sim.mie"
+        fpath = tmp_path / "header_sim.mie"
         fpath.write_bytes(header + multi_record_data)
         messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
         assert len(messages) == 3
