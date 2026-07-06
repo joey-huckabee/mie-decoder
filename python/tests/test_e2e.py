@@ -577,6 +577,59 @@ class TestAtomicWriteSafety:
         with pytest.raises(MieNoValidRecordsError):
             list(reader)
 
+    @pytest.mark.requirement("L1-EXIT-010")
+    @pytest.mark.requirement("L2-RDR-021")
+    def test_empty_recording_terminator_only_yields_zero_records(self, tmp_path: Path) -> None:
+        """L1-EXIT-010: a file whose record stream opens on the 0x0000
+        end-of-records terminator is a valid but empty recording — zero records,
+        NO error, and ``empty_recording`` is set. Models an unused channel
+        recording (literally the two bytes ``00 00``)."""
+        f = tmp_path / "empty.mie"
+        f.write_bytes(b"\x00\x00")
+        reader = MieFileReader(f)
+        msgs = list(reader)  # must NOT raise
+        assert msgs == []
+        assert reader.empty_recording is True
+
+    @pytest.mark.requirement("L1-EXIT-010")
+    @pytest.mark.requirement("L2-RDR-021")
+    def test_wrong_file_is_not_an_empty_recording(self, tmp_path: Path) -> None:
+        """L1-EXIT-010: a wrong-file (no terminator, no valid record) still
+        raises NoValidRecords and is not mistaken for an empty recording."""
+        from mie_decoder.exceptions import MieNoValidRecordsError
+
+        f = tmp_path / "junk.mie"
+        f.write_bytes(b"\xff" * 256)
+        reader = MieFileReader(f)
+        with pytest.raises(MieNoValidRecordsError):
+            list(reader)
+        assert reader.empty_recording is False
+
+    @pytest.mark.requirement("L2-SYN-028")
+    def test_single_record_then_terminator_decodes(self, tmp_path: Path) -> None:
+        """L2-SYN-028: one valid record followed by the terminator decodes.
+        Regression: the lone record's look-ahead follower is the terminator,
+        which the pre-fix look-ahead rejected."""
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        f = tmp_path / "single.mie"
+        f.write_bytes(RECORD_RT15_SA11_RCV + b"\x00\x00")
+        reader = MieFileReader(f)
+        assert len(list(reader)) == 1
+        assert reader.empty_recording is False
+
+    @pytest.mark.requirement("L2-SYN-028")
+    def test_last_record_before_terminator_not_dropped(self, tmp_path: Path) -> None:
+        """L2-SYN-028: the last record before the terminator is not dropped.
+        Every well-formed recording ends ``...record, 00 00``; the pre-fix
+        look-ahead silently lost that final record."""
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        f = tmp_path / "multi.mie"
+        f.write_bytes(RECORD_RT15_SA11_RCV + RECORD_RT15_SA11_RCV + b"\x00\x00")
+        reader = MieFileReader(f)
+        assert len(list(reader)) == 2
+
     @pytest.mark.requirement("L2-SYN-011")
     @pytest.mark.requirement("L1-EXIT-004")
     def test_lenient_unrecoverable_sync_loss_raises(self, tmp_path: Path) -> None:
@@ -773,6 +826,49 @@ class TestAtomicWriteSafety:
         assert rc == 2
         # No output file should have been created.
         assert not (tmp_path / "out.csv").exists()
+
+    @pytest.mark.requirement("L1-EXIT-010")
+    @pytest.mark.requirement("L2-RDR-021")
+    def test_cli_empty_recording_exits_0_with_header_only_csv(self, tmp_path: Path) -> None:
+        """L1-EXIT-010: decoding an empty recording (record stream is just the
+        0x0000 terminator) exits 0 and writes a header-only CSV — not the
+        exit-2 wrong-file rejection."""
+        from mie_decoder.cli import main
+
+        f = tmp_path / "empty.mie"
+        f.write_bytes(b"\x00\x00")
+        out = tmp_path / "out.csv"
+        rc = main(["decode", str(f), "-o", str(out)])
+        assert rc == 0
+        assert out.exists()
+        lines = out.read_text().splitlines()
+        assert len(lines) == 1  # header only, no data rows
+        assert lines[0].startswith("TIME_STAMP,RT,MSG,")
+        assert lines[0].endswith("XMT_GAP")
+
+    @pytest.mark.requirement("L1-EXIT-010")
+    def test_cli_count_empty_recording_prints_zero_exit_0(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """L1-EXIT-010: count of an empty recording prints 0 and exits 0."""
+        from mie_decoder.cli import main
+
+        f = tmp_path / "empty.mie"
+        f.write_bytes(b"\x00\x00")
+        rc = main(["count", str(f)])
+        assert rc == 0
+        assert capsys.readouterr().out.strip() == "0"
+
+    @pytest.mark.requirement("L2-CLI-011")
+    @pytest.mark.requirement("L1-EXIT-002")
+    def test_cli_count_no_valid_records_returns_exit_2(self, tmp_path: Path) -> None:
+        """L2-CLI-011: count on a wrong-file input exits 2, matching decode.
+        Regression: count previously flattened NoValidRecords to exit 1."""
+        from mie_decoder.cli import main
+
+        bad = tmp_path / "junk.mie"
+        bad.write_bytes(b"\xff" * 256)
+        assert main(["count", str(bad)]) == 2
 
     @pytest.mark.requirement("L2-CLI-011")
     @pytest.mark.requirement("L1-EXIT-004")

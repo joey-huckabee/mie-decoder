@@ -567,3 +567,38 @@ class TestNRecordLookahead:
             assert validate_record(buf, 0, len(buf), None, lookahead_records=n), (
                 f"N={n}: EOF must not reject when the candidate itself is valid"
             )
+
+
+class TestEndOfRecordsTerminator:
+    """L2-SYN-028 end-of-records terminator (null Type Word 0x0000).
+
+    Mirrors rust/src/sync.rs::tests::{validate_lookahead_terminator_confirms_
+    last_record, recover_sync_does_not_honor_terminator}.
+    """
+
+    @staticmethod
+    def _record_36w() -> bytes:
+        return bytes([0x02, 0x24]) + bytes(70)
+
+    @pytest.mark.requirement("L2-SYN-028")
+    def test_lookahead_terminator_confirms_last_record(self) -> None:
+        from mie_decoder.sync import validate_record
+
+        # A valid record whose look-ahead boundary is the 0x0000 terminator is
+        # confirmed as the last record — not dropped. Without this the final
+        # record of every well-formed recording would be lost.
+        buf = self._record_36w() + b"\x00\x00"
+        assert validate_record(buf, 0, len(buf), None, lookahead_records=2)
+
+    @pytest.mark.requirement("L2-SYN-028")
+    def test_recover_sync_does_not_honor_terminator(self) -> None:
+        from mie_decoder.sync import recover_sync, validate_record
+
+        # [2 bytes garbage][valid record][0x0000]. Recovery must NOT validate
+        # the record off its terminator follower (a mis-aligned candidate could
+        # otherwise land on a stray zero); recovery requires a real follower.
+        buf = b"\xff\xff" + self._record_36w() + b"\x00\x00"
+        assert recover_sync(buf, 0, len(buf), None) is None
+        # Forward validation of that same record (at its true boundary) accepts
+        # it — proving the trusted-boundary vs recovery split is intentional.
+        assert validate_record(buf, 2, len(buf), None, lookahead_records=2)

@@ -931,8 +931,15 @@ def _classify_decode_success(outcome: WriteOutcome, readers: list[MieFileReader]
     """Emit the L1-EXIT-005 exit-class summary for a successful run and return
     EXIT_OK (mirrors the ``Ok`` arm of Rust ``classify_decode_exit``)."""
     sync_losses = sum(r.sync_losses for r in readers)
+    # L1-EXIT-010: report the empty-recording class only when *every* opened
+    # input was a valid empty recording (so a merge that also drew rows from a
+    # non-empty input stays "complete"). The writer has already produced a
+    # header-only CSV.
+    empty_recording = bool(readers) and all(r.empty_recording for r in readers)
     if outcome.partial is not None:
         cls = "partial-unrecoverable"
+    elif empty_recording and outcome.normal_count == 0 and outcome.error_count == 0:
+        cls = "empty-recording"
     elif sync_losses > 0:
         cls = "partial-recovered"
     else:
@@ -1095,8 +1102,20 @@ def _run_count(args: argparse.Namespace) -> int:
         t0 = time.perf_counter()
         count = sum(1 for _ in messages)
         elapsed = time.perf_counter() - t0
+    except (
+        MieNoValidRecordsError,
+        MieHomogeneousPayloadError,
+        MieTimestampFormatMismatchError,
+    ) as exc:
+        # Align with decode (L2-CLI-011): a wrong-file rejection maps to exit 2,
+        # not the generic runtime exit 1. (An empty recording raises nothing —
+        # the iterator simply yields zero records — so count prints 0 and exits
+        # 0 per L1-EXIT-010.)
+        logger.error("Count failed: %s", exc)
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_NO_RECORDS
     except MieDecoderError as exc:
-        # Any decode error during the count maps to a runtime failure
+        # Any other decode error during the count maps to a runtime failure
         # (exit 1), matching the Rust count subcommand.
         logger.error("Count failed: %s", exc)
         print(f"Error: {exc}", file=sys.stderr)
@@ -1107,7 +1126,14 @@ def _run_count(args: argparse.Namespace) -> int:
     # human-friendly status with path context to stderr (always emitted,
     # not gated by --log-level so an interactive operator sees context).
     print(count)
-    print(f"counted {count} messages in {reader.path.name}", file=sys.stderr)
+    if reader.empty_recording:
+        print(
+            f"no records in {reader.path.name} (empty recording — opens on "
+            f"the end-of-records terminator)",
+            file=sys.stderr,
+        )
+    else:
+        print(f"counted {count} messages in {reader.path.name}", file=sys.stderr)
     return EXIT_OK
 
 

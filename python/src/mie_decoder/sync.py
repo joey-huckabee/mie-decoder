@@ -83,6 +83,7 @@ from typing import Final
 from mie_decoder.decode import (
     MIN_RECORD_WORDS_STANDARD,
     decode_type_word,
+    is_terminator_type_word,
     is_valid_message_type,
     read_u16,
 )
@@ -150,6 +151,7 @@ def validate_record_detailed(
     file_len: int,
     ts_format: TimestampFormat | None = None,
     lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
+    honor_terminator: bool = True,
 ) -> ValidationFailure | None:
     """Return the precise reason a candidate record fails validation.
 
@@ -163,6 +165,13 @@ def validate_record_detailed(
         file_len: Total file length in bytes.
         ts_format: Known timestamp format, or None to skip timestamp
             field-range checks.
+        lookahead_records: Total records checked (candidate + N-1 followers).
+        honor_terminator: When ``True`` (the trusted-boundary path used by
+            forward decode and first-record detection), a null Type Word
+            (``0x0000``) at the candidate's look-ahead boundary is treated as
+            the L2-SYN-028 end-of-records terminator and confirms the
+            candidate. Sync **recovery** passes ``False`` so a mis-aligned
+            candidate cannot validate off a stray zero data word.
 
     Returns:
         ``None`` for a valid record, otherwise the failure reason.
@@ -236,6 +245,16 @@ def validate_record_detailed(
         if next_offset + 2 > file_len:
             break
         next_raw = read_u16(data, next_offset)
+        # L2-SYN-028: a null Type Word (0x0000) at a look-ahead boundary is the
+        # recorder's end-of-records terminator, not an invalid follower. Treat
+        # it like EOF — the candidate is the last real record — so confirm it
+        # rather than rejecting it. Without this the final record of every
+        # well-formed recording (which the recorder caps with 0x0000) would be
+        # dropped. Only honored on the trusted-boundary path; sync recovery
+        # passes honor_terminator=False so a mis-aligned candidate cannot
+        # validate off a stray zero data word.
+        if honor_terminator and is_terminator_type_word(next_raw):
+            break
         next_tw = decode_type_word(next_raw)
         if not is_valid_message_type(next_tw.message_type):
             return ValidationFailure.LOOKAHEAD_UNKNOWN_MESSAGE_TYPE
@@ -423,7 +442,21 @@ def recover_sync(
     )
 
     for candidate in range(scan_start, scan_end, 2):
-        if validate_record(data, candidate, file_len, ts_format, lookahead_records):
+        # Strict look-ahead during recovery (honor_terminator=False): a
+        # mis-aligned candidate whose declared length lands its boundary on a
+        # zero data word must NOT validate as a bogus "last record before
+        # terminator". Recovery requires a real follower record (or EOF).
+        if (
+            validate_record_detailed(
+                data,
+                candidate,
+                file_len,
+                ts_format,
+                lookahead_records,
+                honor_terminator=False,
+            )
+            is None
+        ):
             skipped = candidate - offset
             logger.info(
                 "Sync recovered at offset 0x%X (skipped %d bytes from 0x%X)",

@@ -41,6 +41,15 @@ MIN_RECORD_WORDS: Final[int] = 5
 #: Minimum record size in 16-bit words for Standard: Type(1) + TS(2) + Cmd(1) = 4
 MIN_RECORD_WORDS_STANDARD: Final[int] = 4
 
+#: End-of-records terminator (L2-RDR-021). DDC recorders cap the record stream
+#: with a null Type Word — all sixteen bits zero. Because the Word Count field
+#: (bits 8–13) is zero, ``0x0000`` can never be a valid record (the minimum is
+#: 4 words); the value is unambiguous as a stream terminator rather than a
+#: record. A file whose record stream is empty consists solely of this word (an
+#: empty recording, e.g. an unused MIL-STD-1553 channel that captured no
+#: traffic).
+TERMINATOR_TYPE_WORD: Final[int] = 0x0000
+
 #: struct format for a single little-endian unsigned 16-bit word
 _LE_U16: Final[str] = "<H"
 
@@ -793,6 +802,14 @@ def is_valid_message_type(message_type: int) -> bool:
         0x18, or 0x20).
     """
     return message_type in VALID_MESSAGE_TYPES
+
+
+def is_terminator_type_word(raw: int) -> bool:
+    """Return whether ``raw`` is the end-of-records terminator (null Type Word).
+
+    See :data:`TERMINATOR_TYPE_WORD` and L2-RDR-021 / L2-SYN-028.
+    """
+    return raw == TERMINATOR_TYPE_WORD
 
 
 def read_u16(data: ByteSource, offset: int) -> int:

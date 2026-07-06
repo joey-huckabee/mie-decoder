@@ -15,6 +15,45 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **End-of-records terminator awareness (`0x0000`) and the empty-recording
+  outcome.** DDC recorders cap the record stream with a null Type Word
+  (`0x0000`) and, for a channel that captured no traffic, produce a file that is
+  *only* that terminator (e.g. an unused MIL-STD-1553 station — literally the two
+  bytes `00 00`). The decoder now understands the terminator: a file whose stream
+  opens on it is recognized as a **valid but empty recording** and decodes to a
+  **header-only CSV at exit 0** (new `empty-recording` exit class, with a WARN),
+  instead of the previous `NoValidRecords` error (exit 2) that halted batch
+  processing. `count` prints `0` and exits 0. The wrong-file guard is preserved —
+  only a genuine `0x0000` lead word qualifies; arbitrary non-MIE bytes still exit
+  2. New requirements **L1-EXIT-010**, **L2-RDR-021**, **L2-SYN-028**; L1-EXIT-002
+  amended to carve out the empty case. Documented in `docs/MIE-FORMAT.md` §2.4.
+
+### Fixed
+
+- **The last record of every recording is no longer silently dropped.** Because
+  each recording ends `…record, 00 00`, the final record's look-ahead follower is
+  the terminator, which the N-record look-ahead (L2-SYN-005) treated as an invalid
+  follower — so that record failed validation and was dropped. Single-record files
+  failed entirely (`NoValidRecords`). The look-ahead now honors the terminator on
+  the trusted-boundary path (forward decode / first-record detection) per
+  L2-SYN-028; sync **recovery** stays strict so a mis-aligned candidate can't
+  validate off a stray zero data word. This bug went unnoticed because the
+  conformance fixtures never included a real terminator — now they do
+  (`multi-record-then-terminator` pins all rows survive).
+- **`count` now exits 2 (not 1) on a wrong-file input**, matching `decode` and the
+  L2-CLI-011 exit-code table.
+
+### Tests
+
+- New Rust unit/CLI tests and Python pytest cases for the terminator (forward
+  vs. recovery), single-record-then-terminator, last-record survival, empty
+  recording (exit 0 + header-only CSV, `count` → 0), and the wrong-file guard.
+- Three new cross-implementation conformance fixtures **with a real `00 00`
+  terminator**: `empty-recording`, `single-record-then-terminator`, and
+  `multi-record-then-terminator`.
+
 ## [2.5.3] — 2026-06-28
 
 ### Fixed

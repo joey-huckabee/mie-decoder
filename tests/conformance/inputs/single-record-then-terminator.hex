@@ -1,0 +1,17 @@
+# L2-SYN-028 single-record fixture: one RT15 SA11 Receive record (72 bytes,
+# byte-identical to count-one.hex) followed by the 0x0000 end-of-records
+# terminator. Regression: the lone record's look-ahead follower is the
+# terminator, which the pre-fix 2-record look-ahead rejected — the record
+# was dropped and the file failed as NoValidRecords. It must now decode to
+# exactly one CSV row.
+
+02240F1826DB21F6
+7E79
+0004 0000 0000 2F00 22CA 2F00 22CA
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000
+71C7 0078
+
+# end-of-records terminator
+0000

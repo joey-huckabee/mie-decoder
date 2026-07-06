@@ -66,6 +66,22 @@ Every record (header detection, normal forward decode, and post-recovery) passes
 
 The look-ahead is what makes the validator usable. Single-record validation produces too many false positives on plausible-looking junk bytes; confirming the following record(s) drives the false-positive rate to near-zero on real inputs.
 
+### 2.4 End-of-records terminator
+
+A DDC recorder caps the record stream with an **end-of-records terminator**: a single **null Type Word** — all sixteen bits zero (`0x0000`) — written where the next record's Type Word would begin. Because the Word Count field (bits 8–13) is zero, `0x0000` can never be a valid record (the minimum is 4 words), so the value is unambiguous as a terminator rather than a record.
+
+```
+┌────────┬────────┬─────┬────────┬─────────────────────┐
+│ Rec 1  │ Rec 2  │ ... │ Rec N  │ 0x0000 (terminator) │   [optional trailing padding]
+└────────┴────────┴─────┴────────┴─────────────────────┘
+```
+
+The decoder treats the terminator as a clean end of stream (L2-RDR-021): forward decoding stops there normally, with no sync loss. The look-ahead honors it too (L2-SYN-028) — a record whose following Type Word is the terminator is confirmed as the **last** record rather than rejected, so the final record of every recording is decoded (recovery scans stay strict to avoid mis-aligning onto a stray zero data word). Anything after the terminator (EOF, or zero padding to a block boundary) is ignored.
+
+An **empty recording** is a file whose record stream is *only* the terminator — literally the two bytes `00 00`. This is what a recorder produces for a channel that captured no bus traffic (e.g. an unused MIL-STD-1553 station). It is a *valid* recording with zero records — distinct from a wrong-file input — and the decoder handles it as such: a header-only CSV and a clean exit (L1-EXIT-010; see `ERROR-CATALOG.md` §1 and `DATA-SCENARIOS.md`).
+
+> **Note on the "header".** §2.1 describes an optional proprietary header that the decoder skips by scanning. In the recordings observed to date there is **no** such header — records begin at byte 0 and the stream ends at the `0x0000` terminator. The scan-forward header skip remains as a defense for files that do carry leading non-record bytes, but it is not required for these recorders.
+
 ---
 
 ## 3. Record structure
@@ -109,6 +125,8 @@ The first word of every record. Drives record classification, framing, and the e
 | `0x10` | `BROADCAST_BC_TO_RT` | Broadcast BC→RT |
 | `0x18` | `BROADCAST_RT_TO_RT` | Broadcast RT-to-RT |
 | `0x20` | `SPURIOUS_DATA` | Orphan data fragment with no Command Word |
+
+The value `0x0000` (message type `0`, word count `0`) is **not** a record: it is the end-of-records terminator (§2.4). It never appears in the table above and is never decoded as a message.
 
 The full enumeration of 11 supported transaction shapes (10 message formats plus SPURIOUS_DATA) is in §6.
 

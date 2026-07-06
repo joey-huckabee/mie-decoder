@@ -56,6 +56,7 @@ from mie_decoder.decode import (
     decode_standard_timestamp,
     decode_type_word,
     detect_record_anomalies,
+    is_terminator_type_word,
     probe_timestamp_format,
     read_u16,
     read_u16_array,
@@ -182,6 +183,15 @@ class MieFileReader:
         # after the loop completes (for L1-EXIT-003 / L1-EXIT-005 exit-class
         # summary). Mirrors `MieFileReader::sync_losses` in Rust.
         self._sync_losses: int = 0
+        # L1-EXIT-010 / L2-RDR-021: set True during __iter__ when the input is a
+        # valid but *empty* recording — its record stream opens directly on the
+        # end-of-records terminator (a null Type Word), so zero records are
+        # yielded but the file is a legitimate MIE recording (not a wrong-file
+        # NoValidRecords rejection). The CLI queries this after a successful
+        # zero-record decode to report the empty-recording exit class at exit 0.
+        # Reset at the start of each __iter__ call. Mirrors Rust's
+        # ``MieFileReader::empty_recording``.
+        self._empty_recording: bool = False
         # L2-WRT-020: resolve the per-file MUX value once, from the file name.
         # Shared by reference across every message this reader yields.
         self._mux: str | None = (
@@ -222,6 +232,16 @@ class MieFileReader:
         """
         return self._sync_losses
 
+    @property
+    def empty_recording(self) -> bool:
+        """Whether the most recent ``__iter__`` classified the input as a valid
+        but empty recording (record stream opens on the end-of-records
+        terminator; zero records, but not a wrong-file rejection). Reset each
+        ``__iter__`` call. Per L1-EXIT-010 the CLI uses this to emit the
+        ``empty-recording`` exit class and write a header-only CSV at exit 0.
+        """
+        return self._empty_recording
+
     def __iter__(self) -> Iterator[MieMessage]:
         """Iterate over all decoded messages in file order.
 
@@ -247,6 +267,7 @@ class MieFileReader:
         # iteration so successive __iter__ calls on the same reader
         # handle don't accumulate stale counts.
         self._sync_losses = 0
+        self._empty_recording = False
         prev_was_error = False
         resolved_format: TimestampFormat | None = None
 
@@ -268,6 +289,25 @@ class MieFileReader:
                     lookahead_records=self._lookahead_records,
                 )
                 if start_offset is None:
+                    # L1-EXIT-010 / L2-RDR-021: a valid but *empty* recording
+                    # opens directly on the end-of-records terminator (a null
+                    # Type Word). The record stream is legitimately empty — this
+                    # is NOT a wrong-file NoValidRecordsError. Yield zero records
+                    # cleanly (the writer emits a header-only CSV) and flag the
+                    # condition so the CLI can report the empty-recording exit
+                    # class at exit 0. An unrecognized non-null lead word still
+                    # falls through to the wrong-file diagnosis below, preserving
+                    # the guard against genuinely non-MIE inputs.
+                    if file_len >= 2 and is_terminator_type_word(read_u16(mm, 0)):
+                        logger.warning(
+                            "%s: recording contains no records — the stream "
+                            "opens on the end-of-records terminator (empty "
+                            "capture); writing header-only output",
+                            self._path.name,
+                        )
+                        self._empty_recording = True
+                        return
+
                     # L2-RDR-004: distinguish "no Type Word at all" from
                     # "found a structurally-valid Type Word but its
                     # declared extent runs past EOF". The latter gets
@@ -469,6 +509,22 @@ class MieFileReader:
                 while offset + loop_min <= file_len:
                     # ── Read and validate Type Word ────────────
                     type_raw = read_u16(mm, offset)
+
+                    # L2-RDR-021: a null Type Word (0x0000) at a record boundary
+                    # is the recorder's end-of-records terminator. Stop cleanly —
+                    # a normal end of stream, not a sync loss. (When the
+                    # terminator sits within MIN_RECORD_BYTES of EOF the loop
+                    # guard already ended iteration; this covers a terminator
+                    # followed by trailing padding.) The last real record was
+                    # already confirmed by the L2-SYN-028 look-ahead and emitted
+                    # before we reach here.
+                    if is_terminator_type_word(type_raw):
+                        logger.debug(
+                            "end-of-records terminator at 0x%X; decode complete",
+                            offset,
+                        )
+                        break
+
                     tw = decode_type_word(type_raw)
 
                     ts_words = TIMESTAMP_WORD_COUNTS[resolved_format]

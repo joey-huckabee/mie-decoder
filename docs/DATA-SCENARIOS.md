@@ -31,6 +31,7 @@ below calls out where the two differ.
 |---|---|---|
 | A normal recording | [§3 Input files](#3-input-file-scenarios) | Decodes to CSV, exit 0 |
 | An empty (0-byte) file | [§3](#3-input-file-scenarios) | Single file: error, exit 1. In a merge with `--allow-partial`: dropped, `.partial`, exit 0 |
+| A recording that captured nothing (`00 00` only) | [§3](#3-input-file-scenarios) | Valid empty recording: header-only CSV, exit 0 |
 | A file that isn't MIE / is all-0xFF garbage | [§3](#3-input-file-scenarios) | "No valid records", exit 2 (single file) |
 | A file cut off part-way through | [§3](#3-input-file-scenarios) | Truncated record skipped (lenient) or exit 1 (strict) |
 | IRIG vs Standard vs free-running timestamps | [§4 Timestamps](#4-timestamp-scenarios) | Auto-detected; Standard has empty DELTA unless calibrated |
@@ -107,6 +108,7 @@ below calls out where the two differ.
 |---|---|---|
 | **Valid MIE recording** | Decodes every record to a CSV row. | 0 |
 | **Empty (0 bytes)** | Single-file: reports the file is empty and writes nothing. In a *merge*, the empty file fails at open — see [§8](#8-multi-file-merge-scenarios). | 1 |
+| **Empty *recording*** (captured nothing) | A **valid** MIE recording that captured zero records — its stream is just the `0x0000` end-of-records terminator (e.g. an unused MIL-STD-1553 channel; on disk, the two bytes `00 00`). Writes a **header-only CSV**, WARNs "empty capture", and exits cleanly. `count` prints `0`. This is *not* a wrong-file error — it's recognized by the terminator. | 0 |
 | **Not an MIE file** (wrong type) | Scans the first 64 KB, finds no valid record, reports "no valid records." Try `dump` to inspect the bytes. | 2 |
 | **All-0xFF / single-byte padding** ("homogeneous payload") | A defensive check rejects a file whose candidate records are byte-identical except for the timestamp — almost always a pad, not data. | 2 |
 | **Truncated first record** | A valid header is found but the record runs past end-of-file. Strict: error; lenient: reported and skipped. | 1 / 0 |
@@ -321,7 +323,7 @@ carries the MUX of the file it came from. Turn it off with `--no-mux` (or
 
 | Code | Class | Meaning |
 |---|---|---|
-| **0** | success | Decoded cleanly, *or* recovered from sync loss, *or* wrote a `.partial` under `--allow-partial` |
+| **0** | success | Decoded cleanly, *or* recovered from sync loss, *or* wrote a `.partial` under `--allow-partial`, *or* a valid **empty recording** (header-only CSV, `empty-recording` class) |
 | **1** | runtime / decode error | A strict-mode record error, a write failure, a clobber refusal, or an unreadable input (single file) |
 | **2** | no records | Not an MIE file, homogeneous padding, or (strict) an ambiguous timestamp format |
 | **3** | unrecoverable sync loss | Mid-file corruption with no `--allow-partial` (no output written) |

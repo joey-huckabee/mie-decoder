@@ -12,15 +12,15 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use memmap2::Mmap;
 
 use crate::decode::{
     DEFAULT_DETECT_RECORDS, DEFAULT_MUX_DELIMITER, DEFAULT_MUX_ENABLED, DEFAULT_MUX_FIELD,
     DetectionConfidence, MIN_RECORD_BYTES_STANDARD, classify_message_format, decode_command_word,
-    decode_irig_timestamp, decode_standard_timestamp, decode_type_word, mux_from_filename,
-    probe_timestamp_format, read_u16, read_u16_array,
+    decode_irig_timestamp, decode_standard_timestamp, decode_type_word, is_terminator_type_word,
+    mux_from_filename, probe_timestamp_format, read_u16, read_u16_array,
 };
 use crate::error::{MieError, MieResult};
 use crate::models::{
@@ -69,6 +69,14 @@ pub struct MieFileReader {
     /// post-iteration (e.g., to distinguish L1-EXIT-003 partial-recovered
     /// from L1-EXIT-002 complete in the exit-class summary).
     sync_losses: AtomicU64,
+    /// L1-EXIT-010 / L2-RDR-021: set true during `iter()` when the input is a
+    /// valid but *empty* recording — its record stream opens directly on the
+    /// end-of-records terminator (a null Type Word), so zero records are
+    /// yielded but the file is a legitimate MIE recording (not a wrong-file
+    /// `NoValidRecords` rejection). The CLI queries this after a successful
+    /// zero-record decode to emit the `empty-recording` exit class and write a
+    /// header-only CSV at exit 0. Reset at the start of each `iter()` call.
+    empty_recording: AtomicBool,
 }
 
 /// Builder-style options. `strict=false`, `time_format=Auto`,
@@ -183,6 +191,7 @@ impl MieFileReader {
             standard_tick_rate_hz: opts.standard_tick_rate_hz,
             mux,
             sync_losses: AtomicU64::new(0),
+            empty_recording: AtomicBool::new(false),
         })
     }
 
@@ -201,11 +210,21 @@ impl MieFileReader {
         self.sync_losses.load(Ordering::Relaxed)
     }
 
+    /// Whether the most recent `iter()` classified the input as a valid but
+    /// empty recording (record stream opens on the end-of-records terminator;
+    /// zero records, but not a wrong-file rejection). Reset each `iter()` call.
+    /// Per L1-EXIT-010 the CLI uses this to emit the `empty-recording` exit
+    /// class and write a header-only CSV at exit 0.
+    pub fn empty_recording(&self) -> bool {
+        self.empty_recording.load(Ordering::Relaxed)
+    }
+
     /// Borrow an iterator over decoded messages.
     pub fn iter(&self) -> RecordIter<'_> {
         // Reset the per-call counter so successive iter() calls on the
         // same reader handle don't accumulate stale counts.
         self.sync_losses.store(0, Ordering::Relaxed);
+        self.empty_recording.store(false, Ordering::Relaxed);
 
         // `format_hint` is the Option-typed value threaded through
         // `find_first_record` and `diagnose_header_scan_failure`: None
@@ -400,53 +419,74 @@ impl MieFileReader {
                 }
             }
             None => {
-                // L2-RDR-004: distinguish "no MIE record at all" from
-                // "structurally-valid Type Word truncated past EOF".
-                let truncated = crate::sync::diagnose_header_scan_failure(
-                    data,
-                    file_len,
-                    format_hint,
-                    MAX_SCAN_BYTES,
-                );
-                match truncated {
-                    Some((trunc_offset, record_bytes, available)) => {
-                        if self.strict {
-                            log_error!(
-                                "first record after header detection is truncated \
+                // L1-EXIT-010 / L2-RDR-021: a valid but *empty* recording opens
+                // directly on the end-of-records terminator (a null Type Word).
+                // The record stream is legitimately empty — this is NOT a
+                // wrong-file `NoValidRecords` rejection. Yield zero records
+                // cleanly (the writer emits a header-only CSV) and flag the
+                // condition so the CLI can report the `empty-recording` exit
+                // class at exit 0. An unrecognized non-null lead word still
+                // falls through to the wrong-file diagnosis below, preserving
+                // the guard against genuinely non-MIE inputs.
+                if read_u16(data, 0).is_some_and(is_terminator_type_word) {
+                    log_warn!(
+                        "{}: recording contains no records — the stream opens on \
+                         the end-of-records terminator (empty capture); writing \
+                         header-only output",
+                        self.path.display()
+                    );
+                    self.empty_recording.store(true, Ordering::Relaxed);
+                    early_done = true;
+                    None
+                } else {
+                    // L2-RDR-004: distinguish "no MIE record at all" from
+                    // "structurally-valid Type Word truncated past EOF".
+                    let truncated = crate::sync::diagnose_header_scan_failure(
+                        data,
+                        file_len,
+                        format_hint,
+                        MAX_SCAN_BYTES,
+                    );
+                    match truncated {
+                        Some((trunc_offset, record_bytes, available)) => {
+                            if self.strict {
+                                log_error!(
+                                    "first record after header detection is truncated \
                                  at 0x{:X}: declared {} bytes, only {} available",
-                                trunc_offset,
-                                record_bytes,
-                                available
-                            );
-                            Some(MieError::FirstRecordTruncated {
-                                offset: trunc_offset as u64,
-                                record_bytes: record_bytes as u64,
-                                available_bytes: available as u64,
-                            })
-                        } else {
-                            log_warn!(
-                                "first record after header detection is truncated \
+                                    trunc_offset,
+                                    record_bytes,
+                                    available
+                                );
+                                Some(MieError::FirstRecordTruncated {
+                                    offset: trunc_offset as u64,
+                                    record_bytes: record_bytes as u64,
+                                    available_bytes: available as u64,
+                                })
+                            } else {
+                                log_warn!(
+                                    "first record after header detection is truncated \
                                  at 0x{:X}: declared {} bytes, only {} available — \
                                  lenient mode terminates cleanly with zero records",
-                                trunc_offset,
-                                record_bytes,
-                                available
-                            );
-                            early_done = true;
-                            None
+                                    trunc_offset,
+                                    record_bytes,
+                                    available
+                                );
+                                early_done = true;
+                                None
+                            }
                         }
-                    }
-                    None => {
-                        let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
-                        log_error!(
-                            "no valid records found in first {} bytes of {}",
-                            scan_bytes,
-                            self.path.display()
-                        );
-                        Some(MieError::NoValidRecords {
-                            path: self.path.clone(),
-                            scan_bytes,
-                        })
+                        None => {
+                            let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
+                            log_error!(
+                                "no valid records found in first {} bytes of {}",
+                                scan_bytes,
+                                self.path.display()
+                            );
+                            Some(MieError::NoValidRecords {
+                                path: self.path.clone(),
+                                scan_bytes,
+                            })
+                        }
                     }
                 }
             }
@@ -611,6 +651,24 @@ impl<'a> Iterator for RecordIter<'a> {
                 self.done = true;
                 return None;
             };
+
+            // L2-RDR-021: a null Type Word (0x0000) at a record boundary is the
+            // recorder's end-of-records terminator. Stop cleanly — this is a
+            // normal end of stream, not a sync loss. (When the terminator sits
+            // within MIN_RECORD_BYTES of EOF the length guard above already
+            // ended the loop; this covers a terminator followed by trailing
+            // padding.) The last real record was already confirmed by the
+            // L2-SYN-028 look-ahead, so it has been emitted before we get here.
+            if is_terminator_type_word(type_raw) {
+                log_debug!(
+                    "end-of-records terminator at 0x{:X}; decode complete",
+                    self.offset
+                );
+                self.done = true;
+                self.log_complete();
+                return None;
+            }
+
             let tw = decode_type_word(type_raw);
 
             // L2-DEC-011 / L2-DEC-015: the timestamp format is now
@@ -1585,5 +1643,106 @@ mod tests {
                 "defense false-fired on legitimately varied records: {e}"
             );
         }
+    }
+
+    /// L1-EXIT-010 / L2-RDR-021: a file whose record stream opens directly on
+    /// the end-of-records terminator (a null Type Word) is a valid but *empty*
+    /// recording — it SHALL yield zero records with NO error (distinct from
+    /// the `NoValidRecords` wrong-file rejection) and flag `empty_recording()`.
+    /// Regression: an "unused channel" recording is literally the two bytes
+    /// `00 00`; the decoder previously raised NoValidRecords and exited 2.
+    /// Requirements: L1-EXIT-010, L2-RDR-021
+    #[test]
+    fn empty_recording_terminator_only_yields_zero_records() {
+        let f = write_temp(&[0x00, 0x00]);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        let msgs: Vec<_> = reader
+            .iter()
+            .collect::<Result<_, _>>()
+            .expect("empty recording must not surface an error");
+        assert!(msgs.is_empty(), "empty recording yields zero records");
+        assert!(
+            reader.empty_recording(),
+            "empty_recording() must be set for a terminator-only file"
+        );
+    }
+
+    /// L1-EXIT-010: a wrong-file input (no terminator, no valid record) must
+    /// still surface NoValidRecords and NOT be mistaken for an empty
+    /// recording. Guards the positive terminator signature against masking
+    /// genuinely non-MIE inputs.
+    /// Requirements: L1-EXIT-010, L2-RDR-021
+    #[test]
+    fn wrong_file_is_not_an_empty_recording() {
+        let bytes = vec![0xFFu8; 256];
+        let f = write_temp(&bytes);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        let mut it = reader.iter();
+        assert_eq!(
+            it.next().unwrap().unwrap_err().kind(),
+            crate::error::MieErrorKind::NoValidRecords
+        );
+        drop(it);
+        assert!(
+            !reader.empty_recording(),
+            "a 0xFF wrong-file must not be flagged as an empty recording"
+        );
+    }
+
+    /// L2-SYN-028: a file containing exactly one valid record followed by the
+    /// terminator SHALL decode that record. Regression: the single record's
+    /// look-ahead follower is the terminator, which the pre-fix 2-record
+    /// look-ahead rejected — the lone record was dropped and the file failed
+    /// as NoValidRecords.
+    /// Requirements: L2-SYN-028
+    #[test]
+    fn single_record_then_terminator_decodes() {
+        let mut bytes = rt15_sa11_rcv();
+        bytes.extend_from_slice(&[0x00, 0x00]);
+        let f = write_temp(&bytes);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+        assert_eq!(
+            msgs.len(),
+            1,
+            "the lone record before the terminator decodes"
+        );
+        assert!(!reader.empty_recording());
+    }
+
+    /// L2-SYN-028: the LAST record before the terminator SHALL NOT be dropped.
+    /// Regression: every well-formed recording ends `...record, 00 00`; the
+    /// pre-fix look-ahead failed the final record (its follower is the
+    /// terminator) and silently lost it. The conformance fixtures never
+    /// included a real terminator, which is why the bug went unnoticed.
+    /// Requirements: L2-SYN-028
+    #[test]
+    fn last_record_before_terminator_not_dropped() {
+        let mut bytes = rt15_sa11_rcv();
+        bytes.extend(rt15_sa11_rcv());
+        bytes.extend_from_slice(&[0x00, 0x00]);
+        let f = write_temp(&bytes);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+        assert_eq!(
+            msgs.len(),
+            2,
+            "both records survive; terminator ends cleanly"
+        );
+    }
+
+    /// L2-RDR-021: a terminator followed by trailing padding (not EOF) still
+    /// ends the stream cleanly at the terminator without a sync-loss.
+    /// Requirements: L2-RDR-021
+    #[test]
+    fn terminator_with_trailing_padding_ends_clean() {
+        let mut bytes = rt15_sa11_rcv();
+        bytes.extend_from_slice(&[0x00, 0x00]); // terminator
+        bytes.extend_from_slice(&[0x00; 40]); // trailing zero padding
+        let f = write_temp(&bytes);
+        let reader = MieFileReader::new(f.path()).unwrap();
+        let msgs: Vec<_> = reader.iter().collect::<Result<_, _>>().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert!(!reader.empty_recording());
     }
 }
