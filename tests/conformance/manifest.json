@@ -213,6 +213,20 @@
       "expected": "expected/multi-record-then-terminator.csv"
     },
     {
+      "name": "count-multi-record-then-terminator",
+      "mode": "count",
+      "input": "inputs/multi-record-then-terminator.hex",
+      "expected": "expected/count-multi-record-then-terminator.txt",
+      "expected_stderr_contains": "counted 3 messages in"
+    },
+    {
+      "name": "count-no-valid-records",
+      "mode": "count",
+      "input": "inputs/no-valid-records.hex",
+      "expected_exit": 2,
+      "expected_stderr_contains": "No valid MIE records found"
+    },
+    {
       "name": "homogeneous-payload",
       "input": "inputs/homogeneous-payload.hex",
       "expected_exit": 2
