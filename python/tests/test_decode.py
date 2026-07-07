@@ -468,6 +468,46 @@ class TestDetectTimestampFormat:
         assert out.exists()
 
 
+class TestScoreSingleRecord:
+    """L2-DEC-015: per-record IRIG-vs-Standard scoring. Direct unit tests so a
+    refactor of the scorer is caught locally, not only through probe/conformance.
+    IRIG scores up to +5 (T/R: 2, word-count plausibility: 2, field range: 1);
+    Standard up to +4 (no range bonus)."""
+
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_irig_receive_record_scores_irig_max(self) -> None:
+        from tests.conftest import RECORD_RT15_SA11_RCV
+        from mie_decoder.decode import _score_single_record, decode_type_word, read_u16
+
+        tw = decode_type_word(read_u16(RECORD_RT15_SA11_RCV, 0))
+        irig, std = _score_single_record(RECORD_RT15_SA11_RCV, 0, tw)
+        # BC_TO_RT + Receive (2) + word-count plausible (2) + IRIG range (1).
+        assert irig == 5
+        assert irig > std
+
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_irig_transmit_record_scores_irig_max(self) -> None:
+        from tests.conftest import RECORD_RT15_SA22_XMT
+        from mie_decoder.decode import _score_single_record, decode_type_word, read_u16
+
+        tw = decode_type_word(read_u16(RECORD_RT15_SA22_XMT, 0))
+        irig, std = _score_single_record(RECORD_RT15_SA22_XMT, 0, tw)
+        # RT_TO_BC + Transmit (2) + word-count plausible (2) + IRIG range (1).
+        assert irig == 5
+        assert irig > std
+
+    @pytest.mark.requirement("L2-DEC-015")
+    def test_returns_pair_of_ints(self) -> None:
+        from tests.conftest import RECORD_RT15_SA11_RCV
+        from mie_decoder.decode import _score_single_record, decode_type_word, read_u16
+
+        tw = decode_type_word(read_u16(RECORD_RT15_SA11_RCV, 0))
+        result = _score_single_record(RECORD_RT15_SA11_RCV, 0, tw)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert all(isinstance(x, int) for x in result)
+
+
 class TestStructuralInvariants:
     """L2-SYN-020/021/022 structural invariants."""
 

@@ -261,6 +261,28 @@ def probe_timestamp_format(
         per-format aggregated scores, the number of records actually
         probed, and the L2-DEC-016 confidence classification.
     """
+    irig_score, std_score, records_probed = _accumulate_probe_scores(
+        data, first_offset, max_records
+    )
+    fmt = TimestampFormat.IRIG if irig_score >= std_score else TimestampFormat.STANDARD
+    max_score = max(irig_score, std_score)
+    margin = abs(irig_score - std_score)
+    return DetectionOutcome(
+        format=fmt,
+        irig_score=irig_score,
+        std_score=std_score,
+        records_probed=records_probed,
+        confidence=_classify_detection_confidence(max_score, margin),
+    )
+
+
+def _accumulate_probe_scores(
+    data: ByteSource, first_offset: int, max_records: int
+) -> tuple[int, int, int]:
+    """Walk up to ``max_records`` records from ``first_offset``, returning the
+    aggregate ``(irig_score, std_score, records_probed)``. Advances by each
+    record's declared length (the reader's walk) and stops at EOF or a
+    structurally-impossible record."""
     n = max(1, max_records)
     file_len = len(data)
     irig_score = 0
@@ -276,9 +298,8 @@ def probe_timestamp_format(
             break
         tw_raw = read_u16(data, offset)
         tw = decode_type_word(tw_raw)
-        # Defensively skip structurally-impossible records — these
-        # would also fail the reader's normal validate_record path,
-        # and including them in the probe would skew the score.
+        # Defensively skip structurally-impossible records — these would also
+        # fail the reader's validate_record path, and would skew the score.
         if tw.word_count < MIN_RECORD_WORDS_STANDARD:
             break
 
@@ -287,9 +308,6 @@ def probe_timestamp_format(
         std_score += s_delta
         records_probed += 1
 
-        # Advance by the record's declared length — same advance the
-        # reader will use during decode, so the probe walks the same
-        # records the reader will later interpret.
         record_bytes = tw.word_count * 2
         if record_bytes == 0:
             break
@@ -298,23 +316,16 @@ def probe_timestamp_format(
             break
         offset = next_offset
 
-    fmt = TimestampFormat.IRIG if irig_score >= std_score else TimestampFormat.STANDARD
-    max_score = max(irig_score, std_score)
-    margin = abs(irig_score - std_score)
-    if max_score < _CONFIDENCE_FLOOR or margin < _MIN_MARGIN:
-        confidence = DetectionConfidence.AMBIGUOUS
-    elif max_score >= _DECISIVE_FLOOR and margin >= _DECISIVE_MARGIN:
-        confidence = DetectionConfidence.DECISIVE
-    else:
-        confidence = DetectionConfidence.MARGINAL
+    return irig_score, std_score, records_probed
 
-    return DetectionOutcome(
-        format=fmt,
-        irig_score=irig_score,
-        std_score=std_score,
-        records_probed=records_probed,
-        confidence=confidence,
-    )
+
+def _classify_detection_confidence(max_score: int, margin: int) -> DetectionConfidence:
+    """L2-DEC-016 confidence classification from the aggregate score and margin."""
+    if max_score < _CONFIDENCE_FLOOR or margin < _MIN_MARGIN:
+        return DetectionConfidence.AMBIGUOUS
+    if max_score >= _DECISIVE_FLOOR and margin >= _DECISIVE_MARGIN:
+        return DetectionConfidence.DECISIVE
+    return DetectionConfidence.MARGINAL
 
 
 def _score_single_record(
@@ -331,48 +342,59 @@ def _score_single_record(
     Standard timestamp is a raw 32-bit counter with no semantic field
     bounds to check against).
     """
-    file_len = len(data)
-    irig_score = 0
-    std_score = 0
+    return (
+        _score_irig_candidate(data, offset, type_word),
+        _score_standard_candidate(data, offset, type_word),
+    )
 
-    # IRIG candidate: Cmd at offset+8 (Type + 3 TS words)
-    irig_cmd_offset = offset + 8
-    if irig_cmd_offset + 2 <= file_len:
-        irig_cmd_raw = read_u16(data, irig_cmd_offset)
-        irig_cmd = decode_command_word(irig_cmd_raw)
-        if type_word.message_type == MessageType.BC_TO_RT:
-            if irig_cmd.direction == Direction.RECEIVE:
-                irig_score += 2
-        elif type_word.message_type == MessageType.RT_TO_BC:
-            if irig_cmd.direction == Direction.TRANSMIT:
-                irig_score += 2
-        if type_word.word_count - 6 == irig_cmd.data_word_count:
-            irig_score += 2
-        # IRIG field range check on candidate TS positions.
-        ts_upper = read_u16(data, offset + 2)
-        ts_middle = read_u16(data, offset + 4)
-        hour = ts_upper & 0x1F
-        minute = (ts_middle >> 10) & 0x3F
-        second = (ts_middle >> 4) & 0x3F
-        us_hi = ts_middle & 0xF
-        if hour < 24 and minute < 60 and second < 60 and us_hi < 16:
-            irig_score += 1
 
-    # Standard candidate: Cmd at offset+6 (Type + 2 TS words)
-    std_cmd_offset = offset + 6
-    if std_cmd_offset + 2 <= file_len:
-        std_cmd_raw = read_u16(data, std_cmd_offset)
-        std_cmd = decode_command_word(std_cmd_raw)
-        if type_word.message_type == MessageType.BC_TO_RT:
-            if std_cmd.direction == Direction.RECEIVE:
-                std_score += 2
-        elif type_word.message_type == MessageType.RT_TO_BC:
-            if std_cmd.direction == Direction.TRANSMIT:
-                std_score += 2
-        if type_word.word_count - 5 == std_cmd.data_word_count:
-            std_score += 2
+def _tr_direction_matches(type_word: TypeWord, cmd: CommandWord) -> bool:
+    """T/R consistency: a BC_TO_RT type expects a Receive command, RT_TO_BC
+    expects Transmit. Other message types never match."""
+    if type_word.message_type == MessageType.BC_TO_RT:
+        return cmd.direction == Direction.RECEIVE
+    if type_word.message_type == MessageType.RT_TO_BC:
+        return cmd.direction == Direction.TRANSMIT
+    return False
 
-    return irig_score, std_score
+
+def _score_irig_candidate(data: ByteSource, offset: int, type_word: TypeWord) -> int:
+    """IRIG candidate: Cmd at offset+8 (Type + 3 TS words). Up to +5
+    (T/R: 2, word-count plausibility: 2, field-range validity: 1)."""
+    if offset + 8 + 2 > len(data):
+        return 0
+    cmd = decode_command_word(read_u16(data, offset + 8))
+    score = 0
+    if _tr_direction_matches(type_word, cmd):
+        score += 2
+    # IRIG overhead = TS(3) + Cmd(1) + Stat(1) + Type(1) = 6
+    if type_word.word_count - 6 == cmd.data_word_count:
+        score += 2
+    ts_upper = read_u16(data, offset + 2)
+    ts_middle = read_u16(data, offset + 4)
+    hour = ts_upper & 0x1F
+    minute = (ts_middle >> 10) & 0x3F
+    second = (ts_middle >> 4) & 0x3F
+    us_hi = ts_middle & 0xF
+    if hour < 24 and minute < 60 and second < 60 and us_hi < 16:
+        score += 1
+    return score
+
+
+def _score_standard_candidate(data: ByteSource, offset: int, type_word: TypeWord) -> int:
+    """Standard candidate: Cmd at offset+6 (Type + 2 TS words). Up to +4
+    (T/R: 2, word-count plausibility: 2; no range bonus — the 32-bit counter
+    has no semantic field bounds to check)."""
+    if offset + 6 + 2 > len(data):
+        return 0
+    cmd = decode_command_word(read_u16(data, offset + 6))
+    score = 0
+    if _tr_direction_matches(type_word, cmd):
+        score += 2
+    # Standard overhead = TS(2) + Cmd(1) + Stat(1) + Type(1) = 5
+    if type_word.word_count - 5 == cmd.data_word_count:
+        score += 2
+    return score
 
 
 def decode_command_word(raw: int) -> CommandWord:
