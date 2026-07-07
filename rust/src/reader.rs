@@ -29,8 +29,8 @@ use crate::models::{
     is_known_ddc_error_code, timestamp_word_count,
 };
 use crate::sync::{
-    DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, ValidationFailure, find_first_record, recover_sync,
-    validate_record_detailed,
+    DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, ScanHit, ValidationFailure, find_first_record,
+    recover_sync, validate_record_detailed,
 };
 use crate::{log_debug, log_error, log_info, log_warn};
 
@@ -220,6 +220,246 @@ impl MieFileReader {
     }
 
     /// Borrow an iterator over decoded messages.
+    /// The format iteration falls back to when detection never runs (Auto with
+    /// no records found → IRIG placeholder; otherwise the explicit choice).
+    fn default_resolved_format(&self) -> TimestampFormat {
+        match self.time_format {
+            TimestampFormat::Auto => TimestampFormat::Irig,
+            explicit => explicit,
+        }
+    }
+
+    /// Resolve the timestamp format for a found first record: reject a
+    /// homogeneous-payload pad (L2-SYN-018), else auto-detect (L2-DEC-015) or
+    /// sanity-check a forced format (L2-DEC-013). Returns the resolved format
+    /// and any pending error (which, if set, stops iteration before decoding).
+    fn resolve_format_for_hit(
+        &self,
+        data: &[u8],
+        hit: ScanHit,
+    ) -> (TimestampFormat, Option<MieError>) {
+        let candidate_type_raw = read_u16(data, hit.offset).unwrap_or(0);
+        let candidate_tw = decode_type_word(candidate_type_raw);
+        let candidate_record_bytes = usize::from(candidate_tw.word_count) * 2;
+        if crate::sync::is_homogeneous_payload(data, hit.offset, candidate_record_bytes) {
+            log_error!(
+                "pathological homogeneous-payload input at offset 0x{:X} \
+                 in {}: {} consecutive candidate records are byte-identical",
+                hit.offset,
+                self.path.display(),
+                crate::sync::HOMOGENEITY_SAMPLE_RECORDS,
+            );
+            return (
+                self.default_resolved_format(),
+                Some(MieError::HomogeneousPayload {
+                    path: self.path.clone(),
+                    offset: hit.offset as u64,
+                    sample_records: crate::sync::HOMOGENEITY_SAMPLE_RECORDS as u32,
+                }),
+            );
+        }
+        if self.time_format == TimestampFormat::Auto {
+            self.resolve_auto_format(data, hit)
+        } else {
+            self.check_forced_format(data, hit)
+        }
+    }
+
+    /// L2-DEC-015 multi-record probe to auto-detect IRIG vs Standard. In strict
+    /// mode an Ambiguous result (L2-DEC-016) rejects the file; lenient mode uses
+    /// the chosen format with a WARN.
+    fn resolve_auto_format(
+        &self,
+        data: &[u8],
+        hit: ScanHit,
+    ) -> (TimestampFormat, Option<MieError>) {
+        let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
+        let err = match outcome.confidence {
+            DetectionConfidence::Decisive => {
+                log_info!(
+                    "auto-detected timestamp format: {:?} \
+                     (Decisive: IRIG={} STD={} over {} record(s))",
+                    outcome.format,
+                    outcome.irig_score,
+                    outcome.std_score,
+                    outcome.records_probed,
+                );
+                None
+            }
+            DetectionConfidence::Marginal => {
+                log_info!(
+                    "auto-detected timestamp format: {:?} \
+                     (Marginal: IRIG={} STD={} over {} record(s)) — \
+                     pass --time-format to force the choice if this is wrong",
+                    outcome.format,
+                    outcome.irig_score,
+                    outcome.std_score,
+                    outcome.records_probed,
+                );
+                None
+            }
+            DetectionConfidence::Ambiguous if self.strict => {
+                log_error!(
+                    "timestamp-format auto-detection is ambiguous in {} \
+                     starting at offset 0x{:X}: IRIG={} STD={} over {} \
+                     record(s) — strict mode rejects ambiguous files; \
+                     pass --time-format to force the choice",
+                    self.path.display(),
+                    hit.offset,
+                    outcome.irig_score,
+                    outcome.std_score,
+                    outcome.records_probed,
+                );
+                Some(MieError::TimestampFormatMismatch {
+                    offset: hit.offset as u64,
+                    irig_score: outcome.irig_score,
+                    std_score: outcome.std_score,
+                    records_probed: outcome.records_probed as u32,
+                })
+            }
+            DetectionConfidence::Ambiguous => {
+                log_warn!(
+                    "auto-detected timestamp format: {:?} \
+                     (Ambiguous: IRIG={} STD={} over {} record(s)) — \
+                     using best guess; pass --time-format to force the \
+                     choice or --strict to reject ambiguous files",
+                    outcome.format,
+                    outcome.irig_score,
+                    outcome.std_score,
+                    outcome.records_probed,
+                );
+                None
+            }
+        };
+        (outcome.format, err)
+    }
+
+    /// L2-DEC-013: the format was forced via `--time-format`. If the probe is
+    /// *Decisive* about the OTHER format the forced choice is wrong; strict mode
+    /// rejects, lenient WARNs and proceeds. The forced format is always kept.
+    fn check_forced_format(
+        &self,
+        data: &[u8],
+        hit: ScanHit,
+    ) -> (TimestampFormat, Option<MieError>) {
+        let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
+        let contradicts = outcome.confidence == DetectionConfidence::Decisive
+            && outcome.format != self.time_format;
+        let err = if !contradicts {
+            None
+        } else if self.strict {
+            log_error!(
+                "forced timestamp format {:?} contradicts the recording in {} \
+                 at offset 0x{:X}: detection is decisive for {:?} (IRIG={} \
+                 STD={} over {} record(s)) — strict mode rejects the mismatch; \
+                 drop --time-format to auto-detect",
+                self.time_format,
+                self.path.display(),
+                hit.offset,
+                outcome.format,
+                outcome.irig_score,
+                outcome.std_score,
+                outcome.records_probed,
+            );
+            Some(MieError::TimestampFormatMismatch {
+                offset: hit.offset as u64,
+                irig_score: outcome.irig_score,
+                std_score: outcome.std_score,
+                records_probed: outcome.records_probed as u32,
+            })
+        } else {
+            log_warn!(
+                "forced timestamp format {:?} contradicts the recording at \
+                 offset 0x{:X}: detection is decisive for {:?} (IRIG={} STD={} \
+                 over {} record(s)) — decoding with the forced format anyway; \
+                 drop --time-format to auto-detect or pass --strict to reject \
+                 the mismatch",
+                self.time_format,
+                hit.offset,
+                outcome.format,
+                outcome.irig_score,
+                outcome.std_score,
+                outcome.records_probed,
+            );
+            None
+        };
+        (self.time_format, err)
+    }
+
+    /// No first record found: classify as an empty recording (opens on the
+    /// L2-RDR-021 terminator), a truncated first record (L2-RDR-004), or a
+    /// wrong file (L1-EXIT-002). Returns `(early_done, pending_error)` and sets
+    /// the empty-recording flag when applicable.
+    fn diagnose_no_records(
+        &self,
+        data: &[u8],
+        file_len: usize,
+        format_hint: Option<TimestampFormat>,
+    ) -> (bool, Option<MieError>) {
+        // L1-EXIT-010 / L2-RDR-021: a valid but *empty* recording opens directly
+        // on the end-of-records terminator. Yield zero records cleanly (the
+        // writer emits a header-only CSV); a non-null lead word still falls
+        // through to the wrong-file diagnosis, preserving that guard.
+        if read_u16(data, 0).is_some_and(is_terminator_type_word) {
+            log_warn!(
+                "{}: recording contains no records — the stream opens on \
+                 the end-of-records terminator (empty capture); writing \
+                 header-only output",
+                self.path.display()
+            );
+            self.empty_recording.store(true, Ordering::Relaxed);
+            return (true, None);
+        }
+        // L2-RDR-004: distinguish "no MIE record at all" from "structurally-
+        // valid Type Word truncated past EOF".
+        match crate::sync::diagnose_header_scan_failure(data, file_len, format_hint, MAX_SCAN_BYTES)
+        {
+            Some((trunc_offset, record_bytes, available)) if self.strict => {
+                log_error!(
+                    "first record after header detection is truncated \
+                     at 0x{:X}: declared {} bytes, only {} available",
+                    trunc_offset,
+                    record_bytes,
+                    available
+                );
+                (
+                    false,
+                    Some(MieError::FirstRecordTruncated {
+                        offset: trunc_offset as u64,
+                        record_bytes: record_bytes as u64,
+                        available_bytes: available as u64,
+                    }),
+                )
+            }
+            Some((trunc_offset, record_bytes, available)) => {
+                log_warn!(
+                    "first record after header detection is truncated \
+                     at 0x{:X}: declared {} bytes, only {} available — \
+                     lenient mode terminates cleanly with zero records",
+                    trunc_offset,
+                    record_bytes,
+                    available
+                );
+                (true, None)
+            }
+            None => {
+                let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
+                log_error!(
+                    "no valid records found in first {} bytes of {}",
+                    scan_bytes,
+                    self.path.display()
+                );
+                (
+                    false,
+                    Some(MieError::NoValidRecords {
+                        path: self.path.clone(),
+                        scan_bytes,
+                    }),
+                )
+            }
+        }
+    }
+
     pub fn iter(&self) -> RecordIter<'_> {
         // Reset the per-call counter so successive iter() calls on the
         // same reader handle don't accumulate stale counts.
@@ -247,18 +487,13 @@ impl MieFileReader {
             self.lookahead_records,
         );
 
-        // Tracks whether the iterator should terminate immediately with
-        // no records and no error (the L2-RDR-004 lenient-mode case).
+        // Tracks whether the iterator should terminate immediately with no
+        // records and no error (empty recording / L2-RDR-004 lenient case).
         let mut early_done = false;
-        // The format the iterator will use for the entire decode.
-        // Defaults to the explicit choice (or IRIG as a placeholder for
-        // the Auto-but-no-records-found case where iteration never
-        // happens anyway); rewritten to the L2-DEC-015 probe result
-        // below when we have a real start offset and time_format=Auto.
-        let mut resolved_format = match self.time_format {
-            TimestampFormat::Auto => TimestampFormat::Irig,
-            explicit => explicit,
-        };
+        // The format used for the whole decode. Defaults per
+        // `default_resolved_format`; rewritten by the L2-DEC-015 probe when a
+        // real start offset is found under time_format=Auto.
+        let mut resolved_format = self.default_resolved_format();
 
         let pending_error = match start_offset {
             Some(hit) => {
@@ -271,224 +506,14 @@ impl MieFileReader {
                         hit.offset
                     );
                 }
-                // L2-SYN-018: reject pathological homogeneous-payload
-                // inputs (e.g. 0x20-padded files where every "record"
-                // parses as a synthetic SPURIOUS_DATA frame).
-                let candidate_type_raw = read_u16(data, hit.offset).unwrap_or(0);
-                let candidate_tw = decode_type_word(candidate_type_raw);
-                let candidate_record_bytes = usize::from(candidate_tw.word_count) * 2;
-                if crate::sync::is_homogeneous_payload(data, hit.offset, candidate_record_bytes) {
-                    log_error!(
-                        "pathological homogeneous-payload input at offset 0x{:X} \
-                         in {}: {} consecutive candidate records are byte-identical",
-                        hit.offset,
-                        self.path.display(),
-                        crate::sync::HOMOGENEITY_SAMPLE_RECORDS,
-                    );
-                    Some(MieError::HomogeneousPayload {
-                        path: self.path.clone(),
-                        offset: hit.offset as u64,
-                        sample_records: crate::sync::HOMOGENEITY_SAMPLE_RECORDS as u32,
-                    })
-                } else if self.time_format == TimestampFormat::Auto {
-                    // L2-DEC-015: multi-record probe to disambiguate
-                    // IRIG vs Standard before iteration begins. The
-                    // chosen format is final per L2-DEC-011 — no
-                    // per-record re-detection.
-                    let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
-                    resolved_format = outcome.format;
-                    match outcome.confidence {
-                        DetectionConfidence::Decisive => {
-                            log_info!(
-                                "auto-detected timestamp format: {:?} \
-                                 (Decisive: IRIG={} STD={} over {} record(s))",
-                                outcome.format,
-                                outcome.irig_score,
-                                outcome.std_score,
-                                outcome.records_probed,
-                            );
-                            None
-                        }
-                        DetectionConfidence::Marginal => {
-                            log_info!(
-                                "auto-detected timestamp format: {:?} \
-                                 (Marginal: IRIG={} STD={} over {} record(s)) — \
-                                 pass --time-format to force the choice if this is wrong",
-                                outcome.format,
-                                outcome.irig_score,
-                                outcome.std_score,
-                                outcome.records_probed,
-                            );
-                            None
-                        }
-                        DetectionConfidence::Ambiguous => {
-                            // L2-DEC-016: the probe could not
-                            // confidently distinguish the two
-                            // formats. Strict mode rejects the file;
-                            // lenient mode uses the chosen format
-                            // anyway with a WARN so existing operator
-                            // workflows on borderline files don't
-                            // break silently.
-                            if self.strict {
-                                log_error!(
-                                    "timestamp-format auto-detection is ambiguous in {} \
-                                     starting at offset 0x{:X}: IRIG={} STD={} over {} \
-                                     record(s) — strict mode rejects ambiguous files; \
-                                     pass --time-format to force the choice",
-                                    self.path.display(),
-                                    hit.offset,
-                                    outcome.irig_score,
-                                    outcome.std_score,
-                                    outcome.records_probed,
-                                );
-                                Some(MieError::TimestampFormatMismatch {
-                                    offset: hit.offset as u64,
-                                    irig_score: outcome.irig_score,
-                                    std_score: outcome.std_score,
-                                    records_probed: outcome.records_probed as u32,
-                                })
-                            } else {
-                                log_warn!(
-                                    "auto-detected timestamp format: {:?} \
-                                     (Ambiguous: IRIG={} STD={} over {} record(s)) — \
-                                     using best guess; pass --time-format to force the \
-                                     choice or --strict to reject ambiguous files",
-                                    outcome.format,
-                                    outcome.irig_score,
-                                    outcome.std_score,
-                                    outcome.records_probed,
-                                );
-                                None
-                            }
-                        }
-                    }
-                } else {
-                    // L2-DEC-013: the format was forced via --time-format /
-                    // decode.time_format. Sanity-check it against the same
-                    // detection probe: if the probe is *Decisive* about the
-                    // OTHER format, the forced selection is obviously wrong
-                    // (e.g. --time-format standard on an IRIG file), which
-                    // would otherwise emit garbage timestamps for the whole
-                    // file. Marginal/Ambiguous probes are NOT flagged — those
-                    // are exactly the cases where forcing is the legitimate
-                    // override of a detection the heuristic can't make
-                    // confidently. resolved_format stays the forced format.
-                    let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
-                    if outcome.confidence == DetectionConfidence::Decisive
-                        && outcome.format != self.time_format
-                    {
-                        if self.strict {
-                            log_error!(
-                                "forced timestamp format {:?} contradicts the recording in {} \
-                                 at offset 0x{:X}: detection is decisive for {:?} (IRIG={} \
-                                 STD={} over {} record(s)) — strict mode rejects the mismatch; \
-                                 drop --time-format to auto-detect",
-                                self.time_format,
-                                self.path.display(),
-                                hit.offset,
-                                outcome.format,
-                                outcome.irig_score,
-                                outcome.std_score,
-                                outcome.records_probed,
-                            );
-                            Some(MieError::TimestampFormatMismatch {
-                                offset: hit.offset as u64,
-                                irig_score: outcome.irig_score,
-                                std_score: outcome.std_score,
-                                records_probed: outcome.records_probed as u32,
-                            })
-                        } else {
-                            log_warn!(
-                                "forced timestamp format {:?} contradicts the recording at \
-                                 offset 0x{:X}: detection is decisive for {:?} (IRIG={} STD={} \
-                                 over {} record(s)) — decoding with the forced format anyway; \
-                                 drop --time-format to auto-detect or pass --strict to reject \
-                                 the mismatch",
-                                self.time_format,
-                                hit.offset,
-                                outcome.format,
-                                outcome.irig_score,
-                                outcome.std_score,
-                                outcome.records_probed,
-                            );
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }
+                let (fmt, err) = self.resolve_format_for_hit(data, hit);
+                resolved_format = fmt;
+                err
             }
             None => {
-                // L1-EXIT-010 / L2-RDR-021: a valid but *empty* recording opens
-                // directly on the end-of-records terminator (a null Type Word).
-                // The record stream is legitimately empty — this is NOT a
-                // wrong-file `NoValidRecords` rejection. Yield zero records
-                // cleanly (the writer emits a header-only CSV) and flag the
-                // condition so the CLI can report the `empty-recording` exit
-                // class at exit 0. An unrecognized non-null lead word still
-                // falls through to the wrong-file diagnosis below, preserving
-                // the guard against genuinely non-MIE inputs.
-                if read_u16(data, 0).is_some_and(is_terminator_type_word) {
-                    log_warn!(
-                        "{}: recording contains no records — the stream opens on \
-                         the end-of-records terminator (empty capture); writing \
-                         header-only output",
-                        self.path.display()
-                    );
-                    self.empty_recording.store(true, Ordering::Relaxed);
-                    early_done = true;
-                    None
-                } else {
-                    // L2-RDR-004: distinguish "no MIE record at all" from
-                    // "structurally-valid Type Word truncated past EOF".
-                    let truncated = crate::sync::diagnose_header_scan_failure(
-                        data,
-                        file_len,
-                        format_hint,
-                        MAX_SCAN_BYTES,
-                    );
-                    match truncated {
-                        Some((trunc_offset, record_bytes, available)) => {
-                            if self.strict {
-                                log_error!(
-                                    "first record after header detection is truncated \
-                                 at 0x{:X}: declared {} bytes, only {} available",
-                                    trunc_offset,
-                                    record_bytes,
-                                    available
-                                );
-                                Some(MieError::FirstRecordTruncated {
-                                    offset: trunc_offset as u64,
-                                    record_bytes: record_bytes as u64,
-                                    available_bytes: available as u64,
-                                })
-                            } else {
-                                log_warn!(
-                                    "first record after header detection is truncated \
-                                 at 0x{:X}: declared {} bytes, only {} available — \
-                                 lenient mode terminates cleanly with zero records",
-                                    trunc_offset,
-                                    record_bytes,
-                                    available
-                                );
-                                early_done = true;
-                                None
-                            }
-                        }
-                        None => {
-                            let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
-                            log_error!(
-                                "no valid records found in first {} bytes of {}",
-                                scan_bytes,
-                                self.path.display()
-                            );
-                            Some(MieError::NoValidRecords {
-                                path: self.path.clone(),
-                                scan_bytes,
-                            })
-                        }
-                    }
-                }
+                let (early, err) = self.diagnose_no_records(data, file_len, format_hint);
+                early_done = early;
+                err
             }
         };
 

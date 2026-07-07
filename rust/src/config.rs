@@ -307,35 +307,49 @@ fn apply_decode_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), C
     }
     if let Some(n) = toml.get_int("decode", "detect_records")? {
         // L2-DEC-015: validate range [1, 32] at load time per L2-CFG-010.
-        if n < DETECT_RECORDS_MIN as i64 || n > DETECT_RECORDS_MAX as i64 {
-            return Err(ConfigError(format!(
-                "Invalid decode.detect_records: {n}. \
-                 Valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]"
-            )));
-        }
-        cfg.detect_records = n as usize;
+        cfg.detect_records = require_int_range(
+            n,
+            "decode.detect_records",
+            DETECT_RECORDS_MIN,
+            DETECT_RECORDS_MAX,
+        )?;
     }
     if let Some(n) = toml.get_int("decode", "lookahead_records")? {
         // L2-SYN-026: validate range [1, 32] at load time per L2-CFG-010.
-        if n < LOOKAHEAD_RECORDS_MIN as i64 || n > LOOKAHEAD_RECORDS_MAX as i64 {
-            return Err(ConfigError(format!(
-                "Invalid decode.lookahead_records: {n}. \
-                 Valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]"
-            )));
-        }
-        cfg.lookahead_records = n as usize;
+        cfg.lookahead_records = require_int_range(
+            n,
+            "decode.lookahead_records",
+            LOOKAHEAD_RECORDS_MIN,
+            LOOKAHEAD_RECORDS_MAX,
+        )?;
     }
     if let Some(hz) = toml.get_float("decode", "standard_tick_rate_hz")? {
         // L2-DEC-017: the tick rate must be a real, strictly-positive frequency.
-        if !hz.is_finite() || hz <= 0.0 {
-            return Err(ConfigError(format!(
-                "Invalid decode.standard_tick_rate_hz: {hz}. \
-                 Must be a finite value greater than 0"
-            )));
-        }
-        cfg.standard_tick_rate_hz = Some(hz);
+        cfg.standard_tick_rate_hz =
+            Some(require_positive_finite(hz, "decode.standard_tick_rate_hz")?);
     }
     Ok(())
+}
+
+/// Validate a TOML integer within `[lo, hi]` at load time (L2-CFG-010). `key`
+/// names the offending key for the error message.
+fn require_int_range(n: i64, key: &str, lo: usize, hi: usize) -> Result<usize, ConfigError> {
+    if n < lo as i64 || n > hi as i64 {
+        return Err(ConfigError(format!(
+            "Invalid {key}: {n}. Valid range: [{lo}, {hi}]"
+        )));
+    }
+    Ok(n as usize)
+}
+
+/// Validate a Standard tick rate: finite and strictly positive (L2-DEC-017).
+fn require_positive_finite(hz: f64, key: &str) -> Result<f64, ConfigError> {
+    if !hz.is_finite() || hz <= 0.0 {
+        return Err(ConfigError(format!(
+            "Invalid {key}: {hz}. Must be a finite value greater than 0"
+        )));
+    }
+    Ok(hz)
 }
 
 /// `[output]`: output format (only `csv` today, L2-CFG-010) and no-clobber.
