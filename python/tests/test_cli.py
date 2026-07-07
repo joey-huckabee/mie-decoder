@@ -66,6 +66,16 @@ class TestValidators:
         with pytest.raises(ValueError, match="must be a non-empty string"):
             cli._validate_nonempty("", "--mux-delimiter")
 
+    def test_log_safe_neutralizes_crlf(self) -> None:
+        # S5145: user-controlled values (e.g. an input path) must not be able to
+        # inject newlines into the log. CR/LF are escaped; plain text is intact.
+        assert cli._log_safe("plain/path.mie") == "plain/path.mie"
+        assert cli._log_safe("evil\nINJECTED") == "evil\\nINJECTED"
+        assert cli._log_safe("a\r\nb") == "a\\r\\nb"
+        from pathlib import PurePosixPath
+
+        assert cli._log_safe(PurePosixPath("dir/x.mie")) == "dir/x.mie"
+
 
 # ── override building ───────────────────────────────────────────────────────
 

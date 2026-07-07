@@ -73,6 +73,16 @@ EXIT_CONFIG = 5  # configuration error (missing/malformed/invalid config)
 EXIT_MERGE_INCOMPATIBLE = 6  # merge inputs cannot share an absolute timeline (L1-EXIT-009)
 
 
+def _log_safe(value: object) -> str:
+    """Neutralize CR/LF in user-controlled values before logging.
+
+    A crafted input path could otherwise embed a newline and forge or inject
+    additional log lines (SonarQube S5145). Escaping the control characters
+    keeps each logged value on a single line without altering the visible path.
+    """
+    return str(value).replace("\r", "\\r").replace("\n", "\\n")
+
+
 class _UsageErrorParser(argparse.ArgumentParser):
     """``ArgumentParser`` that exits with :data:`EXIT_USAGE` on a usage error.
 
@@ -1019,8 +1029,8 @@ def _run_decode(args: argparse.Namespace) -> int:
                 logger.warning(
                     "merge: input %s could not be opened; truncating it from the "
                     "merge (--allow-partial): %s",
-                    p,
-                    exc,
+                    _log_safe(p),
+                    _log_safe(exc),
                 )
                 open_dropped = True
             else:
