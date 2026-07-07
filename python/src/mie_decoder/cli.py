@@ -963,6 +963,42 @@ def _classify_decode_success(outcome: WriteOutcome, readers: list[MieFileReader]
     return EXIT_OK
 
 
+def _open_readers_for_decode(
+    input_paths: list[Path],
+    config: DecoderConfig,
+    *,
+    merge_requested: bool,
+) -> tuple[list[MieFileReader], bool]:
+    """Open one reader per resolved input.
+
+    Under a merge with ``--allow-partial``, a per-file open failure (empty /
+    unreadable / missing input) is tolerated: that input is dropped with a WARN
+    and the batch commits as ``.partial`` (L2-MRG-004), mirroring a priming-time
+    or mid-file failure. Otherwise the failure propagates. Returns the readers
+    and whether any input was dropped.
+
+    Raises:
+        MieFileError: An open failure the caller must map to a runtime exit.
+    """
+    readers: list[MieFileReader] = []
+    open_dropped = False
+    for p in input_paths:
+        try:
+            readers.append(_open_reader(p, config))
+        except MieFileError as exc:
+            if merge_requested and config.allow_partial:
+                logger.warning(
+                    "merge: input %s could not be opened; truncating it from the "
+                    "merge (--allow-partial): %s",
+                    _log_safe(p),
+                    _log_safe(exc),
+                )
+                open_dropped = True
+            else:
+                raise
+    return readers, open_dropped
+
+
 def _run_decode(args: argparse.Namespace) -> int:
     """Execute the decode subcommand.
 
@@ -1024,22 +1060,12 @@ def _run_decode(args: argparse.Namespace) -> int:
     # commits the batch as `.partial` (L2-MRG-004), mirroring a priming-time or
     # mid-file failure. A single-input decode is unaffected.
     merge_requested = len(input_paths) > 1
-    readers: list[MieFileReader] = []
-    open_dropped = False
-    for p in input_paths:
-        try:
-            readers.append(_open_reader(p, config))
-        except MieFileError as exc:
-            if merge_requested and config.allow_partial:
-                logger.warning(
-                    "merge: input %s could not be opened; truncating it from the "
-                    "merge (--allow-partial): %s",
-                    _log_safe(p),
-                    _log_safe(exc),
-                )
-                open_dropped = True
-            else:
-                return _report_error("Failed to open input file", exc, EXIT_RUNTIME)
+    try:
+        readers, open_dropped = _open_readers_for_decode(
+            input_paths, config, merge_requested=merge_requested
+        )
+    except MieFileError as exc:
+        return _report_error("Failed to open input file", exc, EXIT_RUNTIME)
 
     for r in readers:
         logger.info("Opened %s (%d bytes)", r.path.name, r.file_size)

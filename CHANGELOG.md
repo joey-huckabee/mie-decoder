@@ -31,12 +31,12 @@ cross-implementation conformance oracle pass unchanged.
 
 ### Changed
 
-- **Cognitive-complexity sweep — behavior-preserving.** 27 functions across both
+- **Cognitive-complexity sweep — behavior-preserving.** 28 functions across both
   implementations were brought under the complexity threshold by pure helper
   extraction, spanning config parsing, timestamp-format detection, the hex
   `dump`, filters, the CSV writers, sync validation, the multi-file merge, the
-  CLI argument parsers, and the reader hot paths (the Rust decode loop and the
-  Python `__iter__` generator). Internal plumbing only — a `MieMessage`
+  CLI argument parsers and decode entrypoint, and the reader hot paths (the Rust
+  decode loop and the Python `__iter__` generator). Internal plumbing only — a `MieMessage`
   DELTA-copy helper was factored out and the reader's per-format payload
   extraction was split by message family; no public API, CLI, or CSV change.
 - **Minor code-health fixes.** Return-type precision on the merge DELTA copy,
