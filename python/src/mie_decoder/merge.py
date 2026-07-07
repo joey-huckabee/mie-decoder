@@ -137,22 +137,40 @@ def _check_mergeable(msg: MieMessage, file_index: int, path: Path) -> None:
         )
 
 
-def _apply_global_delta(msg: MieMessage, tick: float | None, tracker: dict[str, int]) -> MieMessage:
-    """Recompute DELTA on the merged global timeline (L2-MRG-005). The stream
-    is timestamp-sorted, so per-key gaps are non-negative."""
+def _global_delta_value(
+    msg: MieMessage, tick: float | None, tracker: dict[str, int]
+) -> float | None:
+    """Compute the merged-timeline DELTA for ``msg`` and update ``tracker``.
+
+    SPURIOUS_DATA (no key) and uncalibrated Standard timestamps yield ``None``;
+    first occurrence of a key yields ``0.0``; a subsequent record yields the
+    non-negative gap in seconds. The stream is timestamp-sorted, so a negative
+    gap is not expected — it also yields ``None`` defensively.
+    """
     key = msg.delta_key
     if not key:
-        return dataclasses.replace(msg, delta=None)  # SPURIOUS_DATA — no key
+        return None  # SPURIOUS_DATA — no key
     curr = msg.timestamp.to_microseconds(tick)
     if curr is None:
-        return dataclasses.replace(msg, delta=None)
+        return None
     prev = tracker.get(key)
     tracker[key] = curr
     if prev is None:
-        return dataclasses.replace(msg, delta=0.0)
+        return 0.0
     if curr >= prev:
-        return dataclasses.replace(msg, delta=(curr - prev) / 1_000_000.0)
-    return dataclasses.replace(msg, delta=None)
+        return (curr - prev) / 1_000_000.0
+    return None
+
+
+def _apply_global_delta(msg: MieMessage, tick: float | None, tracker: dict[str, int]) -> MieMessage:
+    """Recompute DELTA on the merged global timeline (L2-MRG-005) and return a
+    copy of ``msg`` carrying it."""
+    delta = _global_delta_value(msg, tick, tracker)
+    # `dataclasses.replace` returns the same concrete type at runtime; the explicit
+    # annotation states `MieMessage` for tools whose inference widens the return to
+    # a generic dataclass, without the redundant `cast` mypy rejects.
+    updated: MieMessage = dataclasses.replace(msg, delta=delta)
+    return updated
 
 
 def _dedup_key(msg: MieMessage) -> tuple[object, ...]:

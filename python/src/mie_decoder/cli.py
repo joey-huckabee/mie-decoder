@@ -83,6 +83,20 @@ def _log_safe(value: object) -> str:
     return str(value).replace("\r", "\\r").replace("\n", "\\n")
 
 
+def _report_error(context: str, exc: BaseException, code: int) -> int:
+    """Log and print a handled error, then return its exit code.
+
+    Kept as a helper rather than inline in the ``except`` clause so the log
+    call preserves the clean one-line operator message for these *expected*
+    conditions (file-not-found, no-records) instead of a full stack trace —
+    mirroring how :func:`_classify_decode_error` reports the decode-time
+    failures it is delegated.
+    """
+    logger.error("%s: %s", context, exc)
+    print(f"Error: {exc}", file=sys.stderr)
+    return code
+
+
 class _UsageErrorParser(argparse.ArgumentParser):
     """``ArgumentParser`` that exits with :data:`EXIT_USAGE` on a usage error.
 
@@ -1034,9 +1048,7 @@ def _run_decode(args: argparse.Namespace) -> int:
                 )
                 open_dropped = True
             else:
-                logger.error("Failed to open input file: %s", exc)
-                print(f"Error: {exc}", file=sys.stderr)
-                return EXIT_RUNTIME
+                return _report_error("Failed to open input file", exc, EXIT_RUNTIME)
 
     for r in readers:
         logger.info("Opened %s (%d bytes)", r.path.name, r.file_size)
@@ -1103,9 +1115,7 @@ def _run_count(args: argparse.Namespace) -> int:
             standard_tick_rate_hz=config.standard_tick_rate_hz,
         )
     except MieFileError as exc:
-        logger.error("Failed to open input file: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return _report_error("Failed to open input file", exc, EXIT_RUNTIME)
 
     messages = apply_filters(reader, config.filters)
     try:
@@ -1121,15 +1131,11 @@ def _run_count(args: argparse.Namespace) -> int:
         # not the generic runtime exit 1. (An empty recording raises nothing —
         # the iterator simply yields zero records — so count prints 0 and exits
         # 0 per L1-EXIT-010.)
-        logger.error("Count failed: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_NO_RECORDS
+        return _report_error("Count failed", exc, EXIT_NO_RECORDS)
     except MieDecoderError as exc:
         # Any other decode error during the count maps to a runtime failure
         # (exit 1), matching the Rust count subcommand.
-        logger.error("Count failed: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return _report_error("Count failed", exc, EXIT_RUNTIME)
 
     logger.info("Counted %d messages in %.3fs", count, elapsed)
     # L3-PY-010: integer count to stdout (the machine-readable datum),

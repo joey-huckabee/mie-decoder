@@ -245,16 +245,15 @@ class IrigTimestamp:
             self.day * 86_400 + self.hour * 3_600 + self.minute * 60 + self.second
         ) * 1_000_000 + self.microsecond
 
-    def to_microseconds(  # pylint: disable=unused-argument
-        self, standard_tick_rate_hz: float | None = None
-    ) -> int | None:
+    def to_microseconds(self, _standard_tick_rate_hz: float | None = None) -> int | None:
         """Absolute microseconds from a known epoch.
 
         Always returns the IRIG conversion. Defined with the same
-        signature as :meth:`StandardTimestamp.to_microseconds` so the
-        reader can call ``timestamp.to_microseconds(rate)`` without a
-        type check; ``standard_tick_rate_hz`` is accepted and ignored
-        here because IRIG already has an absolute microsecond basis.
+        (positional) signature as :meth:`StandardTimestamp.to_microseconds`
+        so the reader can call ``timestamp.to_microseconds(rate)`` without a
+        type check; the tick-rate argument is accepted and ignored here
+        (hence the leading underscore) because IRIG already has an absolute
+        microsecond basis.
         """
         return self.to_total_microseconds()
 
