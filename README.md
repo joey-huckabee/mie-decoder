@@ -50,148 +50,41 @@ mie-decoder --config config/default.toml decode recording.mie -o decoded.csv
 
 ## CLI Reference
 
-### decode
+`mie-decoder` has three subcommands — `decode` (binary → CSV), `count`, and
+`dump` — with an identical flag surface in the Rust and Python builds. The
+**complete per-flag reference** (every option, with its default, value range, and
+config-key equivalent) lives in
+**[`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md)**. The CLI's own
+`mie-decoder <subcommand> --help` is generated from the same definitions and is
+always current.
 
-```
-mie-decoder decode <input>... [options]
+Config-file keys are documented in
+[`docs/CONFIG-REFERENCE.md`](docs/CONFIG-REFERENCE.md); task-oriented
+walkthroughs (multi-file merge, MUX from the filename, filtering, vendor diffs)
+are in the [User Guide](docs/USER-GUIDE.md) and [Examples](docs/EXAMPLES.md).
 
-  -o, --output PATH                Output CSV (default stdout)
-  --manifest PATH                  Read input paths from a file (one per line;
-                                   blank lines and #-comments ignored)
-  --glob PATTERN                   Expand a single-directory *.mie-style glob
-                                   (* and ? over the filename; no recursion)
-  --inline-errors                  Errors inline in main CSV
-                                   (default: separate <stem>_errors.csv)
-  --time-format auto|irig|standard Default auto
-  --standard-tick-rate-hz HZ       Standard-counter Hz; enables DELTA for
-                                   Standard timestamps (default: unset)
-  --strict                         Raise on invalid records
-  --format csv                     Output format (csv only at present)
-  --no-mux                         Leave the MUX column empty (vendor-exact);
-                                   default: MUX is derived from the file name
-  --mux-delimiter D                MUX field separator (default '.')
-  --mux-field N                    0-based MUX field index; negative counts
-                                   from the end (default 4)
-  --exclude-types VAL              Comma-separated names or 0xNN hex codes
-  --exclude-rts VAL                Comma-separated RT addresses
-  --exclude-buses VAL              Comma-separated A|B
-  --exclude-subaddresses VAL       Comma-separated subaddresses
-  --include-types VAL              (same syntax as --exclude-types)
-  --include-rts VAL
-  --include-buses VAL
-  --include-subaddresses VAL
-```
-
-Filter flags accept ONE value, which may be comma-separated. Repeating
-the flag accumulates. The `--flag=VAL` form is equivalent to `--flag VAL`.
+### Common examples
 
 ```bash
-mie-decoder decode rec.mie --include-rts 15,20,31    # single flag, comma list
-mie-decoder decode rec.mie --include-rts 15 --include-rts 31   # repeat
-mie-decoder decode rec.mie --include-rts=15,31       # = form
-```
+# Decode to CSV
+mie-decoder decode recording.mie -o decoded.csv
 
-The previous space-separated greedy form (`--include-rts 15 31 file.mie`)
-is no longer accepted — it would consume `file.mie` as another RT
-value.
-
-#### Multi-file merge
-
-Pass more than one input and `decode` merges them into a single
-time-sorted CSV (streaming, constant memory in the record count):
-
-```bash
-mie-decoder decode a.mie b.mie c.mie -o merged.csv   # positionals
-mie-decoder decode --manifest files.txt -o merged.csv  # one path per line
-mie-decoder decode --glob 'recordings/*.mie' -o merged.csv  # tool-expanded
-mie-decoder decode a.mie b.mie -o m.csv --collapse-duplicates  # de-dup overlapping recorders
-```
-
-The three input methods are mutually exclusive. Records are ordered by
-absolute IRIG time, so **every input must be calendar-locked IRIG** —
-a Standard-format, freerun, or mixed-format set is rejected before any
-output with exit code 6. A single input behaves exactly as before; up to
-256 files may be merged at once. Per-file failures follow the same
-`--strict` / lenient / `--allow-partial` policy as a single decode
-(`--allow-partial` writes the combined `.partial` output). Rust and
-Python produce byte-identical merged output.
-
-When several recorders on the same bus overlap, add **`--collapse-duplicates`**
-to merge each transaction's duplicate rows into one instead of inflating the
-count (off by default, so the default never drops a row). `--collapse-window-us
-N` sets the timestamp tolerance for recorders whose clocks differ slightly
-(default `0` = exact match). See the [User Guide](docs/USER-GUIDE.md).
-
-#### MUX from the file name
-
-The `MUX` column is filled from a field of each input's **file name**, so a
-decoded CSV can carry the source/recorder identity encoded in the name. For
-example, given `full_loadout.draw.data.1553.aa.unused.mie_irig`, the default
-splits on `.` and takes field index `4` → `MUX = aa`:
-
-```bash
-mie-decoder decode full_loadout.draw.data.1553.aa.unused.mie_irig -o out.csv  # MUX=aa
-mie-decoder decode rec.mie --mux-delimiter _ --mux-field 1 -o out.csv         # custom
-mie-decoder decode rec.mie --no-mux -o out.csv                                # MUX empty
-```
-
-This is **on by default**. In a multi-file merge each row carries the MUX of
-the file it was decoded from. A negative `--mux-field` counts from the end; an
-out-of-range field leaves MUX empty. To produce output that matches the DDC
-vendor CSV byte-for-byte (empty MUX), pass `--no-mux` (or set
-`[mux] enabled = false`). See [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md).
-
-### count
-
-```
-mie-decoder count <input>
-```
-
-Streams the file and prints the message count to stdout (with a status summary on stderr).
-
-### dump
-
-```
-mie-decoder dump <input> [options]
-
-  --raw         Raw hex dump (no record parsing)
-  --offset N    Start offset in bytes (supports 0xHEX)
-  --length N    Bytes to dump (raw mode)
-  --records N   Max records to dump (record mode)
-```
-
-### Global options
-
-```
---log-level LEVEL                     DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|OFF
-                                      (default WARNING; case-insensitive)
---config PATH                         TOML configuration file
--V, --version
--h, --help
-```
-
-### Examples
-
-```bash
 # Drop spurious + broadcast traffic
 mie-decoder decode rec.mie -o clean.csv \
   --exclude-types SPURIOUS_DATA,BROADCAST_BC_TO_RT
 
 # Only Bus A, only RT 15 (positive filters)
-mie-decoder decode rec.mie -o rt15.csv \
-  --include-buses A --include-rts 15
+mie-decoder decode rec.mie -o rt15.csv --include-buses A --include-rts 15
 
 # Errors inline with normal messages
 mie-decoder decode rec.mie -o all.csv --inline-errors
 
-# Force Standard timestamp format
-mie-decoder decode rec.mie -o decoded.csv --time-format standard
+# Multi-file, time-sorted merge; de-dup overlapping recorders
+mie-decoder decode a.mie b.mie -o merged.csv --collapse-duplicates
 
-# Standard format with a known counter rate (enables the DELTA column)
-mie-decoder decode rec.mie -o decoded.csv --time-format standard --standard-tick-rate-hz 1000000
-
-# Debug logging
-mie-decoder --log-level DEBUG decode rec.mie -o decoded.csv
+# Count records; annotated hex dump
+mie-decoder count recording.mie
+mie-decoder dump recording.mie --records 10
 ```
 
 Library usage (the Rust crate API and the Python `mie_decoder` package) is
@@ -289,6 +182,7 @@ config/
 
 docs/
 ├── ARCHITECTURE.md     Module diagram, sync strategy, data flow
+├── CLI-REFERENCE.md    Complete per-flag CLI reference (all subcommands)
 ├── CONFIG-REFERENCE.md Normative TOML key reference (type / default / CLI override)
 ├── ERROR-CATALOG.md    Operator reference: exit codes, error classes, DDC codes
 ├── EXAMPLES.md         Runnable cookbook of common operator tasks
