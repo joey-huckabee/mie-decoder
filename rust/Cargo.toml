@@ -4,7 +4,7 @@ version = "2.6.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Decoder for DDC MIL-STD-1553 MIE binary recording files"
-license = "MIT"
+license = "Apache-2.0"
 authors = ["Joey"]
 readme = "README.md"
 
