@@ -32,7 +32,7 @@ from mie_decoder import MieFileReader
 
 reader = MieFileReader("recording.mie")
 for message in reader:
-    print(message.timestamp, message.rt, message.subaddress)
+    print(message.timestamp, message.rt, message.msg_label)
 ```
 
 `MieFileReader` and the `MieMessage` records it yields are importable directly
