@@ -49,7 +49,7 @@ mie-decoder/
 │   ├── ARCHITECTURE.md     module diagram, error pipeline, configuration hierarchy
 │   ├── ERROR-CATALOG.md    operator reference for every error / exit code
 │   ├── MIE-FORMAT.md       comprehensive binary format + CSV column reference
-│   ├── ROADMAP.md          versioned roadmap with status annotations
+│   ├── ROADMAP.md          forward-looking roadmap (planned work + commitments)
 │   ├── MAINTAINER-GUIDE.md (this file)
 │   └── diagrams/           PlantUML sources and rendered SVGs
 ├── config/default.toml     fully-commented reference TOML schema

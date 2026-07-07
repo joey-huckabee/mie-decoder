@@ -116,7 +116,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - `docs/L2-REQ.md` — Level 2 architectural derivations (each with a single L1 parent).
 - `docs/L3-REQ.md` — Level 3 implementation obligations (cross-impl `L3-WRT-*`, plus per-impl `L3-PY-*` / `L3-RS-*`; `L3-RS-007` is withdrawn and its ID reserved, from when static-musl support was retired).
 - `docs/TRACE-MATRIX.md` — auto-generated trace matrix produced by `scripts/build-trace-matrix.py`. Forward trace from L1 through L2 and L3 to test artifacts (`@pytest.mark.requirement` markers in `python/tests/` and `/// Requirements:` doc-comments above Rust `#[test]` items). Treat as the single source of truth for live status; the source docs hold spec content only.
-- `docs/ROADMAP.md` — versioned roadmap with explicit "do not drop" commitments (TOML config, CSV byte-compat, sync semantics).
+- `docs/ROADMAP.md` — forward-looking roadmap: planned work plus pinned "do not drop" commitments (TOML config, CSV byte-compat, sync semantics). Completed work is not tracked here — it lives in `CHANGELOG.md` and the L1/L2/L3 requirements.
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
 - `python/` — maintained Python package and CLI with its own source and tests.
 - `tests/conformance/` — shared hexadecimal fixtures and byte-exact CSV

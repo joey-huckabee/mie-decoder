@@ -515,7 +515,7 @@ the lowest visible card and flip the next from that same deck; you only ever
 see k cards at once yet produce one fully sorted stream.
 
 The heap is the easy part; the constraints come from the MIE timestamp model
-(detailed with their resolutions in `ROADMAP.md`):
+(each pinned by an `L2-MRG-*` requirement in `docs/L2-REQ.md`):
 
 - **Merge key** is `IrigTimestamp::to_total_microseconds()` (Rust) /
   `IrigTimestamp.to_total_microseconds()` (Python) — microseconds from the
