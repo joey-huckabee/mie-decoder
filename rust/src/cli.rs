@@ -256,88 +256,20 @@ pub fn run(argv: Vec<String>) -> ExitCode {
 
     // Pull global flags + --help / --version that may appear before the command.
     let mut globals = GlobalArgs::default();
-    let cmd_token = loop {
-        match iter.peek().map(String::as_str) {
-            Some("-h") | Some("--help") => {
-                print!("{HELP}");
-                return ExitCode::SUCCESS;
-            }
-            Some("-V") | Some("--version") => {
-                println!("mie-decoder {VERSION}");
-                return ExitCode::SUCCESS;
-            }
-            Some("--log-level") => {
-                iter.next();
-                match iter.next() {
-                    Some(v) => globals.log_level = Some(v),
-                    None => return die("--log-level requires a value"),
-                }
-            }
-            Some(s) if s.starts_with("--log-level=") => {
-                let Some(v) = iter.next() else {
-                    return die("--log-level requires a value");
-                };
-                globals.log_level = Some(v["--log-level=".len()..].to_string());
-            }
-            Some("--config") => {
-                iter.next();
-                match iter.next() {
-                    Some(v) => globals.config = Some(PathBuf::from(v)),
-                    None => return die("--config requires a path"),
-                }
-            }
-            Some(s) if s.starts_with("--config=") => {
-                let Some(v) = iter.next() else {
-                    return die("--config requires a path");
-                };
-                globals.config = Some(PathBuf::from(&v["--config=".len()..]));
-            }
-            Some(_) => break iter.next(),
-            None => {
-                eprint!("{HELP}");
-                return ExitCode::from(exit_code::USAGE);
-            }
-        }
+    let cmd_token = match parse_global_flags(&mut iter, &mut globals) {
+        Ok(token) => token,
+        Err(code) => return code,
     };
-
     let Some(cmd_token) = cmd_token else {
         eprint!("{HELP}");
         return ExitCode::from(exit_code::USAGE);
     };
 
     // Parse subcommand-specific args. Process control (printing help,
-    // selecting an exit code) is decided HERE — the parse helpers only
-    // signal "user wanted help" via ParseError::HelpRequested.
-    let command = match cmd_token.as_str() {
-        "decode" => match parse_decode(&mut iter) {
-            Ok(c) => Command::Decode(Box::new(c)),
-            Err(ParseError::HelpRequested) => {
-                print!("{HELP}");
-                return ExitCode::SUCCESS;
-            }
-            Err(ParseError::Other(e)) => return die(&e),
-        },
-        "count" => match parse_count(&mut iter) {
-            Ok(p) => Command::Count(p),
-            Err(ParseError::HelpRequested) => {
-                print!("{HELP}");
-                return ExitCode::SUCCESS;
-            }
-            Err(ParseError::Other(e)) => return die(&e),
-        },
-        "dump" => match parse_dump(&mut iter) {
-            Ok(c) => Command::Dump(Box::new(c)),
-            Err(ParseError::HelpRequested) => {
-                print!("{HELP}");
-                return ExitCode::SUCCESS;
-            }
-            Err(ParseError::Other(e)) => return die(&e),
-        },
-        "-h" | "--help" => {
-            print!("{HELP}");
-            return ExitCode::SUCCESS;
-        }
-        other => return die(&format!("Unknown command: {other:?}")),
+    // selecting an exit code) is decided inside `parse_subcommand`.
+    let command = match parse_subcommand(&cmd_token, &mut iter) {
+        Ok(c) => c,
+        Err(code) => return code,
     };
 
     // Apply log level early so the version banner respects it. CLI
@@ -380,6 +312,89 @@ pub fn run(argv: Vec<String>) -> ExitCode {
 fn die(msg: &str) -> ExitCode {
     eprintln!("Error: {msg}\n\n{HELP}");
     ExitCode::from(exit_code::USAGE)
+}
+
+/// Consume leading global flags (`--log-level`, `--config`) and `-h`/`-V`.
+/// Returns `Ok(Some(token))` with the first non-flag token (the subcommand),
+/// `Ok(None)` if none follows, or `Err(code)` when the caller (`run`) should
+/// return that exit code immediately (help/version printed, or a usage error).
+fn parse_global_flags(
+    iter: &mut ArgIter<'_>,
+    globals: &mut GlobalArgs,
+) -> Result<Option<String>, ExitCode> {
+    loop {
+        match iter.peek().map(String::as_str) {
+            Some("-h") | Some("--help") => {
+                print!("{HELP}");
+                return Err(ExitCode::SUCCESS);
+            }
+            Some("-V") | Some("--version") => {
+                println!("mie-decoder {VERSION}");
+                return Err(ExitCode::SUCCESS);
+            }
+            Some("--log-level") => {
+                iter.next();
+                match iter.next() {
+                    Some(v) => globals.log_level = Some(v),
+                    None => return Err(die("--log-level requires a value")),
+                }
+            }
+            Some(s) if s.starts_with("--log-level=") => {
+                let Some(v) = iter.next() else {
+                    return Err(die("--log-level requires a value"));
+                };
+                globals.log_level = Some(v["--log-level=".len()..].to_string());
+            }
+            Some("--config") => {
+                iter.next();
+                match iter.next() {
+                    Some(v) => globals.config = Some(PathBuf::from(v)),
+                    None => return Err(die("--config requires a path")),
+                }
+            }
+            Some(s) if s.starts_with("--config=") => {
+                let Some(v) = iter.next() else {
+                    return Err(die("--config requires a path"));
+                };
+                globals.config = Some(PathBuf::from(&v["--config=".len()..]));
+            }
+            Some(_) => return Ok(iter.next()),
+            None => {
+                eprint!("{HELP}");
+                return Err(ExitCode::from(exit_code::USAGE));
+            }
+        }
+    }
+}
+
+/// Turn a subcommand parse result into `Command`, or an `Err(code)` for `run`
+/// to return: `HelpRequested` prints help and exits `0`; `Other` dies (usage).
+fn parse_or_help<T>(result: Result<T, ParseError>) -> Result<T, ExitCode> {
+    match result {
+        Ok(c) => Ok(c),
+        Err(ParseError::HelpRequested) => {
+            print!("{HELP}");
+            Err(ExitCode::SUCCESS)
+        }
+        Err(ParseError::Other(e)) => Err(die(&e)),
+    }
+}
+
+/// Dispatch `cmd_token` to its argument parser, wrapping the parsed args in a
+/// `Command`. `Err(code)` means `run` should return that exit code.
+fn parse_subcommand(cmd_token: &str, iter: &mut ArgIter<'_>) -> Result<Command, ExitCode> {
+    match cmd_token {
+        "decode" => Ok(Command::Decode(Box::new(parse_or_help(parse_decode(
+            iter,
+        ))?))),
+        "count" => Ok(Command::Count(parse_or_help(parse_count(iter))?)),
+        "dump" => Ok(Command::Dump(Box::new(parse_or_help(parse_dump(iter))?))),
+        "-h" | "--help" => {
+            print!("{HELP}");
+            Err(ExitCode::SUCCESS)
+        }
+        other => Err(die(&format!("Unknown command: {other:?}"))),
+    }
 }
 
 // ── Subcommand parsing ────────────────────────────────────────────────
@@ -439,6 +454,30 @@ fn split_csv(s: &str) -> Vec<String> {
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
         .collect()
+}
+
+/// Parse a comma-separated filter value and push each parsed item into `target`.
+/// Shared by all `--exclude-*` / `--include-*` flags so their per-value loop
+/// lives in one place.
+fn push_filter<T>(
+    csv: &str,
+    target: &mut Vec<T>,
+    parse: impl Fn(&str) -> Result<T, ParseError>,
+) -> Result<(), ParseError> {
+    for v in split_csv(csv) {
+        target.push(parse(&v)?);
+    }
+    Ok(())
+}
+
+/// One `--exclude-types` / `--include-types` element → a message-type code.
+fn parse_type_filter(v: &str) -> Result<u8, ParseError> {
+    parse_type_name(v).map_err(|e| e.0.into())
+}
+
+/// One `--exclude-buses` / `--include-buses` element → a `Bus`.
+fn parse_bus_filter(v: &str) -> Result<crate::models::Bus, ParseError> {
+    parse_bus_name(v).map_err(|e| e.0.into())
 }
 
 fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
@@ -539,98 +578,86 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             // Any of those leaves trailing positionals like `file.mie`
             // free to bind to `args.inputs`. Both space- and `=`-form
             // value syntax are accepted.
-            "--exclude-types" => {
-                for v in split_csv(&next_value("--exclude-types", iter)?) {
-                    args.exclude_types
-                        .push(parse_type_name(&v).map_err(|e| e.0)?);
-                }
-            }
-            s if s.starts_with("--exclude-types=") => {
-                for v in split_csv(&s["--exclude-types=".len()..]) {
-                    args.exclude_types
-                        .push(parse_type_name(&v).map_err(|e| e.0)?);
-                }
-            }
-            "--include-types" => {
-                for v in split_csv(&next_value("--include-types", iter)?) {
-                    args.include_types
-                        .push(parse_type_name(&v).map_err(|e| e.0)?);
-                }
-            }
-            s if s.starts_with("--include-types=") => {
-                for v in split_csv(&s["--include-types=".len()..]) {
-                    args.include_types
-                        .push(parse_type_name(&v).map_err(|e| e.0)?);
-                }
-            }
-            "--exclude-rts" => {
-                for v in split_csv(&next_value("--exclude-rts", iter)?) {
-                    args.exclude_rts.push(parse_u8_value(&v, "--exclude-rts")?);
-                }
-            }
+            "--exclude-types" => push_filter(
+                &next_value("--exclude-types", iter)?,
+                &mut args.exclude_types,
+                parse_type_filter,
+            )?,
+            s if s.starts_with("--exclude-types=") => push_filter(
+                &s["--exclude-types=".len()..],
+                &mut args.exclude_types,
+                parse_type_filter,
+            )?,
+            "--include-types" => push_filter(
+                &next_value("--include-types", iter)?,
+                &mut args.include_types,
+                parse_type_filter,
+            )?,
+            s if s.starts_with("--include-types=") => push_filter(
+                &s["--include-types=".len()..],
+                &mut args.include_types,
+                parse_type_filter,
+            )?,
+            "--exclude-rts" => push_filter(
+                &next_value("--exclude-rts", iter)?,
+                &mut args.exclude_rts,
+                |v| parse_u8_value(v, "--exclude-rts").map_err(Into::into),
+            )?,
             s if s.starts_with("--exclude-rts=") => {
-                for v in split_csv(&s["--exclude-rts=".len()..]) {
-                    args.exclude_rts.push(parse_u8_value(&v, "--exclude-rts")?);
-                }
+                push_filter(&s["--exclude-rts=".len()..], &mut args.exclude_rts, |v| {
+                    parse_u8_value(v, "--exclude-rts").map_err(Into::into)
+                })?
             }
-            "--include-rts" => {
-                for v in split_csv(&next_value("--include-rts", iter)?) {
-                    args.include_rts.push(parse_u8_value(&v, "--include-rts")?);
-                }
-            }
+            "--include-rts" => push_filter(
+                &next_value("--include-rts", iter)?,
+                &mut args.include_rts,
+                |v| parse_u8_value(v, "--include-rts").map_err(Into::into),
+            )?,
             s if s.starts_with("--include-rts=") => {
-                for v in split_csv(&s["--include-rts=".len()..]) {
-                    args.include_rts.push(parse_u8_value(&v, "--include-rts")?);
-                }
+                push_filter(&s["--include-rts=".len()..], &mut args.include_rts, |v| {
+                    parse_u8_value(v, "--include-rts").map_err(Into::into)
+                })?
             }
-            "--exclude-buses" => {
-                for v in split_csv(&next_value("--exclude-buses", iter)?) {
-                    args.exclude_buses
-                        .push(parse_bus_name(&v).map_err(|e| e.0)?);
-                }
-            }
-            s if s.starts_with("--exclude-buses=") => {
-                for v in split_csv(&s["--exclude-buses=".len()..]) {
-                    args.exclude_buses
-                        .push(parse_bus_name(&v).map_err(|e| e.0)?);
-                }
-            }
-            "--include-buses" => {
-                for v in split_csv(&next_value("--include-buses", iter)?) {
-                    args.include_buses
-                        .push(parse_bus_name(&v).map_err(|e| e.0)?);
-                }
-            }
-            s if s.starts_with("--include-buses=") => {
-                for v in split_csv(&s["--include-buses=".len()..]) {
-                    args.include_buses
-                        .push(parse_bus_name(&v).map_err(|e| e.0)?);
-                }
-            }
-            "--exclude-subaddresses" => {
-                for v in split_csv(&next_value("--exclude-subaddresses", iter)?) {
-                    args.exclude_subaddresses
-                        .push(parse_u8_value(&v, "--exclude-subaddresses")?);
-                }
-            }
-            s if s.starts_with("--exclude-subaddresses=") => {
-                for v in split_csv(&s["--exclude-subaddresses=".len()..]) {
-                    args.exclude_subaddresses
-                        .push(parse_u8_value(&v, "--exclude-subaddresses")?);
-                }
-            }
-            "--include-subaddresses" => {
-                for v in split_csv(&next_value("--include-subaddresses", iter)?) {
-                    args.include_subaddresses
-                        .push(parse_u8_value(&v, "--include-subaddresses")?);
-                }
-            }
-            s if s.starts_with("--include-subaddresses=") => {
-                for v in split_csv(&s["--include-subaddresses=".len()..]) {
-                    args.include_subaddresses
-                        .push(parse_u8_value(&v, "--include-subaddresses")?);
-                }
-            }
+            "--exclude-buses" => push_filter(
+                &next_value("--exclude-buses", iter)?,
+                &mut args.exclude_buses,
+                parse_bus_filter,
+            )?,
+            s if s.starts_with("--exclude-buses=") => push_filter(
+                &s["--exclude-buses=".len()..],
+                &mut args.exclude_buses,
+                parse_bus_filter,
+            )?,
+            "--include-buses" => push_filter(
+                &next_value("--include-buses", iter)?,
+                &mut args.include_buses,
+                parse_bus_filter,
+            )?,
+            s if s.starts_with("--include-buses=") => push_filter(
+                &s["--include-buses=".len()..],
+                &mut args.include_buses,
+                parse_bus_filter,
+            )?,
+            "--exclude-subaddresses" => push_filter(
+                &next_value("--exclude-subaddresses", iter)?,
+                &mut args.exclude_subaddresses,
+                |v| parse_u8_value(v, "--exclude-subaddresses").map_err(Into::into),
+            )?,
+            s if s.starts_with("--exclude-subaddresses=") => push_filter(
+                &s["--exclude-subaddresses=".len()..],
+                &mut args.exclude_subaddresses,
+                |v| parse_u8_value(v, "--exclude-subaddresses").map_err(Into::into),
+            )?,
+            "--include-subaddresses" => push_filter(
+                &next_value("--include-subaddresses", iter)?,
+                &mut args.include_subaddresses,
+                |v| parse_u8_value(v, "--include-subaddresses").map_err(Into::into),
+            )?,
+            s if s.starts_with("--include-subaddresses=") => push_filter(
+                &s["--include-subaddresses=".len()..],
+                &mut args.include_subaddresses,
+                |v| parse_u8_value(v, "--include-subaddresses").map_err(Into::into),
+            )?,
             "-h" | "--help" => return Err(ParseError::HelpRequested),
             s if s.starts_with('-') => {
                 return Err(format!("unknown decode option: {s}").into());
@@ -881,14 +908,11 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, CliErr
     .map_err(|e| CliError::runtime(format_mie_error(e)))
 }
 
-fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliError> {
-    let cfg = resolve_config(&globals)?;
-
-    // Resolve the input set before `with_overrides` consumes the filter
-    // fields of `args` (so we can still read inputs/manifest/glob).
-    let input_paths = resolve_inputs(&args)?;
-
-    let cfg = cfg.with_overrides(ConfigOverrides {
+/// Assemble the CLI `ConfigOverrides` from parsed decode args (CLI > config >
+/// default). The filter vectors are moved out of `args` (leaving them empty),
+/// so `args.output` stays usable afterward.
+fn build_config_overrides(args: &mut DecodeArgs, log_level: Option<String>) -> ConfigOverrides {
+    ConfigOverrides {
         time_format: args.time_format,
         strict: args.strict,
         error_mode: if args.inline_errors {
@@ -897,10 +921,9 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
             None
         },
         output_format: args.output_format.clone(),
-        // CLI flag flips no_clobber on; absence leaves the config value
-        // intact (Some(false) would clobber a `true` from the config).
+        // A CLI flag flips the option on; absence leaves the config value intact
+        // (Some(false) would clobber a `true` from the config).
         no_clobber: if args.no_clobber { Some(true) } else { None },
-        // Same precedence pattern for --allow-partial.
         allow_partial: if args.allow_partial { Some(true) } else { None },
         detect_records: args.detect_records,
         lookahead_records: args.lookahead_records,
@@ -909,24 +932,115 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
         mux_enabled: if args.no_mux { Some(false) } else { None },
         mux_delimiter: args.mux_delimiter.clone(),
         mux_field: args.mux_field,
-        // Cross-recorder duplicate collapsing (L2-MRG-007); absence leaves the
-        // config value (CLI > config > default).
         collapse_duplicates: if args.collapse_duplicates {
             Some(true)
         } else {
             None
         },
         collapse_window_us: args.collapse_window_us,
-        exclude_types: args.exclude_types,
-        exclude_rts: args.exclude_rts,
-        exclude_buses: args.exclude_buses,
-        exclude_subaddresses: args.exclude_subaddresses,
-        include_types: args.include_types,
-        include_rts: args.include_rts,
-        include_buses: args.include_buses,
-        include_subaddresses: args.include_subaddresses,
-        log_level: globals.log_level.clone(),
-    });
+        exclude_types: std::mem::take(&mut args.exclude_types),
+        exclude_rts: std::mem::take(&mut args.exclude_rts),
+        exclude_buses: std::mem::take(&mut args.exclude_buses),
+        exclude_subaddresses: std::mem::take(&mut args.exclude_subaddresses),
+        include_types: std::mem::take(&mut args.include_types),
+        include_rts: std::mem::take(&mut args.include_rts),
+        include_buses: std::mem::take(&mut args.include_buses),
+        include_subaddresses: std::mem::take(&mut args.include_subaddresses),
+        log_level,
+    }
+}
+
+/// Open a reader per resolved input (L2-MRG-001). Under `--allow-partial` a
+/// *merge* tolerates a per-file open failure — it drops that input with a WARN
+/// and reports `open_dropped = true` so the batch commits a `.partial`
+/// (L2-MRG-004). A single-input decode propagates the open error. Returns the
+/// opened readers and whether any input was dropped.
+fn open_all_readers(
+    input_paths: &[PathBuf],
+    cfg: &DecoderConfig,
+    merge_requested: bool,
+) -> Result<(Vec<MieFileReader>, bool), CliError> {
+    let mut readers: Vec<MieFileReader> = Vec::with_capacity(input_paths.len());
+    let mut open_dropped = false;
+    for p in input_paths {
+        match open_reader(p, cfg) {
+            Ok(r) => readers.push(r),
+            Err(e) if merge_requested && cfg.allow_partial => {
+                log_warn!(
+                    "merge: input {} could not be opened; truncating it from the \
+                     merge (--allow-partial): {}",
+                    p.display(),
+                    e.message
+                );
+                open_dropped = true;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok((readers, open_dropped))
+}
+
+/// Run the decode (single input) or k-way merge (two or more) and return the
+/// writer result. `Err(code)` is an early exit: an incompatible-merge or
+/// prime-time failure (L2-MRG-003) whose exit code is chosen here.
+fn execute_decode_or_merge(
+    readers: &[MieFileReader],
+    cfg: &DecoderConfig,
+    output: Option<&Path>,
+    write_opts: WriteOptions,
+    merge_requested: bool,
+    open_dropped: bool,
+) -> Result<crate::error::MieResult<crate::writer::WriteOutcome>, ExitCode> {
+    if !merge_requested {
+        let messages = readers[0].iter().filter_messages(cfg.filters.clone());
+        return Ok(write_messages(messages, output, cfg.error_mode, write_opts));
+    }
+
+    match crate::merge::MergedRecordIter::new(
+        readers,
+        cfg.standard_tick_rate_hz,
+        cfg.allow_partial,
+        cfg.strict,
+    ) {
+        Ok(merged) => {
+            let merged = merged.collapse(cfg.collapse_duplicates, cfg.collapse_window_us);
+            // Clone the suppressed-duplicate counter before the writer consumes
+            // the iterator, then report it after (L2-MRG-007).
+            let collapsed = merged.collapsed_handle();
+            // An input dropped at open time surfaces a terminal after the good
+            // rows so the writer commits a `.partial` (L2-MRG-004).
+            let open_tail =
+                open_dropped.then_some(Err(crate::error::MieError::UnrecoverableSyncLoss {
+                    offset: 0,
+                    sync_losses: 0,
+                }));
+            let result = write_messages(
+                merged.filter_messages(cfg.filters.clone()).chain(open_tail),
+                output,
+                cfg.error_mode,
+                write_opts,
+            );
+            let n = collapsed.load(std::sync::atomic::Ordering::Relaxed);
+            if n > 0 {
+                log_info!("merge: collapsed {n} duplicate message(s) across recorders");
+            }
+            Ok(result)
+        }
+        // Incompatible inputs (L2-MRG-003) and prime-time file failures surface
+        // here, before any output — route through the same exit classifier.
+        Err(e) => Err(classify_decode_exit(Err(e), 0, false)),
+    }
+}
+
+fn run_decode(globals: GlobalArgs, mut args: DecodeArgs) -> Result<ExitCode, CliError> {
+    let cfg = resolve_config(&globals)?;
+
+    // Resolve the input set before `build_config_overrides` moves the filter
+    // fields out of `args` (so we can still read inputs/manifest/glob).
+    let input_paths = resolve_inputs(&args)?;
+
+    let overrides = build_config_overrides(&mut args, globals.log_level.clone());
+    let cfg = cfg.with_overrides(overrides);
 
     if cfg.output_format != "csv" {
         return Err(CliError::runtime(format!(
@@ -942,23 +1056,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
     // commits the batch as `.partial` (L2-MRG-004), mirroring how a priming-time
     // or mid-file failure is handled. A single-input decode is unaffected.
     let merge_requested = input_paths.len() > 1;
-    let mut readers: Vec<MieFileReader> = Vec::with_capacity(input_paths.len());
-    let mut open_dropped = false;
-    for p in &input_paths {
-        match open_reader(p, &cfg) {
-            Ok(r) => readers.push(r),
-            Err(e) if merge_requested && cfg.allow_partial => {
-                log_warn!(
-                    "merge: input {} could not be opened; truncating it from the \
-                     merge (--allow-partial): {}",
-                    p.display(),
-                    e.message
-                );
-                open_dropped = true;
-            }
-            Err(e) => return Err(e),
-        }
-    }
+    let (readers, open_dropped) = open_all_readers(&input_paths, &cfg, merge_requested)?;
     for r in &readers {
         log_info!("opened {} ({} bytes)", r.path().display(), r.file_size());
     }
@@ -981,48 +1079,19 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
         allow_partial: cfg.allow_partial,
     };
 
-    // One input → the existing single-file path (unchanged, monomorphized,
-    // per-file DELTA). Two or more → the time-sorted k-way merge with global
-    // DELTA (L2-MRG-002 / L2-MRG-005). Both feed the same generic writer.
-    let write_result = if !merge_requested {
-        let messages = readers[0].iter().filter_messages(cfg.filters.clone());
-        write_messages(messages, args.output.as_deref(), cfg.error_mode, write_opts)
-    } else {
-        match crate::merge::MergedRecordIter::new(
-            &readers,
-            cfg.standard_tick_rate_hz,
-            cfg.allow_partial,
-            cfg.strict,
-        ) {
-            Ok(merged) => {
-                let merged = merged.collapse(cfg.collapse_duplicates, cfg.collapse_window_us);
-                // Clone the suppressed-duplicate counter before the iterator is
-                // consumed by the writer, then report it after (L2-MRG-007).
-                let collapsed = merged.collapsed_handle();
-                // An input dropped at open time surfaces a terminal after the
-                // good rows so the writer commits a `.partial` (L2-MRG-004).
-                let open_tail =
-                    open_dropped.then_some(Err(crate::error::MieError::UnrecoverableSyncLoss {
-                        offset: 0,
-                        sync_losses: 0,
-                    }));
-                let result = write_messages(
-                    merged.filter_messages(cfg.filters.clone()).chain(open_tail),
-                    args.output.as_deref(),
-                    cfg.error_mode,
-                    write_opts,
-                );
-                let n = collapsed.load(std::sync::atomic::Ordering::Relaxed);
-                if n > 0 {
-                    log_info!("merge: collapsed {n} duplicate message(s) across recorders");
-                }
-                result
-            }
-            // Incompatible inputs (L2-MRG-003) and prime-time file failures
-            // surface here, before any output. Route through the same
-            // classifier so each maps to its proper exit code.
-            Err(e) => return Ok(classify_decode_exit(Err(e), 0, false)),
-        }
+    // One input → the single-file path (per-file DELTA); two or more → the
+    // time-sorted k-way merge with global DELTA. Both feed the same writer. An
+    // incompatible-merge / prime-time failure returns its exit code directly.
+    let write_result = match execute_decode_or_merge(
+        &readers,
+        &cfg,
+        args.output.as_deref(),
+        write_opts,
+        merge_requested,
+        open_dropped,
+    ) {
+        Ok(r) => r,
+        Err(code) => return Ok(code),
     };
 
     // Cumulative sync-loss count across all inputs drives the L1-EXIT-005
