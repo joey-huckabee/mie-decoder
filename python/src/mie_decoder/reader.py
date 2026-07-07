@@ -83,7 +83,6 @@ from mie_decoder.models import (
     Direction,
     ERROR_SPURIOUS_CONTINUATION,
     ERROR_SPURIOUS_STANDALONE,
-    IrigTimestamp,
     KNOWN_DDC_ERROR_CODES,
     MessageFormat,
     MessageType,
@@ -777,16 +776,18 @@ class MieFileReader:
     ) -> Timestamp:
         """Decode the record timestamp and emit the freerun / IRIG day-of-year
         advisories (the latter one-time per decode)."""
-        timestamp: Timestamp
         if fmt == TimestampFormat.IRIG:
-            timestamp = decode_irig_timestamp(
+            # decode_irig_timestamp always returns a concrete IrigTimestamp, so
+            # the freerun / day-of-year fields are read directly (no isinstance
+            # guard — it would be gratuitously always-true here).
+            irig = decode_irig_timestamp(
                 read_u16(mm, offset + 2),
                 read_u16(mm, offset + 4),
                 read_u16(mm, offset + 6),
             )
-            if isinstance(timestamp, IrigTimestamp) and timestamp.freerun:
+            if irig.freerun:
                 logger.warning("Freerun timestamp at 0x%X", offset)
-            elif isinstance(timestamp, IrigTimestamp) and not state.warned_irig_day:
+            elif not state.warned_irig_day:
                 # PRA-9: the IRIG day-of-year field has a known
                 # firmware-dependent decode discrepancy on some
                 # DDC cards; time-of-day fields are unaffected.
@@ -799,12 +800,11 @@ class MieFileReader:
                     "microsecond are unaffected) — see "
                     "docs/VENDOR-CSV-DIFFS.md §5"
                 )
-        else:
-            timestamp = decode_standard_timestamp(
-                read_u16(mm, offset + 2),
-                read_u16(mm, offset + 4),
-            )
-        return timestamp
+            return irig
+        return decode_standard_timestamp(
+            read_u16(mm, offset + 2),
+            read_u16(mm, offset + 4),
+        )
 
     def _build_spurious_step(
         self,
