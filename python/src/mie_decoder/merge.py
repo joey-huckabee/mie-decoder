@@ -163,28 +163,9 @@ def _global_delta_value(
 
 def _apply_global_delta(msg: MieMessage, tick: float | None, tracker: dict[str, int]) -> MieMessage:
     """Recompute DELTA on the merged global timeline (L2-MRG-005) and return a
-    copy of ``msg`` carrying it.
-
-    Rebuilt field-by-field rather than via ``dataclasses.replace`` so every tool
-    infers the concrete ``MieMessage`` return type (some widen ``replace``'s
-    result to a generic dataclass). ``MieMessage`` is frozen, so this is the
-    only field that changes; the rest are copied verbatim.
-    """
+    copy of ``msg`` carrying it."""
     delta = _global_delta_value(msg, tick, tracker)
-    return MieMessage(
-        timestamp=msg.timestamp,
-        type_word=msg.type_word,
-        message_format=msg.message_format,
-        command_word=msg.command_word,
-        command_word_2=msg.command_word_2,
-        status_word=msg.status_word,
-        status_word_2=msg.status_word_2,
-        data_words=msg.data_words,
-        error_word=msg.error_word,
-        delta=delta,
-        file_offset=msg.file_offset,
-        mux=msg.mux,
-    )
+    return msg.with_delta(delta)
 
 
 def _dedup_key(msg: MieMessage) -> tuple[object, ...]:

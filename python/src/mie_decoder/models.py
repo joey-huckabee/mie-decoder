@@ -446,6 +446,30 @@ class MieMessage:
     file_offset: int
     mux: str | None = None
 
+    def with_delta(self, delta: float | None) -> "MieMessage":
+        """Return a copy of this message carrying a new DELTA.
+
+        ``MieMessage`` is frozen, so callers that recompute DELTA on a merged
+        multi-file timeline (L2-MRG-005) build a fresh instance instead of
+        mutating in place. Rebuilt field-by-field rather than via
+        ``dataclasses.replace`` so every type checker infers the concrete
+        ``MieMessage`` return type; only ``delta`` changes.
+        """
+        return MieMessage(
+            timestamp=self.timestamp,
+            type_word=self.type_word,
+            message_format=self.message_format,
+            command_word=self.command_word,
+            command_word_2=self.command_word_2,
+            status_word=self.status_word,
+            status_word_2=self.status_word_2,
+            data_words=self.data_words,
+            error_word=self.error_word,
+            delta=delta,
+            file_offset=self.file_offset,
+            mux=self.mux,
+        )
+
     @property
     def rt(self) -> int | None:
         """Remote Terminal address, or None for SPURIOUS_DATA."""
