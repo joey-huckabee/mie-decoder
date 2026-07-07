@@ -52,9 +52,44 @@ def apply_filters(
         yield from messages
         return
 
+    _log_active_filters(filters)
     excluded_count = 0
     passed_count = 0
 
+    for msg in messages:
+        rt, subaddress = _rt_and_subaddress(msg)
+        if filters.should_exclude(
+            message_type=msg.type_word.message_type,
+            rt=rt,
+            bus=msg.type_word.bus,
+            subaddress=subaddress,
+        ):
+            excluded_count += 1
+            _log_filtered_out(msg, rt, subaddress)
+            continue
+
+        passed_count += 1
+        yield msg
+
+    logger.info(
+        "Filter results: %d passed, %d excluded",
+        passed_count,
+        excluded_count,
+    )
+
+
+def _rt_and_subaddress(msg: MieMessage) -> tuple[int | None, int | None]:
+    """Extract ``(rt, subaddress)`` from a message's Command Word, or
+    ``(None, None)`` for SPURIOUS_DATA (no Command Word) so only type/bus
+    filters can match it (mirrors the Rust filter) and no AttributeError."""
+    cw = msg.command_word
+    if cw is None:
+        return None, None
+    return cw.rt, cw.subaddress
+
+
+def _log_active_filters(filters: FilterConfig) -> None:
+    """Emit the one-time INFO summary of the active exclude/include sets."""
     logger.info(
         "Filtering active: exclude_types=%s exclude_rts=%s "
         "exclude_buses=%s exclude_subaddresses=%s "
@@ -70,35 +105,14 @@ def apply_filters(
         filters.include_subaddresses or "none",
     )
 
-    for msg in messages:
-        # SPURIOUS_DATA records carry no Command Word, so rt/subaddress are
-        # None and only type/bus filters can match them (mirrors the Rust
-        # filter). Guarding here also avoids an AttributeError on None.
-        cw = msg.command_word
-        rt = cw.rt if cw is not None else None
-        subaddress = cw.subaddress if cw is not None else None
-        if filters.should_exclude(
-            message_type=msg.type_word.message_type,
-            rt=rt,
-            bus=msg.type_word.bus,
-            subaddress=subaddress,
-        ):
-            excluded_count += 1
-            logger.debug(
-                "Filtered out: offset=0x%X type=0x%02X RT%s SA%s Bus %s",
-                msg.file_offset,
-                msg.type_word.message_type,
-                rt if rt is not None else "-",
-                subaddress if subaddress is not None else "-",
-                msg.type_word.bus.name,
-            )
-            continue
 
-        passed_count += 1
-        yield msg
-
-    logger.info(
-        "Filter results: %d passed, %d excluded",
-        passed_count,
-        excluded_count,
+def _log_filtered_out(msg: MieMessage, rt: int | None, subaddress: int | None) -> None:
+    """DEBUG line for a message dropped by the filters."""
+    logger.debug(
+        "Filtered out: offset=0x%X type=0x%02X RT%s SA%s Bus %s",
+        msg.file_offset,
+        msg.type_word.message_type,
+        rt if rt is not None else "-",
+        subaddress if subaddress is not None else "-",
+        msg.type_word.bus.name,
     )
