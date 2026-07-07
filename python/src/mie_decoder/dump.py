@@ -28,7 +28,7 @@ from mie_decoder.decode import (
     read_u16,
 )
 from mie_decoder.exceptions import MieFileEmptyError, MieFileNotFoundError
-from mie_decoder.models import MessageType
+from mie_decoder.models import MessageType, TypeWord
 
 logger = logging.getLogger(__name__)
 
@@ -130,76 +130,92 @@ def hex_dump_records(
         type_raw = read_u16(data, offset)
         tw = decode_type_word(type_raw)
 
-        if tw.word_count < MIN_RECORD_WORDS:
-            print(
-                f"  !! Invalid word_count={tw.word_count} at 0x{offset:08X}, stopping",
-                file=out,
-            )
-            # L2-CLI-013: surface the scan-stop anomaly through the logger
-            # (subject to the configured level), in addition to the inline note.
-            logger.warning(
-                "dump: invalid word_count=%d at 0x%X; stopping record scan",
-                tw.word_count,
-                offset,
-            )
+        # Validate the record's extent; a stop reason is written inline and
+        # logged (L2-CLI-013) inside the helper, so here we just break.
+        record_end = _dump_record_extent(tw, offset, file_len, out)
+        if record_end is None:
             break
+        record_bytes = record_end - offset
 
-        record_bytes = tw.word_count * 2
-        if offset + record_bytes > file_len:
-            print(
-                f"  !! Truncated record at 0x{offset:08X} "
-                f"({record_bytes} bytes needed, {file_len - offset} available)",
-                file=out,
-            )
-            logger.warning(
-                "dump: truncated record at 0x%X (%d bytes needed, %d available); "
-                "stopping record scan",
-                offset,
-                record_bytes,
-                file_len - offset,
-            )
-            break
-
-        # Decode header fields for annotation
-        type_name = _TYPE_NAMES.get(tw.message_type, f"UNKNOWN(0x{tw.message_type:02X})")
-        ts_upper = read_u16(data, offset + 2)
-        ts_middle = read_u16(data, offset + 4)
-        ts_lower = read_u16(data, offset + 6)
-        timestamp = decode_irig_timestamp(ts_upper, ts_middle, ts_lower)
-        cmd_raw = read_u16(data, offset + 8)
-        cmd = decode_command_word(cmd_raw)
-
-        # Record header
-        print(
-            f"{'─' * 72}\n"
-            f"  Record #{record_num}  @  0x{offset:08X}  "
-            f"({record_bytes} bytes, {tw.word_count} words)\n"
-            f"  Type: 0x{tw.raw:04X}  →  {type_name}  "
-            f"Bus {'B' if tw.bus else 'A'}  "
-            f"{'ERROR' if tw.error else 'OK'}\n"
-            f"  Time: {timestamp.format()}"
-            f"{'  [FREERUN]' if timestamp.freerun else ''}\n"
-            f"  Cmd:  0x{cmd.raw:04X}  →  RT{cmd.rt} SA{cmd.subaddress} "
-            f"{'T' if cmd.direction else 'R'} WC={cmd.data_word_count}",
-            file=out,
-        )
-
-        # Hex dump of the full record
-        record_data = data[offset : offset + record_bytes]
-        for i in range(0, len(record_data), 16):
-            addr = offset + i
-            hex_part = " ".join(f"{b:02X}" for b in record_data[i : i + 16])
-            ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in record_data[i : i + 16])
-            print(
-                f"    {addr:08X}  {hex_part:<48s}  |{ascii_part}|",
-                file=out,
-            )
+        _write_record_annotation(out, data, tw, offset, record_bytes, record_num)
+        _write_record_hex_payload(out, data[offset:record_end], offset)
 
         print(file=out)
-        offset += record_bytes
+        offset = record_end
         record_num += 1
 
     print(
         f"{'─' * 72}\n{record_num} records dumped.",
         file=out,
     )
+
+
+def _dump_record_extent(tw: TypeWord, offset: int, file_len: int, out: TextIO) -> int | None:
+    """Validate the record at ``offset`` for the dump scan. Returns ``record_end``
+    to proceed, or ``None`` to stop scanning — writing the inline anomaly note to
+    ``out`` and logging it (L2-CLI-013) on each stop path."""
+    if tw.word_count < MIN_RECORD_WORDS:
+        print(
+            f"  !! Invalid word_count={tw.word_count} at 0x{offset:08X}, stopping",
+            file=out,
+        )
+        logger.warning(
+            "dump: invalid word_count=%d at 0x%X; stopping record scan",
+            tw.word_count,
+            offset,
+        )
+        return None
+
+    record_bytes = tw.word_count * 2
+    if offset + record_bytes > file_len:
+        print(
+            f"  !! Truncated record at 0x{offset:08X} "
+            f"({record_bytes} bytes needed, {file_len - offset} available)",
+            file=out,
+        )
+        logger.warning(
+            "dump: truncated record at 0x%X (%d bytes needed, %d available); stopping record scan",
+            offset,
+            record_bytes,
+            file_len - offset,
+        )
+        return None
+
+    return offset + record_bytes
+
+
+def _write_record_annotation(
+    out: TextIO, data: bytes, tw: TypeWord, offset: int, record_bytes: int, record_num: int
+) -> None:
+    """Write the decoded-header annotation block (Type / Time / Cmd) for one record.
+    The IRIG timestamp decode is a best-effort summary — for Standard-format files
+    the raw bytes below remain authoritative."""
+    type_name = _TYPE_NAMES.get(tw.message_type, f"UNKNOWN(0x{tw.message_type:02X})")
+    ts_upper = read_u16(data, offset + 2)
+    ts_middle = read_u16(data, offset + 4)
+    ts_lower = read_u16(data, offset + 6)
+    timestamp = decode_irig_timestamp(ts_upper, ts_middle, ts_lower)
+    cmd = decode_command_word(read_u16(data, offset + 8))
+    print(
+        f"{'─' * 72}\n"
+        f"  Record #{record_num}  @  0x{offset:08X}  "
+        f"({record_bytes} bytes, {tw.word_count} words)\n"
+        f"  Type: 0x{tw.raw:04X}  →  {type_name}  "
+        f"Bus {'B' if tw.bus else 'A'}  "
+        f"{'ERROR' if tw.error else 'OK'}\n"
+        f"  Time: {timestamp.format()}"
+        f"{'  [FREERUN]' if timestamp.freerun else ''}\n"
+        f"  Cmd:  0x{cmd.raw:04X}  →  RT{cmd.rt} SA{cmd.subaddress} "
+        f"{'T' if cmd.direction else 'R'} WC={cmd.data_word_count}",
+        file=out,
+    )
+
+
+def _write_record_hex_payload(out: TextIO, record_data: bytes, offset: int) -> None:
+    """Hex-dump a record's raw bytes, 16 per line, each line offset-annotated."""
+    for i in range(0, len(record_data), 16):
+        addr = offset + i
+        chunk = record_data[i : i + 16]
+        hex_part = " ".join(f"{b:02X}" for b in chunk)
+        ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
+        print(f"    {addr:08X}  {hex_part:<48s}  |{ascii_part}|", file=out)
