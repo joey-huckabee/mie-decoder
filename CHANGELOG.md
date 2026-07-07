@@ -15,6 +15,8 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-07-06
+
 ### Added
 
 - **End-of-records terminator awareness (`0x0000`) and the empty-recording
@@ -1323,7 +1325,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.3...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.3...v2.6.0
 [2.5.3]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.0...v2.5.1
