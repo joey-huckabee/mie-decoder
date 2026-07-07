@@ -263,11 +263,22 @@ pub fn load_config(path: Option<&Path>) -> Result<DecoderConfig, ConfigError> {
 pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     let toml = parse_toml(text).map_err(ConfigError)?;
     let mut cfg = DecoderConfig::default();
+    // Each `[section]` is applied by its own helper (all validate at load time
+    // per L2-CFG-010) so no single function carries the whole schema.
+    apply_logging_section(&toml, &mut cfg)?;
+    apply_decode_section(&toml, &mut cfg)?;
+    apply_output_section(&toml, &mut cfg)?;
+    apply_mux_section(&toml, &mut cfg)?;
+    apply_filter_sections(&toml, &mut cfg)?;
+    warn_unknown_keys(&toml);
+    Ok(cfg)
+}
 
+/// `[logging]`: validate at load time so the error points at the config file
+/// rather than surfacing later as a silent no-op.
+fn apply_logging_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
     if let Some(level) = toml.get_string("logging", "level")? {
         let upper = level.to_uppercase();
-        // Validate at load time so the error points at the config file
-        // rather than surfacing later as a silent no-op.
         if crate::log::Level::parse(&upper).is_none() {
             return Err(ConfigError(format!(
                 "Invalid logging.level: {level:?}. \
@@ -276,6 +287,12 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
         }
         cfg.log_level = upper;
     }
+    Ok(())
+}
+
+/// `[decode]`: timestamp format, strict/allow-partial flags, detection and
+/// look-ahead ranges, and the Standard tick-rate calibration.
+fn apply_decode_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
     if let Some(tf) = toml.get_string("decode", "time_format")? {
         cfg.time_format = parse_time_format(tf)?;
     }
@@ -285,10 +302,45 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     if let Some(em) = toml.get_string("decode", "error_mode")? {
         cfg.error_mode = parse_error_mode(em)?;
     }
+    if let Some(b) = toml.get_bool("decode", "allow_partial")? {
+        cfg.allow_partial = b;
+    }
+    if let Some(n) = toml.get_int("decode", "detect_records")? {
+        // L2-DEC-015: validate range [1, 32] at load time per L2-CFG-010.
+        if n < DETECT_RECORDS_MIN as i64 || n > DETECT_RECORDS_MAX as i64 {
+            return Err(ConfigError(format!(
+                "Invalid decode.detect_records: {n}. \
+                 Valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]"
+            )));
+        }
+        cfg.detect_records = n as usize;
+    }
+    if let Some(n) = toml.get_int("decode", "lookahead_records")? {
+        // L2-SYN-026: validate range [1, 32] at load time per L2-CFG-010.
+        if n < LOOKAHEAD_RECORDS_MIN as i64 || n > LOOKAHEAD_RECORDS_MAX as i64 {
+            return Err(ConfigError(format!(
+                "Invalid decode.lookahead_records: {n}. \
+                 Valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]"
+            )));
+        }
+        cfg.lookahead_records = n as usize;
+    }
+    if let Some(hz) = toml.get_float("decode", "standard_tick_rate_hz")? {
+        // L2-DEC-017: the tick rate must be a real, strictly-positive frequency.
+        if !hz.is_finite() || hz <= 0.0 {
+            return Err(ConfigError(format!(
+                "Invalid decode.standard_tick_rate_hz: {hz}. \
+                 Must be a finite value greater than 0"
+            )));
+        }
+        cfg.standard_tick_rate_hz = Some(hz);
+    }
+    Ok(())
+}
+
+/// `[output]`: output format (only `csv` today, L2-CFG-010) and no-clobber.
+fn apply_output_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
     if let Some(fmt) = toml.get_string("output", "format")? {
-        // L2-CFG-010: validate enum membership at load time. `csv` is
-        // currently the only supported output format; forward-compat for
-        // future formats (Parquet, etc.) will widen this list.
         if fmt != "csv" {
             return Err(ConfigError(format!(
                 "Invalid output.format: {fmt:?}. Valid: csv"
@@ -299,48 +351,11 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     if let Some(b) = toml.get_bool("output", "no_clobber")? {
         cfg.no_clobber = b;
     }
-    if let Some(b) = toml.get_bool("decode", "allow_partial")? {
-        cfg.allow_partial = b;
-    }
-    if let Some(n) = toml.get_int("decode", "detect_records")? {
-        // L2-DEC-015: validate range [1, 32] at load time per
-        // L2-CFG-010. A nonpositive or oversized value would otherwise
-        // silently degrade detection quality.
-        if n < DETECT_RECORDS_MIN as i64 || n > DETECT_RECORDS_MAX as i64 {
-            return Err(ConfigError(format!(
-                "Invalid decode.detect_records: {n}. \
-                 Valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]"
-            )));
-        }
-        cfg.detect_records = n as usize;
-    }
-    if let Some(n) = toml.get_int("decode", "lookahead_records")? {
-        // L2-SYN-026: validate range [1, 32] at load time per
-        // L2-CFG-010. Out-of-range values would silently degrade
-        // sync validation quality or hit performance cliffs.
-        if n < LOOKAHEAD_RECORDS_MIN as i64 || n > LOOKAHEAD_RECORDS_MAX as i64 {
-            return Err(ConfigError(format!(
-                "Invalid decode.lookahead_records: {n}. \
-                 Valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]"
-            )));
-        }
-        cfg.lookahead_records = n as usize;
-    }
-    if let Some(hz) = toml.get_float("decode", "standard_tick_rate_hz")? {
-        // L2-DEC-017: the tick rate must be a real, strictly-positive
-        // frequency. Reject non-finite or non-positive values at load time
-        // per L2-CFG-010 so a bad rate can never silently produce garbage
-        // microseconds.
-        if !hz.is_finite() || hz <= 0.0 {
-            return Err(ConfigError(format!(
-                "Invalid decode.standard_tick_rate_hz: {hz}. \
-                 Must be a finite value greater than 0"
-            )));
-        }
-        cfg.standard_tick_rate_hz = Some(hz);
-    }
+    Ok(())
+}
 
-    // L2-WRT-020: MUX-from-filename configuration.
+/// `[mux]`: MUX-from-filename configuration (L2-WRT-020).
+fn apply_mux_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
     if let Some(b) = toml.get_bool("mux", "enabled")? {
         cfg.mux_enabled = b;
     }
@@ -355,7 +370,11 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     if let Some(n) = toml.get_int("mux", "field")? {
         cfg.mux_field = n;
     }
+    Ok(())
+}
 
+/// `[filter]`: the four exclude-array keys, each element validated on push.
+fn apply_filter_sections(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
     if let Some(types) = toml.get_array("filter", "exclude_types")? {
         for v in types {
             cfg.filters.exclude_types.push(parse_type_value(v)?);
@@ -380,18 +399,19 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
                 .push(parse_int_rt_sa(v, "exclude_subaddresses")?);
         }
     }
+    Ok(())
+}
 
-    // L2-CFG-009: WARN on unknown `[section] key` entries so typos in a
-    // config file (e.g., `exclude_subdresses`) surface to the operator
-    // instead of being silently dropped. Non-fatal so forward-compatible
-    // additions don't break older configs.
+/// L2-CFG-009: WARN on unknown `[section] key` entries so typos in a config
+/// file (e.g., `exclude_subdresses`) surface to the operator instead of being
+/// silently dropped. Non-fatal so forward-compatible additions don't break
+/// older configs.
+fn warn_unknown_keys(toml: &TomlDoc) {
     for (section, key, _) in &toml.entries {
         if !is_known_shared_key(section.as_str(), key.as_str()) {
             crate::log_warn!("unknown TOML key: [{section}] {key}");
         }
     }
-
-    Ok(cfg)
 }
 
 /// Shared schema membership check used by L2-CFG-009. Any
@@ -738,33 +758,34 @@ fn split_array_items(s: &str) -> Vec<String> {
     let mut prev_backslash = false;
     for c in s.chars() {
         if in_quote {
-            cur.push(c);
-            if c == '\\' && !prev_backslash {
-                prev_backslash = true;
-                continue;
-            }
-            if c == '"' && !prev_backslash {
-                in_quote = false;
-            }
-            prev_backslash = false;
+            (in_quote, prev_backslash) = push_quoted_char(c, &mut cur, prev_backslash);
+        } else if c == ',' {
+            out.push(cur.trim().to_string());
+            cur.clear();
         } else {
-            match c {
-                ',' => {
-                    out.push(cur.trim().to_string());
-                    cur.clear();
-                }
-                '"' => {
-                    in_quote = true;
-                    cur.push(c);
-                }
-                _ => cur.push(c),
+            if c == '"' {
+                in_quote = true;
             }
+            cur.push(c);
         }
     }
     if !cur.trim().is_empty() {
         out.push(cur.trim().to_string());
     }
     out
+}
+
+/// Consume one char while inside a quoted string, pushing it to `cur`. Returns
+/// the updated `(in_quote, prev_backslash)` state: a backslash escapes the next
+/// character (suppressing a closing quote), and an unescaped `"` closes the
+/// quote.
+fn push_quoted_char(c: char, cur: &mut String, prev_backslash: bool) -> (bool, bool) {
+    cur.push(c);
+    if c == '\\' && !prev_backslash {
+        return (true, true); // still quoted; next char is escaped
+    }
+    let closing = c == '"' && !prev_backslash;
+    (!closing, false)
 }
 
 #[cfg(test)]

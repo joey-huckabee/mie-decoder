@@ -219,29 +219,36 @@ class FilterConfig:
             filter is active (SPURIOUS_DATA has no RT/SA). Mirrors the
             Rust ``FilterConfig::should_exclude`` behavior.
         """
-        # Negative filters (checked first; they take precedence).
-        if self.exclude_types and message_type in self.exclude_types:
-            return True
-        if self.exclude_rts and rt in self.exclude_rts:
-            return True
-        if self.exclude_buses and bus in self.exclude_buses:
-            return True
-        if self.exclude_subaddresses and subaddress in self.exclude_subaddresses:
-            return True
+        # Negative filters take precedence over positive ones.
+        return self._matches_exclude(message_type, rt, bus, subaddress) or self._fails_include(
+            message_type, rt, bus, subaddress
+        )
 
-        # Positive filters: if a set is active, the value must be present.
-        if self.include_types and message_type not in self.include_types:
-            return True
-        if self.include_buses and bus not in self.include_buses:
-            return True
-        if self.include_rts and (rt is None or rt not in self.include_rts):
-            return True
-        if self.include_subaddresses and (
-            subaddress is None or subaddress not in self.include_subaddresses
-        ):
-            return True
+    def _matches_exclude(
+        self, message_type: int, rt: int | None, bus: Bus, subaddress: int | None
+    ) -> bool:
+        """Whether the message matches any active ``exclude_*`` set."""
+        return bool(
+            (self.exclude_types and message_type in self.exclude_types)
+            or (self.exclude_rts and rt in self.exclude_rts)
+            or (self.exclude_buses and bus in self.exclude_buses)
+            or (self.exclude_subaddresses and subaddress in self.exclude_subaddresses)
+        )
 
-        return False
+    def _fails_include(
+        self, message_type: int, rt: int | None, bus: Bus, subaddress: int | None
+    ) -> bool:
+        """Whether the message is absent from any active ``include_*`` set. A
+        ``None`` rt/subaddress (SPURIOUS_DATA) fails an active RT/SA include."""
+        return bool(
+            (self.include_types and message_type not in self.include_types)
+            or (self.include_buses and bus not in self.include_buses)
+            or (self.include_rts and (rt is None or rt not in self.include_rts))
+            or (
+                self.include_subaddresses
+                and (subaddress is None or subaddress not in self.include_subaddresses)
+            )
+        )
 
 
 @dataclass
@@ -306,57 +313,41 @@ class DecoderConfig:
         Returns:
             A new DecoderConfig with the overrides applied.
         """
-        new_log = kwargs.get("log_level") or self.log_level
-        new_tf = kwargs.get("time_format") or self.time_format
-        strict_override = kwargs.get("strict")
-        new_strict = self.strict if strict_override is None else bool(strict_override)
-        new_em = kwargs.get("error_mode") or self.error_mode
-        new_fmt = kwargs.get("output_format") or self.output_format
-        # bool overrides need an explicit None check; `or` would let a
-        # config-file True be reset to False by an omitted CLI flag.
-        new_nc = kwargs["no_clobber"] if kwargs.get("no_clobber") is not None else self.no_clobber
-        new_ap = (
-            kwargs["allow_partial"]
-            if kwargs.get("allow_partial") is not None
-            else self.allow_partial
-        )
-        new_dr = (
-            kwargs["detect_records"]
-            if kwargs.get("detect_records") is not None
-            else self.detect_records
-        )
-        new_lr = (
-            kwargs["lookahead_records"]
-            if kwargs.get("lookahead_records") is not None
-            else self.lookahead_records
-        )
-        new_sthz = (
-            kwargs["standard_tick_rate_hz"]
-            if kwargs.get("standard_tick_rate_hz") is not None
-            else self.standard_tick_rate_hz
-        )
-        new_mux_enabled = (
-            kwargs["mux_enabled"] if kwargs.get("mux_enabled") is not None else self.mux_enabled
-        )
-        new_mux_delimiter = kwargs.get("mux_delimiter") or self.mux_delimiter
-        new_mux_field = (
-            kwargs["mux_field"] if kwargs.get("mux_field") is not None else self.mux_field
-        )
-        new_collapse_duplicates = (
-            kwargs["collapse_duplicates"]
-            if kwargs.get("collapse_duplicates") is not None
-            else self.collapse_duplicates
-        )
-        new_collapse_window_us = (
-            kwargs["collapse_window_us"]
-            if kwargs.get("collapse_window_us") is not None
-            else self.collapse_window_us
+        return DecoderConfig(
+            log_level=self._override_or(kwargs, "log_level"),
+            time_format=self._override_or(kwargs, "time_format"),
+            strict=self._override_present(kwargs, "strict"),
+            error_mode=self._override_or(kwargs, "error_mode"),
+            filters=self._merge_filter_overrides(kwargs),
+            output_format=self._override_or(kwargs, "output_format"),
+            no_clobber=self._override_present(kwargs, "no_clobber"),
+            allow_partial=self._override_present(kwargs, "allow_partial"),
+            detect_records=self._override_present(kwargs, "detect_records"),
+            lookahead_records=self._override_present(kwargs, "lookahead_records"),
+            standard_tick_rate_hz=self._override_present(kwargs, "standard_tick_rate_hz"),
+            mux_enabled=self._override_present(kwargs, "mux_enabled"),
+            mux_delimiter=self._override_or(kwargs, "mux_delimiter"),
+            mux_field=self._override_present(kwargs, "mux_field"),
+            collapse_duplicates=self._override_present(kwargs, "collapse_duplicates"),
+            collapse_window_us=self._override_present(kwargs, "collapse_window_us"),
         )
 
-        # Merge filter overrides — CLI adds to (not replaces) config file
-        # filters. include_* are CLI-only (no config-file key), matching
-        # Rust, but merge the same way for symmetry.
-        new_filters = FilterConfig(
+    def _override_or(self, kwargs: dict[str, Any], name: str) -> Any:
+        """Override resolution for enum / non-empty-string fields: a falsy or
+        absent override keeps the current value (``kwargs.get(name) or self.name``)."""
+        return kwargs.get(name) or getattr(self, name)
+
+    def _override_present(self, kwargs: dict[str, Any], name: str) -> Any:
+        """Override resolution for bool / int / float fields: only an explicit
+        non-``None`` override replaces the current value, so an omitted CLI flag
+        never resets a config-file value (e.g. ``no_clobber = true``)."""
+        value = kwargs.get(name)
+        return value if value is not None else getattr(self, name)
+
+    def _merge_filter_overrides(self, kwargs: dict[str, Any]) -> FilterConfig:
+        """CLI filters ADD to (not replace) config-file filters (Rust parity);
+        ``include_*`` are CLI-only but merge the same way for symmetry."""
+        return FilterConfig(
             exclude_types=self.filters.exclude_types | set(kwargs.get("exclude_types") or []),
             exclude_rts=self.filters.exclude_rts | set(kwargs.get("exclude_rts") or []),
             exclude_buses=self.filters.exclude_buses | set(kwargs.get("exclude_buses") or []),
@@ -369,25 +360,6 @@ class DecoderConfig:
             include_subaddresses=(
                 self.filters.include_subaddresses | set(kwargs.get("include_subaddresses") or [])
             ),
-        )
-
-        return DecoderConfig(
-            log_level=new_log,
-            time_format=new_tf,
-            strict=new_strict,
-            error_mode=new_em,
-            filters=new_filters,
-            output_format=new_fmt,
-            no_clobber=new_nc,
-            allow_partial=new_ap,
-            detect_records=new_dr,
-            lookahead_records=new_lr,
-            standard_tick_rate_hz=new_sthz,
-            mux_enabled=new_mux_enabled,
-            mux_delimiter=new_mux_delimiter,
-            mux_field=new_mux_field,
-            collapse_duplicates=new_collapse_duplicates,
-            collapse_window_us=new_collapse_window_us,
         )
 
 
@@ -412,36 +384,41 @@ def _parse_type_names(names: Sequence[object]) -> set[int]:
         ValueError: an unrecognized name, a code outside ``0..=255``, or an
             element that is neither a string nor an integer.
     """
-    result: set[int] = set()
-    for name in names:
-        # bool is an int subclass; a TOML boolean is not a valid type code.
-        if isinstance(name, bool):
-            raise ValueError(f"Invalid message type code: {name!r}")
-        if isinstance(name, int):
-            if not (0 <= name <= 255):
-                raise ValueError(f"Type code out of range: {name}")
-            result.add(name)
-            continue
-        if not isinstance(name, str):
-            raise ValueError(
-                "exclude_types/include_types entries must be strings or "
-                f"integers, got {type(name).__name__}"
-            )
-        upper = name.strip().upper()
-        if upper in _TYPE_NAME_MAP:
-            result.add(_TYPE_NAME_MAP[upper])
-        elif upper.startswith("0X"):
-            try:
-                code = int(upper, 16)
-            except ValueError as exc:
-                raise ValueError(f"Invalid hex type code: {name!r}") from exc
-            if not (0 <= code <= 255):
-                raise ValueError(f"Invalid hex type code: {name!r}")
-            result.add(code)
-        else:
-            valid = ", ".join(sorted(_TYPE_NAME_MAP.keys()))
-            raise ValueError(f"Unknown message type name: {name!r}. Valid names: {valid}")
-    return result
+    return {_parse_type_code(name) for name in names}
+
+
+def _parse_type_code(name: object) -> int:
+    """Parse one message-type identifier (an int code, or a string) to a u8."""
+    # bool is an int subclass; a TOML boolean is not a valid type code.
+    if isinstance(name, bool):
+        raise ValueError(f"Invalid message type code: {name!r}")
+    if isinstance(name, int):
+        if not 0 <= name <= 255:
+            raise ValueError(f"Type code out of range: {name}")
+        return name
+    if not isinstance(name, str):
+        raise ValueError(
+            "exclude_types/include_types entries must be strings or "
+            f"integers, got {type(name).__name__}"
+        )
+    return _parse_type_code_str(name)
+
+
+def _parse_type_code_str(name: str) -> int:
+    """Parse a type-identifier string: an enum name (``BC_TO_RT``) or a ``0x`` hex code."""
+    upper = name.strip().upper()
+    if upper in _TYPE_NAME_MAP:
+        return _TYPE_NAME_MAP[upper]
+    if upper.startswith("0X"):
+        try:
+            code = int(upper, 16)
+        except ValueError as exc:
+            raise ValueError(f"Invalid hex type code: {name!r}") from exc
+        if not 0 <= code <= 255:
+            raise ValueError(f"Invalid hex type code: {name!r}")
+        return code
+    valid = ", ".join(sorted(_TYPE_NAME_MAP.keys()))
+    raise ValueError(f"Unknown message type name: {name!r}. Valid names: {valid}")
 
 
 def _parse_bus_names(names: Sequence[object]) -> set[Bus]:
@@ -507,162 +484,40 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     with open(config_path, "rb") as f:
         data = tomllib.load(f)
 
-    # ── Parse sections ─────────────────────────────────────────────
-    logging_section = data.get("logging", {})
+    # Each `[section]` is validated by its own loader (L2-CFG-010: validate at
+    # load time) so no single function carries the whole schema. The loaders
+    # run in the original order — all validation first, then the unknown-key
+    # WARN, then assembly — so error precedence is unchanged.
     decode_section = data.get("decode", {})
-    filter_section = data.get("filter", {})
     output_section = data.get("output", {})
 
-    # Logging level (L2-CFG-010: validate at load time).
-    log_level_raw = logging_section.get("level", "WARNING")
-    if not isinstance(log_level_raw, str):
-        raise ValueError(
-            f"Invalid [logging] level: expected string, got {type(log_level_raw).__name__}"
-        )
-    log_level = log_level_raw.upper()
-    if log_level not in _VALID_LOG_LEVELS:
-        raise ValueError(
-            f"Invalid [logging] level: {log_level_raw!r}. "
-            f"Valid: DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, OFF"
-        )
-
-    # Timestamp format
-    tf_str = decode_section.get("time_format", "auto").lower()
-    if tf_str not in _TIME_FORMAT_MAP:
-        raise ValueError(f"Invalid time_format: {tf_str!r}. Valid: auto, irig, standard")
-    time_format = _TIME_FORMAT_MAP[tf_str]
-
-    # Strict mode (L2-CFG-010: TOML boolean only; no coercion).
+    log_level = _load_logging_level(data.get("logging", {}))
+    time_format = _load_time_format(decode_section)
     strict = _require_bool("decode", "strict", decode_section.get("strict", False))
-
-    # Error mode
-    em_str = decode_section.get("error_mode", "separate").lower()
-    if em_str not in _ERROR_MODE_MAP:
-        raise ValueError(f"Invalid error_mode: {em_str!r}. Valid: separate, inline")
-    error_mode = _ERROR_MODE_MAP[em_str]
-
-    # Filters
-    exclude_types = _parse_type_names(filter_section.get("exclude_types", []))
-    # L2-CFG schema: RT/SA values must be in [0, 31].
-    exclude_rts = _require_rt_sa_range("exclude_rts", filter_section.get("exclude_rts", []))
-    exclude_buses = _parse_bus_names(filter_section.get("exclude_buses", []))
-    exclude_subaddresses = _require_rt_sa_range(
-        "exclude_subaddresses", filter_section.get("exclude_subaddresses", [])
-    )
-
-    filters = FilterConfig(
-        exclude_types=exclude_types,
-        exclude_rts=exclude_rts,
-        exclude_buses=exclude_buses,
-        exclude_subaddresses=exclude_subaddresses,
-    )
-
-    # Output format (L2-CFG-010: validate at load time; "csv" is currently
-    # the only supported value).
-    output_format = output_section.get("format", "csv")
-    if output_format != "csv":
-        raise ValueError(f"Invalid output.format: {output_format!r}. Valid: csv")
-    # L2-WRT-017: refuse to overwrite existing destination.
+    error_mode = _load_error_mode(decode_section)
+    filters = _load_filter_section(data.get("filter", {}))
+    output_format = _load_output_format(output_section)
     no_clobber = _require_bool("output", "no_clobber", output_section.get("no_clobber", False))
-    # L1-EXIT-004: --allow-partial / decode.allow_partial — turns
-    # unrecoverable mid-file sync loss into a `.partial` commit + exit 0
-    # instead of exit 3.
     allow_partial = _require_bool(
         "decode", "allow_partial", decode_section.get("allow_partial", False)
     )
-
-    # L2-DEC-015: probe size for timestamp-format auto-detection.
-    # L2-CFG-010 — validate range at load time. An out-of-range value
-    # would silently degrade detection quality.
-    detect_records_raw = decode_section.get("detect_records", 8)
-    if not isinstance(detect_records_raw, int) or isinstance(detect_records_raw, bool):
-        raise ValueError(
-            f"Invalid decode.detect_records: {detect_records_raw!r}; must be an integer"
-        )
-    if detect_records_raw < DETECT_RECORDS_MIN or detect_records_raw > DETECT_RECORDS_MAX:
-        raise ValueError(
-            f"Invalid decode.detect_records: {detect_records_raw}. "
-            f"Valid range: [{DETECT_RECORDS_MIN}, {DETECT_RECORDS_MAX}]"
-        )
-    detect_records = detect_records_raw
-
-    # L2-SYN-026: look-ahead depth for sync validation. Same load-time
-    # validation pattern as detect_records.
-    lookahead_records_raw = decode_section.get("lookahead_records", 2)
-    if not isinstance(lookahead_records_raw, int) or isinstance(lookahead_records_raw, bool):
-        raise ValueError(
-            f"Invalid decode.lookahead_records: {lookahead_records_raw!r}; must be an integer"
-        )
-    if (
-        lookahead_records_raw < LOOKAHEAD_RECORDS_MIN
-        or lookahead_records_raw > LOOKAHEAD_RECORDS_MAX
-    ):
-        raise ValueError(
-            f"Invalid decode.lookahead_records: {lookahead_records_raw}. "
-            f"Valid range: [{LOOKAHEAD_RECORDS_MIN}, {LOOKAHEAD_RECORDS_MAX}]"
-        )
-    lookahead_records = lookahead_records_raw
-
-    # L2-DEC-017: optional Standard-counter tick rate. When present it must
-    # be a real, strictly-positive frequency. Accept int or float (but not
-    # bool); reject non-finite or non-positive values at load time per
-    # L2-CFG-010 so a bad rate can never silently produce garbage micros.
-    standard_tick_rate_hz: float | None = None
-    if "standard_tick_rate_hz" in decode_section:
-        raw_hz = decode_section["standard_tick_rate_hz"]
-        if isinstance(raw_hz, bool) or not isinstance(raw_hz, (int, float)):
-            raise ValueError(f"Invalid decode.standard_tick_rate_hz: {raw_hz!r}; must be a number")
-        hz = float(raw_hz)
-        if not math.isfinite(hz) or hz <= 0.0:
-            raise ValueError(
-                f"Invalid decode.standard_tick_rate_hz: {hz}. Must be a finite value greater than 0"
-            )
-        standard_tick_rate_hz = hz
-
-    # L2-WRT-020: MUX-from-filename configuration.
-    mux_section = data.get("mux", {})
-    if not isinstance(mux_section, dict):
-        mux_section = {}
-    mux_enabled = _require_bool("mux", "enabled", mux_section.get("enabled", True))
-    mux_delimiter_raw = mux_section.get("delimiter", ".")
-    if not isinstance(mux_delimiter_raw, str) or mux_delimiter_raw == "":
-        raise ValueError(
-            f"Invalid mux.delimiter: {mux_delimiter_raw!r}; must be a non-empty string"
-        )
-    mux_delimiter = mux_delimiter_raw
-    mux_field_raw = mux_section.get("field", 4)
-    if isinstance(mux_field_raw, bool) or not isinstance(mux_field_raw, int):
-        raise ValueError(f"Invalid mux.field: {mux_field_raw!r}; must be an integer")
-    mux_field = mux_field_raw
-
-    # L2-MRG-007: cross-recorder duplicate collapsing (multi-file merge).
-    merge_section = data.get("merge", {})
-    if not isinstance(merge_section, dict):
-        merge_section = {}
-    collapse_duplicates = _require_bool(
-        "merge", "collapse_duplicates", merge_section.get("collapse_duplicates", False)
+    detect_records = _require_int_range(
+        "decode.detect_records",
+        decode_section.get("detect_records", 8),
+        DETECT_RECORDS_MIN,
+        DETECT_RECORDS_MAX,
     )
-    collapse_window_us_raw = merge_section.get("collapse_window_us", 0)
-    if (
-        isinstance(collapse_window_us_raw, bool)
-        or not isinstance(collapse_window_us_raw, int)
-        or collapse_window_us_raw < 0
-    ):
-        raise ValueError(
-            f"Invalid merge.collapse_window_us: {collapse_window_us_raw!r}; "
-            "must be a non-negative integer"
-        )
-    collapse_window_us = collapse_window_us_raw
+    lookahead_records = _require_int_range(
+        "decode.lookahead_records",
+        decode_section.get("lookahead_records", 2),
+        LOOKAHEAD_RECORDS_MIN,
+        LOOKAHEAD_RECORDS_MAX,
+    )
+    standard_tick_rate_hz = _load_standard_tick_rate(decode_section)
+    mux_enabled, mux_delimiter, mux_field = _load_mux_section(data.get("mux", {}))
+    collapse_duplicates, collapse_window_us = _load_merge_section(data.get("merge", {}))
 
-    # L2-CFG-009: WARN on unknown keys so typos surface to the operator
-    # instead of being silently dropped. Non-fatal so forward-compatible
-    # additions don't break older configs.
-    for section_name, section_dict in data.items():
-        if not isinstance(section_dict, dict):
-            continue
-        for key in section_dict.keys():
-            if (section_name, key) not in _KNOWN_SHARED_KEYS:
-                logger.warning("unknown TOML key: [%s] %s", section_name, key)
+    _warn_unknown_keys(data)
 
     config = DecoderConfig(
         log_level=log_level,
@@ -685,3 +540,130 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
 
     logger.debug("Loaded config: %s", config)
     return config
+
+
+def _load_logging_level(logging_section: dict[str, Any]) -> str:
+    """`[logging] level` — validated against the known level names."""
+    log_level_raw = logging_section.get("level", "WARNING")
+    if not isinstance(log_level_raw, str):
+        raise ValueError(
+            f"Invalid [logging] level: expected string, got {type(log_level_raw).__name__}"
+        )
+    log_level = log_level_raw.upper()
+    if log_level not in _VALID_LOG_LEVELS:
+        raise ValueError(
+            f"Invalid [logging] level: {log_level_raw!r}. "
+            f"Valid: DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, OFF"
+        )
+    return log_level
+
+
+def _load_time_format(decode_section: dict[str, Any]) -> TimestampFormat:
+    """`[decode] time_format`."""
+    tf_str = decode_section.get("time_format", "auto").lower()
+    if tf_str not in _TIME_FORMAT_MAP:
+        raise ValueError(f"Invalid time_format: {tf_str!r}. Valid: auto, irig, standard")
+    return _TIME_FORMAT_MAP[tf_str]
+
+
+def _load_error_mode(decode_section: dict[str, Any]) -> ErrorMode:
+    """`[decode] error_mode`."""
+    em_str = decode_section.get("error_mode", "separate").lower()
+    if em_str not in _ERROR_MODE_MAP:
+        raise ValueError(f"Invalid error_mode: {em_str!r}. Valid: separate, inline")
+    return _ERROR_MODE_MAP[em_str]
+
+
+def _load_filter_section(filter_section: dict[str, Any]) -> FilterConfig:
+    """`[filter]` exclude arrays (RT/SA values validated to [0, 31])."""
+    return FilterConfig(
+        exclude_types=_parse_type_names(filter_section.get("exclude_types", [])),
+        exclude_rts=_require_rt_sa_range("exclude_rts", filter_section.get("exclude_rts", [])),
+        exclude_buses=_parse_bus_names(filter_section.get("exclude_buses", [])),
+        exclude_subaddresses=_require_rt_sa_range(
+            "exclude_subaddresses", filter_section.get("exclude_subaddresses", [])
+        ),
+    )
+
+
+def _load_output_format(output_section: dict[str, Any]) -> str:
+    """`[output] format` — `csv` is currently the only supported value (L2-CFG-010)."""
+    output_format: str = output_section.get("format", "csv")
+    if output_format != "csv":
+        raise ValueError(f"Invalid output.format: {output_format!r}. Valid: csv")
+    return output_format
+
+
+def _load_standard_tick_rate(decode_section: dict[str, Any]) -> float | None:
+    """`[decode] standard_tick_rate_hz` (L2-DEC-017): when present, a real,
+    strictly-positive frequency. Accept int or float (not bool); reject
+    non-finite or non-positive values so a bad rate can't silently produce
+    garbage microseconds."""
+    if "standard_tick_rate_hz" not in decode_section:
+        return None
+    raw_hz = decode_section["standard_tick_rate_hz"]
+    if isinstance(raw_hz, bool) or not isinstance(raw_hz, (int, float)):
+        raise ValueError(f"Invalid decode.standard_tick_rate_hz: {raw_hz!r}; must be a number")
+    hz = float(raw_hz)
+    if not math.isfinite(hz) or hz <= 0.0:
+        raise ValueError(
+            f"Invalid decode.standard_tick_rate_hz: {hz}. Must be a finite value greater than 0"
+        )
+    return hz
+
+
+def _load_mux_section(mux_section: Any) -> tuple[bool, str, int]:
+    """`[mux]` MUX-from-filename configuration (L2-WRT-020)."""
+    if not isinstance(mux_section, dict):
+        mux_section = {}
+    mux_enabled = _require_bool("mux", "enabled", mux_section.get("enabled", True))
+    mux_delimiter_raw = mux_section.get("delimiter", ".")
+    if not isinstance(mux_delimiter_raw, str) or mux_delimiter_raw == "":
+        raise ValueError(
+            f"Invalid mux.delimiter: {mux_delimiter_raw!r}; must be a non-empty string"
+        )
+    mux_field_raw = mux_section.get("field", 4)
+    if isinstance(mux_field_raw, bool) or not isinstance(mux_field_raw, int):
+        raise ValueError(f"Invalid mux.field: {mux_field_raw!r}; must be an integer")
+    return mux_enabled, mux_delimiter_raw, mux_field_raw
+
+
+def _load_merge_section(merge_section: Any) -> tuple[bool, int]:
+    """`[merge]` cross-recorder duplicate collapsing (L2-MRG-007)."""
+    if not isinstance(merge_section, dict):
+        merge_section = {}
+    collapse_duplicates = _require_bool(
+        "merge", "collapse_duplicates", merge_section.get("collapse_duplicates", False)
+    )
+    collapse_window_us_raw = merge_section.get("collapse_window_us", 0)
+    if (
+        isinstance(collapse_window_us_raw, bool)
+        or not isinstance(collapse_window_us_raw, int)
+        or collapse_window_us_raw < 0
+    ):
+        raise ValueError(
+            f"Invalid merge.collapse_window_us: {collapse_window_us_raw!r}; "
+            "must be a non-negative integer"
+        )
+    return collapse_duplicates, collapse_window_us_raw
+
+
+def _require_int_range(key: str, value: object, lo: int, hi: int) -> int:
+    """Validate a TOML integer within ``[lo, hi]`` at load time (L2-CFG-010),
+    rejecting bools and non-integers. ``key`` names the offending TOML key."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Invalid {key}: {value!r}; must be an integer")
+    if value < lo or value > hi:
+        raise ValueError(f"Invalid {key}: {value}. Valid range: [{lo}, {hi}]")
+    return value
+
+
+def _warn_unknown_keys(data: dict[str, Any]) -> None:
+    """L2-CFG-009: WARN on unknown `[section] key` entries so typos surface to
+    the operator instead of being silently dropped. Non-fatal."""
+    for section_name, section_dict in data.items():
+        if not isinstance(section_dict, dict):
+            continue
+        for key in section_dict:
+            if (section_name, key) not in _KNOWN_SHARED_KEYS:
+                logger.warning("unknown TOML key: [%s] %s", section_name, key)
