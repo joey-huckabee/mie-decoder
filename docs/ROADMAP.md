@@ -2,6 +2,13 @@
 
 ## Release status
 
+**v2.6.1 — patch, 2026-07-07.** Maintainability release clearing the SonarCloud
+findings from the v2.6.0 analysis: a log-injection hardening (CR/LF escaping of
+user-controlled log values) plus a behavior-preserving cognitive-complexity
+sweep across both implementations (config, decode, dump, filters, writer, sync,
+merge, CLI, and the reader hot paths). No public API, CLI, or CSV change; the
+cross-implementation conformance oracle passes unchanged. See `CHANGELOG.md`.
+
 **v2.6.0 — minor, 2026-07-06.** Teaches the decoder the DDC `0x0000`
 end-of-records terminator: empty recordings (a channel that captured no
 traffic — just the terminator) now decode to a header-only CSV at exit 0
