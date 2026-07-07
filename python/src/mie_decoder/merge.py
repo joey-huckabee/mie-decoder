@@ -18,7 +18,6 @@ semantics as Rust (L3-PY-014) — no new dependency.
 
 from __future__ import annotations
 
-import dataclasses
 import heapq
 import itertools
 import logging
@@ -137,22 +136,36 @@ def _check_mergeable(msg: MieMessage, file_index: int, path: Path) -> None:
         )
 
 
-def _apply_global_delta(msg: MieMessage, tick: float | None, tracker: dict[str, int]) -> MieMessage:
-    """Recompute DELTA on the merged global timeline (L2-MRG-005). The stream
-    is timestamp-sorted, so per-key gaps are non-negative."""
+def _global_delta_value(
+    msg: MieMessage, tick: float | None, tracker: dict[str, int]
+) -> float | None:
+    """Compute the merged-timeline DELTA for ``msg`` and update ``tracker``.
+
+    SPURIOUS_DATA (no key) and uncalibrated Standard timestamps yield ``None``;
+    first occurrence of a key yields ``0.0``; a subsequent record yields the
+    non-negative gap in seconds. The stream is timestamp-sorted, so a negative
+    gap is not expected — it also yields ``None`` defensively.
+    """
     key = msg.delta_key
     if not key:
-        return dataclasses.replace(msg, delta=None)  # SPURIOUS_DATA — no key
+        return None  # SPURIOUS_DATA — no key
     curr = msg.timestamp.to_microseconds(tick)
     if curr is None:
-        return dataclasses.replace(msg, delta=None)
+        return None
     prev = tracker.get(key)
     tracker[key] = curr
     if prev is None:
-        return dataclasses.replace(msg, delta=0.0)
+        return 0.0
     if curr >= prev:
-        return dataclasses.replace(msg, delta=(curr - prev) / 1_000_000.0)
-    return dataclasses.replace(msg, delta=None)
+        return (curr - prev) / 1_000_000.0
+    return None
+
+
+def _apply_global_delta(msg: MieMessage, tick: float | None, tracker: dict[str, int]) -> MieMessage:
+    """Recompute DELTA on the merged global timeline (L2-MRG-005) and return a
+    copy of ``msg`` carrying it."""
+    delta = _global_delta_value(msg, tick, tracker)
+    return msg.with_delta(delta)
 
 
 def _dedup_key(msg: MieMessage) -> tuple[object, ...]:
@@ -336,27 +349,8 @@ def _merge_drain(
                 pending_terminal = exc  # defer until the heap drains
                 continue
             raise
-        # L2-MRG-006: each input is assumed internally time-sorted (capture
-        # order is chronological). A backward step means the merged output may
-        # be out of order for this file — strict fails the batch, lenient WARNs
-        # once per file.
         curr = _merge_micros(nxt, tick)
-        prev = prev_us[idx]
-        if prev is not None and curr < prev:
-            if strict:
-                raise MieNonMonotonicInputError(idx, str(readers[idx].path), prev, curr)
-            if not warned[idx]:
-                warned[idx] = True
-                logger.warning(
-                    "merge: input #%d (%s) is not internally time-sorted: "
-                    "timestamp stepped backward (prev_us=%d curr_us=%d) — "
-                    "merged output may be out of order for this input "
-                    "(further occurrences suppressed)",
-                    idx,
-                    readers[idx].path,
-                    prev,
-                    curr,
-                )
+        _check_monotonic_input(readers, idx, prev_us[idx], curr, strict, warned)
         prev_us[idx] = curr
         seq = seqs[idx]
         seqs[idx] = seq + 1
@@ -370,3 +364,32 @@ def _merge_drain(
     # `.partial` after all good records are written.
     if pending_terminal is not None:
         raise pending_terminal
+
+
+def _check_monotonic_input(
+    readers: list[MieFileReader],
+    idx: int,
+    prev: int | None,
+    curr: int,
+    strict: bool,
+    warned: list[bool],
+) -> None:
+    """L2-MRG-006: each input is assumed internally time-sorted (capture order is
+    chronological). A backward step means the merged output may be out of order
+    for this file — strict fails the batch, lenient WARNs once per file."""
+    if prev is None or curr >= prev:
+        return
+    if strict:
+        raise MieNonMonotonicInputError(idx, str(readers[idx].path), prev, curr)
+    if not warned[idx]:
+        warned[idx] = True
+        logger.warning(
+            "merge: input #%d (%s) is not internally time-sorted: "
+            "timestamp stepped backward (prev_us=%d curr_us=%d) — "
+            "merged output may be out of order for this input "
+            "(further occurrences suppressed)",
+            idx,
+            readers[idx].path,
+            prev,
+            curr,
+        )

@@ -245,16 +245,15 @@ class IrigTimestamp:
             self.day * 86_400 + self.hour * 3_600 + self.minute * 60 + self.second
         ) * 1_000_000 + self.microsecond
 
-    def to_microseconds(  # pylint: disable=unused-argument
-        self, standard_tick_rate_hz: float | None = None
-    ) -> int | None:
+    def to_microseconds(self, _standard_tick_rate_hz: float | None = None) -> int | None:
         """Absolute microseconds from a known epoch.
 
         Always returns the IRIG conversion. Defined with the same
-        signature as :meth:`StandardTimestamp.to_microseconds` so the
-        reader can call ``timestamp.to_microseconds(rate)`` without a
-        type check; ``standard_tick_rate_hz`` is accepted and ignored
-        here because IRIG already has an absolute microsecond basis.
+        (positional) signature as :meth:`StandardTimestamp.to_microseconds`
+        so the reader can call ``timestamp.to_microseconds(rate)`` without a
+        type check; the tick-rate argument is accepted and ignored here
+        (hence the leading underscore) because IRIG already has an absolute
+        microsecond basis.
         """
         return self.to_total_microseconds()
 
@@ -446,6 +445,30 @@ class MieMessage:
     delta: float | None
     file_offset: int
     mux: str | None = None
+
+    def with_delta(self, delta: float | None) -> "MieMessage":
+        """Return a copy of this message carrying a new DELTA.
+
+        ``MieMessage`` is frozen, so callers that recompute DELTA on a merged
+        multi-file timeline (L2-MRG-005) build a fresh instance instead of
+        mutating in place. Rebuilt field-by-field rather than via
+        ``dataclasses.replace`` so every type checker infers the concrete
+        ``MieMessage`` return type; only ``delta`` changes.
+        """
+        return MieMessage(
+            timestamp=self.timestamp,
+            type_word=self.type_word,
+            message_format=self.message_format,
+            command_word=self.command_word,
+            command_word_2=self.command_word_2,
+            status_word=self.status_word,
+            status_word_2=self.status_word_2,
+            data_words=self.data_words,
+            error_word=self.error_word,
+            delta=delta,
+            file_offset=self.file_offset,
+            mux=self.mux,
+        )
 
     @property
     def rt(self) -> int | None:

@@ -611,72 +611,103 @@ where
         (n_main, n_errors, partial_info)
     };
 
-    match partial_info {
-        None => {
-            // Normal path. Each file is committed atomically (temp +
-            // rename), but the two commits are sequential — there is no
-            // cross-file atomicity. We commit MAIN first so that if the
-            // second (errors) commit fails, the file left behind is the
-            // primary artifact (main.csv), never an orphan errors file with
-            // no main. This matches the Python writer's order (writer.py).
-            // If the first (main) commit fails, the errors file is still an
-            // un-renamed temp (unlinked on Drop), so neither file appears.
-            // See ARCHITECTURE.md §8.
-            main_atomic.commit()?;
-            log_info!("wrote {} normal rows to {}", normal_count, output.display());
-            if normal_count == 0 {
-                log_warn!("main CSV is empty (header only)");
-            }
+    commit_split_outputs(
+        SplitCommit {
+            main_atomic,
+            errors_atomic,
+            output,
+            error_path: &error_path,
+            normal_count,
+            error_count,
+        },
+        partial_info,
+    )
+}
 
-            if let Some(ea) = errors_atomic {
-                ea.commit()?;
-                log_info!(
-                    "wrote {} error/spurious rows to {}",
-                    error_count,
-                    error_path.display()
-                );
-            } else {
-                log_info!("no error/spurious records — error file not created");
-            }
+/// The two atomic files plus their row counts, threaded into
+/// [`commit_split_outputs`]. Grouped into a struct to keep the commit helper's
+/// signature small (and to satisfy the arg-count lint).
+struct SplitCommit<'a> {
+    main_atomic: AtomicCsvFile,
+    errors_atomic: Option<AtomicCsvFile>,
+    output: &'a Path,
+    error_path: &'a Path,
+    normal_count: u64,
+    error_count: u64,
+}
 
-            Ok(WriteOutcome {
-                normal_count,
-                error_count,
-                partial: None,
-            })
+/// Commit the split outputs. `partial_info = None` is the normal path (atomic
+/// rename over each destination, MAIN first per L2-WRT-019 so a failed errors
+/// commit never leaves an orphan errors file); `Some((offset, sync_losses))`
+/// is the `--allow-partial` path (rename each temp to its `.partial`).
+fn commit_split_outputs(
+    files: SplitCommit<'_>,
+    partial_info: Option<(u64, u64)>,
+) -> MieResult<WriteOutcome> {
+    let SplitCommit {
+        main_atomic,
+        errors_atomic,
+        output,
+        error_path,
+        normal_count,
+        error_count,
+    } = files;
+
+    let Some((offset, sync_losses)) = partial_info else {
+        // Normal path. The two commits are sequential (no cross-file
+        // atomicity): MAIN first so that if the errors commit fails, the file
+        // left behind is the primary artifact, never an orphan errors file. If
+        // the main commit fails, the errors temp is still un-renamed (unlinked
+        // on Drop), so neither file appears. See ARCHITECTURE.md §8.
+        main_atomic.commit()?;
+        log_info!("wrote {} normal rows to {}", normal_count, output.display());
+        if normal_count == 0 {
+            log_warn!("main CSV is empty (header only)");
         }
-        Some((offset, sync_losses)) => {
-            // Partial path. Rename each AtomicCsvFile temp to its
-            // `.partial` counterpart so the operator can inspect what
-            // was decoded before the corruption.
-            let errors_partial_path = if let Some(ea) = errors_atomic {
-                Some(ea.commit_partial()?)
-            } else {
-                None
-            };
-            let main_partial_path = main_atomic.commit_partial()?;
-            log_warn!(
-                "unrecoverable sync loss at 0x{:X} after {} recovery attempt(s); \
-                 wrote {} normal + {} error rows as partial to {} (--allow-partial)",
-                offset,
-                sync_losses,
-                normal_count,
+        if let Some(ea) = errors_atomic {
+            ea.commit()?;
+            log_info!(
+                "wrote {} error/spurious rows to {}",
                 error_count,
-                main_partial_path.display()
+                error_path.display()
             );
-
-            Ok(WriteOutcome {
-                normal_count,
-                error_count,
-                partial: Some(PartialCommit {
-                    main_path: main_partial_path,
-                    errors_path: errors_partial_path,
-                    offset,
-                    sync_losses,
-                }),
-            })
+        } else {
+            log_info!("no error/spurious records — error file not created");
         }
-    }
+        return Ok(WriteOutcome {
+            normal_count,
+            error_count,
+            partial: None,
+        });
+    };
+
+    // Partial path. Rename each temp to its `.partial` counterpart so the
+    // operator can inspect what was decoded before the corruption.
+    let errors_partial_path = match errors_atomic {
+        Some(ea) => Some(ea.commit_partial()?),
+        None => None,
+    };
+    let main_partial_path = main_atomic.commit_partial()?;
+    log_warn!(
+        "unrecoverable sync loss at 0x{:X} after {} recovery attempt(s); \
+         wrote {} normal + {} error rows as partial to {} (--allow-partial)",
+        offset,
+        sync_losses,
+        normal_count,
+        error_count,
+        main_partial_path.display()
+    );
+
+    Ok(WriteOutcome {
+        normal_count,
+        error_count,
+        partial: Some(PartialCommit {
+            main_path: main_partial_path,
+            errors_path: errors_partial_path,
+            offset,
+            sync_losses,
+        }),
+    })
 }
 
 fn stream_into<W, I>(writer: &mut CsvWriter<W>, messages: I) -> MieResult<()>

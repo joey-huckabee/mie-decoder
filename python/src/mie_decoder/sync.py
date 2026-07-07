@@ -201,58 +201,72 @@ def validate_record_detailed(
     if offset + record_bytes > file_len:
         return ValidationFailure.RECORD_TRUNCATED
 
-    # ── Check 5: IRIG timestamp field ranges (L2-SYN-004, L2-SYN-019)
-    # All three timestamp words are needed to evaluate microsecond
-    # and day; offset + 8 <= file_len covers reading upper (offset+2),
-    # middle (offset+4), and lower (offset+6) words.
-    if ts_format == TimestampFormat.IRIG and offset + 8 <= file_len:
-        ts_upper = read_u16(data, offset + 2)
-        ts_middle = read_u16(data, offset + 4)
-        ts_lower = read_u16(data, offset + 6)
-        freerun = bool((ts_upper >> 15) & 1)
-        day = (ts_upper >> 5) & 0x1FF  # bits 13-5
-        hour = ts_upper & 0x1F
-        minute = (ts_middle >> 10) & 0x3F
-        second = (ts_middle >> 4) & 0x3F
-        microsecond_hi4 = ts_middle & 0xF
-        microsecond_lo16 = ts_lower
-        microsecond = (microsecond_hi4 << 16) | microsecond_lo16
+    # ── Check 5: IRIG timestamp field ranges (L2-SYN-004, L2-SYN-019) ──
+    if ts_format == TimestampFormat.IRIG:
+        irig_failure = _validate_irig_timestamp_ranges(data, offset, file_len)
+        if irig_failure is not None:
+            return irig_failure
 
-        if hour >= 24:
-            return ValidationFailure.IRIG_HOUR_OUT_OF_RANGE
-        if minute >= 60:
-            return ValidationFailure.IRIG_MINUTE_OUT_OF_RANGE
-        if second >= 60:
-            return ValidationFailure.IRIG_SECOND_OUT_OF_RANGE
-        if microsecond > 999_999:
-            return ValidationFailure.IRIG_MICROSECOND_OUT_OF_RANGE
-        # L2-SYN-019: skip the day-of-year range check when freerun
-        # is set, because the card's free-running oscillator is not
-        # calendar-locked. Hour/minute/second/microsecond constraints
-        # still apply because those are a function of the counter
-        # modulus, not the external IRIG-B feed.
-        if not freerun and not (1 <= day <= 366):
-            return ValidationFailure.IRIG_DAY_OUT_OF_RANGE
+    # ── Check 6: N-record look-ahead (L2-SYN-005, L2-SYN-026, L2-SYN-028) ──
+    return _validate_lookahead_records(
+        data, offset, record_bytes, file_len, min_wc, lookahead_records, honor_terminator
+    )
 
-    # ── Check 6: N-record look-ahead (L2-SYN-005, L2-SYN-026) ──────
-    # Walk up to lookahead_records - 1 subsequent records, validating
-    # each Type Word's message type + word count plausibility. Advance
-    # by each candidate's declared word_count. EOF terminates the walk
-    # gracefully without rejecting the original candidate.
+
+def _validate_irig_timestamp_ranges(
+    data: ByteSource, offset: int, file_len: int
+) -> ValidationFailure | None:
+    """Check 5: IRIG timestamp field ranges (L2-SYN-004 / L2-SYN-019). All three
+    timestamp words are needed; a near-EOF record where they are not all readable
+    is a no-op (the caller's in-bounds checks remain authoritative)."""
+    if offset + 8 > file_len:
+        return None
+    ts_upper = read_u16(data, offset + 2)
+    ts_middle = read_u16(data, offset + 4)
+    ts_lower = read_u16(data, offset + 6)
+    freerun = bool((ts_upper >> 15) & 1)
+    day = (ts_upper >> 5) & 0x1FF  # bits 13-5
+    hour = ts_upper & 0x1F
+    minute = (ts_middle >> 10) & 0x3F
+    second = (ts_middle >> 4) & 0x3F
+    microsecond = ((ts_middle & 0xF) << 16) | ts_lower
+
+    if hour >= 24:
+        return ValidationFailure.IRIG_HOUR_OUT_OF_RANGE
+    if minute >= 60:
+        return ValidationFailure.IRIG_MINUTE_OUT_OF_RANGE
+    if second >= 60:
+        return ValidationFailure.IRIG_SECOND_OUT_OF_RANGE
+    if microsecond > 999_999:
+        return ValidationFailure.IRIG_MICROSECOND_OUT_OF_RANGE
+    # L2-SYN-019: freerun skips the day-of-year check — the free-running
+    # oscillator is not calendar-locked. Hour/minute/second/microsecond still
+    # apply (they are a function of the counter modulus).
+    if not freerun and not 1 <= day <= 366:
+        return ValidationFailure.IRIG_DAY_OUT_OF_RANGE
+    return None
+
+
+def _validate_lookahead_records(
+    data: ByteSource,
+    offset: int,
+    record_bytes: int,
+    file_len: int,
+    min_wc: int,
+    lookahead_records: int,
+    honor_terminator: bool,
+) -> ValidationFailure | None:
+    """Check 6: N-record look-ahead (L2-SYN-005 / L2-SYN-026). Validate each of
+    the next ``lookahead_records - 1`` records' Type Word fields. EOF — or the
+    L2-SYN-028 ``0x0000`` terminator when ``honor_terminator`` — ends the walk
+    gracefully without rejecting the original candidate (recovery passes
+    ``False`` so a mis-aligned candidate cannot validate off a stray zero)."""
     n = max(1, lookahead_records)
     next_offset = offset + record_bytes
     for _ in range(1, n):
         if next_offset + 2 > file_len:
             break
         next_raw = read_u16(data, next_offset)
-        # L2-SYN-028: a null Type Word (0x0000) at a look-ahead boundary is the
-        # recorder's end-of-records terminator, not an invalid follower. Treat
-        # it like EOF — the candidate is the last real record — so confirm it
-        # rather than rejecting it. Without this the final record of every
-        # well-formed recording (which the recorder caps with 0x0000) would be
-        # dropped. Only honored on the trusted-boundary path; sync recovery
-        # passes honor_terminator=False so a mis-aligned candidate cannot
-        # validate off a stray zero data word.
         if honor_terminator and is_terminator_type_word(next_raw):
             break
         next_tw = decode_type_word(next_raw)
@@ -264,7 +278,6 @@ def validate_record_detailed(
         if next_record_bytes == 0:
             break
         next_offset += next_record_bytes
-
     return None
 
 

@@ -15,7 +15,7 @@ use crate::decode::{
 };
 use crate::error::{MieError, MieResult};
 use crate::log_warn;
-use crate::models::{Direction, MessageType};
+use crate::models::{Direction, MessageType, TypeWord};
 
 fn type_name(code: u8) -> String {
     match MessageType::from_code(code) {
@@ -205,116 +205,20 @@ fn write_hex_dump_records<W: Write>(
         };
         let tw = decode_type_word(type_raw);
 
-        if tw.word_count < MIN_RECORD_WORDS {
-            writeln!(
-                out,
-                "  !! Invalid word_count={} at 0x{:08X}, stopping",
-                tw.word_count, offset
-            )?;
-            // L2-CLI-013: surface the scan-stop anomaly through the logger
-            // (subject to the global level), in addition to the inline note.
-            log_warn!(
-                "dump: invalid word_count={} at 0x{:X}; stopping record scan",
-                tw.word_count,
-                offset
-            );
-            break;
-        }
-        let record_bytes = usize::from(tw.word_count) * 2;
-        // record_bytes maxes at 63 * 2 = 126; offset is bounded by the
-        // loop guard. checked_add belt-and-suspenders.
-        let record_end = match offset.checked_add(record_bytes) {
-            Some(v) => v,
-            None => {
-                writeln!(
-                    out,
-                    "  !! Offset overflow at 0x{:08X} (record_bytes={}), stopping",
-                    offset, record_bytes
-                )?;
-                log_warn!(
-                    "dump: offset overflow at 0x{:X} (record_bytes={}); stopping record scan",
-                    offset,
-                    record_bytes
-                );
-                break;
-            }
+        // Validate the record's extent; a stop reason is written inline and
+        // logged (L2-CLI-013) inside the helper, so here we just break.
+        let record_end = match dump_record_extent(&tw, offset, file_len, out)? {
+            Some(end) => end,
+            None => break,
         };
-        if record_end > file_len {
-            writeln!(
-                out,
-                "  !! Truncated record at 0x{:08X} ({} bytes needed, {} available)",
-                offset,
-                record_bytes,
-                file_len - offset
-            )?;
-            log_warn!(
-                "dump: truncated record at 0x{:X} ({} bytes needed, {} available); \
-                 stopping record scan",
-                offset,
-                record_bytes,
-                file_len - offset
-            );
-            break;
-        }
+        let record_bytes = record_end - offset;
 
-        // Decode IRIG-shaped header for annotation. (For Standard timestamps
-        // this is still useful to display the raw bytes; the IRIG decode is
-        // a best-effort summary.)
-        let ts_upper = read_u16(data, offset + 2).unwrap_or(0);
-        let ts_middle = read_u16(data, offset + 4).unwrap_or(0);
-        let ts_lower = read_u16(data, offset + 6).unwrap_or(0);
-        let ts = decode_irig_timestamp(ts_upper, ts_middle, ts_lower);
-        let cmd_raw = read_u16(data, offset + 8).unwrap_or(0);
-        let cmd = decode_command_word(cmd_raw);
-
-        let bus_label = tw.bus.as_str();
-        let err_label = if tw.error { "ERROR" } else { "OK" };
-        let dir_char = if cmd.direction == Direction::Transmit {
-            'T'
-        } else {
-            'R'
-        };
-
-        writeln!(out, "{}", "-".repeat(72))?;
-        writeln!(
-            out,
-            "  Record #{record_num}  @  0x{offset:08X}  ({record_bytes} bytes, {wc} words)",
-            wc = tw.word_count
-        )?;
-        writeln!(
-            out,
-            "  Type: 0x{:04X}  ->  {}  Bus {}  {}",
-            tw.raw,
-            type_name(tw.message_type),
-            bus_label,
-            err_label
-        )?;
-        writeln!(
-            out,
-            "  Time: {}{}",
-            ts.format(),
-            if ts.freerun { "  [FREERUN]" } else { "" }
-        )?;
-        writeln!(
-            out,
-            "  Cmd:  0x{:04X}  ->  RT{} SA{} {} WC={}",
-            cmd.raw, cmd.rt, cmd.subaddress, dir_char, cmd.data_word_count
-        )?;
-
-        // record_end was already checked above; reuse it.
-        let record_data = &data[offset..record_end];
-        let mut i = 0;
-        while i < record_data.len() {
-            let line = &record_data[i..(i + 16).min(record_data.len())];
-            // offset + i: offset is bounded by loop guard, i by
-            // record_bytes (≤ 126). saturating_add as belt-and-suspenders.
-            write_hex_line(out, "    ", offset.saturating_add(i), line)?;
-            i += 16;
-        }
+        write_record_annotation(out, data, &tw, offset, record_bytes, record_num)?;
+        write_record_hex_payload(out, &data[offset..record_end], offset)?;
         writeln!(out)?;
 
-        // offset can advance to record_end; checked again at the top of
-        // the next iteration.
+        // offset can advance to record_end; checked again at the top of the
+        // next iteration.
         offset = record_end;
         record_num += 1;
     }
@@ -322,6 +226,130 @@ fn write_hex_dump_records<W: Write>(
     writeln!(out, "{}", "-".repeat(72))?;
     writeln!(out, "{record_num} records dumped.")?;
     out.flush()
+}
+
+/// Validate the record at `offset` for the dump scan. Returns `Some(record_end)`
+/// to proceed, or `None` to stop scanning — writing the inline anomaly note to
+/// `out` and logging it (L2-CLI-013) on each stop path.
+fn dump_record_extent<W: Write>(
+    tw: &TypeWord,
+    offset: usize,
+    file_len: usize,
+    out: &mut W,
+) -> std::io::Result<Option<usize>> {
+    if tw.word_count < MIN_RECORD_WORDS {
+        writeln!(
+            out,
+            "  !! Invalid word_count={} at 0x{:08X}, stopping",
+            tw.word_count, offset
+        )?;
+        log_warn!(
+            "dump: invalid word_count={} at 0x{:X}; stopping record scan",
+            tw.word_count,
+            offset
+        );
+        return Ok(None);
+    }
+    let record_bytes = usize::from(tw.word_count) * 2;
+    // record_bytes maxes at 63 * 2 = 126; offset is bounded by the loop
+    // guard. checked_add belt-and-suspenders.
+    let Some(record_end) = offset.checked_add(record_bytes) else {
+        writeln!(
+            out,
+            "  !! Offset overflow at 0x{:08X} (record_bytes={}), stopping",
+            offset, record_bytes
+        )?;
+        log_warn!(
+            "dump: offset overflow at 0x{:X} (record_bytes={}); stopping record scan",
+            offset,
+            record_bytes
+        );
+        return Ok(None);
+    };
+    if record_end > file_len {
+        writeln!(
+            out,
+            "  !! Truncated record at 0x{:08X} ({} bytes needed, {} available)",
+            offset,
+            record_bytes,
+            file_len - offset
+        )?;
+        log_warn!(
+            "dump: truncated record at 0x{:X} ({} bytes needed, {} available); \
+             stopping record scan",
+            offset,
+            record_bytes,
+            file_len - offset
+        );
+        return Ok(None);
+    }
+    Ok(Some(record_end))
+}
+
+/// Write the decoded-header annotation block (Type / Time / Cmd) for one record.
+/// The IRIG timestamp decode is a best-effort summary — for Standard-format
+/// files the raw bytes below the header remain authoritative.
+fn write_record_annotation<W: Write>(
+    out: &mut W,
+    data: &[u8],
+    tw: &TypeWord,
+    offset: usize,
+    record_bytes: usize,
+    record_num: u64,
+) -> std::io::Result<()> {
+    let ts_upper = read_u16(data, offset + 2).unwrap_or(0);
+    let ts_middle = read_u16(data, offset + 4).unwrap_or(0);
+    let ts_lower = read_u16(data, offset + 6).unwrap_or(0);
+    let ts = decode_irig_timestamp(ts_upper, ts_middle, ts_lower);
+    let cmd = decode_command_word(read_u16(data, offset + 8).unwrap_or(0));
+    let dir_char = if cmd.direction == Direction::Transmit {
+        'T'
+    } else {
+        'R'
+    };
+
+    writeln!(out, "{}", "-".repeat(72))?;
+    writeln!(
+        out,
+        "  Record #{record_num}  @  0x{offset:08X}  ({record_bytes} bytes, {wc} words)",
+        wc = tw.word_count
+    )?;
+    writeln!(
+        out,
+        "  Type: 0x{:04X}  ->  {}  Bus {}  {}",
+        tw.raw,
+        type_name(tw.message_type),
+        tw.bus.as_str(),
+        if tw.error { "ERROR" } else { "OK" }
+    )?;
+    writeln!(
+        out,
+        "  Time: {}{}",
+        ts.format(),
+        if ts.freerun { "  [FREERUN]" } else { "" }
+    )?;
+    writeln!(
+        out,
+        "  Cmd:  0x{:04X}  ->  RT{} SA{} {} WC={}",
+        cmd.raw, cmd.rt, cmd.subaddress, dir_char, cmd.data_word_count
+    )
+}
+
+/// Hex-dump a record's raw bytes, 16 per line, each line offset-annotated.
+fn write_record_hex_payload<W: Write>(
+    out: &mut W,
+    record_data: &[u8],
+    offset: usize,
+) -> std::io::Result<()> {
+    let mut i = 0;
+    while i < record_data.len() {
+        let line = &record_data[i..(i + 16).min(record_data.len())];
+        // offset + i: offset is bounded by the caller's loop guard, i by
+        // record_bytes (≤ 126). saturating_add belt-and-suspenders.
+        write_hex_line(out, "    ", offset.saturating_add(i), line)?;
+        i += 16;
+    }
+    Ok(())
 }
 
 /// Convenience wrapper that writes to stdout (buffered).

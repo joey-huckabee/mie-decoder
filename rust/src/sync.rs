@@ -156,79 +156,103 @@ fn validate_record_detailed_impl(
         return Err(ValidationFailure::RecordTruncated);
     }
 
-    // Check 5: IRIG timestamp field range checks per L2-SYN-004
-    // and L2-SYN-019. We need all three timestamp words to evaluate
-    // microsecond and day; offset + 8 <= file_len covers reading
-    // upper (offset+2), middle (offset+4), and lower (offset+6) words.
-    if ts_format == Some(TimestampFormat::Irig)
-        && offset.checked_add(8).is_some_and(|end| end <= file_len)
-        && let (Some(ts_upper), Some(ts_middle), Some(ts_lower)) = (
-            read_u16(data, offset + 2),
-            read_u16(data, offset + 4),
-            read_u16(data, offset + 6),
-        )
-    {
-        let freerun = (ts_upper >> 15) & 1 == 1;
-        let day = (ts_upper >> 5) & 0x1FF; // bits 13-5
-        let hour = ts_upper & 0x1F;
-        let minute = (ts_middle >> 10) & 0x3F;
-        let second = (ts_middle >> 4) & 0x3F;
-        let microsecond_hi4 = u32::from(ts_middle & 0xF);
-        let microsecond_lo16 = u32::from(ts_lower);
-        let microsecond = (microsecond_hi4 << 16) | microsecond_lo16;
-
-        if hour >= 24 {
-            return Err(ValidationFailure::IrigHourOutOfRange);
-        }
-        if minute >= 60 {
-            return Err(ValidationFailure::IrigMinuteOutOfRange);
-        }
-        if second >= 60 {
-            return Err(ValidationFailure::IrigSecondOutOfRange);
-        }
-        if microsecond > 999_999 {
-            return Err(ValidationFailure::IrigMicrosecondOutOfRange);
-        }
-        // L2-SYN-019: skip the day-of-year range check when
-        // freerun is set, because the card's free-running
-        // oscillator is not calendar-locked. Hour/minute/second/
-        // microsecond constraints still apply because those are
-        // a function of the counter modulus, not the external
-        // IRIG-B feed.
-        if !freerun && !(1..=366).contains(&day) {
-            return Err(ValidationFailure::IrigDayOutOfRange);
-        }
+    // Check 5: IRIG timestamp field ranges (L2-SYN-004 / L2-SYN-019).
+    if ts_format == Some(TimestampFormat::Irig) {
+        validate_irig_fields(data, offset, file_len)?;
     }
 
-    // Check 6: N-record look-ahead per L2-SYN-005 / L2-SYN-026. Walk up
-    // to `lookahead_records - 1` subsequent records, each validated on
-    // the same Type Word fields (message type + word count plausibility)
-    // as the candidate. Advance by each candidate's declared
-    // `word_count`; EOF terminates the walk gracefully without
-    // rejecting the original candidate (the in-bounds checks above are
-    // authoritative for records that do exist).
+    // Check 6: N-record look-ahead (L2-SYN-005 / L2-SYN-026 / L2-SYN-028).
+    validate_lookahead_records(
+        data,
+        offset,
+        record_bytes,
+        file_len,
+        min_wc,
+        lookahead_records,
+        honor_terminator,
+    )
+}
+
+/// Check 5: IRIG timestamp field range checks (L2-SYN-004 / L2-SYN-019). We
+/// need all three timestamp words to evaluate microsecond and day; when they
+/// are not all readable (near EOF) this is a no-op — the in-bounds checks in
+/// the caller remain authoritative.
+fn validate_irig_fields(
+    data: &[u8],
+    offset: usize,
+    file_len: usize,
+) -> Result<(), ValidationFailure> {
+    if offset.checked_add(8).is_none_or(|end| end > file_len) {
+        return Ok(());
+    }
+    let (Some(ts_upper), Some(ts_middle), Some(ts_lower)) = (
+        read_u16(data, offset + 2),
+        read_u16(data, offset + 4),
+        read_u16(data, offset + 6),
+    ) else {
+        return Ok(());
+    };
+
+    let freerun = (ts_upper >> 15) & 1 == 1;
+    let day = (ts_upper >> 5) & 0x1FF; // bits 13-5
+    let hour = ts_upper & 0x1F;
+    let minute = (ts_middle >> 10) & 0x3F;
+    let second = (ts_middle >> 4) & 0x3F;
+    let microsecond = (u32::from(ts_middle & 0xF) << 16) | u32::from(ts_lower);
+
+    if hour >= 24 {
+        return Err(ValidationFailure::IrigHourOutOfRange);
+    }
+    if minute >= 60 {
+        return Err(ValidationFailure::IrigMinuteOutOfRange);
+    }
+    if second >= 60 {
+        return Err(ValidationFailure::IrigSecondOutOfRange);
+    }
+    if microsecond > 999_999 {
+        return Err(ValidationFailure::IrigMicrosecondOutOfRange);
+    }
+    // L2-SYN-019: skip the day-of-year range check when freerun is set —
+    // the free-running oscillator is not calendar-locked. Hour/minute/second/
+    // microsecond still apply (they are a function of the counter modulus).
+    if !freerun && !(1..=366).contains(&day) {
+        return Err(ValidationFailure::IrigDayOutOfRange);
+    }
+    Ok(())
+}
+
+/// Check 6: N-record look-ahead (L2-SYN-005 / L2-SYN-026). Walk up to
+/// `lookahead_records - 1` subsequent records, each validated on the same Type
+/// Word fields (message type + word-count plausibility) as the candidate.
+/// Advance by each candidate's declared `word_count`; EOF — or the L2-SYN-028
+/// end-of-records terminator when `honor_terminator` — ends the walk gracefully
+/// without rejecting the original candidate.
+fn validate_lookahead_records(
+    data: &[u8],
+    offset: usize,
+    record_bytes: usize,
+    file_len: usize,
+    min_wc: u16,
+    lookahead_records: usize,
+    honor_terminator: bool,
+) -> Result<(), ValidationFailure> {
     let n = lookahead_records.max(1);
     let Some(mut next_offset) = offset.checked_add(record_bytes) else {
         return Err(ValidationFailure::RecordTruncated);
     };
     for _ in 1..n {
-        // EOF: no more bytes to look ahead into. The remaining
-        // unchecked records (if any) simply don't exist in the file —
-        // not a rejection.
+        // EOF: the remaining unchecked records (if any) don't exist — not a
+        // rejection.
         if next_offset + 2 > file_len {
             break;
         }
         let Some(next_raw) = read_u16(data, next_offset) else {
             break;
         };
-        // L2-SYN-028: a null Type Word (0x0000) at a look-ahead boundary is
-        // the recorder's end-of-records terminator, not an invalid follower.
-        // Treat it exactly like EOF — the candidate is the last real record in
-        // the stream, so confirm it rather than rejecting it. Without this, a
-        // file whose final record is followed by the terminator (i.e. every
-        // well-formed recording) would fail look-ahead on that last record and
-        // drop it. Only honored on the trusted-boundary path (forward decode /
-        // first-record detection); sync recovery passes `honor_terminator =
+        // L2-SYN-028: a null Type Word (0x0000) is the end-of-records
+        // terminator, not an invalid follower — treat it like EOF so the last
+        // real record of a recording is confirmed rather than dropped. Only on
+        // the trusted-boundary path; sync recovery passes `honor_terminator =
         // false` so a mis-aligned candidate cannot validate off a stray zero
         // data word.
         if honor_terminator && is_terminator_type_word(next_raw) {
@@ -241,16 +265,12 @@ fn validate_record_detailed_impl(
         if next_tw.word_count < min_wc || next_tw.word_count > 63 {
             return Err(ValidationFailure::LookaheadInvalidWordCount);
         }
-        // Advance by the look-ahead candidate's declared length so the
-        // next iteration validates the record AFTER it, not 2 bytes
-        // forward of this position.
+        // Advance by the candidate's declared length so the next iteration
+        // validates the record AFTER it, not 2 bytes forward.
         let next_record_bytes = usize::from(next_tw.word_count) * 2;
         if next_record_bytes == 0 {
-            // Defensive — Type Word with wc=0 would already have been
-            // rejected by Check 3 above, so this is unreachable on the
-            // candidate path. The look-ahead candidates have the same
-            // min_wc floor applied above, so reaching this branch
-            // would indicate a logic bug, not a malformed input.
+            // Defensive — wc=0 is already rejected by the min_wc floor above,
+            // so this is unreachable; break rather than loop forever.
             break;
         }
         let Some(advance) = next_offset.checked_add(next_record_bytes) else {

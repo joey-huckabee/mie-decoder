@@ -29,8 +29,8 @@ use crate::models::{
     is_known_ddc_error_code, timestamp_word_count,
 };
 use crate::sync::{
-    DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, ValidationFailure, find_first_record, recover_sync,
-    validate_record_detailed,
+    DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, ScanHit, ValidationFailure, find_first_record,
+    recover_sync, validate_record_detailed,
 };
 use crate::{log_debug, log_error, log_info, log_warn};
 
@@ -220,6 +220,246 @@ impl MieFileReader {
     }
 
     /// Borrow an iterator over decoded messages.
+    /// The format iteration falls back to when detection never runs (Auto with
+    /// no records found → IRIG placeholder; otherwise the explicit choice).
+    fn default_resolved_format(&self) -> TimestampFormat {
+        match self.time_format {
+            TimestampFormat::Auto => TimestampFormat::Irig,
+            explicit => explicit,
+        }
+    }
+
+    /// Resolve the timestamp format for a found first record: reject a
+    /// homogeneous-payload pad (L2-SYN-018), else auto-detect (L2-DEC-015) or
+    /// sanity-check a forced format (L2-DEC-013). Returns the resolved format
+    /// and any pending error (which, if set, stops iteration before decoding).
+    fn resolve_format_for_hit(
+        &self,
+        data: &[u8],
+        hit: ScanHit,
+    ) -> (TimestampFormat, Option<MieError>) {
+        let candidate_type_raw = read_u16(data, hit.offset).unwrap_or(0);
+        let candidate_tw = decode_type_word(candidate_type_raw);
+        let candidate_record_bytes = usize::from(candidate_tw.word_count) * 2;
+        if crate::sync::is_homogeneous_payload(data, hit.offset, candidate_record_bytes) {
+            log_error!(
+                "pathological homogeneous-payload input at offset 0x{:X} \
+                 in {}: {} consecutive candidate records are byte-identical",
+                hit.offset,
+                self.path.display(),
+                crate::sync::HOMOGENEITY_SAMPLE_RECORDS,
+            );
+            return (
+                self.default_resolved_format(),
+                Some(MieError::HomogeneousPayload {
+                    path: self.path.clone(),
+                    offset: hit.offset as u64,
+                    sample_records: crate::sync::HOMOGENEITY_SAMPLE_RECORDS as u32,
+                }),
+            );
+        }
+        if self.time_format == TimestampFormat::Auto {
+            self.resolve_auto_format(data, hit)
+        } else {
+            self.check_forced_format(data, hit)
+        }
+    }
+
+    /// L2-DEC-015 multi-record probe to auto-detect IRIG vs Standard. In strict
+    /// mode an Ambiguous result (L2-DEC-016) rejects the file; lenient mode uses
+    /// the chosen format with a WARN.
+    fn resolve_auto_format(
+        &self,
+        data: &[u8],
+        hit: ScanHit,
+    ) -> (TimestampFormat, Option<MieError>) {
+        let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
+        let err = match outcome.confidence {
+            DetectionConfidence::Decisive => {
+                log_info!(
+                    "auto-detected timestamp format: {:?} \
+                     (Decisive: IRIG={} STD={} over {} record(s))",
+                    outcome.format,
+                    outcome.irig_score,
+                    outcome.std_score,
+                    outcome.records_probed,
+                );
+                None
+            }
+            DetectionConfidence::Marginal => {
+                log_info!(
+                    "auto-detected timestamp format: {:?} \
+                     (Marginal: IRIG={} STD={} over {} record(s)) — \
+                     pass --time-format to force the choice if this is wrong",
+                    outcome.format,
+                    outcome.irig_score,
+                    outcome.std_score,
+                    outcome.records_probed,
+                );
+                None
+            }
+            DetectionConfidence::Ambiguous if self.strict => {
+                log_error!(
+                    "timestamp-format auto-detection is ambiguous in {} \
+                     starting at offset 0x{:X}: IRIG={} STD={} over {} \
+                     record(s) — strict mode rejects ambiguous files; \
+                     pass --time-format to force the choice",
+                    self.path.display(),
+                    hit.offset,
+                    outcome.irig_score,
+                    outcome.std_score,
+                    outcome.records_probed,
+                );
+                Some(MieError::TimestampFormatMismatch {
+                    offset: hit.offset as u64,
+                    irig_score: outcome.irig_score,
+                    std_score: outcome.std_score,
+                    records_probed: outcome.records_probed as u32,
+                })
+            }
+            DetectionConfidence::Ambiguous => {
+                log_warn!(
+                    "auto-detected timestamp format: {:?} \
+                     (Ambiguous: IRIG={} STD={} over {} record(s)) — \
+                     using best guess; pass --time-format to force the \
+                     choice or --strict to reject ambiguous files",
+                    outcome.format,
+                    outcome.irig_score,
+                    outcome.std_score,
+                    outcome.records_probed,
+                );
+                None
+            }
+        };
+        (outcome.format, err)
+    }
+
+    /// L2-DEC-013: the format was forced via `--time-format`. If the probe is
+    /// *Decisive* about the OTHER format the forced choice is wrong; strict mode
+    /// rejects, lenient WARNs and proceeds. The forced format is always kept.
+    fn check_forced_format(
+        &self,
+        data: &[u8],
+        hit: ScanHit,
+    ) -> (TimestampFormat, Option<MieError>) {
+        let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
+        let contradicts = outcome.confidence == DetectionConfidence::Decisive
+            && outcome.format != self.time_format;
+        let err = if !contradicts {
+            None
+        } else if self.strict {
+            log_error!(
+                "forced timestamp format {:?} contradicts the recording in {} \
+                 at offset 0x{:X}: detection is decisive for {:?} (IRIG={} \
+                 STD={} over {} record(s)) — strict mode rejects the mismatch; \
+                 drop --time-format to auto-detect",
+                self.time_format,
+                self.path.display(),
+                hit.offset,
+                outcome.format,
+                outcome.irig_score,
+                outcome.std_score,
+                outcome.records_probed,
+            );
+            Some(MieError::TimestampFormatMismatch {
+                offset: hit.offset as u64,
+                irig_score: outcome.irig_score,
+                std_score: outcome.std_score,
+                records_probed: outcome.records_probed as u32,
+            })
+        } else {
+            log_warn!(
+                "forced timestamp format {:?} contradicts the recording at \
+                 offset 0x{:X}: detection is decisive for {:?} (IRIG={} STD={} \
+                 over {} record(s)) — decoding with the forced format anyway; \
+                 drop --time-format to auto-detect or pass --strict to reject \
+                 the mismatch",
+                self.time_format,
+                hit.offset,
+                outcome.format,
+                outcome.irig_score,
+                outcome.std_score,
+                outcome.records_probed,
+            );
+            None
+        };
+        (self.time_format, err)
+    }
+
+    /// No first record found: classify as an empty recording (opens on the
+    /// L2-RDR-021 terminator), a truncated first record (L2-RDR-004), or a
+    /// wrong file (L1-EXIT-002). Returns `(early_done, pending_error)` and sets
+    /// the empty-recording flag when applicable.
+    fn diagnose_no_records(
+        &self,
+        data: &[u8],
+        file_len: usize,
+        format_hint: Option<TimestampFormat>,
+    ) -> (bool, Option<MieError>) {
+        // L1-EXIT-010 / L2-RDR-021: a valid but *empty* recording opens directly
+        // on the end-of-records terminator. Yield zero records cleanly (the
+        // writer emits a header-only CSV); a non-null lead word still falls
+        // through to the wrong-file diagnosis, preserving that guard.
+        if read_u16(data, 0).is_some_and(is_terminator_type_word) {
+            log_warn!(
+                "{}: recording contains no records — the stream opens on \
+                 the end-of-records terminator (empty capture); writing \
+                 header-only output",
+                self.path.display()
+            );
+            self.empty_recording.store(true, Ordering::Relaxed);
+            return (true, None);
+        }
+        // L2-RDR-004: distinguish "no MIE record at all" from "structurally-
+        // valid Type Word truncated past EOF".
+        match crate::sync::diagnose_header_scan_failure(data, file_len, format_hint, MAX_SCAN_BYTES)
+        {
+            Some((trunc_offset, record_bytes, available)) if self.strict => {
+                log_error!(
+                    "first record after header detection is truncated \
+                     at 0x{:X}: declared {} bytes, only {} available",
+                    trunc_offset,
+                    record_bytes,
+                    available
+                );
+                (
+                    false,
+                    Some(MieError::FirstRecordTruncated {
+                        offset: trunc_offset as u64,
+                        record_bytes: record_bytes as u64,
+                        available_bytes: available as u64,
+                    }),
+                )
+            }
+            Some((trunc_offset, record_bytes, available)) => {
+                log_warn!(
+                    "first record after header detection is truncated \
+                     at 0x{:X}: declared {} bytes, only {} available — \
+                     lenient mode terminates cleanly with zero records",
+                    trunc_offset,
+                    record_bytes,
+                    available
+                );
+                (true, None)
+            }
+            None => {
+                let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
+                log_error!(
+                    "no valid records found in first {} bytes of {}",
+                    scan_bytes,
+                    self.path.display()
+                );
+                (
+                    false,
+                    Some(MieError::NoValidRecords {
+                        path: self.path.clone(),
+                        scan_bytes,
+                    }),
+                )
+            }
+        }
+    }
+
     pub fn iter(&self) -> RecordIter<'_> {
         // Reset the per-call counter so successive iter() calls on the
         // same reader handle don't accumulate stale counts.
@@ -247,18 +487,13 @@ impl MieFileReader {
             self.lookahead_records,
         );
 
-        // Tracks whether the iterator should terminate immediately with
-        // no records and no error (the L2-RDR-004 lenient-mode case).
+        // Tracks whether the iterator should terminate immediately with no
+        // records and no error (empty recording / L2-RDR-004 lenient case).
         let mut early_done = false;
-        // The format the iterator will use for the entire decode.
-        // Defaults to the explicit choice (or IRIG as a placeholder for
-        // the Auto-but-no-records-found case where iteration never
-        // happens anyway); rewritten to the L2-DEC-015 probe result
-        // below when we have a real start offset and time_format=Auto.
-        let mut resolved_format = match self.time_format {
-            TimestampFormat::Auto => TimestampFormat::Irig,
-            explicit => explicit,
-        };
+        // The format used for the whole decode. Defaults per
+        // `default_resolved_format`; rewritten by the L2-DEC-015 probe when a
+        // real start offset is found under time_format=Auto.
+        let mut resolved_format = self.default_resolved_format();
 
         let pending_error = match start_offset {
             Some(hit) => {
@@ -271,224 +506,14 @@ impl MieFileReader {
                         hit.offset
                     );
                 }
-                // L2-SYN-018: reject pathological homogeneous-payload
-                // inputs (e.g. 0x20-padded files where every "record"
-                // parses as a synthetic SPURIOUS_DATA frame).
-                let candidate_type_raw = read_u16(data, hit.offset).unwrap_or(0);
-                let candidate_tw = decode_type_word(candidate_type_raw);
-                let candidate_record_bytes = usize::from(candidate_tw.word_count) * 2;
-                if crate::sync::is_homogeneous_payload(data, hit.offset, candidate_record_bytes) {
-                    log_error!(
-                        "pathological homogeneous-payload input at offset 0x{:X} \
-                         in {}: {} consecutive candidate records are byte-identical",
-                        hit.offset,
-                        self.path.display(),
-                        crate::sync::HOMOGENEITY_SAMPLE_RECORDS,
-                    );
-                    Some(MieError::HomogeneousPayload {
-                        path: self.path.clone(),
-                        offset: hit.offset as u64,
-                        sample_records: crate::sync::HOMOGENEITY_SAMPLE_RECORDS as u32,
-                    })
-                } else if self.time_format == TimestampFormat::Auto {
-                    // L2-DEC-015: multi-record probe to disambiguate
-                    // IRIG vs Standard before iteration begins. The
-                    // chosen format is final per L2-DEC-011 — no
-                    // per-record re-detection.
-                    let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
-                    resolved_format = outcome.format;
-                    match outcome.confidence {
-                        DetectionConfidence::Decisive => {
-                            log_info!(
-                                "auto-detected timestamp format: {:?} \
-                                 (Decisive: IRIG={} STD={} over {} record(s))",
-                                outcome.format,
-                                outcome.irig_score,
-                                outcome.std_score,
-                                outcome.records_probed,
-                            );
-                            None
-                        }
-                        DetectionConfidence::Marginal => {
-                            log_info!(
-                                "auto-detected timestamp format: {:?} \
-                                 (Marginal: IRIG={} STD={} over {} record(s)) — \
-                                 pass --time-format to force the choice if this is wrong",
-                                outcome.format,
-                                outcome.irig_score,
-                                outcome.std_score,
-                                outcome.records_probed,
-                            );
-                            None
-                        }
-                        DetectionConfidence::Ambiguous => {
-                            // L2-DEC-016: the probe could not
-                            // confidently distinguish the two
-                            // formats. Strict mode rejects the file;
-                            // lenient mode uses the chosen format
-                            // anyway with a WARN so existing operator
-                            // workflows on borderline files don't
-                            // break silently.
-                            if self.strict {
-                                log_error!(
-                                    "timestamp-format auto-detection is ambiguous in {} \
-                                     starting at offset 0x{:X}: IRIG={} STD={} over {} \
-                                     record(s) — strict mode rejects ambiguous files; \
-                                     pass --time-format to force the choice",
-                                    self.path.display(),
-                                    hit.offset,
-                                    outcome.irig_score,
-                                    outcome.std_score,
-                                    outcome.records_probed,
-                                );
-                                Some(MieError::TimestampFormatMismatch {
-                                    offset: hit.offset as u64,
-                                    irig_score: outcome.irig_score,
-                                    std_score: outcome.std_score,
-                                    records_probed: outcome.records_probed as u32,
-                                })
-                            } else {
-                                log_warn!(
-                                    "auto-detected timestamp format: {:?} \
-                                     (Ambiguous: IRIG={} STD={} over {} record(s)) — \
-                                     using best guess; pass --time-format to force the \
-                                     choice or --strict to reject ambiguous files",
-                                    outcome.format,
-                                    outcome.irig_score,
-                                    outcome.std_score,
-                                    outcome.records_probed,
-                                );
-                                None
-                            }
-                        }
-                    }
-                } else {
-                    // L2-DEC-013: the format was forced via --time-format /
-                    // decode.time_format. Sanity-check it against the same
-                    // detection probe: if the probe is *Decisive* about the
-                    // OTHER format, the forced selection is obviously wrong
-                    // (e.g. --time-format standard on an IRIG file), which
-                    // would otherwise emit garbage timestamps for the whole
-                    // file. Marginal/Ambiguous probes are NOT flagged — those
-                    // are exactly the cases where forcing is the legitimate
-                    // override of a detection the heuristic can't make
-                    // confidently. resolved_format stays the forced format.
-                    let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
-                    if outcome.confidence == DetectionConfidence::Decisive
-                        && outcome.format != self.time_format
-                    {
-                        if self.strict {
-                            log_error!(
-                                "forced timestamp format {:?} contradicts the recording in {} \
-                                 at offset 0x{:X}: detection is decisive for {:?} (IRIG={} \
-                                 STD={} over {} record(s)) — strict mode rejects the mismatch; \
-                                 drop --time-format to auto-detect",
-                                self.time_format,
-                                self.path.display(),
-                                hit.offset,
-                                outcome.format,
-                                outcome.irig_score,
-                                outcome.std_score,
-                                outcome.records_probed,
-                            );
-                            Some(MieError::TimestampFormatMismatch {
-                                offset: hit.offset as u64,
-                                irig_score: outcome.irig_score,
-                                std_score: outcome.std_score,
-                                records_probed: outcome.records_probed as u32,
-                            })
-                        } else {
-                            log_warn!(
-                                "forced timestamp format {:?} contradicts the recording at \
-                                 offset 0x{:X}: detection is decisive for {:?} (IRIG={} STD={} \
-                                 over {} record(s)) — decoding with the forced format anyway; \
-                                 drop --time-format to auto-detect or pass --strict to reject \
-                                 the mismatch",
-                                self.time_format,
-                                hit.offset,
-                                outcome.format,
-                                outcome.irig_score,
-                                outcome.std_score,
-                                outcome.records_probed,
-                            );
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                }
+                let (fmt, err) = self.resolve_format_for_hit(data, hit);
+                resolved_format = fmt;
+                err
             }
             None => {
-                // L1-EXIT-010 / L2-RDR-021: a valid but *empty* recording opens
-                // directly on the end-of-records terminator (a null Type Word).
-                // The record stream is legitimately empty — this is NOT a
-                // wrong-file `NoValidRecords` rejection. Yield zero records
-                // cleanly (the writer emits a header-only CSV) and flag the
-                // condition so the CLI can report the `empty-recording` exit
-                // class at exit 0. An unrecognized non-null lead word still
-                // falls through to the wrong-file diagnosis below, preserving
-                // the guard against genuinely non-MIE inputs.
-                if read_u16(data, 0).is_some_and(is_terminator_type_word) {
-                    log_warn!(
-                        "{}: recording contains no records — the stream opens on \
-                         the end-of-records terminator (empty capture); writing \
-                         header-only output",
-                        self.path.display()
-                    );
-                    self.empty_recording.store(true, Ordering::Relaxed);
-                    early_done = true;
-                    None
-                } else {
-                    // L2-RDR-004: distinguish "no MIE record at all" from
-                    // "structurally-valid Type Word truncated past EOF".
-                    let truncated = crate::sync::diagnose_header_scan_failure(
-                        data,
-                        file_len,
-                        format_hint,
-                        MAX_SCAN_BYTES,
-                    );
-                    match truncated {
-                        Some((trunc_offset, record_bytes, available)) => {
-                            if self.strict {
-                                log_error!(
-                                    "first record after header detection is truncated \
-                                 at 0x{:X}: declared {} bytes, only {} available",
-                                    trunc_offset,
-                                    record_bytes,
-                                    available
-                                );
-                                Some(MieError::FirstRecordTruncated {
-                                    offset: trunc_offset as u64,
-                                    record_bytes: record_bytes as u64,
-                                    available_bytes: available as u64,
-                                })
-                            } else {
-                                log_warn!(
-                                    "first record after header detection is truncated \
-                                 at 0x{:X}: declared {} bytes, only {} available — \
-                                 lenient mode terminates cleanly with zero records",
-                                    trunc_offset,
-                                    record_bytes,
-                                    available
-                                );
-                                early_done = true;
-                                None
-                            }
-                        }
-                        None => {
-                            let scan_bytes = file_len.min(MAX_SCAN_BYTES) as u64;
-                            log_error!(
-                                "no valid records found in first {} bytes of {}",
-                                scan_bytes,
-                                self.path.display()
-                            );
-                            Some(MieError::NoValidRecords {
-                                path: self.path.clone(),
-                                scan_bytes,
-                            })
-                        }
-                    }
-                }
+                let (early, err) = self.diagnose_no_records(data, file_len, format_hint);
+                early_done = early;
+                err
             }
         };
 
@@ -613,6 +638,21 @@ fn delta_key(rt: u8, subaddress: u8, transmit: bool) -> u32 {
     (u32::from(rt) << 16) | (u32::from(subaddress) << 8) | u32::from(transmit)
 }
 
+/// Outcome of decoding one record in the loop body (`decode_one`), so the loop
+/// body's `continue` / `return Some(item)` / `return None` can be expressed from
+/// helper methods that cannot themselves drive the caller's loop.
+enum Step {
+    /// Advance/recover already happened — loop again.
+    Continue,
+    /// Emit this item.
+    Yield(MieResult<MieMessage>),
+    /// End of stream (`next` returns `None`). The `done` flag and any
+    /// `log_complete` are set by whichever branch produced the stop, matching
+    /// the pre-refactor paths (some stops set `done`, the OOB timestamp read
+    /// historically did not).
+    Stop,
+}
+
 impl<'a> Iterator for RecordIter<'a> {
     type Item = MieResult<MieMessage>;
 
@@ -639,414 +679,422 @@ impl<'a> Iterator for RecordIter<'a> {
         }
 
         loop {
-            // Need at least a Type Word + minimum-format payload.
-            if self.offset + MIN_RECORD_BYTES_STANDARD > self.file_len {
-                self.done = true;
-                self.log_complete();
-                return None;
+            match self.decode_one() {
+                Step::Continue => continue,
+                Step::Yield(item) => return Some(item),
+                // `done` and any `log_complete` were set by the producing branch.
+                Step::Stop => return None,
             }
+        }
+    }
+}
 
-            // ── Read Type Word ─────────────────────────────────────
-            let Some(type_raw) = read_u16(self.data, self.offset) else {
-                self.done = true;
-                return None;
-            };
-
-            // L2-RDR-021: a null Type Word (0x0000) at a record boundary is the
-            // recorder's end-of-records terminator. Stop cleanly — this is a
-            // normal end of stream, not a sync loss. (When the terminator sits
-            // within MIN_RECORD_BYTES of EOF the length guard above already
-            // ended the loop; this covers a terminator followed by trailing
-            // padding.) The last real record was already confirmed by the
-            // L2-SYN-028 look-ahead, so it has been emitted before we get here.
-            if is_terminator_type_word(type_raw) {
-                log_debug!(
-                    "end-of-records terminator at 0x{:X}; decode complete",
-                    self.offset
-                );
-                self.done = true;
-                self.log_complete();
-                return None;
-            }
-
-            let tw = decode_type_word(type_raw);
-
-            // L2-DEC-011 / L2-DEC-015: the timestamp format is now
-            // resolved eagerly in iter() (multi-record probe), so by
-            // the time we reach next() the format is already chosen
-            // and stays fixed for the rest of the decode.
-            let resolved = self.resolved_format;
-            let ts_words = timestamp_word_count(resolved);
-            let record_bytes = usize::from(tw.word_count) * 2;
-
-            // ── Validate this record ────────────────────────────────
-            // Delegate to sync::validate_record so the per-record path
-            // matches the header-skip and recovery paths exactly. This
-            // applies all five heuristics: valid type, plausible word
-            // count, fits in file, IRIG field ranges, and two-record
-            // look-ahead. A weaker inline check would let corrupt-but-
-            // plausible records slip through and be emitted as garbage
-            // rows.
-            let validation = validate_record_detailed(
-                self.data,
-                self.offset,
-                self.file_len,
-                Some(resolved),
-                self.lookahead_records,
-            );
-
-            if let Err(failure) = validation {
-                self.sync_losses += 1;
-                self.sync_losses_atomic.fetch_add(1, Ordering::Relaxed);
-                log_validation_context(self.data, self.offset);
-                if self.strict {
-                    let err = match failure {
-                        ValidationFailure::UnknownMessageType => MieError::UnknownTypeWord {
-                            offset: self.offset as u64,
-                            raw_type_word: type_raw,
-                            message_type: tw.message_type,
-                        },
-                        ValidationFailure::InvalidWordCount => MieError::InvalidTypeWord {
-                            offset: self.offset as u64,
-                            raw_type_word: type_raw,
-                            word_count: tw.word_count,
-                        },
-                        ValidationFailure::RecordTruncated => MieError::RecordTruncated {
-                            offset: self.offset as u64,
-                            record_bytes: record_bytes as u64,
-                            available_bytes: self.file_len.saturating_sub(self.offset) as u64,
-                        },
-                        other => MieError::PayloadError {
-                            offset: self.offset as u64,
-                            detail: format!("{other} (raw_type=0x{type_raw:04X})"),
-                        },
-                    };
-                    self.done = true;
-                    return Some(Err(err));
-                }
-
-                log_warn!(
-                    "sync lost at 0x{:X} (type=0x{:02X} wc={}); scanning forward",
-                    self.offset,
-                    tw.message_type,
-                    tw.word_count
-                );
-                match recover_sync(
-                    self.data,
-                    self.offset,
-                    self.file_len,
-                    Some(self.resolved_format),
-                    MAX_SCAN_BYTES,
-                    self.lookahead_records,
-                ) {
-                    Some(hit) => {
-                        log_info!(
-                            "sync recovered at 0x{:X} (skipped {} bytes from 0x{:X})",
-                            hit.offset,
-                            hit.skipped,
-                            self.offset
-                        );
-                        self.offset = hit.offset;
-                        self.prev_was_error = false;
-                        continue;
-                    }
-                    None => {
-                        // Distinguish truncation (ran out of file
-                        // before the scan window exhausted) from
-                        // genuine mid-file corruption (full 64 KB
-                        // window scanned, no valid record).
-                        //
-                        // - Truncation → L1-DEC-005 / L2-RDR-002: lenient
-                        //   mode stops cleanly with no error.
-                        // - Corruption → L1-EXIT-004: surface as terminal
-                        //   `UnrecoverableSyncLoss` so the CLI maps to
-                        //   exit 3 (or to a `.partial` commit + exit
-                        //   0 when `--allow-partial` is set).
-                        let bytes_remaining = self.file_len.saturating_sub(self.offset);
-                        if bytes_remaining < MAX_SCAN_BYTES {
-                            log_info!(
-                                "lenient mode: scan exhausted at EOF \
-                                 (offset 0x{:X}, {} bytes remain < {} \
-                                 scan window); treating as truncation",
-                                self.offset,
-                                bytes_remaining,
-                                MAX_SCAN_BYTES
-                            );
-                            self.done = true;
-                            self.log_complete();
-                            return None;
-                        }
-                        log_error!(
-                            "unrecoverable sync loss at 0x{:X} after {} messages",
-                            self.offset,
-                            self.msg_count
-                        );
-                        // Stash a terminal Err so the next next() call
-                        // surfaces UnrecoverableSyncLoss exactly once.
-                        // The writer can then either commit a `.partial`
-                        // (allow_partial) or unlink the temp + propagate
-                        // for exit 3.
-                        self.pending_unrecoverable = Some(MieError::UnrecoverableSyncLoss {
-                            offset: self.offset as u64,
-                            sync_losses: self.sync_losses,
-                        });
-                        self.log_complete();
-                        // Recurse once to pop the pending error and set
-                        // `done`. Single recursion: the branch above
-                        // returns before re-entering this loop.
-                        return self.next();
-                    }
-                }
-            }
-
-            // ── Decode timestamp ───────────────────────────────────
-            let timestamp = match resolved {
-                TimestampFormat::Irig => {
-                    let upper = read_u16(self.data, self.offset + 2)?;
-                    let middle = read_u16(self.data, self.offset + 4)?;
-                    let lower = read_u16(self.data, self.offset + 6)?;
-                    let irig = decode_irig_timestamp(upper, middle, lower);
-                    if irig.freerun {
-                        log_warn!("freerun timestamp at 0x{:X}", self.offset);
-                    } else if !self.warned_irig_day {
-                        // PRA-9: the IRIG day-of-year field has a known
-                        // firmware-dependent decode discrepancy on some DDC
-                        // cards; the time-of-day fields are unaffected. Emit a
-                        // one-time advisory (not a decode failure) so the
-                        // operator is nudged to the documented limitation.
-                        self.warned_irig_day = true;
-                        log_warn!(
-                            "IRIG day-of-year decoded for this recording; the day-of-year field \
-                             has a known firmware-dependent discrepancy on some DDC cards \
-                             (hour/minute/second/microsecond are unaffected) — see \
-                             docs/VENDOR-CSV-DIFFS.md §5"
-                        );
-                    }
-                    Timestamp::Irig(irig)
-                }
-                TimestampFormat::Standard => {
-                    let upper = read_u16(self.data, self.offset + 2)?;
-                    let lower = read_u16(self.data, self.offset + 4)?;
-                    Timestamp::Standard(decode_standard_timestamp(upper, lower))
-                }
-                TimestampFormat::Auto => unreachable!(),
-            };
-
-            let cmd_byte_offset = self.offset + 2 + usize::from(ts_words) * 2;
-
-            // ── SPURIOUS_DATA: no Command Word ─────────────────────
-            if tw.message_type == MessageType::SpuriousData as u8 {
-                let raw_word_count = i32::from(tw.word_count) - 1 - i32::from(ts_words);
-                let mut data_words = DataWords::new();
-                if raw_word_count > 0 {
-                    let n = raw_word_count as usize;
-                    let mut buf = [0u16; crate::models::MAX_DATA_WORDS];
-                    let n_capped = n.min(crate::models::MAX_DATA_WORDS);
-                    // Bound the read to the current record. raw_word_count is
-                    // computed from tw.word_count so this is structurally safe
-                    // already; bounding is defense-in-depth in case the math
-                    // is refactored later.
-                    let record_end = self.offset + record_bytes;
-                    let record_data = &self.data[..record_end];
-                    if read_u16_array(record_data, cmd_byte_offset, n_capped, &mut buf) {
-                        data_words = DataWords::from_slice(&buf[..n_capped]);
-                    }
-                }
-
-                let error_code = if self.prev_was_error {
-                    ERROR_SPURIOUS_CONTINUATION
-                } else {
-                    ERROR_SPURIOUS_STANDALONE
-                };
-                log_debug!(
-                    "SPURIOUS_DATA at 0x{:X}: {} raw words, {}",
-                    self.offset,
-                    raw_word_count.max(0),
-                    if self.prev_was_error {
-                        "continuation"
-                    } else {
-                        "standalone"
-                    }
-                );
-
-                // SPURIOUS_DATA has no RT/MSG key and is never tracked
-                // for DELTA. The CSV writer emits an empty DELTA cell.
-                let msg = MieMessage {
-                    timestamp,
-                    type_word: tw,
-                    message_format: MessageFormat::SpuriousData,
-                    command_word: None,
-                    command_word_2: None,
-                    status_word: None,
-                    status_word_2: None,
-                    data_words,
-                    error_word: Some(error_code),
-                    delta: None,
-                    file_offset: self.offset as u64,
-                    mux: self.mux.clone(),
-                };
-                self.advance_after_yield(record_bytes);
-                self.prev_was_error = false;
-                return Some(Ok(msg));
-            }
-
-            // ── Decode Command Word ────────────────────────────────
-            let Some(cmd_raw) = read_u16(self.data, cmd_byte_offset) else {
-                self.done = true;
-                return None;
-            };
-            let cmd = decode_command_word(cmd_raw);
-
-            // ── Errored record (bit 14 set) ─────────────────────────
-            if tw.error {
-                let key = delta_key(
-                    cmd.rt,
-                    cmd.subaddress,
-                    matches!(cmd.direction, crate::models::Direction::Transmit),
-                );
-                let delta = self.delta_for(key, &timestamp);
-                let msg = self.decode_error_record(
-                    &tw,
-                    timestamp,
-                    &cmd,
-                    cmd_byte_offset,
-                    ts_words,
-                    delta,
-                );
-                self.advance_after_yield(record_bytes);
-                self.prev_was_error = true;
-                return Some(msg);
-            }
-
-            // ── Normal record: classify and extract payload ────────
-            let msg_fmt =
-                match classify_message_format(tw.message_type, &cmd, tw.word_count, ts_words) {
-                    Ok(f) => f,
-                    Err(_) => {
-                        log_warn!(
-                            "cannot classify record at 0x{:X} (type=0x{:02X}); skipping",
-                            self.offset,
-                            tw.message_type
-                        );
-                        self.offset += record_bytes;
-                        self.prev_was_error = false;
-                        continue;
-                    }
-                };
-
+impl<'a> RecordIter<'a> {
+    /// Decode one record at the current offset, returning how the loop should
+    /// proceed. All the original loop-body paths are preserved exactly; only the
+    /// control flow is expressed via [`Step`] so the work can live in helpers.
+    fn decode_one(&mut self) -> Step {
+        // Need at least a Type Word + minimum-format payload.
+        if self.offset + MIN_RECORD_BYTES_STANDARD > self.file_len {
+            self.done = true;
+            self.log_complete();
+            return Step::Stop;
+        }
+        let Some(type_raw) = read_u16(self.data, self.offset) else {
+            self.done = true;
+            return Step::Stop;
+        };
+        // L2-RDR-021: a null Type Word (0x0000) at a record boundary is the
+        // end-of-records terminator — a normal end of stream, not a sync loss.
+        if is_terminator_type_word(type_raw) {
             log_debug!(
-                "record at 0x{:X}: type=0x{:02X} fmt={:?} RT{} SA{}",
-                self.offset,
-                tw.message_type,
-                msg_fmt,
-                cmd.rt,
-                cmd.subaddress
+                "end-of-records terminator at 0x{:X}; decode complete",
+                self.offset
             );
+            self.done = true;
+            self.log_complete();
+            return Step::Stop;
+        }
+        let tw = decode_type_word(type_raw);
+        let resolved = self.resolved_format;
+        let ts_words = timestamp_word_count(resolved);
+        let record_bytes = usize::from(tw.word_count) * 2;
 
-            // L2-SYN-020..025: structural invariants. Strict mode aborts;
-            // lenient mode logs a WARN, advances past the record, and
-            // continues iteration.
-            if let Err(v) =
-                crate::decode::validate_structural_invariants(&tw, &cmd, msg_fmt, ts_words)
-            {
-                if self.strict {
-                    self.done = true;
-                    return Some(Err(crate::error::MieError::PayloadError {
-                        offset: self.offset as u64,
-                        detail: format!("L2-SYN structural invariant violation: {}", v.detail),
-                    }));
-                }
-                log_warn!(
-                    "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
-                    self.offset,
-                    v.detail
-                );
-                self.offset += record_bytes;
-                self.prev_was_error = false;
-                continue;
-            }
+        // Validate via the shared sync path (same heuristics as header-skip and
+        // recovery), so corrupt-but-plausible records don't slip through.
+        if let Err(failure) = validate_record_detailed(
+            self.data,
+            self.offset,
+            self.file_len,
+            Some(resolved),
+            self.lookahead_records,
+        ) {
+            return self.handle_sync_loss(failure, type_raw, &tw, record_bytes);
+        }
 
-            // Bound the slice to the current record's byte range so
-            // payload reads can never spill into the next record. The
-            // Type Word's word_count defines the record length; a
-            // Command Word that *claims* a larger data_word_count than
-            // the record can hold must NOT cause us to read those
-            // extra words from whatever follows.
-            let record_end = self.offset + record_bytes;
-            let record_data = &self.data[..record_end];
-            let payload_offset = cmd_byte_offset + 2;
-            let (cmd2, status, status2, data_words) =
-                extract_payload(record_data, payload_offset, msg_fmt, &cmd);
+        // Timestamp. An OOB read here historically returned None without setting
+        // `done`; preserve that (Stop with no `done`).
+        let Some(timestamp) = self.decode_timestamp_at(resolved) else {
+            return Step::Stop;
+        };
+        let cmd_byte_offset = self.offset + 2 + usize::from(ts_words) * 2;
 
-            // L2-SYN-023 / L2-SYN-027: post-extract Reject-class checks
-            // (Cmd2 direction and Cmd1/Cmd2 data_word_count agreement for
-            // RT-to-RT formats). Same strict/lenient policy as the
-            // pre-extract invariants.
-            if let Err(v) =
-                crate::decode::validate_post_extract_invariants(msg_fmt, &cmd, cmd2.as_ref())
-            {
-                if self.strict {
-                    self.done = true;
-                    return Some(Err(crate::error::MieError::PayloadError {
-                        offset: self.offset as u64,
-                        detail: format!("L2-SYN structural invariant violation: {}", v.detail),
-                    }));
-                }
-                log_warn!(
-                    "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
-                    self.offset,
-                    v.detail
-                );
-                self.offset += record_bytes;
-                self.prev_was_error = false;
-                continue;
-            }
+        // SPURIOUS_DATA: no Command Word.
+        if tw.message_type == MessageType::SpuriousData as u8 {
+            let msg =
+                self.spurious_message(&tw, timestamp, ts_words, cmd_byte_offset, record_bytes);
+            return Step::Yield(Ok(msg));
+        }
 
-            // L2-SYN-024 / L2-SYN-025: AnomalyWarn-class observations.
-            // Both modes log a WARN and continue emitting the record.
-            for v in crate::decode::detect_record_anomalies(&tw, &cmd, status) {
-                log_warn!("L2-SYN anomaly at 0x{:X}: {}", self.offset, v.detail);
-            }
+        let Some(cmd_raw) = read_u16(self.data, cmd_byte_offset) else {
+            self.done = true;
+            return Step::Stop;
+        };
+        let cmd = decode_command_word(cmd_raw);
 
+        // Errored record (Type Word bit 14 set).
+        if tw.error {
             let key = delta_key(
                 cmd.rt,
                 cmd.subaddress,
                 matches!(cmd.direction, crate::models::Direction::Transmit),
             );
             let delta = self.delta_for(key, &timestamp);
-
-            let msg = MieMessage {
-                timestamp,
-                type_word: tw,
-                message_format: msg_fmt,
-                command_word: Some(cmd),
-                command_word_2: cmd2,
-                status_word: status,
-                status_word_2: status2,
-                data_words,
-                error_word: None,
-                delta,
-                file_offset: self.offset as u64,
-                mux: self.mux.clone(),
-            };
+            let msg =
+                self.decode_error_record(&tw, timestamp, &cmd, cmd_byte_offset, ts_words, delta);
             self.advance_after_yield(record_bytes);
-            self.prev_was_error = false;
+            self.prev_was_error = true;
+            return Step::Yield(msg);
+        }
 
-            if self.msg_count > 0 && self.msg_count.is_multiple_of(100_000) {
+        self.decode_normal_record(
+            &tw,
+            &cmd,
+            timestamp,
+            ts_words,
+            cmd_byte_offset,
+            record_bytes,
+        )
+    }
+
+    /// Validation failed at the current offset: strict mode surfaces a terminal
+    /// record error; lenient mode scans forward (`recover_sync`) and either
+    /// continues from the recovered offset, stops cleanly on truncation, or
+    /// surfaces a terminal `UnrecoverableSyncLoss` (L1-EXIT-004).
+    fn handle_sync_loss(
+        &mut self,
+        failure: ValidationFailure,
+        type_raw: u16,
+        tw: &TypeWord,
+        record_bytes: usize,
+    ) -> Step {
+        self.sync_losses += 1;
+        self.sync_losses_atomic.fetch_add(1, Ordering::Relaxed);
+        log_validation_context(self.data, self.offset);
+        if self.strict {
+            let err = match failure {
+                ValidationFailure::UnknownMessageType => MieError::UnknownTypeWord {
+                    offset: self.offset as u64,
+                    raw_type_word: type_raw,
+                    message_type: tw.message_type,
+                },
+                ValidationFailure::InvalidWordCount => MieError::InvalidTypeWord {
+                    offset: self.offset as u64,
+                    raw_type_word: type_raw,
+                    word_count: tw.word_count,
+                },
+                ValidationFailure::RecordTruncated => MieError::RecordTruncated {
+                    offset: self.offset as u64,
+                    record_bytes: record_bytes as u64,
+                    available_bytes: self.file_len.saturating_sub(self.offset) as u64,
+                },
+                other => MieError::PayloadError {
+                    offset: self.offset as u64,
+                    detail: format!("{other} (raw_type=0x{type_raw:04X})"),
+                },
+            };
+            self.done = true;
+            return Step::Yield(Err(err));
+        }
+
+        log_warn!(
+            "sync lost at 0x{:X} (type=0x{:02X} wc={}); scanning forward",
+            self.offset,
+            tw.message_type,
+            tw.word_count
+        );
+        match recover_sync(
+            self.data,
+            self.offset,
+            self.file_len,
+            Some(self.resolved_format),
+            MAX_SCAN_BYTES,
+            self.lookahead_records,
+        ) {
+            Some(hit) => {
                 log_info!(
-                    "decoded {} messages (0x{:X} / 0x{:X})",
-                    self.msg_count,
-                    self.offset,
-                    self.file_len
+                    "sync recovered at 0x{:X} (skipped {} bytes from 0x{:X})",
+                    hit.offset,
+                    hit.skipped,
+                    self.offset
                 );
+                self.offset = hit.offset;
+                self.prev_was_error = false;
+                Step::Continue
             }
-
-            return Some(Ok(msg));
+            None => {
+                // Distinguish truncation (ran out of file before the scan window
+                // exhausted) from genuine mid-file corruption.
+                let bytes_remaining = self.file_len.saturating_sub(self.offset);
+                if bytes_remaining < MAX_SCAN_BYTES {
+                    log_info!(
+                        "lenient mode: scan exhausted at EOF \
+                         (offset 0x{:X}, {} bytes remain < {} \
+                         scan window); treating as truncation",
+                        self.offset,
+                        bytes_remaining,
+                        MAX_SCAN_BYTES
+                    );
+                    self.done = true;
+                    self.log_complete();
+                    return Step::Stop;
+                }
+                log_error!(
+                    "unrecoverable sync loss at 0x{:X} after {} messages",
+                    self.offset,
+                    self.msg_count
+                );
+                // Surface UnrecoverableSyncLoss as a terminal Err (pre-refactor
+                // this routed through `pending_unrecoverable` + a self.next()
+                // recursion; the net effect — log_complete, done, one Err item —
+                // is identical).
+                self.log_complete();
+                self.done = true;
+                Step::Yield(Err(MieError::UnrecoverableSyncLoss {
+                    offset: self.offset as u64,
+                    sync_losses: self.sync_losses,
+                }))
+            }
         }
     }
-}
 
-impl<'a> RecordIter<'a> {
+    /// Decode the record's timestamp at the current offset (IRIG or Standard).
+    /// Returns `None` on an out-of-bounds read (the caller stops), mirroring the
+    /// pre-refactor `?` behavior. Emits the freerun / one-time IRIG day-of-year
+    /// advisories as a side effect.
+    fn decode_timestamp_at(&mut self, resolved: TimestampFormat) -> Option<Timestamp> {
+        match resolved {
+            TimestampFormat::Irig => {
+                let upper = read_u16(self.data, self.offset + 2)?;
+                let middle = read_u16(self.data, self.offset + 4)?;
+                let lower = read_u16(self.data, self.offset + 6)?;
+                let irig = decode_irig_timestamp(upper, middle, lower);
+                if irig.freerun {
+                    log_warn!("freerun timestamp at 0x{:X}", self.offset);
+                } else if !self.warned_irig_day {
+                    // PRA-9: one-time IRIG day-of-year discrepancy advisory.
+                    self.warned_irig_day = true;
+                    log_warn!(
+                        "IRIG day-of-year decoded for this recording; the day-of-year field \
+                         has a known firmware-dependent discrepancy on some DDC cards \
+                         (hour/minute/second/microsecond are unaffected) — see \
+                         docs/VENDOR-CSV-DIFFS.md §5"
+                    );
+                }
+                Some(Timestamp::Irig(irig))
+            }
+            TimestampFormat::Standard => {
+                let upper = read_u16(self.data, self.offset + 2)?;
+                let lower = read_u16(self.data, self.offset + 4)?;
+                Some(Timestamp::Standard(decode_standard_timestamp(upper, lower)))
+            }
+            TimestampFormat::Auto => unreachable!(),
+        }
+    }
+
+    /// Build the SPURIOUS_DATA message (no Command/Status), advance past it, and
+    /// clear the prev-was-error flag. The `0x2000`/`0x2001` continuation code is
+    /// chosen from whether the immediately preceding decoded record errored.
+    fn spurious_message(
+        &mut self,
+        tw: &TypeWord,
+        timestamp: Timestamp,
+        ts_words: u16,
+        cmd_byte_offset: usize,
+        record_bytes: usize,
+    ) -> MieMessage {
+        let raw_word_count = i32::from(tw.word_count) - 1 - i32::from(ts_words);
+        let mut data_words = DataWords::new();
+        if raw_word_count > 0 {
+            let n = raw_word_count as usize;
+            let mut buf = [0u16; crate::models::MAX_DATA_WORDS];
+            let n_capped = n.min(crate::models::MAX_DATA_WORDS);
+            // Bound the read to the current record (defense-in-depth).
+            let record_end = self.offset + record_bytes;
+            let record_data = &self.data[..record_end];
+            if read_u16_array(record_data, cmd_byte_offset, n_capped, &mut buf) {
+                data_words = DataWords::from_slice(&buf[..n_capped]);
+            }
+        }
+
+        let error_code = if self.prev_was_error {
+            ERROR_SPURIOUS_CONTINUATION
+        } else {
+            ERROR_SPURIOUS_STANDALONE
+        };
+        log_debug!(
+            "SPURIOUS_DATA at 0x{:X}: {} raw words, {}",
+            self.offset,
+            raw_word_count.max(0),
+            if self.prev_was_error {
+                "continuation"
+            } else {
+                "standalone"
+            }
+        );
+
+        let msg = MieMessage {
+            timestamp,
+            type_word: *tw,
+            message_format: MessageFormat::SpuriousData,
+            command_word: None,
+            command_word_2: None,
+            status_word: None,
+            status_word_2: None,
+            data_words,
+            error_word: Some(error_code),
+            delta: None,
+            file_offset: self.offset as u64,
+            mux: self.mux.clone(),
+        };
+        self.advance_after_yield(record_bytes);
+        self.prev_was_error = false;
+        msg
+    }
+
+    /// Classify, apply the L2-SYN structural invariants, extract the payload, and
+    /// emit a normal record — or, on a lenient-mode invariant failure / classify
+    /// error, skip it (`Continue`); strict mode surfaces a terminal `PayloadError`.
+    fn decode_normal_record(
+        &mut self,
+        tw: &TypeWord,
+        cmd: &CommandWord,
+        timestamp: Timestamp,
+        ts_words: u16,
+        cmd_byte_offset: usize,
+        record_bytes: usize,
+    ) -> Step {
+        let msg_fmt = match classify_message_format(tw.message_type, cmd, tw.word_count, ts_words) {
+            Ok(f) => f,
+            Err(_) => {
+                log_warn!(
+                    "cannot classify record at 0x{:X} (type=0x{:02X}); skipping",
+                    self.offset,
+                    tw.message_type
+                );
+                self.offset += record_bytes;
+                self.prev_was_error = false;
+                return Step::Continue;
+            }
+        };
+
+        log_debug!(
+            "record at 0x{:X}: type=0x{:02X} fmt={:?} RT{} SA{}",
+            self.offset,
+            tw.message_type,
+            msg_fmt,
+            cmd.rt,
+            cmd.subaddress
+        );
+
+        // L2-SYN-020..025 pre-extract invariants.
+        if let Err(v) = crate::decode::validate_structural_invariants(tw, cmd, msg_fmt, ts_words) {
+            if self.strict {
+                self.done = true;
+                return Step::Yield(Err(crate::error::MieError::PayloadError {
+                    offset: self.offset as u64,
+                    detail: format!("L2-SYN structural invariant violation: {}", v.detail),
+                }));
+            }
+            log_warn!(
+                "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
+                self.offset,
+                v.detail
+            );
+            self.offset += record_bytes;
+            self.prev_was_error = false;
+            return Step::Continue;
+        }
+
+        // Bound payload reads to this record's byte range so an over-claiming
+        // Command Word cannot read into the next record.
+        let record_end = self.offset + record_bytes;
+        let record_data = &self.data[..record_end];
+        let payload_offset = cmd_byte_offset + 2;
+        let (cmd2, status, status2, data_words) =
+            extract_payload(record_data, payload_offset, msg_fmt, cmd);
+
+        // L2-SYN-023 / L2-SYN-027 post-extract invariants.
+        if let Err(v) = crate::decode::validate_post_extract_invariants(msg_fmt, cmd, cmd2.as_ref())
+        {
+            if self.strict {
+                self.done = true;
+                return Step::Yield(Err(crate::error::MieError::PayloadError {
+                    offset: self.offset as u64,
+                    detail: format!("L2-SYN structural invariant violation: {}", v.detail),
+                }));
+            }
+            log_warn!(
+                "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
+                self.offset,
+                v.detail
+            );
+            self.offset += record_bytes;
+            self.prev_was_error = false;
+            return Step::Continue;
+        }
+
+        // L2-SYN-024 / L2-SYN-025 anomaly observations (WARN, still emitted).
+        for v in crate::decode::detect_record_anomalies(tw, cmd, status) {
+            log_warn!("L2-SYN anomaly at 0x{:X}: {}", self.offset, v.detail);
+        }
+
+        let key = delta_key(
+            cmd.rt,
+            cmd.subaddress,
+            matches!(cmd.direction, crate::models::Direction::Transmit),
+        );
+        let delta = self.delta_for(key, &timestamp);
+
+        let msg = MieMessage {
+            timestamp,
+            type_word: *tw,
+            message_format: msg_fmt,
+            command_word: Some(*cmd),
+            command_word_2: cmd2,
+            status_word: status,
+            status_word_2: status2,
+            data_words,
+            error_word: None,
+            delta,
+            file_offset: self.offset as u64,
+            mux: self.mux.clone(),
+        };
+        self.advance_after_yield(record_bytes);
+        self.prev_was_error = false;
+
+        if self.msg_count > 0 && self.msg_count.is_multiple_of(100_000) {
+            log_info!(
+                "decoded {} messages (0x{:X} / 0x{:X})",
+                self.msg_count,
+                self.offset,
+                self.file_len
+            );
+        }
+
+        Step::Yield(Ok(msg))
+    }
+
     fn advance_after_yield(&mut self, record_bytes: usize) {
         self.offset += record_bytes;
         self.msg_count += 1;

@@ -470,55 +470,68 @@ def write_csv(
     if opts is None:
         opts = WriteOptions()
 
-    # File-path destination: stream rows straight into an atomic temp
-    # file (constant memory), then commit() over the destination, or
-    # commit_partial() to <dest>.partial on an allow_partial sync loss.
+    # File-path destination vs. text-stream (TextIO or None → stdout): the two
+    # differ enough (atomic temp + preflight + .partial vs. straight streaming)
+    # to warrant separate helpers.
     if isinstance(output, (str, Path)):
-        dest = Path(output)
-        _preflight_output(dest, opts)
-        partial_info: tuple[int, int] | None = None
-        with _AtomicCsvFile(dest) as atomic:
-            writer = _StreamingCsvRowWriter(atomic.stream, str(dest))
-            try:
-                for msg in messages:
-                    writer.write_message(msg)
-            except MieUnrecoverableSyncLossError as exc:
-                if not opts.allow_partial:
-                    raise
-                partial_info = (exc.offset, exc.sync_losses)
-
-            count = writer.rows_written
-            if partial_info is None:
-                atomic.commit()
-                logger.info("Wrote %d rows to %s", count, dest)
-                return WriteOutcome(normal_count=count, error_count=0, partial=None)
-
-            partial_path = atomic.commit_partial()
-            offset, sync_losses = partial_info
-            logger.warning(
-                "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
-                "wrote %d rows to %s (--allow-partial)",
-                offset,
-                sync_losses,
-                count,
-                partial_path,
-            )
-            return WriteOutcome(
-                normal_count=count,
-                error_count=0,
-                partial=PartialCommit(
-                    main_path=partial_path,
-                    errors_path=None,
-                    offset=offset,
-                    sync_losses=sync_losses,
-                ),
-            )
-
-    # Text-stream destination (TextIO or None → stdout). No on-disk
-    # identity, so no preflight, no atomic temp, and no .partial commit —
-    # rows already streamed to the consumer are what it has seen.
+        return _write_csv_to_file(messages, Path(output), opts)
     stream: TextIO = output if output is not None else sys.stdout
     dest_name = "stdout" if output is None else "<stream>"
+    return _write_csv_to_stream(messages, stream, dest_name, opts)
+
+
+def _write_csv_to_file(
+    messages: Iterable[MieMessage], dest: Path, opts: WriteOptions
+) -> WriteOutcome:
+    """Stream rows into an atomic temp file (constant memory), then commit() over
+    the destination — or commit_partial() to ``<dest>.partial`` on an
+    allow_partial sync loss."""
+    _preflight_output(dest, opts)
+    partial_info: tuple[int, int] | None = None
+    with _AtomicCsvFile(dest) as atomic:
+        writer = _StreamingCsvRowWriter(atomic.stream, str(dest))
+        try:
+            for msg in messages:
+                writer.write_message(msg)
+        except MieUnrecoverableSyncLossError as exc:
+            if not opts.allow_partial:
+                raise
+            partial_info = (exc.offset, exc.sync_losses)
+
+        count = writer.rows_written
+        if partial_info is None:
+            atomic.commit()
+            logger.info("Wrote %d rows to %s", count, dest)
+            return WriteOutcome(normal_count=count, error_count=0, partial=None)
+
+        partial_path = atomic.commit_partial()
+        offset, sync_losses = partial_info
+        logger.warning(
+            "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
+            "wrote %d rows to %s (--allow-partial)",
+            offset,
+            sync_losses,
+            count,
+            partial_path,
+        )
+        return WriteOutcome(
+            normal_count=count,
+            error_count=0,
+            partial=PartialCommit(
+                main_path=partial_path,
+                errors_path=None,
+                offset=offset,
+                sync_losses=sync_losses,
+            ),
+        )
+
+
+def _write_csv_to_stream(
+    messages: Iterable[MieMessage], stream: TextIO, dest_name: str, opts: WriteOptions
+) -> WriteOutcome:
+    """Stream rows straight to a text sink. No on-disk identity, so no preflight,
+    no atomic temp, and no ``.partial`` — rows already sent are what the consumer
+    has seen."""
     writer = _StreamingCsvRowWriter(stream, dest_name)
     try:
         for msg in messages:
@@ -530,8 +543,7 @@ def write_csv(
     except MieUnrecoverableSyncLossError:
         if not opts.allow_partial:
             raise
-        # Rows decoded so far are already in the stream; nothing to roll
-        # back. Mirror the prior behavior: succeed with no PartialCommit.
+        # Rows decoded so far are already in the stream; nothing to roll back.
         logger.debug("Unrecoverable sync loss on stream output (--allow-partial)")
 
     logger.info("Wrote %d rows to %s", writer.rows_written, dest_name)
@@ -609,45 +621,14 @@ def write_csv_split(
 
         normal_count = main_writer.rows_written
         error_count = error_writer.rows_written if error_writer is not None else 0
-
-        if partial_info is None:
-            # Commit MAIN first (L2-WRT-019): the two commits are not
-            # cross-file atomic, so if the errors commit fails the residue
-            # is the primary main.csv, never an orphan errors file.
-            main_atomic.commit()
-            logger.info("Wrote %d normal messages to %s", normal_count, output_path)
-            if errors_atomic is not None:
-                errors_atomic.commit()
-                logger.info("Wrote %d error/spurious messages to %s", error_count, error_path)
-            else:
-                logger.info("No error/spurious messages — error file not created")
-            return WriteOutcome(normal_count=normal_count, error_count=error_count, partial=None)
-
-        # Partial path: commit each file as .partial (errors first, then
-        # main, mirroring the Rust writer).
-        errors_partial: Path | None = None
-        if errors_atomic is not None:
-            errors_partial = errors_atomic.commit_partial()
-        main_partial = main_atomic.commit_partial()
-        offset, sync_losses = partial_info
-        logger.warning(
-            "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
-            "wrote %d normal + %d error rows as partial to %s (--allow-partial)",
-            offset,
-            sync_losses,
+        return _commit_split_outputs(
+            main_atomic,
+            errors_atomic,
+            output_path,
+            error_path,
             normal_count,
             error_count,
-            main_partial,
-        )
-        return WriteOutcome(
-            normal_count=normal_count,
-            error_count=error_count,
-            partial=PartialCommit(
-                main_path=main_partial,
-                errors_path=errors_partial,
-                offset=offset,
-                sync_losses=sync_losses,
-            ),
+            partial_info,
         )
     finally:
         # Unlink any temp that was never committed (failure path). After a
@@ -655,3 +636,54 @@ def write_csv_split(
         main_atomic.close()
         if errors_atomic is not None:
             errors_atomic.close()
+
+
+def _commit_split_outputs(
+    main_atomic: _AtomicCsvFile,
+    errors_atomic: _AtomicCsvFile | None,
+    output_path: Path,
+    error_path: Path,
+    normal_count: int,
+    error_count: int,
+    partial_info: tuple[int, int] | None,
+) -> WriteOutcome:
+    """Commit the split outputs. ``partial_info is None`` is the normal path
+    (atomic rename over each destination, MAIN first per L2-WRT-019 so a failed
+    errors commit never leaves an orphan errors file); a tuple is the
+    ``--allow-partial`` path (rename each temp to its ``.partial``)."""
+    if partial_info is None:
+        main_atomic.commit()
+        logger.info("Wrote %d normal messages to %s", normal_count, output_path)
+        if errors_atomic is not None:
+            errors_atomic.commit()
+            logger.info("Wrote %d error/spurious messages to %s", error_count, error_path)
+        else:
+            logger.info("No error/spurious messages — error file not created")
+        return WriteOutcome(normal_count=normal_count, error_count=error_count, partial=None)
+
+    # Partial path: commit each file as .partial (errors first, then main,
+    # mirroring the Rust writer).
+    errors_partial: Path | None = None
+    if errors_atomic is not None:
+        errors_partial = errors_atomic.commit_partial()
+    main_partial = main_atomic.commit_partial()
+    offset, sync_losses = partial_info
+    logger.warning(
+        "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
+        "wrote %d normal + %d error rows as partial to %s (--allow-partial)",
+        offset,
+        sync_losses,
+        normal_count,
+        error_count,
+        main_partial,
+    )
+    return WriteOutcome(
+        normal_count=normal_count,
+        error_count=error_count,
+        partial=PartialCommit(
+            main_path=main_partial,
+            errors_path=errors_partial,
+            offset=offset,
+            sync_losses=sync_losses,
+        ),
+    )

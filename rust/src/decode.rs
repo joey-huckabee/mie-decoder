@@ -522,6 +522,35 @@ pub fn probe_timestamp_format(
     first_offset: usize,
     max_records: usize,
 ) -> DetectionOutcome {
+    let (irig_score, std_score, records_probed) =
+        accumulate_probe_scores(data, first_offset, max_records);
+
+    let format = if irig_score >= std_score {
+        TimestampFormat::Irig
+    } else {
+        TimestampFormat::Standard
+    };
+    let max_score = irig_score.max(std_score);
+    let margin = (irig_score - std_score).abs();
+
+    DetectionOutcome {
+        format,
+        irig_score,
+        std_score,
+        records_probed,
+        confidence: classify_confidence(max_score, margin),
+    }
+}
+
+/// Walk up to `max_records` records from `first_offset`, accumulating the IRIG
+/// and Standard scores and counting how many records were probed. Advances by
+/// each record's declared length — the same walk the reader performs — and
+/// stops at EOF or a structurally-impossible record.
+fn accumulate_probe_scores(
+    data: &[u8],
+    first_offset: usize,
+    max_records: usize,
+) -> (i32, i32, usize) {
     let n = max_records.max(1);
     let file_len = data.len();
     let mut irig_score: i32 = 0;
@@ -538,9 +567,8 @@ pub fn probe_timestamp_format(
             break;
         };
         let tw = decode_type_word(tw_raw);
-        // Defensively skip structurally-impossible records — these
-        // would also fail the reader's normal validate_record path,
-        // and including them in the probe would skew the score.
+        // Defensively skip structurally-impossible records — these would also
+        // fail the reader's validate_record path, and would skew the score.
         if tw.word_count < MIN_RECORD_WORDS_STANDARD {
             break;
         }
@@ -550,9 +578,6 @@ pub fn probe_timestamp_format(
         std_score += s_delta;
         records_probed += 1;
 
-        // Advance by the record's declared length — same advance the
-        // reader will use during decode, so the probe walks the same
-        // records the reader will later interpret.
         let record_bytes = usize::from(tw.word_count) * 2;
         if record_bytes == 0 {
             break;
@@ -566,27 +591,17 @@ pub fn probe_timestamp_format(
         offset = next_offset;
     }
 
-    let format = if irig_score >= std_score {
-        TimestampFormat::Irig
-    } else {
-        TimestampFormat::Standard
-    };
-    let max_score = irig_score.max(std_score);
-    let margin = (irig_score - std_score).abs();
-    let confidence = if max_score < CONFIDENCE_FLOOR || margin < MIN_MARGIN {
+    (irig_score, std_score, records_probed)
+}
+
+/// L2-DEC-016 confidence classification from the aggregate score and margin.
+fn classify_confidence(max_score: i32, margin: i32) -> DetectionConfidence {
+    if max_score < CONFIDENCE_FLOOR || margin < MIN_MARGIN {
         DetectionConfidence::Ambiguous
     } else if max_score >= DECISIVE_FLOOR && margin >= DECISIVE_MARGIN {
         DetectionConfidence::Decisive
     } else {
         DetectionConfidence::Marginal
-    };
-
-    DetectionOutcome {
-        format,
-        irig_score,
-        std_score,
-        records_probed,
-        confidence,
     }
 }
 
@@ -600,56 +615,66 @@ pub fn probe_timestamp_format(
 /// because the Standard timestamp is a raw 32-bit counter with no
 /// semantic field bounds to check against).
 fn score_single_record(data: &[u8], offset: usize, type_word: &TypeWord) -> (i32, i32) {
-    let mut irig_score: i32 = 0;
-    let mut std_score: i32 = 0;
+    (
+        score_irig_candidate(data, offset, type_word),
+        score_standard_candidate(data, offset, type_word),
+    )
+}
 
-    // IRIG candidate: Cmd at offset+8 (Type + 3 TS words)
-    if let Some(irig_cmd_raw) = read_u16(data, offset + 8) {
-        let irig_cmd = decode_command_word(irig_cmd_raw);
-        // T/R consistency with the Type Word: receive code expects Receive
-        // direction, transmit code expects Transmit. Either match adds 2.
-        if (type_word.message_type == MessageType::BcToRt as u8
-            && irig_cmd.direction == Direction::Receive)
-            || (type_word.message_type == MessageType::RtToBc as u8
-                && irig_cmd.direction == Direction::Transmit)
-        {
-            irig_score += 2;
-        }
-        // Word count plausibility: IRIG overhead = TS(3) + Cmd(1) + Stat(1) + Type(1) = 6
-        if i32::from(type_word.word_count) - 6 == i32::from(irig_cmd.data_word_count) {
-            irig_score += 2;
-        }
-        // Range check on the candidate IRIG fields
-        if let (Some(ts_upper), Some(ts_middle)) =
-            (read_u16(data, offset + 2), read_u16(data, offset + 4))
-        {
-            let hour = ts_upper & 0x1F;
-            let minute = (ts_middle >> 10) & 0x3F;
-            let second = (ts_middle >> 4) & 0x3F;
-            let us_hi = ts_middle & 0xF;
-            if hour < 24 && minute < 60 && second < 60 && us_hi < 16 {
-                irig_score += 1;
-            }
+/// T/R consistency: a `BC_TO_RT` type expects a Receive command, `RT_TO_BC`
+/// expects Transmit. Other message types never match.
+fn tr_direction_matches(type_word: &TypeWord, cmd: &CommandWord) -> bool {
+    (type_word.message_type == MessageType::BcToRt as u8 && cmd.direction == Direction::Receive)
+        || (type_word.message_type == MessageType::RtToBc as u8
+            && cmd.direction == Direction::Transmit)
+}
+
+/// IRIG candidate: Cmd at offset+8 (Type + 3 TS words). Up to `+5`
+/// (T/R: 2, word-count plausibility: 2, field-range validity: 1).
+fn score_irig_candidate(data: &[u8], offset: usize, type_word: &TypeWord) -> i32 {
+    let Some(cmd_raw) = read_u16(data, offset + 8) else {
+        return 0;
+    };
+    let cmd = decode_command_word(cmd_raw);
+    let mut score = 0;
+    if tr_direction_matches(type_word, &cmd) {
+        score += 2;
+    }
+    // IRIG overhead = TS(3) + Cmd(1) + Stat(1) + Type(1) = 6
+    if i32::from(type_word.word_count) - 6 == i32::from(cmd.data_word_count) {
+        score += 2;
+    }
+    if let (Some(ts_upper), Some(ts_middle)) =
+        (read_u16(data, offset + 2), read_u16(data, offset + 4))
+    {
+        let hour = ts_upper & 0x1F;
+        let minute = (ts_middle >> 10) & 0x3F;
+        let second = (ts_middle >> 4) & 0x3F;
+        let us_hi = ts_middle & 0xF;
+        if hour < 24 && minute < 60 && second < 60 && us_hi < 16 {
+            score += 1;
         }
     }
+    score
+}
 
-    // Standard candidate: Cmd at offset+6 (Type + 2 TS words)
-    if let Some(std_cmd_raw) = read_u16(data, offset + 6) {
-        let std_cmd = decode_command_word(std_cmd_raw);
-        if (type_word.message_type == MessageType::BcToRt as u8
-            && std_cmd.direction == Direction::Receive)
-            || (type_word.message_type == MessageType::RtToBc as u8
-                && std_cmd.direction == Direction::Transmit)
-        {
-            std_score += 2;
-        }
-        // Standard overhead = TS(2) + Cmd(1) + Stat(1) + Type(1) = 5
-        if i32::from(type_word.word_count) - 5 == i32::from(std_cmd.data_word_count) {
-            std_score += 2;
-        }
+/// Standard candidate: Cmd at offset+6 (Type + 2 TS words). Up to `+4`
+/// (T/R: 2, word-count plausibility: 2; no range bonus — the 32-bit counter
+/// has no semantic field bounds to check).
+fn score_standard_candidate(data: &[u8], offset: usize, type_word: &TypeWord) -> i32 {
+    let Some(cmd_raw) = read_u16(data, offset + 6) else {
+        return 0;
+    };
+    let cmd = decode_command_word(cmd_raw);
+    let mut score = 0;
+    if tr_direction_matches(type_word, &cmd) {
+        score += 2;
     }
-
-    (irig_score, std_score)
+    // Standard overhead = TS(2) + Cmd(1) + Stat(1) + Type(1) = 5
+    if i32::from(type_word.word_count) - 5 == i32::from(cmd.data_word_count) {
+        score += 2;
+    }
+    score
 }
 
 #[inline]

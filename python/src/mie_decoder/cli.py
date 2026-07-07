@@ -73,6 +73,30 @@ EXIT_CONFIG = 5  # configuration error (missing/malformed/invalid config)
 EXIT_MERGE_INCOMPATIBLE = 6  # merge inputs cannot share an absolute timeline (L1-EXIT-009)
 
 
+def _log_safe(value: object) -> str:
+    """Neutralize CR/LF in user-controlled values before logging.
+
+    A crafted input path could otherwise embed a newline and forge or inject
+    additional log lines (SonarQube S5145). Escaping the control characters
+    keeps each logged value on a single line without altering the visible path.
+    """
+    return str(value).replace("\r", "\\r").replace("\n", "\\n")
+
+
+def _report_error(context: str, exc: BaseException, code: int) -> int:
+    """Log and print a handled error, then return its exit code.
+
+    Kept as a helper rather than inline in the ``except`` clause so the log
+    call preserves the clean one-line operator message for these *expected*
+    conditions (file-not-found, no-records) instead of a full stack trace —
+    mirroring how :func:`_classify_decode_error` reports the decode-time
+    failures it is delegated.
+    """
+    logger.error("%s: %s", context, exc)
+    print(f"Error: {exc}", file=sys.stderr)
+    return code
+
+
 class _UsageErrorParser(argparse.ArgumentParser):
     """``ArgumentParser`` that exits with :data:`EXIT_USAGE` on a usage error.
 
@@ -857,46 +881,33 @@ def _write_messages(
     return outcome
 
 
+# Decode-time errors that follow the standard log + stderr (+ optional exit-class
+# line) shape, in match order (specific before base). Mirrors the error arms of
+# ``classify_decode_exit`` in ``rust/src/cli.rs``. The three non-standard arms
+# (sync-loss's sync_losses detail, broken-pipe's exit-0, writer's own wording)
+# stay explicit below.
+_SIMPLE_DECODE_ERRORS: tuple[
+    tuple[type[Exception] | tuple[type[Exception], ...], int, str | None], ...
+] = (
+    (MieIncompatibleMergeInputsError, EXIT_MERGE_INCOMPATIBLE, "merge-incompatible"),
+    ((MieInputOutputCollisionError, MieClobberRefusedError), EXIT_RUNTIME, None),
+    (MieNoValidRecordsError, EXIT_NO_RECORDS, "no-records"),
+    (MieHomogeneousPayloadError, EXIT_NO_RECORDS, "no-records"),
+    (MieTimestampFormatMismatchError, EXIT_NO_RECORDS, "no-records (timestamp-format-mismatch)"),
+    (MieNonMonotonicInputError, EXIT_RUNTIME, "non-monotonic-input (strict)"),
+)
+
+
 def _classify_decode_error(exc: Exception) -> int:
-    """Map a decode-time exception to its exit code, emitting the same stderr
-    and exit-class log lines as before. Mirrors the error arms of
-    ``classify_decode_exit`` in ``rust/src/cli.rs``. Order matters: specific
-    types precede the ``MieDecoderError`` base.
+    """Map a decode-time exception to its exit code, emitting the stderr and
+    exit-class log lines. Mirrors ``classify_decode_exit`` in ``rust/src/cli.rs``.
     """
-    if isinstance(exc, MieIncompatibleMergeInputsError):
-        # L1-EXIT-009 / L2-MRG-003: inputs cannot share an absolute timeline.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: merge-incompatible")
-        return EXIT_MERGE_INCOMPATIBLE
-    if isinstance(exc, (MieInputOutputCollisionError, MieClobberRefusedError)):
-        # File-safety preflight (L2-WRT-014/017). Generic runtime error.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
-    if isinstance(exc, MieNoValidRecordsError):
-        # L1-EXIT-002 → no-records.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: no-records")
-        return EXIT_NO_RECORDS
-    if isinstance(exc, MieHomogeneousPayloadError):
-        # L2-SYN-018 + L1-EXIT-002: a single-byte pad, not an MIE recording —
-        # same exit class as NoValidRecords.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: no-records")
-        return EXIT_NO_RECORDS
-    if isinstance(exc, MieTimestampFormatMismatchError):
-        # L2-DEC-016 + L1-EXIT-002: ambiguous IRIG-vs-Standard probe — another
-        # "wrong file type" rejection. Only fires in strict mode.
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: no-records (timestamp-format-mismatch)")
-        return EXIT_NO_RECORDS
+    for exc_types, code, exit_class in _SIMPLE_DECODE_ERRORS:
+        if isinstance(exc, exc_types):
+            return _report_decode_error(exc, code, exit_class)
+
     if isinstance(exc, MieUnrecoverableSyncLossError):
-        # L1-EXIT-004 → exit 3 (allow_partial would have been caught inside the
-        # writer and returned a WriteOutcome instead).
+        # L1-EXIT-004 → exit 3 (allow_partial is caught inside the writer).
         logger.error("%s", exc)
         print(f"Error: {exc}", file=sys.stderr)
         logger.info(
@@ -914,17 +925,21 @@ def _classify_decode_error(exc: Exception) -> int:
         logger.error("Write failed: %s", exc)
         print(f"Error writing output: {exc}", file=sys.stderr)
         return EXIT_RUNTIME
-    if isinstance(exc, MieNonMonotonicInputError):
-        # L2-MRG-006: a strict-mode merge hit an input that is not internally
-        # time-sorted. Record-error class (exit 1).
-        logger.error("%s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        logger.info("decode exit class: non-monotonic-input (strict)")
-        return EXIT_RUNTIME
+
     # Any remaining MieDecoderError (record errors, generic file errors).
     logger.error("Decode failed: %s", exc)
     print(f"Error: {exc}", file=sys.stderr)
     return EXIT_RUNTIME
+
+
+def _report_decode_error(exc: Exception, code: int, exit_class: str | None) -> int:
+    """Standard decode-error reporting: log the error, print it to stderr, and
+    emit the exit-class INFO line when one is given; return the exit code."""
+    logger.error("%s", exc)
+    print(f"Error: {exc}", file=sys.stderr)
+    if exit_class is not None:
+        logger.info("decode exit class: %s", exit_class)
+    return code
 
 
 def _classify_decode_success(outcome: WriteOutcome, readers: list[MieFileReader]) -> int:
@@ -1019,14 +1034,12 @@ def _run_decode(args: argparse.Namespace) -> int:
                 logger.warning(
                     "merge: input %s could not be opened; truncating it from the "
                     "merge (--allow-partial): %s",
-                    p,
-                    exc,
+                    _log_safe(p),
+                    _log_safe(exc),
                 )
                 open_dropped = True
             else:
-                logger.error("Failed to open input file: %s", exc)
-                print(f"Error: {exc}", file=sys.stderr)
-                return EXIT_RUNTIME
+                return _report_error("Failed to open input file", exc, EXIT_RUNTIME)
 
     for r in readers:
         logger.info("Opened %s (%d bytes)", r.path.name, r.file_size)
@@ -1093,9 +1106,7 @@ def _run_count(args: argparse.Namespace) -> int:
             standard_tick_rate_hz=config.standard_tick_rate_hz,
         )
     except MieFileError as exc:
-        logger.error("Failed to open input file: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return _report_error("Failed to open input file", exc, EXIT_RUNTIME)
 
     messages = apply_filters(reader, config.filters)
     try:
@@ -1111,15 +1122,11 @@ def _run_count(args: argparse.Namespace) -> int:
         # not the generic runtime exit 1. (An empty recording raises nothing —
         # the iterator simply yields zero records — so count prints 0 and exits
         # 0 per L1-EXIT-010.)
-        logger.error("Count failed: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_NO_RECORDS
+        return _report_error("Count failed", exc, EXIT_NO_RECORDS)
     except MieDecoderError as exc:
         # Any other decode error during the count maps to a runtime failure
         # (exit 1), matching the Rust count subcommand.
-        logger.error("Count failed: %s", exc)
-        print(f"Error: {exc}", file=sys.stderr)
-        return EXIT_RUNTIME
+        return _report_error("Count failed", exc, EXIT_RUNTIME)
 
     logger.info("Counted %d messages in %.3fs", count, elapsed)
     # L3-PY-010: integer count to stdout (the machine-readable datum),

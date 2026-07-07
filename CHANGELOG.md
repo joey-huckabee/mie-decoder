@@ -15,6 +15,36 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.6.1] — 2026-07-07
+
+Maintainability release: resolves the SonarCloud findings from the v2.6.0
+analysis. No change to the CLI, the public library API, or the byte-exact CSV
+output — the full Rust and Python test suites and the 60-case
+cross-implementation conformance oracle pass unchanged.
+
+### Security
+
+- **Log injection hardened (CWE-117).** User-controlled values written to the
+  logs (notably input file paths) are now escaped for carriage-return and
+  line-feed, so a crafted path can no longer forge or split log records.
+  (SonarCloud `S5145`.)
+
+### Changed
+
+- **Cognitive-complexity sweep — behavior-preserving.** 27 functions across both
+  implementations were brought under the complexity threshold by pure helper
+  extraction, spanning config parsing, timestamp-format detection, the hex
+  `dump`, filters, the CSV writers, sync validation, the multi-file merge, the
+  CLI argument parsers, and the reader hot paths (the Rust decode loop and the
+  Python `__iter__` generator). Internal plumbing only — a `MieMessage`
+  DELTA-copy helper was factored out and the reader's per-format payload
+  extraction was split by message family; no public API, CLI, or CSV change.
+- **Minor code-health fixes.** Return-type precision on the merge DELTA copy,
+  exception-logging hygiene (log-and-return instead of `logging.exception`
+  outside the handler), removal of an unused timestamp-conversion parameter, and
+  a redundant `isinstance` guard dropped. (SonarCloud `S5886`, `S5890`, `S8572`,
+  `S1172`, `S2589`.)
+
 ## [2.6.0] — 2026-07-06
 
 ### Added
@@ -1325,7 +1355,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.1...HEAD
+[2.6.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.3...v2.6.0
 [2.5.3]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.1...v2.5.2
