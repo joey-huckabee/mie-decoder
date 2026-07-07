@@ -354,27 +354,8 @@ def _merge_drain(
                 pending_terminal = exc  # defer until the heap drains
                 continue
             raise
-        # L2-MRG-006: each input is assumed internally time-sorted (capture
-        # order is chronological). A backward step means the merged output may
-        # be out of order for this file — strict fails the batch, lenient WARNs
-        # once per file.
         curr = _merge_micros(nxt, tick)
-        prev = prev_us[idx]
-        if prev is not None and curr < prev:
-            if strict:
-                raise MieNonMonotonicInputError(idx, str(readers[idx].path), prev, curr)
-            if not warned[idx]:
-                warned[idx] = True
-                logger.warning(
-                    "merge: input #%d (%s) is not internally time-sorted: "
-                    "timestamp stepped backward (prev_us=%d curr_us=%d) — "
-                    "merged output may be out of order for this input "
-                    "(further occurrences suppressed)",
-                    idx,
-                    readers[idx].path,
-                    prev,
-                    curr,
-                )
+        _check_monotonic_input(readers, idx, prev_us[idx], curr, strict, warned)
         prev_us[idx] = curr
         seq = seqs[idx]
         seqs[idx] = seq + 1
@@ -388,3 +369,32 @@ def _merge_drain(
     # `.partial` after all good records are written.
     if pending_terminal is not None:
         raise pending_terminal
+
+
+def _check_monotonic_input(
+    readers: list[MieFileReader],
+    idx: int,
+    prev: int | None,
+    curr: int,
+    strict: bool,
+    warned: list[bool],
+) -> None:
+    """L2-MRG-006: each input is assumed internally time-sorted (capture order is
+    chronological). A backward step means the merged output may be out of order
+    for this file — strict fails the batch, lenient WARNs once per file."""
+    if prev is None or curr >= prev:
+        return
+    if strict:
+        raise MieNonMonotonicInputError(idx, str(readers[idx].path), prev, curr)
+    if not warned[idx]:
+        warned[idx] = True
+        logger.warning(
+            "merge: input #%d (%s) is not internally time-sorted: "
+            "timestamp stepped backward (prev_us=%d curr_us=%d) — "
+            "merged output may be out of order for this input "
+            "(further occurrences suppressed)",
+            idx,
+            readers[idx].path,
+            prev,
+            curr,
+        )
