@@ -64,7 +64,54 @@ Every record (header detection, normal forward decode, and post-recovery) passes
 4. **IRIG timestamp fields in range** (when timestamp format is IRIG) — hour < 24, minute < 60, second < 60, day-of-year in [1, 366] (except when the freerun bit is set, per L2-SYN-019), microsecond < 1,000,000 — L2-SYN-004.
 5. **Look-ahead confirmation** — the following Type Word (at `offset + word_count × 2`, when ≥ 2 bytes remain) must be a **plausible Type Word** — a known message type and a word count within the valid range — per L2-SYN-005. (Look-ahead applies only this lightweight Type-Word plausibility check, not the full checks 1–4; those remain authoritative for the candidate record itself and for any record that is actually decoded.) The look-ahead depth is configurable (default 2, range `[1, 32]` via `decode.lookahead_records` / `--lookahead-records`, L2-SYN-026); a candidate is confirmed only if the next `N-1` records also validate.
 
-The look-ahead is what makes the validator usable. Single-record validation produces too many false positives on plausible-looking junk bytes; confirming the following record(s) drives the false-positive rate to near-zero on real inputs.
+The look-ahead (check 5) is what makes the whole validator usable, and it is worth understanding *why*.
+
+#### Why the look-ahead exists
+
+An MIE file has **no per-record sync marker** — no magic bytes, no offset index, no length table the decoder can trust up front. The only framing is the Type Word's `word_count`: each record declares its own length in words, and the next record begins immediately after. Records are **self-delimiting**, nothing more. That is enough while the decoder is already aligned and walking record to record, but not at the two moments when it does *not* know where it is:
+
+- **Start of file** — records begin at byte 0, but leading non-record bytes (or a wrong file entirely) mean the decoder must scan forward, 2 bytes at a time, for the first real record (§2.1).
+- **After corruption** — sync recovery scans forward, 2 bytes at a time, for the next real record (§2.2).
+
+In both, many candidate offsets are tested, and the plausible-but-wrong ones must be rejected.
+
+**Why validating a single Type Word is not enough.** A Type Word is only 16 bits, and a large fraction of arbitrary values *look* structurally valid:
+
+- the message-type field (7 bits) matches one of the 7 known codes → ≈ 7/128 ≈ **5%** of random values pass;
+- the word-count field (6 bits) falls in the valid `[min, 63]` range → ≈ **90%** pass.
+
+So roughly **1 in 20** random 2-byte positions clears the basic Type-Word check by chance alone. Across a scan of thousands of offsets — mid-record byte alignments, padding, genuine garbage — that is a flood of false positives. A validator that accepted on a single Type Word would "resync" onto noise constantly, emitting garbage rows or mis-framing the entire remainder of the stream. (These are rough, order-of-magnitude figures; real inputs are not uniformly random, but the scale of the problem is real.)
+
+**How the look-ahead removes them: chaining.** The `word_count` field *self-frames*. A candidate at offset `X` that declares 36 words predicts the next Type Word sits **exactly** at `X + 72`. The look-ahead accepts `X` only if the Type Word at that predicted position is itself plausible (and `N − 1` further records chain the same way):
+
+- a **correct** candidate chains — its declared length lands precisely on the next real record, whose length lands on the next, and so on;
+- a **coincidental** match almost never chains — its bogus length points into arbitrary bytes, which have only that same ~5% chance of looking valid, and at one specific required position rather than "somewhere nearby."
+
+One look-ahead record takes the false-positive rate from ~5% toward ~0.25%; the default of two (`N = 2`, i.e. one follower) drives it toward zero on real inputs. The look-ahead is effectively a **synthetic sync check**, assembled from the redundancy of consecutive, self-consistent record lengths — standing in for the per-record sync marker the format does not have. It is configurable up to 32 (`--lookahead-records`, L2-SYN-026) for pathological inputs where two corrupt frames happen to align; the cost is one extra 2-byte read per look-ahead record.
+
+The followers are held to only the *lightweight* Type-Word plausibility test (valid message type + word count in range), not the full checks 1–4 — that is enough to establish the chain and keeps the scan cheap. Checks 1–4 remain authoritative for the candidate itself and for every record actually decoded.
+
+### 2.4 End-of-records terminator
+
+A DDC recorder caps the record stream with an **end-of-records terminator**: a single **null Type Word** — all sixteen bits zero (`0x0000`) — written where the next record's Type Word would begin. Because the Word Count field (bits 8–13) is zero, `0x0000` can never be a valid record (the minimum is 4 words), so the value is unambiguous as a terminator rather than a record.
+
+```
+┌────────┬────────┬─────┬────────┬─────────────────────┐
+│ Rec 1  │ Rec 2  │ ... │ Rec N  │ 0x0000 (terminator) │   [optional trailing padding]
+└────────┴────────┴─────┴────────┴─────────────────────┘
+```
+
+The decoder treats the terminator as a clean end of stream (L2-RDR-021): forward decoding stops there normally, with no sync loss. Anything after the terminator (EOF, or zero padding to a block boundary) is ignored.
+
+#### The terminator and the look-ahead
+
+The terminator interacts with the look-ahead (§2.3) in a way that follows directly from the chaining model. Every well-formed recording ends `…​record, 0x0000`, so the **last** real record's predicted follower position holds the terminator, not another record. A look-ahead that demanded a plausible *record* there would reject that final record — the chain would fail at the end of every file, and the last record of every recording would be silently lost. The terminator is therefore treated as a legitimate **end-of-chain**: on the forward-decode and first-record paths, a candidate whose follower is `0x0000` is confirmed as the last record (L2-SYN-028), exactly as true EOF would confirm it.
+
+**Sync recovery deliberately does not extend this courtesy.** Recovery (§2.2) probes un-aligned offsets, where a mis-framed candidate can have its *declared* length land on a `0x0000` that is really a zero **data word** inside some later record — a false positive of precisely the kind the look-ahead exists to suppress. On the recovery path the terminator is *not* accepted as an end-of-chain; a candidate must chain to a real follower record, or reach true EOF, to be confirmed. The relaxation is thus scoped to the trusted, already-aligned boundaries (forward decode, and offset 0 / post-header detection) and withheld from the speculative recovery scan.
+
+An **empty recording** is a file whose record stream is *only* the terminator — literally the two bytes `00 00`. This is what a recorder produces for a channel that captured no bus traffic (e.g. an unused MIL-STD-1553 station). It is a *valid* recording with zero records — distinct from a wrong-file input — and the decoder handles it as such: a header-only CSV and a clean exit (L1-EXIT-010; see `ERROR-CATALOG.md` §1 and `DATA-SCENARIOS.md`).
+
+> **Note on the "header".** §2.1 describes an optional proprietary header that the decoder skips by scanning. In the recordings observed to date there is **no** such header — records begin at byte 0 and the stream ends at the `0x0000` terminator. The scan-forward header skip remains as a defense for files that do carry leading non-record bytes, but it is not required for these recorders.
 
 ---
 
@@ -109,6 +156,8 @@ The first word of every record. Drives record classification, framing, and the e
 | `0x10` | `BROADCAST_BC_TO_RT` | Broadcast BC→RT |
 | `0x18` | `BROADCAST_RT_TO_RT` | Broadcast RT-to-RT |
 | `0x20` | `SPURIOUS_DATA` | Orphan data fragment with no Command Word |
+
+The value `0x0000` (message type `0`, word count `0`) is **not** a record: it is the end-of-records terminator (§2.4). It never appears in the table above and is never decoded as a message.
 
 The full enumeration of 11 supported transaction shapes (10 message formats plus SPURIOUS_DATA) is in §6.
 

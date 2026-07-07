@@ -2,6 +2,16 @@
 
 ## Release status
 
+**v2.6.0 — minor, 2026-07-06.** Teaches the decoder the DDC `0x0000`
+end-of-records terminator: empty recordings (a channel that captured no
+traffic — just the terminator) now decode to a header-only CSV at exit 0
+(`empty-recording` class) instead of erroring, and the last record of every
+recording — previously dropped because its look-ahead follower is the
+terminator — is now decoded. `count` exits 2 (not 1) on a wrong file, matching
+`decode`. Adds requirements L1-EXIT-010, L2-RDR-021, L2-SYN-028 and a deep
+`MIE-FORMAT.md` §2.3 explanation of why the look-ahead exists. See
+`CHANGELOG.md`.
+
 **v2.5.3 — patch, 2026-06-28.** Fixes transmit mode codes carrying no data word
 (MIL-STD-1553 mode codes 0–15) being silently dropped from the CSV in lenient
 mode; they now classify as `MODE_CODE_NO_DATA` and are written (empty `WD*`).

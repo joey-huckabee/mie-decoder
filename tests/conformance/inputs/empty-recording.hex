@@ -1,0 +1,10 @@
+# L1-EXIT-010 / L2-RDR-021 empty-recording fixture.
+#
+# A valid but EMPTY recording: the record stream opens directly on the
+# end-of-records terminator (a null Type Word, 0x0000). This is literally
+# what a DDC recorder writes for an unused MIL-STD-1553 channel that
+# captured no bus traffic. The decoder must treat it as a successful,
+# empty decode — header-only CSV, exit 0 — NOT the exit-2 "wrong file"
+# NoValidRecords rejection.
+
+0000

@@ -229,6 +229,24 @@ impl CliError {
             message: message.into(),
         }
     }
+    /// Map a decode-time `MieError` surfaced by the reader to the CLI exit
+    /// class, mirroring `classify_decode_exit`'s error arms so `count` and
+    /// `decode` agree: a "wrong file type" rejection (`NoValidRecords`,
+    /// `HomogeneousPayload`, or a strict-mode `TimestampFormatMismatch`)
+    /// maps to `NO_RECORDS` (exit 2); everything else stays `RUNTIME`
+    /// (exit 1). (Previously `count` flattened all reader errors to exit 1.)
+    fn from_decode_error(e: MieError) -> Self {
+        let code = match e.kind() {
+            crate::error::MieErrorKind::NoValidRecords
+            | crate::error::MieErrorKind::HomogeneousPayload
+            | crate::error::MieErrorKind::TimestampFormatMismatch => exit_code::NO_RECORDS,
+            _ => exit_code::RUNTIME,
+        };
+        Self {
+            code,
+            message: format_mie_error(e),
+        }
+    }
 }
 
 // ── Top-level entry ───────────────────────────────────────────────────
@@ -1003,7 +1021,7 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
             // Incompatible inputs (L2-MRG-003) and prime-time file failures
             // surface here, before any output. Route through the same
             // classifier so each maps to its proper exit code.
-            Err(e) => return Ok(classify_decode_exit(Err(e), 0)),
+            Err(e) => return Ok(classify_decode_exit(Err(e), 0, false)),
         }
     };
 
@@ -1011,7 +1029,17 @@ fn run_decode(globals: GlobalArgs, args: DecodeArgs) -> Result<ExitCode, CliErro
     // exit-class summary. Safe to query after the iterator(s) are consumed.
     let sync_losses: u64 = readers.iter().map(|r| r.sync_losses()).sum();
 
-    Ok(classify_decode_exit(write_result, sync_losses))
+    // L1-EXIT-010: report the empty-recording class only when *every* opened
+    // input was a valid empty recording (so a merge that also drew rows from a
+    // non-empty input stays `complete`). A single-file empty decode is the
+    // common case; the writer has already produced a header-only CSV.
+    let empty_recording = !readers.is_empty() && readers.iter().all(|r| r.empty_recording());
+
+    Ok(classify_decode_exit(
+        write_result,
+        sync_losses,
+        empty_recording,
+    ))
 }
 
 /// Resolve the `decode` input set from exactly one method (positionals,
@@ -1111,11 +1139,23 @@ where
 fn classify_decode_exit(
     r: crate::error::MieResult<crate::writer::WriteOutcome>,
     sync_losses: u64,
+    empty_recording: bool,
 ) -> ExitCode {
     match r {
         Ok(outcome) => {
+            // L1-EXIT-010: a valid but empty recording (opened on the
+            // end-of-records terminator) is a successful decode that produces a
+            // header-only CSV. Distinguish it from an ordinary complete decode
+            // so operators can tell "captured nothing" apart from "captured and
+            // wrote rows" by the exit-class line alone.
+            let empty = empty_recording
+                && outcome.partial.is_none()
+                && outcome.normal_count == 0
+                && outcome.error_count == 0;
             let class = if outcome.partial.is_some() {
                 "partial-unrecoverable"
+            } else if empty {
+                "empty-recording"
             } else if sync_losses > 0 {
                 "partial-recovered"
             } else {
@@ -1201,7 +1241,11 @@ fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), CliError> {
     for item in reader.iter().filter_messages(filter_cfg) {
         match item {
             Ok(_) => count += 1,
-            Err(e) => return Err(CliError::runtime(format_mie_error(e))),
+            // Align with `decode`: a wrong-file rejection maps to exit 2, not 1
+            // (L2-CLI-011). An empty recording surfaces no error at all — the
+            // iterator simply yields zero records — so `count` prints 0 and
+            // exits 0 (L1-EXIT-010).
+            Err(e) => return Err(CliError::from_decode_error(e)),
         }
     }
     // L3-RS-008: integer count to stdout (the machine-readable data),
@@ -1209,7 +1253,14 @@ fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), CliError> {
     // not gated by --log-level so an interactive operator sees it
     // without having to opt into INFO logging).
     println!("{count}");
-    eprintln!("counted {count} messages in {}", reader.path().display());
+    if reader.empty_recording() {
+        eprintln!(
+            "no records in {} (empty recording — opens on the end-of-records terminator)",
+            reader.path().display()
+        );
+    } else {
+        eprintln!("counted {count} messages in {}", reader.path().display());
+    }
     Ok(())
 }
 

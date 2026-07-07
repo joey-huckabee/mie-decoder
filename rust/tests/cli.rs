@@ -196,6 +196,76 @@ fn decode_happy_path_writes_csv_with_header_and_one_row() {
     );
 }
 
+/// L1-EXIT-010: decoding a valid but empty recording (the record stream is
+/// just the `00 00` end-of-records terminator) SHALL exit 0, write a
+/// header-only CSV, and report the `empty-recording` exit class — NOT the
+/// `NoValidRecords` wrong-file rejection (exit 2). Models an unused
+/// MIL-STD-1553 channel that captured no traffic.
+/// Requirements: L1-EXIT-010, L2-RDR-021
+#[test]
+fn decode_empty_recording_exits_0_with_header_only_csv() {
+    let tmp = TempDir::new();
+    let input = tmp.write("empty.mie", &[0x00, 0x00]);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("--log-level"),
+        std::ffi::OsStr::new("info"),
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(exit_code(&out), 0, "empty recording must exit 0");
+    let csv = std::fs::read_to_string(&output).expect("header-only CSV must be created");
+    assert_eq!(
+        csv.lines().count(),
+        1,
+        "empty recording produces a header-only CSV (no data rows)\n--- csv ---\n{csv}"
+    );
+    assert!(csv.contains("MSG"), "header row must be present");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("empty-recording"),
+        "stderr must name the empty-recording exit class\n--- stderr ---\n{stderr}"
+    );
+}
+
+/// L1-EXIT-010: `count` on an empty recording prints `0` and exits 0.
+/// Requirements: L1-EXIT-010
+#[test]
+fn count_empty_recording_prints_zero_exits_0() {
+    let tmp = TempDir::new();
+    let input = tmp.write("empty.mie", &[0x00, 0x00]);
+    let out = run([std::ffi::OsStr::new("count"), input.as_os_str()]);
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "count of an empty recording must exit 0"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "0",
+        "count must print 0 for an empty recording"
+    );
+}
+
+/// L2-CLI-011: `count` on a wrong-file (no valid records) input SHALL exit 2,
+/// matching `decode`. Regression: `count` previously flattened the
+/// `NoValidRecords` error to the generic runtime exit 1.
+/// Requirements: L2-CLI-011, L1-EXIT-002
+#[test]
+fn count_no_valid_records_exits_2() {
+    let tmp = TempDir::new();
+    let input = tmp.write("junk.mie", &vec![0xFFu8; 256]);
+    let out = run([std::ffi::OsStr::new("count"), input.as_os_str()]);
+    assert_eq!(
+        exit_code(&out),
+        2,
+        "count on a wrong-file input must exit 2 (aligned with decode)"
+    );
+}
+
 /// A multi-file merge whose inputs can't share an absolute timeline (a
 /// freerun-leading file here) is rejected before any output, exit 6.
 /// Requirements: L1-EXIT-009, L2-MRG-003, L2-CLI-011

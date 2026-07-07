@@ -3,7 +3,10 @@
 //! Pure functions: no logging, no side effects. The reader is responsible
 //! for emitting any log output based on the returned values.
 
-use crate::decode::{MIN_RECORD_WORDS_STANDARD, decode_type_word, message_type_is_valid, read_u16};
+use crate::decode::{
+    MIN_RECORD_WORDS_STANDARD, decode_type_word, is_terminator_type_word, message_type_is_valid,
+    read_u16,
+};
 use crate::models::{TimestampFormat, timestamp_word_count};
 use std::fmt;
 
@@ -92,12 +95,37 @@ pub fn validate_record(
 }
 
 /// Validate a candidate record and return the precise failure reason.
+///
+/// The look-ahead honors the L2-SYN-028 end-of-records terminator: a null
+/// Type Word (`0x0000`) at the candidate's next-record boundary confirms the
+/// candidate as the last record in the stream. This is the trusted-boundary
+/// path used by forward decode and first-record detection. Sync **recovery**,
+/// which probes arbitrary un-aligned offsets, must NOT honor the terminator
+/// (a mis-aligned candidate could otherwise land its boundary on a stray zero
+/// *data* word and validate as a bogus "last record"); `recover_sync` calls
+/// the strict form via the private `validate_record_detailed_impl` with
+/// `honor_terminator = false`.
 pub fn validate_record_detailed(
     data: &[u8],
     offset: usize,
     file_len: usize,
     ts_format: Option<TimestampFormat>,
     lookahead_records: usize,
+) -> Result<(), ValidationFailure> {
+    validate_record_detailed_impl(data, offset, file_len, ts_format, lookahead_records, true)
+}
+
+/// Core validator. `honor_terminator` controls whether a null Type Word
+/// (`0x0000`) at the candidate's look-ahead boundary is treated as the
+/// L2-SYN-028 end-of-records terminator (graceful confirmation) or as an
+/// invalid follower (rejection). See [`validate_record_detailed`].
+fn validate_record_detailed_impl(
+    data: &[u8],
+    offset: usize,
+    file_len: usize,
+    ts_format: Option<TimestampFormat>,
+    lookahead_records: usize,
+    honor_terminator: bool,
 ) -> Result<(), ValidationFailure> {
     // Check 1: Type Word readable.
     let Some(type_raw) = read_u16(data, offset) else {
@@ -193,6 +221,19 @@ pub fn validate_record_detailed(
         let Some(next_raw) = read_u16(data, next_offset) else {
             break;
         };
+        // L2-SYN-028: a null Type Word (0x0000) at a look-ahead boundary is
+        // the recorder's end-of-records terminator, not an invalid follower.
+        // Treat it exactly like EOF — the candidate is the last real record in
+        // the stream, so confirm it rather than rejecting it. Without this, a
+        // file whose final record is followed by the terminator (i.e. every
+        // well-formed recording) would fail look-ahead on that last record and
+        // drop it. Only honored on the trusted-boundary path (forward decode /
+        // first-record detection); sync recovery passes `honor_terminator =
+        // false` so a mis-aligned candidate cannot validate off a stray zero
+        // data word.
+        if honor_terminator && is_terminator_type_word(next_raw) {
+            break;
+        }
         let next_tw = decode_type_word(next_raw);
         if !message_type_is_valid(next_tw.message_type) {
             return Err(ValidationFailure::LookaheadUnknownMessageType);
@@ -362,7 +403,21 @@ pub fn recover_sync(
     let scan_end = file_len.min(offset.saturating_add(max_scan));
     let mut candidate = scan_start;
     while candidate < scan_end {
-        if validate_record(data, candidate, file_len, ts_format, lookahead_records) {
+        // Strict look-ahead during recovery (honor_terminator = false): a
+        // mis-aligned candidate whose declared length happens to land its
+        // boundary on a zero data word must NOT validate as a bogus
+        // "last record before terminator". Recovery requires a real
+        // follower record (or EOF), never a stray zero.
+        if validate_record_detailed_impl(
+            data,
+            candidate,
+            file_len,
+            ts_format,
+            lookahead_records,
+            false,
+        )
+        .is_ok()
+        {
             return Some(ScanHit {
                 offset: candidate,
                 skipped: candidate - offset,
@@ -779,6 +834,62 @@ mod tests {
             !validate_record(&buf, 0, buf.len(), None, 4),
             "N=4 reaches record 3's invalid Type Word and rejects"
         );
+    }
+
+    /// L2-SYN-028: a valid record whose look-ahead boundary is the null
+    /// Type Word terminator (0x0000) is confirmed as the last record in the
+    /// stream — not rejected. Without this the final record of every
+    /// well-formed recording (which the recorder caps with 0x0000) would be
+    /// dropped.
+    /// Requirements: L2-SYN-028
+    #[test]
+    fn validate_lookahead_terminator_confirms_last_record() {
+        let mut buf = make_valid_record_36w(1);
+        buf.extend_from_slice(&[0x00, 0x00]); // end-of-records terminator
+        assert!(
+            validate_record(&buf, 0, buf.len(), None, DEFAULT_LOOKAHEAD_RECORDS),
+            "a record followed by the 0x0000 terminator must validate"
+        );
+    }
+
+    /// L2-SYN-028: sync recovery must NOT honor the terminator. During
+    /// recovery the scan probes un-aligned offsets, so a candidate whose
+    /// declared length lands its boundary on a stray zero *data word* must
+    /// not validate as a bogus "last record". A record followed immediately
+    /// by the terminator is therefore invisible to `recover_sync` (recovery
+    /// requires a real follower record or EOF), even though forward
+    /// validation accepts it.
+    /// Requirements: L2-SYN-028
+    #[test]
+    fn recover_sync_does_not_honor_terminator() {
+        // [2 bytes garbage][valid 72-byte record][0x0000 terminator].
+        // recover_sync from offset 0 scans forward; the only structurally
+        // valid record (at offset 2) is followed by the terminator, so the
+        // strict recovery look-ahead rejects it and recovery fails.
+        let mut buf = vec![0xFF, 0xFF];
+        buf.extend(make_valid_record_36w(1));
+        buf.extend_from_slice(&[0x00, 0x00]);
+        assert!(
+            recover_sync(
+                &buf,
+                0,
+                buf.len(),
+                None,
+                MAX_SCAN_BYTES,
+                DEFAULT_LOOKAHEAD_RECORDS
+            )
+            .is_none(),
+            "recovery must not validate a record off a terminator follower"
+        );
+        // But forward validation of that same record (at its true boundary)
+        // does accept it — proving the split is intentional.
+        assert!(validate_record(
+            &buf,
+            2,
+            buf.len(),
+            None,
+            DEFAULT_LOOKAHEAD_RECORDS
+        ));
     }
 
     /// Requirements: L2-SYN-026

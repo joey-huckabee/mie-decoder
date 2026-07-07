@@ -250,19 +250,31 @@ class TestClassifyDecodeError:
 
 class TestClassifyDecodeSuccess:
     def test_complete(self) -> None:
-        outcome = SimpleNamespace(partial=None)
-        readers = [SimpleNamespace(sync_losses=0)]
+        outcome = SimpleNamespace(partial=None, normal_count=3, error_count=0)
+        readers = [SimpleNamespace(sync_losses=0, empty_recording=False)]
         assert cli._classify_decode_success(outcome, readers) == EXIT_OK  # type: ignore[arg-type]
 
     def test_partial_recovered(self) -> None:
-        outcome = SimpleNamespace(partial=None)
-        readers = [SimpleNamespace(sync_losses=2), SimpleNamespace(sync_losses=1)]
+        outcome = SimpleNamespace(partial=None, normal_count=3, error_count=0)
+        readers = [
+            SimpleNamespace(sync_losses=2, empty_recording=False),
+            SimpleNamespace(sync_losses=1, empty_recording=False),
+        ]
         assert cli._classify_decode_success(outcome, readers) == EXIT_OK  # type: ignore[arg-type]
 
     def test_partial_unrecoverable(self) -> None:
-        outcome = SimpleNamespace(partial=Path("out.csv.partial"))
-        readers = [SimpleNamespace(sync_losses=5)]
+        outcome = SimpleNamespace(partial=Path("out.csv.partial"), normal_count=1, error_count=0)
+        readers = [SimpleNamespace(sync_losses=5, empty_recording=False)]
         assert cli._classify_decode_success(outcome, readers) == EXIT_OK  # type: ignore[arg-type]
+
+    def test_empty_recording(self, caplog: pytest.LogCaptureFixture) -> None:
+        # L1-EXIT-010: every input an empty recording + zero rows written →
+        # the summary line names the empty-recording class.
+        outcome = SimpleNamespace(partial=None, normal_count=0, error_count=0)
+        readers = [SimpleNamespace(sync_losses=0, empty_recording=True)]
+        with caplog.at_level("INFO"):
+            assert cli._classify_decode_success(outcome, readers) == EXIT_OK  # type: ignore[arg-type]
+        assert "empty-recording" in caplog.text
 
 
 # ── merge output-collision check ────────────────────────────────────────────

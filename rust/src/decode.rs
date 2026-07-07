@@ -18,6 +18,22 @@ pub const MIN_RECORD_WORDS: u16 = 5;
 /// Minimum record size in 16-bit words for Standard: Type(1) + TS(2) + Cmd(1) = 4
 pub const MIN_RECORD_WORDS_STANDARD: u16 = 4;
 
+/// End-of-records terminator (L2-RDR-021). DDC recorders cap the record
+/// stream with a null Type Word — all sixteen bits zero. Because the
+/// Word Count field (bits 8–13) is zero, `0x0000` can never be a valid
+/// record (the minimum is 4 words); the value is therefore unambiguous
+/// as a stream terminator rather than a record. A file whose record
+/// stream is empty consists solely of this word (an empty recording,
+/// e.g. an unused MIL-STD-1553 channel that captured no traffic).
+pub const TERMINATOR_TYPE_WORD: u16 = 0x0000;
+
+/// True if `raw` is the end-of-records terminator (a null Type Word).
+/// See [`TERMINATOR_TYPE_WORD`] and L2-RDR-021 / L2-SYN-028.
+#[inline]
+pub fn is_terminator_type_word(raw: u16) -> bool {
+    raw == TERMINATOR_TYPE_WORD
+}
+
 // ── Primitive readers ─────────────────────────────────────────────────
 
 /// Read a single little-endian `u16` at `offset`. Returns `None` if OOB.
@@ -653,8 +669,8 @@ mod tests {
         assert_eq!(mux_from_filename(name, ".", 4).as_deref(), Some("aa"));
         // Other operator files at the same index.
         assert_eq!(
-            mux_from_filename("full_loadout.draw.data.1553.s10.unused.mie_irig", ".", 4).as_deref(),
-            Some("s10")
+            mux_from_filename("full_loadout.draw.data.1553.bb.unused.mie_irig", ".", 4).as_deref(),
+            Some("bb")
         );
         // Negative index counts from the end (-3 == index 4 here).
         assert_eq!(mux_from_filename(name, ".", -3).as_deref(), Some("aa"));

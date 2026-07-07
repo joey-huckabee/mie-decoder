@@ -189,6 +189,44 @@
       "config": "configs/strict.toml"
     },
     {
+      "name": "empty-recording",
+      "input": "inputs/empty-recording.hex",
+      "expected": "expected/empty-recording.csv",
+      "expected_exit": 0,
+      "expected_stderr_contains": "empty capture"
+    },
+    {
+      "name": "empty-recording-count",
+      "mode": "count",
+      "input": "inputs/empty-recording.hex",
+      "expected": "expected/empty-recording-count.txt",
+      "expected_stderr_contains": "empty recording"
+    },
+    {
+      "name": "single-record-then-terminator",
+      "input": "inputs/single-record-then-terminator.hex",
+      "expected": "expected/single-record-then-terminator.csv"
+    },
+    {
+      "name": "multi-record-then-terminator",
+      "input": "inputs/multi-record-then-terminator.hex",
+      "expected": "expected/multi-record-then-terminator.csv"
+    },
+    {
+      "name": "count-multi-record-then-terminator",
+      "mode": "count",
+      "input": "inputs/multi-record-then-terminator.hex",
+      "expected": "expected/count-multi-record-then-terminator.txt",
+      "expected_stderr_contains": "counted 3 messages in"
+    },
+    {
+      "name": "count-no-valid-records",
+      "mode": "count",
+      "input": "inputs/no-valid-records.hex",
+      "expected_exit": 2,
+      "expected_stderr_contains": "No valid MIE records found"
+    },
+    {
       "name": "homogeneous-payload",
       "input": "inputs/homogeneous-payload.hex",
       "expected_exit": 2
@@ -436,7 +474,7 @@
       ],
       "input_names": [
         "full_loadout.draw.data.1553.aa.unused.mie_irig",
-        "full_loadout.draw.data.1553.gun.unused.mie_irig"
+        "full_loadout.draw.data.1553.bb.unused.mie_irig"
       ],
       "expected": "expected/mux-merge-per-file.csv",
       "args": [

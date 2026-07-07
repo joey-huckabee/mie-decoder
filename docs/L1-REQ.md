@@ -255,9 +255,9 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 
 ### L1-EXIT-002
 
-**Statement**: A decode invocation that finds no valid records SHALL exit with code `2` and SHALL NOT create an output file.
+**Statement**: A decode invocation that finds no valid records **and is not a recognized empty recording** (per L1-EXIT-010) SHALL exit with code `2` and SHALL NOT create an output file.
 
-**Rationale**: An empty input, a wrong-format input, or an input with no records that pass validation is operationally distinct from a decode that ran and produced legitimate empty output (which doesn't happen — a successful decode produces at least one record). Exit code `2` lets the operator distinguish "you pointed me at the wrong file" from "you pointed me at the right file and there are no records in it". Not creating the output file prevents a downstream consumer from being handed an empty CSV that looks legitimately empty.
+**Rationale**: A wrong-format input, or an input with no records that pass validation, is operationally distinct from an input the operator pointed at deliberately. Exit code `2` lets the operator distinguish "you pointed me at the wrong file" from "you pointed me at the right file and there are records in it". Not creating the output file prevents a downstream consumer from being handed an empty CSV that looks legitimately empty. **Exception**: a *valid but empty recording* — one whose record stream opens directly on the DDC end-of-records terminator (a null Type Word) — is a legitimate successful decode, not a wrong-file rejection; it is carved out by L1-EXIT-010 and exits `0` with a header-only CSV. The positive terminator signature is what separates the two: a file that opens on the terminator is a recognized (empty) MIE recording, whereas arbitrary non-MIE bytes are not.
 
 **Verification Method**: Test (T)
 
@@ -314,6 +314,14 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 **Statement**: A multi-file merge invocation whose inputs cannot be ordered on a common absolute timeline — because a file resolves to the Standard timestamp format, leads with a freerun IRIG record, or the input set mixes timestamp formats — SHALL exit with code `6`, SHALL name the offending file and its detected format, and SHALL NOT create an output file. Both implementations SHALL return the same code for the same condition.
 
 **Rationale**: Time-sorted merge is only meaningful when every input shares one calendar-anchored clock (calendar-locked IRIG). Standard free-running counters have no shared epoch, and freerun IRIG carries no calendar meaning, so a merge across such inputs would silently emit a misleadingly "sorted" CSV. A dedicated exit code — distinct from a bad single input (`2`), a usage error (`4`), and a config error (`5`) — lets automation detect "these recordings are not mergeable" specifically, and refusing before any output prevents a wrong-order CSV from reaching a downstream consumer.
+
+**Verification Method**: Test (T)
+
+### L1-EXIT-010
+
+**Statement**: A decode invocation of a **valid but empty recording** — an input whose record stream opens directly on the DDC end-of-records terminator (a null Type Word, `0x0000`), so it contains zero records but is a genuine MIE recording — SHALL exit with code `0`, SHALL write a header-only CSV (the column header row with no data rows), SHALL log a WARN naming the empty capture, and SHALL report a distinct `empty-recording` exit class. Both implementations SHALL behave identically. This is the sole case in which a successful decode produces zero data rows; it is explicitly carved out of L1-EXIT-002.
+
+**Rationale**: Recorders routinely produce files that captured no bus traffic — e.g. an unused MIL-STD-1553 channel — which on disk are just the two-byte terminator. Operators run these files through the same batch pipelines as populated recordings and must not have the batch halt on them: "captured nothing" is a normal, expected outcome, not an error. Emitting a header-only CSV (rather than no file, as L1-EXIT-002 mandates for wrong-file inputs) gives downstream consumers a well-formed, legitimately empty artifact and keeps per-file output invariants intact. The distinct exit class and WARN let an operator still tell "captured nothing" apart from "captured and wrote rows" from logs alone. The guard against masking genuinely wrong inputs is the positive terminator signature: only a file that opens on `0x0000` is treated as empty; arbitrary non-MIE bytes still fail as L1-EXIT-002 (exit `2`). The `count` subcommand mirrors this — an empty recording prints `0` and exits `0`.
 
 **Verification Method**: Test (T)
 

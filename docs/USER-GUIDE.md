@@ -387,7 +387,7 @@ section (`collapse_duplicates`, `collapse_window_us`).
 If your recordings are named so a field identifies the source or recorder, the
 decoder can copy that field into the `MUX` column. For the convention
 `full_loadout.draw.data.1553.aa.unused.mie_irig` — where the 5th dot-separated
-field (`aa`, `gun`, `s2`, …) is the recorder — the **defaults already do the
+field (`aa`, `bb`, `cc`, …) is the recorder — the **defaults already do the
 right thing**:
 
 ```bash
@@ -403,7 +403,7 @@ recorders is self-labeling:
 
 ```bash
 mie-decoder decode --glob 'flight/*.mie_irig' -o merged.csv
-# rows from …aa…  → MUX "aa";  rows from …gun… → MUX "gun";  etc.
+# rows from …aa…  → MUX "aa";  rows from …bb… → MUX "bb";  etc.
 ```
 
 MUX population is **on by default**. To produce output that matches a DDC vendor
