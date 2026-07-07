@@ -129,6 +129,8 @@ emits one context line capped at 32 bytes.
 
 `validate_record` uses an N-record look-ahead: a candidate is confirmed valid only if the next `N − 1` records each start with a valid Type Word (message type in the known set, word count plausible). The walk advances by each candidate's declared `word_count` so it checks the *next records*, not the next 2-byte positions. This dramatically reduces false positives from coincidental byte patterns. When fewer than 2 bytes remain at any look-ahead position, the walk terminates without rejecting the original candidate — checks 1–5 alone are authoritative for records that don't exist in the file (L2-SYN-005, L2-SYN-026).
 
+The format has no per-record sync marker, so the Type Word's `word_count` is the only framing; the look-ahead turns the redundancy of consecutive self-consistent lengths into a *synthetic* sync check. `MIE-FORMAT.md` §2.3 ("Why the look-ahead exists") is the deep rationale — the false-positive math, the chaining argument, and why the end-of-records terminator is accepted as an end-of-chain on the forward paths but not during recovery.
+
 The look-ahead depth `N` is configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, range `[1, 32]`, default `2` (preserves the historical two-record look-ahead from earlier versions). Higher values catch wider classes of consecutive-same-shape corruption — for example, two adjacent fake-record headers that align on plausible Type Words can defeat `N = 2` but be caught at `N = 4`. The cost is small (one Type Word read per extra look-ahead record).
 
 ### Phase 4 — Sync recovery (walk forward)

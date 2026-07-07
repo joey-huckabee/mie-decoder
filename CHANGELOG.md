@@ -50,9 +50,25 @@ full release workflow.
 - New Rust unit/CLI tests and Python pytest cases for the terminator (forward
   vs. recovery), single-record-then-terminator, last-record survival, empty
   recording (exit 0 + header-only CSV, `count` → 0), and the wrong-file guard.
-- Three new cross-implementation conformance fixtures **with a real `00 00`
-  terminator**: `empty-recording`, `single-record-then-terminator`, and
-  `multi-record-then-terminator`.
+- Six new cross-implementation conformance cases, including three fixtures
+  carrying a real `00 00` terminator (`empty-recording`,
+  `single-record-then-terminator`, `multi-record-then-terminator`) plus two
+  `count`-path cross-checks — `count-no-valid-records` (both impls exit 2 on a
+  wrong file, guarding the count/decode exit-code parity of L2-CLI-011) and
+  `count-multi-record-then-terminator` (both impls count 3, proving the last
+  record survives via the count path).
+
+### Documentation
+
+- **`docs/MIE-FORMAT.md` §2.3 now explains *why* the N-record look-ahead
+  exists**, not just what it checks: the format has no per-record sync marker,
+  so the Type Word's `word_count` is the only framing; a single Type Word
+  passes by chance ~1 in 20 of the time, so the look-ahead chains consecutive
+  self-consistent lengths into a synthetic sync check that drives the
+  false-positive rate toward zero. §2.4 explains, as design rationale, why the
+  end-of-records terminator is accepted as an end-of-chain on the forward
+  paths but not during sync recovery. `docs/ARCHITECTURE.md` Phase 3 points to
+  the deep rationale.
 
 ## [2.5.3] — 2026-06-28
 
