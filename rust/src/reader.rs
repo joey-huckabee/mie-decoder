@@ -638,6 +638,21 @@ fn delta_key(rt: u8, subaddress: u8, transmit: bool) -> u32 {
     (u32::from(rt) << 16) | (u32::from(subaddress) << 8) | u32::from(transmit)
 }
 
+/// Outcome of decoding one record in the loop body (`decode_one`), so the loop
+/// body's `continue` / `return Some(item)` / `return None` can be expressed from
+/// helper methods that cannot themselves drive the caller's loop.
+enum Step {
+    /// Advance/recover already happened — loop again.
+    Continue,
+    /// Emit this item.
+    Yield(MieResult<MieMessage>),
+    /// End of stream (`next` returns `None`). The `done` flag and any
+    /// `log_complete` are set by whichever branch produced the stop, matching
+    /// the pre-refactor paths (some stops set `done`, the OOB timestamp read
+    /// historically did not).
+    Stop,
+}
+
 impl<'a> Iterator for RecordIter<'a> {
     type Item = MieResult<MieMessage>;
 
@@ -664,414 +679,422 @@ impl<'a> Iterator for RecordIter<'a> {
         }
 
         loop {
-            // Need at least a Type Word + minimum-format payload.
-            if self.offset + MIN_RECORD_BYTES_STANDARD > self.file_len {
-                self.done = true;
-                self.log_complete();
-                return None;
+            match self.decode_one() {
+                Step::Continue => continue,
+                Step::Yield(item) => return Some(item),
+                // `done` and any `log_complete` were set by the producing branch.
+                Step::Stop => return None,
             }
+        }
+    }
+}
 
-            // ── Read Type Word ─────────────────────────────────────
-            let Some(type_raw) = read_u16(self.data, self.offset) else {
-                self.done = true;
-                return None;
-            };
-
-            // L2-RDR-021: a null Type Word (0x0000) at a record boundary is the
-            // recorder's end-of-records terminator. Stop cleanly — this is a
-            // normal end of stream, not a sync loss. (When the terminator sits
-            // within MIN_RECORD_BYTES of EOF the length guard above already
-            // ended the loop; this covers a terminator followed by trailing
-            // padding.) The last real record was already confirmed by the
-            // L2-SYN-028 look-ahead, so it has been emitted before we get here.
-            if is_terminator_type_word(type_raw) {
-                log_debug!(
-                    "end-of-records terminator at 0x{:X}; decode complete",
-                    self.offset
-                );
-                self.done = true;
-                self.log_complete();
-                return None;
-            }
-
-            let tw = decode_type_word(type_raw);
-
-            // L2-DEC-011 / L2-DEC-015: the timestamp format is now
-            // resolved eagerly in iter() (multi-record probe), so by
-            // the time we reach next() the format is already chosen
-            // and stays fixed for the rest of the decode.
-            let resolved = self.resolved_format;
-            let ts_words = timestamp_word_count(resolved);
-            let record_bytes = usize::from(tw.word_count) * 2;
-
-            // ── Validate this record ────────────────────────────────
-            // Delegate to sync::validate_record so the per-record path
-            // matches the header-skip and recovery paths exactly. This
-            // applies all five heuristics: valid type, plausible word
-            // count, fits in file, IRIG field ranges, and two-record
-            // look-ahead. A weaker inline check would let corrupt-but-
-            // plausible records slip through and be emitted as garbage
-            // rows.
-            let validation = validate_record_detailed(
-                self.data,
-                self.offset,
-                self.file_len,
-                Some(resolved),
-                self.lookahead_records,
-            );
-
-            if let Err(failure) = validation {
-                self.sync_losses += 1;
-                self.sync_losses_atomic.fetch_add(1, Ordering::Relaxed);
-                log_validation_context(self.data, self.offset);
-                if self.strict {
-                    let err = match failure {
-                        ValidationFailure::UnknownMessageType => MieError::UnknownTypeWord {
-                            offset: self.offset as u64,
-                            raw_type_word: type_raw,
-                            message_type: tw.message_type,
-                        },
-                        ValidationFailure::InvalidWordCount => MieError::InvalidTypeWord {
-                            offset: self.offset as u64,
-                            raw_type_word: type_raw,
-                            word_count: tw.word_count,
-                        },
-                        ValidationFailure::RecordTruncated => MieError::RecordTruncated {
-                            offset: self.offset as u64,
-                            record_bytes: record_bytes as u64,
-                            available_bytes: self.file_len.saturating_sub(self.offset) as u64,
-                        },
-                        other => MieError::PayloadError {
-                            offset: self.offset as u64,
-                            detail: format!("{other} (raw_type=0x{type_raw:04X})"),
-                        },
-                    };
-                    self.done = true;
-                    return Some(Err(err));
-                }
-
-                log_warn!(
-                    "sync lost at 0x{:X} (type=0x{:02X} wc={}); scanning forward",
-                    self.offset,
-                    tw.message_type,
-                    tw.word_count
-                );
-                match recover_sync(
-                    self.data,
-                    self.offset,
-                    self.file_len,
-                    Some(self.resolved_format),
-                    MAX_SCAN_BYTES,
-                    self.lookahead_records,
-                ) {
-                    Some(hit) => {
-                        log_info!(
-                            "sync recovered at 0x{:X} (skipped {} bytes from 0x{:X})",
-                            hit.offset,
-                            hit.skipped,
-                            self.offset
-                        );
-                        self.offset = hit.offset;
-                        self.prev_was_error = false;
-                        continue;
-                    }
-                    None => {
-                        // Distinguish truncation (ran out of file
-                        // before the scan window exhausted) from
-                        // genuine mid-file corruption (full 64 KB
-                        // window scanned, no valid record).
-                        //
-                        // - Truncation → L1-DEC-005 / L2-RDR-002: lenient
-                        //   mode stops cleanly with no error.
-                        // - Corruption → L1-EXIT-004: surface as terminal
-                        //   `UnrecoverableSyncLoss` so the CLI maps to
-                        //   exit 3 (or to a `.partial` commit + exit
-                        //   0 when `--allow-partial` is set).
-                        let bytes_remaining = self.file_len.saturating_sub(self.offset);
-                        if bytes_remaining < MAX_SCAN_BYTES {
-                            log_info!(
-                                "lenient mode: scan exhausted at EOF \
-                                 (offset 0x{:X}, {} bytes remain < {} \
-                                 scan window); treating as truncation",
-                                self.offset,
-                                bytes_remaining,
-                                MAX_SCAN_BYTES
-                            );
-                            self.done = true;
-                            self.log_complete();
-                            return None;
-                        }
-                        log_error!(
-                            "unrecoverable sync loss at 0x{:X} after {} messages",
-                            self.offset,
-                            self.msg_count
-                        );
-                        // Stash a terminal Err so the next next() call
-                        // surfaces UnrecoverableSyncLoss exactly once.
-                        // The writer can then either commit a `.partial`
-                        // (allow_partial) or unlink the temp + propagate
-                        // for exit 3.
-                        self.pending_unrecoverable = Some(MieError::UnrecoverableSyncLoss {
-                            offset: self.offset as u64,
-                            sync_losses: self.sync_losses,
-                        });
-                        self.log_complete();
-                        // Recurse once to pop the pending error and set
-                        // `done`. Single recursion: the branch above
-                        // returns before re-entering this loop.
-                        return self.next();
-                    }
-                }
-            }
-
-            // ── Decode timestamp ───────────────────────────────────
-            let timestamp = match resolved {
-                TimestampFormat::Irig => {
-                    let upper = read_u16(self.data, self.offset + 2)?;
-                    let middle = read_u16(self.data, self.offset + 4)?;
-                    let lower = read_u16(self.data, self.offset + 6)?;
-                    let irig = decode_irig_timestamp(upper, middle, lower);
-                    if irig.freerun {
-                        log_warn!("freerun timestamp at 0x{:X}", self.offset);
-                    } else if !self.warned_irig_day {
-                        // PRA-9: the IRIG day-of-year field has a known
-                        // firmware-dependent decode discrepancy on some DDC
-                        // cards; the time-of-day fields are unaffected. Emit a
-                        // one-time advisory (not a decode failure) so the
-                        // operator is nudged to the documented limitation.
-                        self.warned_irig_day = true;
-                        log_warn!(
-                            "IRIG day-of-year decoded for this recording; the day-of-year field \
-                             has a known firmware-dependent discrepancy on some DDC cards \
-                             (hour/minute/second/microsecond are unaffected) — see \
-                             docs/VENDOR-CSV-DIFFS.md §5"
-                        );
-                    }
-                    Timestamp::Irig(irig)
-                }
-                TimestampFormat::Standard => {
-                    let upper = read_u16(self.data, self.offset + 2)?;
-                    let lower = read_u16(self.data, self.offset + 4)?;
-                    Timestamp::Standard(decode_standard_timestamp(upper, lower))
-                }
-                TimestampFormat::Auto => unreachable!(),
-            };
-
-            let cmd_byte_offset = self.offset + 2 + usize::from(ts_words) * 2;
-
-            // ── SPURIOUS_DATA: no Command Word ─────────────────────
-            if tw.message_type == MessageType::SpuriousData as u8 {
-                let raw_word_count = i32::from(tw.word_count) - 1 - i32::from(ts_words);
-                let mut data_words = DataWords::new();
-                if raw_word_count > 0 {
-                    let n = raw_word_count as usize;
-                    let mut buf = [0u16; crate::models::MAX_DATA_WORDS];
-                    let n_capped = n.min(crate::models::MAX_DATA_WORDS);
-                    // Bound the read to the current record. raw_word_count is
-                    // computed from tw.word_count so this is structurally safe
-                    // already; bounding is defense-in-depth in case the math
-                    // is refactored later.
-                    let record_end = self.offset + record_bytes;
-                    let record_data = &self.data[..record_end];
-                    if read_u16_array(record_data, cmd_byte_offset, n_capped, &mut buf) {
-                        data_words = DataWords::from_slice(&buf[..n_capped]);
-                    }
-                }
-
-                let error_code = if self.prev_was_error {
-                    ERROR_SPURIOUS_CONTINUATION
-                } else {
-                    ERROR_SPURIOUS_STANDALONE
-                };
-                log_debug!(
-                    "SPURIOUS_DATA at 0x{:X}: {} raw words, {}",
-                    self.offset,
-                    raw_word_count.max(0),
-                    if self.prev_was_error {
-                        "continuation"
-                    } else {
-                        "standalone"
-                    }
-                );
-
-                // SPURIOUS_DATA has no RT/MSG key and is never tracked
-                // for DELTA. The CSV writer emits an empty DELTA cell.
-                let msg = MieMessage {
-                    timestamp,
-                    type_word: tw,
-                    message_format: MessageFormat::SpuriousData,
-                    command_word: None,
-                    command_word_2: None,
-                    status_word: None,
-                    status_word_2: None,
-                    data_words,
-                    error_word: Some(error_code),
-                    delta: None,
-                    file_offset: self.offset as u64,
-                    mux: self.mux.clone(),
-                };
-                self.advance_after_yield(record_bytes);
-                self.prev_was_error = false;
-                return Some(Ok(msg));
-            }
-
-            // ── Decode Command Word ────────────────────────────────
-            let Some(cmd_raw) = read_u16(self.data, cmd_byte_offset) else {
-                self.done = true;
-                return None;
-            };
-            let cmd = decode_command_word(cmd_raw);
-
-            // ── Errored record (bit 14 set) ─────────────────────────
-            if tw.error {
-                let key = delta_key(
-                    cmd.rt,
-                    cmd.subaddress,
-                    matches!(cmd.direction, crate::models::Direction::Transmit),
-                );
-                let delta = self.delta_for(key, &timestamp);
-                let msg = self.decode_error_record(
-                    &tw,
-                    timestamp,
-                    &cmd,
-                    cmd_byte_offset,
-                    ts_words,
-                    delta,
-                );
-                self.advance_after_yield(record_bytes);
-                self.prev_was_error = true;
-                return Some(msg);
-            }
-
-            // ── Normal record: classify and extract payload ────────
-            let msg_fmt =
-                match classify_message_format(tw.message_type, &cmd, tw.word_count, ts_words) {
-                    Ok(f) => f,
-                    Err(_) => {
-                        log_warn!(
-                            "cannot classify record at 0x{:X} (type=0x{:02X}); skipping",
-                            self.offset,
-                            tw.message_type
-                        );
-                        self.offset += record_bytes;
-                        self.prev_was_error = false;
-                        continue;
-                    }
-                };
-
+impl<'a> RecordIter<'a> {
+    /// Decode one record at the current offset, returning how the loop should
+    /// proceed. All the original loop-body paths are preserved exactly; only the
+    /// control flow is expressed via [`Step`] so the work can live in helpers.
+    fn decode_one(&mut self) -> Step {
+        // Need at least a Type Word + minimum-format payload.
+        if self.offset + MIN_RECORD_BYTES_STANDARD > self.file_len {
+            self.done = true;
+            self.log_complete();
+            return Step::Stop;
+        }
+        let Some(type_raw) = read_u16(self.data, self.offset) else {
+            self.done = true;
+            return Step::Stop;
+        };
+        // L2-RDR-021: a null Type Word (0x0000) at a record boundary is the
+        // end-of-records terminator — a normal end of stream, not a sync loss.
+        if is_terminator_type_word(type_raw) {
             log_debug!(
-                "record at 0x{:X}: type=0x{:02X} fmt={:?} RT{} SA{}",
-                self.offset,
-                tw.message_type,
-                msg_fmt,
-                cmd.rt,
-                cmd.subaddress
+                "end-of-records terminator at 0x{:X}; decode complete",
+                self.offset
             );
+            self.done = true;
+            self.log_complete();
+            return Step::Stop;
+        }
+        let tw = decode_type_word(type_raw);
+        let resolved = self.resolved_format;
+        let ts_words = timestamp_word_count(resolved);
+        let record_bytes = usize::from(tw.word_count) * 2;
 
-            // L2-SYN-020..025: structural invariants. Strict mode aborts;
-            // lenient mode logs a WARN, advances past the record, and
-            // continues iteration.
-            if let Err(v) =
-                crate::decode::validate_structural_invariants(&tw, &cmd, msg_fmt, ts_words)
-            {
-                if self.strict {
-                    self.done = true;
-                    return Some(Err(crate::error::MieError::PayloadError {
-                        offset: self.offset as u64,
-                        detail: format!("L2-SYN structural invariant violation: {}", v.detail),
-                    }));
-                }
-                log_warn!(
-                    "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
-                    self.offset,
-                    v.detail
-                );
-                self.offset += record_bytes;
-                self.prev_was_error = false;
-                continue;
-            }
+        // Validate via the shared sync path (same heuristics as header-skip and
+        // recovery), so corrupt-but-plausible records don't slip through.
+        if let Err(failure) = validate_record_detailed(
+            self.data,
+            self.offset,
+            self.file_len,
+            Some(resolved),
+            self.lookahead_records,
+        ) {
+            return self.handle_sync_loss(failure, type_raw, &tw, record_bytes);
+        }
 
-            // Bound the slice to the current record's byte range so
-            // payload reads can never spill into the next record. The
-            // Type Word's word_count defines the record length; a
-            // Command Word that *claims* a larger data_word_count than
-            // the record can hold must NOT cause us to read those
-            // extra words from whatever follows.
-            let record_end = self.offset + record_bytes;
-            let record_data = &self.data[..record_end];
-            let payload_offset = cmd_byte_offset + 2;
-            let (cmd2, status, status2, data_words) =
-                extract_payload(record_data, payload_offset, msg_fmt, &cmd);
+        // Timestamp. An OOB read here historically returned None without setting
+        // `done`; preserve that (Stop with no `done`).
+        let Some(timestamp) = self.decode_timestamp_at(resolved) else {
+            return Step::Stop;
+        };
+        let cmd_byte_offset = self.offset + 2 + usize::from(ts_words) * 2;
 
-            // L2-SYN-023 / L2-SYN-027: post-extract Reject-class checks
-            // (Cmd2 direction and Cmd1/Cmd2 data_word_count agreement for
-            // RT-to-RT formats). Same strict/lenient policy as the
-            // pre-extract invariants.
-            if let Err(v) =
-                crate::decode::validate_post_extract_invariants(msg_fmt, &cmd, cmd2.as_ref())
-            {
-                if self.strict {
-                    self.done = true;
-                    return Some(Err(crate::error::MieError::PayloadError {
-                        offset: self.offset as u64,
-                        detail: format!("L2-SYN structural invariant violation: {}", v.detail),
-                    }));
-                }
-                log_warn!(
-                    "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
-                    self.offset,
-                    v.detail
-                );
-                self.offset += record_bytes;
-                self.prev_was_error = false;
-                continue;
-            }
+        // SPURIOUS_DATA: no Command Word.
+        if tw.message_type == MessageType::SpuriousData as u8 {
+            let msg =
+                self.spurious_message(&tw, timestamp, ts_words, cmd_byte_offset, record_bytes);
+            return Step::Yield(Ok(msg));
+        }
 
-            // L2-SYN-024 / L2-SYN-025: AnomalyWarn-class observations.
-            // Both modes log a WARN and continue emitting the record.
-            for v in crate::decode::detect_record_anomalies(&tw, &cmd, status) {
-                log_warn!("L2-SYN anomaly at 0x{:X}: {}", self.offset, v.detail);
-            }
+        let Some(cmd_raw) = read_u16(self.data, cmd_byte_offset) else {
+            self.done = true;
+            return Step::Stop;
+        };
+        let cmd = decode_command_word(cmd_raw);
 
+        // Errored record (Type Word bit 14 set).
+        if tw.error {
             let key = delta_key(
                 cmd.rt,
                 cmd.subaddress,
                 matches!(cmd.direction, crate::models::Direction::Transmit),
             );
             let delta = self.delta_for(key, &timestamp);
-
-            let msg = MieMessage {
-                timestamp,
-                type_word: tw,
-                message_format: msg_fmt,
-                command_word: Some(cmd),
-                command_word_2: cmd2,
-                status_word: status,
-                status_word_2: status2,
-                data_words,
-                error_word: None,
-                delta,
-                file_offset: self.offset as u64,
-                mux: self.mux.clone(),
-            };
+            let msg =
+                self.decode_error_record(&tw, timestamp, &cmd, cmd_byte_offset, ts_words, delta);
             self.advance_after_yield(record_bytes);
-            self.prev_was_error = false;
+            self.prev_was_error = true;
+            return Step::Yield(msg);
+        }
 
-            if self.msg_count > 0 && self.msg_count.is_multiple_of(100_000) {
+        self.decode_normal_record(
+            &tw,
+            &cmd,
+            timestamp,
+            ts_words,
+            cmd_byte_offset,
+            record_bytes,
+        )
+    }
+
+    /// Validation failed at the current offset: strict mode surfaces a terminal
+    /// record error; lenient mode scans forward (`recover_sync`) and either
+    /// continues from the recovered offset, stops cleanly on truncation, or
+    /// surfaces a terminal `UnrecoverableSyncLoss` (L1-EXIT-004).
+    fn handle_sync_loss(
+        &mut self,
+        failure: ValidationFailure,
+        type_raw: u16,
+        tw: &TypeWord,
+        record_bytes: usize,
+    ) -> Step {
+        self.sync_losses += 1;
+        self.sync_losses_atomic.fetch_add(1, Ordering::Relaxed);
+        log_validation_context(self.data, self.offset);
+        if self.strict {
+            let err = match failure {
+                ValidationFailure::UnknownMessageType => MieError::UnknownTypeWord {
+                    offset: self.offset as u64,
+                    raw_type_word: type_raw,
+                    message_type: tw.message_type,
+                },
+                ValidationFailure::InvalidWordCount => MieError::InvalidTypeWord {
+                    offset: self.offset as u64,
+                    raw_type_word: type_raw,
+                    word_count: tw.word_count,
+                },
+                ValidationFailure::RecordTruncated => MieError::RecordTruncated {
+                    offset: self.offset as u64,
+                    record_bytes: record_bytes as u64,
+                    available_bytes: self.file_len.saturating_sub(self.offset) as u64,
+                },
+                other => MieError::PayloadError {
+                    offset: self.offset as u64,
+                    detail: format!("{other} (raw_type=0x{type_raw:04X})"),
+                },
+            };
+            self.done = true;
+            return Step::Yield(Err(err));
+        }
+
+        log_warn!(
+            "sync lost at 0x{:X} (type=0x{:02X} wc={}); scanning forward",
+            self.offset,
+            tw.message_type,
+            tw.word_count
+        );
+        match recover_sync(
+            self.data,
+            self.offset,
+            self.file_len,
+            Some(self.resolved_format),
+            MAX_SCAN_BYTES,
+            self.lookahead_records,
+        ) {
+            Some(hit) => {
                 log_info!(
-                    "decoded {} messages (0x{:X} / 0x{:X})",
-                    self.msg_count,
-                    self.offset,
-                    self.file_len
+                    "sync recovered at 0x{:X} (skipped {} bytes from 0x{:X})",
+                    hit.offset,
+                    hit.skipped,
+                    self.offset
                 );
+                self.offset = hit.offset;
+                self.prev_was_error = false;
+                Step::Continue
             }
-
-            return Some(Ok(msg));
+            None => {
+                // Distinguish truncation (ran out of file before the scan window
+                // exhausted) from genuine mid-file corruption.
+                let bytes_remaining = self.file_len.saturating_sub(self.offset);
+                if bytes_remaining < MAX_SCAN_BYTES {
+                    log_info!(
+                        "lenient mode: scan exhausted at EOF \
+                         (offset 0x{:X}, {} bytes remain < {} \
+                         scan window); treating as truncation",
+                        self.offset,
+                        bytes_remaining,
+                        MAX_SCAN_BYTES
+                    );
+                    self.done = true;
+                    self.log_complete();
+                    return Step::Stop;
+                }
+                log_error!(
+                    "unrecoverable sync loss at 0x{:X} after {} messages",
+                    self.offset,
+                    self.msg_count
+                );
+                // Surface UnrecoverableSyncLoss as a terminal Err (pre-refactor
+                // this routed through `pending_unrecoverable` + a self.next()
+                // recursion; the net effect — log_complete, done, one Err item —
+                // is identical).
+                self.log_complete();
+                self.done = true;
+                Step::Yield(Err(MieError::UnrecoverableSyncLoss {
+                    offset: self.offset as u64,
+                    sync_losses: self.sync_losses,
+                }))
+            }
         }
     }
-}
 
-impl<'a> RecordIter<'a> {
+    /// Decode the record's timestamp at the current offset (IRIG or Standard).
+    /// Returns `None` on an out-of-bounds read (the caller stops), mirroring the
+    /// pre-refactor `?` behavior. Emits the freerun / one-time IRIG day-of-year
+    /// advisories as a side effect.
+    fn decode_timestamp_at(&mut self, resolved: TimestampFormat) -> Option<Timestamp> {
+        match resolved {
+            TimestampFormat::Irig => {
+                let upper = read_u16(self.data, self.offset + 2)?;
+                let middle = read_u16(self.data, self.offset + 4)?;
+                let lower = read_u16(self.data, self.offset + 6)?;
+                let irig = decode_irig_timestamp(upper, middle, lower);
+                if irig.freerun {
+                    log_warn!("freerun timestamp at 0x{:X}", self.offset);
+                } else if !self.warned_irig_day {
+                    // PRA-9: one-time IRIG day-of-year discrepancy advisory.
+                    self.warned_irig_day = true;
+                    log_warn!(
+                        "IRIG day-of-year decoded for this recording; the day-of-year field \
+                         has a known firmware-dependent discrepancy on some DDC cards \
+                         (hour/minute/second/microsecond are unaffected) — see \
+                         docs/VENDOR-CSV-DIFFS.md §5"
+                    );
+                }
+                Some(Timestamp::Irig(irig))
+            }
+            TimestampFormat::Standard => {
+                let upper = read_u16(self.data, self.offset + 2)?;
+                let lower = read_u16(self.data, self.offset + 4)?;
+                Some(Timestamp::Standard(decode_standard_timestamp(upper, lower)))
+            }
+            TimestampFormat::Auto => unreachable!(),
+        }
+    }
+
+    /// Build the SPURIOUS_DATA message (no Command/Status), advance past it, and
+    /// clear the prev-was-error flag. The `0x2000`/`0x2001` continuation code is
+    /// chosen from whether the immediately preceding decoded record errored.
+    fn spurious_message(
+        &mut self,
+        tw: &TypeWord,
+        timestamp: Timestamp,
+        ts_words: u16,
+        cmd_byte_offset: usize,
+        record_bytes: usize,
+    ) -> MieMessage {
+        let raw_word_count = i32::from(tw.word_count) - 1 - i32::from(ts_words);
+        let mut data_words = DataWords::new();
+        if raw_word_count > 0 {
+            let n = raw_word_count as usize;
+            let mut buf = [0u16; crate::models::MAX_DATA_WORDS];
+            let n_capped = n.min(crate::models::MAX_DATA_WORDS);
+            // Bound the read to the current record (defense-in-depth).
+            let record_end = self.offset + record_bytes;
+            let record_data = &self.data[..record_end];
+            if read_u16_array(record_data, cmd_byte_offset, n_capped, &mut buf) {
+                data_words = DataWords::from_slice(&buf[..n_capped]);
+            }
+        }
+
+        let error_code = if self.prev_was_error {
+            ERROR_SPURIOUS_CONTINUATION
+        } else {
+            ERROR_SPURIOUS_STANDALONE
+        };
+        log_debug!(
+            "SPURIOUS_DATA at 0x{:X}: {} raw words, {}",
+            self.offset,
+            raw_word_count.max(0),
+            if self.prev_was_error {
+                "continuation"
+            } else {
+                "standalone"
+            }
+        );
+
+        let msg = MieMessage {
+            timestamp,
+            type_word: *tw,
+            message_format: MessageFormat::SpuriousData,
+            command_word: None,
+            command_word_2: None,
+            status_word: None,
+            status_word_2: None,
+            data_words,
+            error_word: Some(error_code),
+            delta: None,
+            file_offset: self.offset as u64,
+            mux: self.mux.clone(),
+        };
+        self.advance_after_yield(record_bytes);
+        self.prev_was_error = false;
+        msg
+    }
+
+    /// Classify, apply the L2-SYN structural invariants, extract the payload, and
+    /// emit a normal record — or, on a lenient-mode invariant failure / classify
+    /// error, skip it (`Continue`); strict mode surfaces a terminal `PayloadError`.
+    fn decode_normal_record(
+        &mut self,
+        tw: &TypeWord,
+        cmd: &CommandWord,
+        timestamp: Timestamp,
+        ts_words: u16,
+        cmd_byte_offset: usize,
+        record_bytes: usize,
+    ) -> Step {
+        let msg_fmt = match classify_message_format(tw.message_type, cmd, tw.word_count, ts_words) {
+            Ok(f) => f,
+            Err(_) => {
+                log_warn!(
+                    "cannot classify record at 0x{:X} (type=0x{:02X}); skipping",
+                    self.offset,
+                    tw.message_type
+                );
+                self.offset += record_bytes;
+                self.prev_was_error = false;
+                return Step::Continue;
+            }
+        };
+
+        log_debug!(
+            "record at 0x{:X}: type=0x{:02X} fmt={:?} RT{} SA{}",
+            self.offset,
+            tw.message_type,
+            msg_fmt,
+            cmd.rt,
+            cmd.subaddress
+        );
+
+        // L2-SYN-020..025 pre-extract invariants.
+        if let Err(v) = crate::decode::validate_structural_invariants(tw, cmd, msg_fmt, ts_words) {
+            if self.strict {
+                self.done = true;
+                return Step::Yield(Err(crate::error::MieError::PayloadError {
+                    offset: self.offset as u64,
+                    detail: format!("L2-SYN structural invariant violation: {}", v.detail),
+                }));
+            }
+            log_warn!(
+                "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
+                self.offset,
+                v.detail
+            );
+            self.offset += record_bytes;
+            self.prev_was_error = false;
+            return Step::Continue;
+        }
+
+        // Bound payload reads to this record's byte range so an over-claiming
+        // Command Word cannot read into the next record.
+        let record_end = self.offset + record_bytes;
+        let record_data = &self.data[..record_end];
+        let payload_offset = cmd_byte_offset + 2;
+        let (cmd2, status, status2, data_words) =
+            extract_payload(record_data, payload_offset, msg_fmt, cmd);
+
+        // L2-SYN-023 / L2-SYN-027 post-extract invariants.
+        if let Err(v) = crate::decode::validate_post_extract_invariants(msg_fmt, cmd, cmd2.as_ref())
+        {
+            if self.strict {
+                self.done = true;
+                return Step::Yield(Err(crate::error::MieError::PayloadError {
+                    offset: self.offset as u64,
+                    detail: format!("L2-SYN structural invariant violation: {}", v.detail),
+                }));
+            }
+            log_warn!(
+                "L2-SYN structural invariant violation at 0x{:X}: {}; skipping record",
+                self.offset,
+                v.detail
+            );
+            self.offset += record_bytes;
+            self.prev_was_error = false;
+            return Step::Continue;
+        }
+
+        // L2-SYN-024 / L2-SYN-025 anomaly observations (WARN, still emitted).
+        for v in crate::decode::detect_record_anomalies(tw, cmd, status) {
+            log_warn!("L2-SYN anomaly at 0x{:X}: {}", self.offset, v.detail);
+        }
+
+        let key = delta_key(
+            cmd.rt,
+            cmd.subaddress,
+            matches!(cmd.direction, crate::models::Direction::Transmit),
+        );
+        let delta = self.delta_for(key, &timestamp);
+
+        let msg = MieMessage {
+            timestamp,
+            type_word: *tw,
+            message_format: msg_fmt,
+            command_word: Some(*cmd),
+            command_word_2: cmd2,
+            status_word: status,
+            status_word_2: status2,
+            data_words,
+            error_word: None,
+            delta,
+            file_offset: self.offset as u64,
+            mux: self.mux.clone(),
+        };
+        self.advance_after_yield(record_bytes);
+        self.prev_was_error = false;
+
+        if self.msg_count > 0 && self.msg_count.is_multiple_of(100_000) {
+            log_info!(
+                "decoded {} messages (0x{:X} / 0x{:X})",
+                self.msg_count,
+                self.offset,
+                self.file_len
+            );
+        }
+
+        Step::Yield(Ok(msg))
+    }
+
     fn advance_after_yield(&mut self, record_bytes: usize) {
         self.offset += record_bytes;
         self.msg_count += 1;
