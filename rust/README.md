@@ -27,7 +27,7 @@ cargo build --release
 use mie_decoder::{
     filter::{FilterConfig, FilterIterExt},
     reader::MieFileReader,
-    writer::write_csv,
+    writer::{write_csv, WriteOptions},
 };
 
 let reader = MieFileReader::new("recording.mie")?;
@@ -45,7 +45,7 @@ let filters = FilterConfig {
     ..Default::default()
 };
 let messages = reader.iter().filter_messages(filters);
-write_csv(messages, Some(std::path::Path::new("decoded.csv")))?;
+write_csv(messages, Some(std::path::Path::new("decoded.csv")), WriteOptions::default())?;
 ```
 
 ## Development
