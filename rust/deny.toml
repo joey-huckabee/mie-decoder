@@ -15,9 +15,9 @@ yanked = "deny"
 
 [licenses]
 version = 2
-# The crate is MIT; its only dependency `memmap2` and the unix-only transitive
-# `libc` are "MIT OR Apache-2.0". Keep this set tight — a dependency under any
-# other license fails the gate and forces a conscious review.
+# The crate is Apache-2.0; its only dependency `memmap2` and the unix-only
+# transitive `libc` are "MIT OR Apache-2.0". Keep this set tight — a dependency
+# under any other license fails the gate and forces a conscious review.
 allow = ["MIT", "Apache-2.0"]
 
 [bans]
