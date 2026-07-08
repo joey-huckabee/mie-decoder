@@ -381,8 +381,9 @@ These are codified in `CLAUDE.md`; the highlights:
 For non-trivial changes:
 
 1. Open an issue describing the change first.
-2. If it touches a known robustness gap, link to the entry in
-   `docs/ROADMAP.md` ("Robustness & validation backlog" section).
+2. If it touches a known gap or planned refinement, link to the entry in
+   `docs/ROADMAP.md` (see its "Decode correctness" / "Merge follow-ups"
+   sections).
 3. Keep the PR focused — one feat/fix per PR.
 
 For trivial doc fixes or single-line bug fixes, a PR without a prior
