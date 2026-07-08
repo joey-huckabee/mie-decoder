@@ -125,34 +125,18 @@ MIE-Decoder automatically handles:
 
 ## Configuration
 
-Copy `config/default.toml` and customize:
+`mie-decoder` reads settings from an optional TOML file passed with
+`--config PATH`. Precedence is **CLI flags > config file > built-in defaults**.
 
-```toml
-[logging]
-level = "INFO"
+The schema is not reproduced here (where it drifts). See the two authoritative
+sources instead:
 
-[decode]
-time_format = "auto"      # auto, irig, standard
-strict = false
-error_mode = "separate"   # separate, inline
-# standard_tick_rate_hz = 1000000.0   # Standard counter Hz; enables DELTA (default: unset)
-
-[filter]
-exclude_types = ["SPURIOUS_DATA"]
-exclude_rts = [31]
-exclude_buses = []
-exclude_subaddresses = []
-
-[output]
-format = "csv"
-
-[mux]                       # MUX column from the file name (L2-WRT-020)
-enabled = true             # false (or --no-mux) leaves MUX empty (vendor-exact)
-delimiter = "."            # field separator applied to the basename
-field = 4                  # 0-based field index (negative counts from the end)
-```
-
-CLI args override config file values; config file values override built-in defaults.
+- **[`config/default.toml`](config/default.toml)** — the fully-commented reference
+  file: every key with its real default value and inline notes. Copy it and edit.
+- **[`docs/CONFIG-REFERENCE.md`](docs/CONFIG-REFERENCE.md)** — the normative
+  per-key reference: type, default, validation behavior, and the CLI flag that
+  overrides each key (the config-side companion to
+  [`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md)).
 
 ## Supported Message Formats
 
