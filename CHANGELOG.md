@@ -15,6 +15,55 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.6.2] — 2026-07-07
+
+Documentation and packaging release from a team review: corrects a license
+declaration contradiction, hardens `dump` output on Windows, fixes the README
+library examples, and consolidates the CLI reference. No functional change to
+decode behavior or CSV output — the conformance oracle and full test suites are
+unchanged.
+
+### Changed
+
+- **License declaration corrected to Apache-2.0.** The `LICENSE` file has always
+  been the Apache License 2.0, but the package metadata and READMEs declared
+  `MIT` — a contradiction that is legally ambiguous for downstream users and
+  fails automated license scans. Every declaration (`rust/Cargo.toml`,
+  `python/pyproject.toml`, the three READMEs, `rust/deny.toml`) now correctly
+  states **Apache-2.0**, matching the `LICENSE` file. This corrects the declared
+  license shown on crates.io / PyPI; the `LICENSE` text itself is unchanged.
+- **`docs/ROADMAP.md` is now forward-looking only.** Removed ~1,840 lines of
+  completed history (the "Team Review Backlog", "Production-Readiness Audit",
+  "Architecture Audit", and "Documentation Initiative" sections) that duplicated
+  the requirements docs and had begun minting requirement IDs which collided with
+  real assignments (e.g. a proposed `L2-CONF-006` vs. the assigned
+  public-library-API `L2-CONF-006`). Completed work is now tracked solely in
+  `CHANGELOG.md`, the `L1/L2/L3-REQ.md` requirements, and git; the roadmap no
+  longer mints `L2-*`/`L3-*` IDs.
+
+### Added
+
+- **`docs/CLI-REFERENCE.md`** — a complete per-flag reference for the `decode`,
+  `count`, and `dump` subcommands and the global options: value, default, range,
+  and config-key equivalent for every flag. The root README now links to it
+  rather than duplicating an (already-incomplete) exhaustive flag table, giving
+  the CLI parameter documentation a single home.
+
+### Fixed
+
+- **`dump` no longer crashes on a redirected stdout on Windows.** The
+  record-aware dump annotation contains non-ASCII characters (box-drawing,
+  en-dash, `§`); piping `mie-decoder dump file.mie > out.txt` on a stock Windows
+  shell (cp1252 code page) previously raised `UnicodeEncodeError` and aborted the
+  dump. The CLI now forces UTF-8 on stdout/stderr (encoding only — `newline`
+  handling is untouched, so the byte-exact CSV contract is unaffected), matching
+  the POSIX default and the raw UTF-8 the Rust build already emitted.
+- **README library examples now compile / run.** The Rust example called
+  `write_csv` with two arguments — it takes three (added
+  `WriteOptions::default()`); the Python example printed `message.subaddress`,
+  which does not exist (now `message.msg_label`). Both fixes were verified by
+  compiling / running the examples against a real fixture.
+
 ## [2.6.1] — 2026-07-07
 
 Maintainability release: resolves the SonarCloud findings from the v2.6.0
@@ -1355,7 +1404,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.1...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.2...HEAD
+[2.6.2]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.3...v2.6.0
 [2.5.3]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.2...v2.5.3
