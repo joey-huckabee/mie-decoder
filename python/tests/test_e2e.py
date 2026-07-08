@@ -1680,6 +1680,40 @@ class TestDumpDiagnostics:
             for r in caplog.records
         ), [r.getMessage() for r in caplog.records]
 
+    @pytest.mark.requirement("L2-CLI-009")
+    def test_dump_to_cp1252_stdout_emits_utf8(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: the record-aware dump's annotation contains non-ASCII
+        characters (box-drawing, en-dash, section marks). On a *redirected*
+        Windows stdout — which defaults to the cp1252 code page — writing them
+        raised ``UnicodeEncodeError`` and aborted the dump. The CLI now forces
+        UTF-8 on stdout/stderr, so the output is faithful on every platform,
+        matching the raw UTF-8 byte stream the Rust dump already emits.
+        """
+        import sys
+
+        from mie_decoder.cli import main
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "in.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV)
+
+        # Simulate a redirected Windows stdout: a text stream whose encoding
+        # (cp1252) cannot represent the dump's non-ASCII annotation characters.
+        raw = io.BytesIO()
+        monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252", newline=""))
+
+        rc = main(["dump", str(fpath)])
+        sys.stdout.flush()
+
+        assert rc == 0
+        # Faithful UTF-8 — would have raised UnicodeEncodeError before the fix.
+        text = raw.getvalue().decode("utf-8")
+        # And it genuinely contains non-ASCII annotation characters, so the
+        # assertion would fail on mojibake / '?' substitution too.
+        assert any(ord(ch) > 0x7F for ch in text)
+
 
 class TestSeparateModeCommitOrder:
     """L2-WRT-019: separate mode commits the main CSV before the errors CSV.

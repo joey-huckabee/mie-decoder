@@ -1213,6 +1213,33 @@ def _run_dump(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _force_utf8_streams() -> None:
+    """Emit UTF-8 on stdout/stderr regardless of the platform locale.
+
+    On Windows a redirected stdout defaults to the active code page (cp1252 in
+    most locales), which cannot encode the box-drawing / section characters in
+    ``dump`` output — writing them raises ``UnicodeEncodeError`` and aborts the
+    dump — nor the en-dash / section marks in log messages, which garble to
+    ``?``. Reconfiguring the streams to UTF-8 makes output faithful and matches
+    the POSIX default, where stdout is already UTF-8.
+
+    Encoding only: ``newline`` is left untouched so the byte-exact CSV contract
+    (``L2-WRT-*``, verified by the conformance oracle) is unaffected. Streams
+    that cannot be reconfigured (already detached, or replaced by a test
+    harness / capture object without ``reconfigure``) are left as-is.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (ValueError, OSError):
+            # Detached buffer or a stream that refuses reconfiguration — the
+            # dump / log output is best-effort in that case, not a hard error.
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the MIE-Decoder CLI.
 
@@ -1224,6 +1251,8 @@ def main(argv: list[str] | None = None) -> int:
         error; 2 no valid records; 3 unrecoverable sync loss; 4 CLI usage
         error; 5 configuration error.
     """
+    _force_utf8_streams()
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
