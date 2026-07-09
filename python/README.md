@@ -44,8 +44,14 @@ from the package root (`mie_decoder`).
 poetry -C python run pytest        # test suite
 poetry -C python run mypy src      # strict type check (CI-gated)
 poetry -C python run mie-decoder --help
-poetry -P python build             # build the wheel + sdist
+poetry -P python build             # wheel + sdist — note the -P (see below)
 ```
+
+> **Why `-P` for the build, not `-C` like everything else?** `-P` (`--project`,
+> requires Poetry ≥ 2.0) is used only for `build`: `poetry -C python build`
+> doubles the source path on Windows (looks for `…/python/src/src/…`) and the
+> wheel build fails, while `-P python build` produces both the sdist and the
+> wheel cleanly on every platform. Every other command uses `-C python …`.
 
 See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the full development workflow.
 

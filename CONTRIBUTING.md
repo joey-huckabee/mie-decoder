@@ -161,7 +161,7 @@ poetry -C python run ruff format              # auto-format (CI runs ruff format
 poetry -C python run vulture                  # dead-code scan (CI-gated)
 poetry -C python run bandit -r src/mie_decoder  # security scan / SAST (CI-gated)
 poetry -C python run mie-decoder --help
-poetry -P python build
+poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P needs Poetry >= 2.0
 ```
 
 Shared Rust/Python conformance:
