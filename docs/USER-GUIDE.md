@@ -285,6 +285,13 @@ The Python CLI takes the exact same forms (`python -m mie_decoder decode …`
 or the `mie-decoder` console script). The three methods are **mutually
 exclusive** — pick one. A single input behaves exactly as a normal decode.
 
+> **Match recordings, not everything.** `--glob` matches by filename only, and
+> every match is decoded as a recording — so a pattern that also catches a
+> non-recording (e.g. `recordings/*` in a directory that holds a `README.txt`)
+> fails the run with exit 2. Keep the pattern specific (`recordings/*.mie`). See
+> the [`--glob` note in the CLI reference](CLI-REFERENCE.md#input-selection) for
+> the full behavior and the `--allow-partial` fallback for mixed directories.
+
 #### How the rows get ordered (it is not arbitrary)
 
 Each input file comes from an independent recorder, and each recorder may log
