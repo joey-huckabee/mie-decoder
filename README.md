@@ -97,7 +97,14 @@ When the DDC card detects an error mid-transaction (Manchester error, parity err
 
 ### Error modes
 
-- **Default (separate)**: Normal messages go to the main CSV. Errored and spurious records go to `<output>_errors.csv`.
+> **By default, errored and SPURIOUS records are not in the main CSV** — they are
+> written to a separate `<output>_errors.csv` so the main file stays clean. If you
+> expected an errored record (a Type Word with bit 14 set) in the main output,
+> that is why. Pass **`--inline-errors`** to put every record in one CSV with the
+> `ERROR`/`ERROR_CODE` columns populated — which is also the layout that matches
+> the DDC vendor tool (see [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md)).
+
+- **Default (separate)**: Normal messages go to the main CSV. Errored and spurious records go to `<output>_errors.csv` (created only if there are error rows).
 - **`--inline-errors`**: All messages in one CSV. `ERROR` column is `"ERROR"` or `"SPURIOUS"`; `ERROR_CODE` holds the code.
 
 ### Error codes
