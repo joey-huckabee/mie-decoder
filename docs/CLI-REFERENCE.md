@@ -65,6 +65,20 @@ multi-file merge — see [Merge](#merge-multi-file) below.
 | `--manifest PATH` | path | *(none)* | Read input paths from a file, one per line; blank lines and `#`-comments are ignored. |
 | `--glob PATTERN` | glob | *(none)* | Expand a single-directory glob (e.g. `dir/*.mie`); `*` and `?` match over the filename only (no recursion). |
 
+> **`--glob` selects by *filename*, not by content.** Every file whose name
+> matches is treated as a recording and decoded — the glob does no content or
+> extension sniffing. If the pattern catches a non-recording (a `README.txt`, a
+> log file, etc.), the run fails with **exit 2** (`no valid records`); in a
+> multi-file merge that failure happens *before any output is written*, so one
+> stray file loses the whole batch. Prefer a pattern that matches recordings
+> only — `dir/*.mie` (or `dir/*.mie_irig` for the IRIG naming) — over a broad
+> `dir/*`. The same applies to a `--manifest` that lists a non-recording path.
+>
+> If a mixed directory is unavoidable, `--allow-partial` makes a **merge** skip
+> an undecodable input (WARN) and commit a `.partial` output instead of aborting
+> — but it does not rescue a single-file glob, and it marks the output partial
+> (signalling possible data loss), so a precise pattern is the better default.
+
 ### Output
 
 | Flag | Value | Default | Description |
