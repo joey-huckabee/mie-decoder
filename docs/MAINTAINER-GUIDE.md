@@ -512,7 +512,7 @@ The resulting binary at `rust/target/release/mie-decoder` is the deliverable art
 
 ```bash
 poetry -C python check --strict --lock
-poetry -P python build
+poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P needs Poetry >= 2.0
 ```
 
 This produces `python/dist/mie_decoder-<version>.tar.gz` and `mie_decoder-<version>-py3-none-any.whl`.
