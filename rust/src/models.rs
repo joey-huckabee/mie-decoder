@@ -472,6 +472,10 @@ impl MieMessage {
         self.command_word.map(|c| c.rt)
     }
 
+    pub fn subaddress(&self) -> Option<u8> {
+        self.command_word.map(|c| c.subaddress)
+    }
+
     pub fn bus(&self) -> Bus {
         self.type_word.bus
     }
@@ -711,6 +715,20 @@ mod tests {
 
         let msg = make_msg(15, Direction::Transmit, 22);
         assert_eq!(msg.msg_label(), "22T");
+    }
+
+    /// Requirements: L2-MSG-003
+    #[test]
+    fn rt_and_subaddress_shortcuts() {
+        let msg = make_msg(15, Direction::Receive, 11);
+        assert_eq!(msg.rt(), Some(15));
+        assert_eq!(msg.subaddress(), Some(11));
+
+        // SPURIOUS_DATA carries no Command Word, so both shortcuts are None.
+        let mut spurious = make_msg(15, Direction::Receive, 11);
+        spurious.command_word = None;
+        assert_eq!(spurious.rt(), None);
+        assert_eq!(spurious.subaddress(), None);
     }
 
     fn make_msg(rt: u8, dir: Direction, sa: u8) -> MieMessage {

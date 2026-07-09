@@ -476,6 +476,11 @@ class MieMessage:
         return self.command_word.rt if self.command_word is not None else None
 
     @property
+    def subaddress(self) -> int | None:
+        """Subaddress, or None for SPURIOUS_DATA."""
+        return self.command_word.subaddress if self.command_word is not None else None
+
+    @property
     def bus(self) -> Bus:
         """Bus identifier shortcut."""
         return self.type_word.bus
