@@ -15,6 +15,63 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.7.0] — 2026-07-08
+
+Minor release from a second round of team review. Adds a small public-API
+accessor and two diagnostic/tooling improvements, plus documentation
+clarifications. No change to decode behavior or the byte-exact CSV output — the
+full Rust and Python suites and the 60-case conformance oracle pass unchanged.
+
+### Added
+
+- **`MieMessage.subaddress()` convenience accessor** in both implementations
+  (Rust `subaddress(&self) -> Option<u8>`, Python `subaddress` property),
+  mirroring the existing `rt()` — returns `None` for SPURIOUS_DATA. This is the
+  additive public API that makes the release a minor bump; `cargo-semver-checks`
+  confirms no breaking change.
+- **`dump` now explains errored records.** The record-aware hex dump annotates
+  each record with an explicit `error flag (bit 14): SET/clear`, a classified
+  `Format:` line (e.g. `TRANSMIT`, `MODE_CODE_NO_DATA`), and — for errored
+  records — an `Error: 0xNNNN → <DDC description>` line, so *why* a record is
+  errored is legible at a glance. The classifier is guarded (an unclassifiable
+  record degrades to `(unclassifiable)`, never throws) since `dump` runs on
+  suspect files.
+- **Conformance runner single-implementation modes** (`--python-only` /
+  `--rust-only`). Because the byte-exact oracles are committed under
+  `tests/conformance/expected/`, each implementation can now be validated on its
+  own with no other toolchain present — e.g. a Python-only, air-gapped host runs
+  `python tests/conformance/run.py --python-only` with no cargo. `--update-expected`
+  still requires both implementations (it regenerates the oracles only when Rust
+  and Python agree).
+
+### Changed
+
+- **Docs: default error routing made prominent.** Errored and SPURIOUS records
+  go to `<output>_errors.csv` by default (separate mode); `--inline-errors` puts
+  them in the main CSV and matches the DDC vendor tool. A README callout and
+  cross-references now state this up front (it had surprised operators expecting
+  an errored record in the main CSV).
+- **Docs: `--glob` matches filenames, not recordings.** Documented that a glob
+  which catches a non-recording (a `README`, a log) fails with exit 2 — and in a
+  merge aborts before any output — so precise patterns (`dir/*.mie`) are the
+  right default. (`docs/CLI-REFERENCE.md`, `docs/USER-GUIDE.md`.)
+- **Docs: config schema no longer duplicated in the README.** The drifted TOML
+  snippet (wrong filter defaults / logging level, missing keys) is replaced by
+  links to the two authoritative sources, `config/default.toml` and
+  `docs/CONFIG-REFERENCE.md`.
+- **Docs: recorded why the Python wheel build uses `poetry -P` (not `-C`).**
+  `poetry -C python build` doubles the source path on Windows (verified on Poetry
+  2.3.4); `-P` (`--project`, Poetry ≥ 2.0) is the deliberate workaround.
+
+### Fixed
+
+- **README library examples can no longer silently rot.** The Rust example is now
+  compiled in CI (as a `no_run` doctest via `include_str!` in `src/lib.rs`, plus a
+  checked `examples/library_usage.rs`, with `cargo test --doc` added to CI and the
+  pre-commit hook); the Python example is executed against a fixture by
+  `tests/test_readme_examples.py`. Both would have caught the earlier
+  `write_csv`-arity and `message.subaddress` breakages.
+
 ## [2.6.2] — 2026-07-07
 
 Documentation and packaging release from a team review: corrects a license
@@ -1404,7 +1461,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.2...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.2...v2.7.0
 [2.6.2]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.5.3...v2.6.0
