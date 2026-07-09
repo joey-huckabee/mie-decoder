@@ -22,13 +22,14 @@ from typing import TextIO
 from mie_decoder.decode import (
     MIN_RECORD_BYTES,
     MIN_RECORD_WORDS,
+    classify_message_format,
     decode_command_word,
     decode_irig_timestamp,
     decode_type_word,
     read_u16,
 )
 from mie_decoder.exceptions import MieFileEmptyError, MieFileNotFoundError
-from mie_decoder.models import MessageType, TypeWord
+from mie_decoder.models import DDC_ERROR_DESCRIPTIONS, MessageType, TypeWord
 
 logger = logging.getLogger(__name__)
 
@@ -196,19 +197,32 @@ def _write_record_annotation(
     ts_lower = read_u16(data, offset + 6)
     timestamp = decode_irig_timestamp(ts_upper, ts_middle, ts_lower)
     cmd = decode_command_word(read_u16(data, offset + 8))
-    print(
-        f"{'─' * 72}\n"
-        f"  Record #{record_num}  @  0x{offset:08X}  "
-        f"({record_bytes} bytes, {tw.word_count} words)\n"
-        f"  Type: 0x{tw.raw:04X}  →  {type_name}  "
-        f"Bus {'B' if tw.bus else 'A'}  "
-        f"{'ERROR' if tw.error else 'OK'}\n"
-        f"  Time: {timestamp.format()}"
-        f"{'  [FREERUN]' if timestamp.freerun else ''}\n"
-        f"  Cmd:  0x{cmd.raw:04X}  →  RT{cmd.rt} SA{cmd.subaddress} "
+
+    # Classified message format. dump runs on suspect files, so guard the
+    # classifier — an unclassifiable record degrades to a label, never throws.
+    # `3` = IRIG timestamp words (dump decodes the timestamp as IRIG above).
+    try:
+        fmt_name = classify_message_format(tw.message_type, cmd, tw.word_count, 3).name
+    except ValueError:
+        fmt_name = "(unclassifiable)"
+
+    lines = [
+        "─" * 72,
+        f"  Record #{record_num}  @  0x{offset:08X}  ({record_bytes} bytes, {tw.word_count} words)",
+        f"  Type:   0x{tw.raw:04X}  →  {type_name}  Bus {'B' if tw.bus else 'A'}  "
+        f"error flag (bit 14): {'SET' if tw.error else 'clear'}",
+        f"  Format: {fmt_name}",
+        f"  Time:   {timestamp.format()}{'  [FREERUN]' if timestamp.freerun else ''}",
+        f"  Cmd:    0x{cmd.raw:04X}  →  RT{cmd.rt} SA{cmd.subaddress} "
         f"{'T' if cmd.direction else 'R'} WC={cmd.data_word_count}",
-        file=out,
-    )
+    ]
+    # For an errored record the Error Word is the last word of the record; show
+    # its value and the DDC description so the reason is legible at a glance.
+    if tw.error:
+        err_code = read_u16(data, offset + (tw.word_count - 1) * 2)
+        desc = DDC_ERROR_DESCRIPTIONS.get(err_code, "unknown DDC error code")
+        lines.append(f"  Error:  0x{err_code:04X}  →  {desc}")
+    print("\n".join(lines), file=out)
 
 
 def _write_record_hex_payload(out: TextIO, record_data: bytes, offset: int) -> None:

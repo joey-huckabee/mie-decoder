@@ -10,12 +10,12 @@ use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 
 use crate::decode::{
-    MIN_RECORD_BYTES, MIN_RECORD_WORDS, decode_command_word, decode_irig_timestamp,
-    decode_type_word, read_u16,
+    MIN_RECORD_BYTES, MIN_RECORD_WORDS, classify_message_format, decode_command_word,
+    decode_irig_timestamp, decode_type_word, read_u16,
 };
 use crate::error::{MieError, MieResult};
 use crate::log_warn;
-use crate::models::{Direction, MessageType, TypeWord};
+use crate::models::{Direction, MessageFormat, MessageType, TypeWord, ddc_error_description};
 
 fn type_name(code: u8) -> String {
     match MessageType::from_code(code) {
@@ -308,6 +308,13 @@ fn write_record_annotation<W: Write>(
         'R'
     };
 
+    // Classified message format. dump runs on suspect files, so a record that
+    // cannot be classified degrades to a label rather than propagating an error.
+    // `3` = IRIG timestamp words (the timestamp above is decoded as IRIG).
+    let fmt_name = classify_message_format(tw.message_type, &cmd, tw.word_count, 3)
+        .map(message_format_name)
+        .unwrap_or("(unclassifiable)");
+
     writeln!(out, "{}", "-".repeat(72))?;
     writeln!(
         out,
@@ -316,23 +323,55 @@ fn write_record_annotation<W: Write>(
     )?;
     writeln!(
         out,
-        "  Type: 0x{:04X}  ->  {}  Bus {}  {}",
+        "  Type:   0x{:04X}  ->  {}  Bus {}  error flag (bit 14): {}",
         tw.raw,
         type_name(tw.message_type),
         tw.bus.as_str(),
-        if tw.error { "ERROR" } else { "OK" }
+        if tw.error { "SET" } else { "clear" }
     )?;
+    writeln!(out, "  Format: {fmt_name}")?;
     writeln!(
         out,
-        "  Time: {}{}",
+        "  Time:   {}{}",
         ts.format(),
         if ts.freerun { "  [FREERUN]" } else { "" }
     )?;
     writeln!(
         out,
-        "  Cmd:  0x{:04X}  ->  RT{} SA{} {} WC={}",
+        "  Cmd:    0x{:04X}  ->  RT{} SA{} {} WC={}",
         cmd.raw, cmd.rt, cmd.subaddress, dir_char, cmd.data_word_count
-    )
+    )?;
+    // For an errored record the Error Word is the last word of the record; show
+    // its value and the DDC description so the reason is legible at a glance.
+    if tw.error {
+        let code = read_u16(data, offset + (tw.word_count as usize - 1) * 2).unwrap_or(0);
+        let desc = ddc_error_description(code);
+        let desc = if desc.is_empty() {
+            "unknown DDC error code"
+        } else {
+            desc
+        };
+        writeln!(out, "  Error:  0x{code:04X}  ->  {desc}")?;
+    }
+    Ok(())
+}
+
+/// Canonical uppercase name of a classified message format, matching the Python
+/// `MessageFormat` enum names shown in `dump`.
+fn message_format_name(fmt: MessageFormat) -> &'static str {
+    match fmt {
+        MessageFormat::Receive => "RECEIVE",
+        MessageFormat::Transmit => "TRANSMIT",
+        MessageFormat::RtToRt => "RT_TO_RT",
+        MessageFormat::ReceiveBroadcast => "RECEIVE_BROADCAST",
+        MessageFormat::RtToRtBroadcast => "RT_TO_RT_BROADCAST",
+        MessageFormat::ModeCodeTxData => "MODE_CODE_TX_DATA",
+        MessageFormat::ModeCodeRxData => "MODE_CODE_RX_DATA",
+        MessageFormat::ModeCodeNoData => "MODE_CODE_NO_DATA",
+        MessageFormat::ModeCodeBcastNoData => "MODE_CODE_BCAST_NO_DATA",
+        MessageFormat::ModeCodeBcastData => "MODE_CODE_BCAST_DATA",
+        MessageFormat::SpuriousData => "SPURIOUS_DATA",
+    }
 }
 
 /// Hex-dump a record's raw bytes, 16 per line, each line offset-annotated.
@@ -420,6 +459,31 @@ mod tests {
         assert!(s.contains("Record #0"));
         assert!(s.contains("BC->RT (Receive)"));
         assert!(s.contains("1 records dumped"));
+    }
+
+    /// The record-aware dump surfaces the bit-14 error flag, the classified
+    /// message format, and the DDC Error Word + description for an errored
+    /// record. Mirrors the Python
+    /// `test_dump_annotates_errored_record_with_code_and_format`.
+    /// Requirements: L2-CLI-009
+    #[test]
+    fn record_dump_annotates_errored_record() {
+        // Errored RT->BC (Transmit): Type 0x4604 (bit 14 set), 6 words / 12
+        // bytes, Error Word 0x0120 (No Status Response or Too Few Data Words).
+        let buf = [
+            0x04, 0x46, 0x0F, 0x18, 0xF2, 0xDA, 0x26, 0x5D, 0x3E, 0x7C, 0x20, 0x01,
+        ];
+        let f = TempFile::write(&buf);
+        let mut out = Vec::new();
+        hex_dump_records(f.path(), Some(1), 0, &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("error flag (bit 14): SET"), "{s}");
+        assert!(s.contains("Format: TRANSMIT"), "{s}");
+        assert!(s.contains("Error:  0x0120"), "{s}");
+        assert!(
+            s.contains("No Status Response or Too Few Data Words"),
+            "{s}"
+        );
     }
 
     /// L2-CLI-013: a scan-stop anomaly emits a logger WARN in addition to the
