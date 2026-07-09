@@ -23,6 +23,22 @@ To use an already-built Rust binary:
 python tests/conformance/run.py --rust-bin rust/target/debug/mie-decoder
 ```
 
+### Single-implementation runs (one toolchain)
+
+Because the `expected/` oracles are committed, each implementation can be
+validated on its own — useful where only one toolchain is available (e.g. an
+air-gapped host with Python but no Rust/cargo). These skip the other
+implementation's setup and the cross-impl CLI-surface check; each side is still
+held to the same byte-exact oracle.
+
+```bash
+python tests/conformance/run.py --python-only                     # no cargo needed
+python tests/conformance/run.py --rust-only --rust-bin <path>     # no mie_decoder package needed
+```
+
+(`--update-expected` still requires both implementations, since it regenerates
+the oracles only after confirming Rust and Python agree.)
+
 When intentionally changing shared CSV behavior, update the checked-in
 oracles only after both implementations produce identical output:
 
