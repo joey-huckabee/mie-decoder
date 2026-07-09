@@ -262,7 +262,7 @@ Status is computed by `scripts/build-trace-matrix.py`'s rollup rule. This matrix
 | L2-CONF-003 | _(none)_ | `python/tests/test_conformance_wiring.py::test_conformance_manifest_has_cases_with_oracles`<br>`python/tests/test_conformance_wiring.py::test_conformance_runner_exists` | Implemented |
 | L2-CONF-004 | _(none)_ | _(TBD)_ | Implemented (I) |
 | L2-CONF-005 | L3-PY-001, L3-PY-002, L3-PY-003, L3-PY-008, L3-RS-001, L3-RS-002, L3-RS-011 | `python/tests/test_conformance_wiring.py::test_conformance_job_present_in_ci`<br>`python/tests/test_package_api.py::test_console_script_entry_point_registered` | Implemented |
-| L2-CONF-006 | L3-PY-007, L3-RS-013 | `python/tests/test_package_api.py::test_decoder_entry_point_importable_from_package_root`<br>`python/tests/test_package_api.py::test_decoder_entry_point_is_a_typed_callable`<br>`python/tests/test_package_api.py::test_message_type_importable_from_package_root`<br>`python/tests/test_package_api.py::test_public_surface_is_documented`<br>`rust/tests/integration.rs::crate_root_reexports_public_decode_api` | Implemented |
+| L2-CONF-006 | L3-PY-007, L3-RS-013 | `python/tests/test_package_api.py::test_decoder_entry_point_importable_from_package_root`<br>`python/tests/test_package_api.py::test_decoder_entry_point_is_a_typed_callable`<br>`python/tests/test_package_api.py::test_message_type_importable_from_package_root`<br>`python/tests/test_package_api.py::test_public_surface_is_documented`<br>`python/tests/test_readme_examples.py::test_python_readme_examples_execute`<br>`rust/tests/integration.rs::crate_root_reexports_public_decode_api` | Implemented |
 
 ### L1-EXIT: Exit-code semantics and operational contract
 

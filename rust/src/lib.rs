@@ -2,7 +2,11 @@
 //!
 //! See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) for the module
 //! diagram and synchronization strategy.
-
+//!
+//! The crate README (rendered below) is included as crate-level documentation
+//! via `include_str!`, so its `rust` code block is compiled as a `no_run`
+//! doctest by `cargo test --doc` — the library example cannot silently rot.
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(clippy::expect_used, clippy::unwrap_used))]
 
 pub mod cli;

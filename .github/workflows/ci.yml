@@ -66,6 +66,13 @@ jobs:
         working-directory: rust
         run: cargo test --locked --all-targets
 
+      - name: Run Rust doctests
+        # `--all-targets` above skips doctests, so run them explicitly. This
+        # compiles the README library example (included via include_str! in
+        # src/lib.rs) so it cannot silently rot.
+        working-directory: rust
+        run: cargo test --locked --doc
+
       - name: Install cargo-llvm-cov
         # Coverage gate runs only on Linux — coverage isn't platform-
         # dependent so the Windows cell would just duplicate work.

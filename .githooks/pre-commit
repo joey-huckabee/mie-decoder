@@ -23,7 +23,7 @@
 #   Rust-only (skipped if no .rs / .toml staged):
 #     9. cargo fmt --check
 #    10. cargo clippy --all-targets -- -D warnings
-#    11. cargo test --all-targets
+#    11. cargo test --all-targets + cargo test --doc
 #    12. dbg!() scan in staged .rs
 #    13. unsafe blocks require `// SAFETY:` comment
 
@@ -199,8 +199,10 @@ if ! ( cd rust && cargo clippy --all-targets -- -D warnings ); then
 fi
 
 # ── 11. cargo test ────────────────────────────────────────────────────
-step "cd rust && cargo test --all-targets"
-if ! ( cd rust && cargo test --all-targets ); then
+# --all-targets skips doctests, so run --doc too: it compiles the README
+# library example (included via include_str! in src/lib.rs).
+step "cd rust && cargo test --all-targets && cargo test --doc"
+if ! ( cd rust && cargo test --all-targets && cargo test --doc ); then
     fail "tests failed"
 fi
 
