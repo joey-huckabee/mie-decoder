@@ -125,6 +125,10 @@ class TestMieMessage:
     def test_rt_shortcut(self, sample_msg: MieMessage) -> None:
         assert sample_msg.rt == 15
 
+    @pytest.mark.requirement("L2-MSG-003")
+    def test_subaddress_shortcut(self, sample_msg: MieMessage) -> None:
+        assert sample_msg.subaddress == 11
+
     @pytest.mark.requirement("L2-MSG-002")
     def test_bus_shortcut(self, sample_msg: MieMessage) -> None:
         assert sample_msg.bus == Bus.A
@@ -229,5 +233,6 @@ class TestErrorProperties:
         assert msg.is_error is False
         assert msg.is_spurious is True
         assert msg.rt is None
+        assert msg.subaddress is None
         assert msg.msg_label == ""
         assert msg.delta_key == ""
