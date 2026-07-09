@@ -23,29 +23,32 @@ cargo build --release
 
 ## Library usage
 
-```rust
+```rust,no_run
 use mie_decoder::{
     filter::{FilterConfig, FilterIterExt},
     reader::MieFileReader,
     writer::{write_csv, WriteOptions},
 };
 
-let reader = MieFileReader::new("recording.mie")?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let reader = MieFileReader::new("recording.mie")?;
 
-// Basic iteration
-for msg in reader.iter() {
-    let msg = msg?;
-    println!("{} RT{:?} {}", msg.timestamp.format(), msg.rt(), msg.msg_label());
+    // Basic iteration
+    for msg in reader.iter() {
+        let msg = msg?;
+        println!("{} RT{:?} {}", msg.timestamp.format(), msg.rt(), msg.msg_label());
+    }
+
+    // With filtering, streaming straight to CSV
+    let reader = MieFileReader::new("recording.mie")?;
+    let filters = FilterConfig {
+        exclude_types: vec![0x20], // skip spurious
+        ..Default::default()
+    };
+    let messages = reader.iter().filter_messages(filters);
+    write_csv(messages, Some(std::path::Path::new("decoded.csv")), WriteOptions::default())?;
+    Ok(())
 }
-
-// With filtering, streaming straight to CSV
-let reader = MieFileReader::new("recording.mie")?;
-let filters = FilterConfig {
-    exclude_types: vec![0x20], // skip spurious
-    ..Default::default()
-};
-let messages = reader.iter().filter_messages(filters);
-write_csv(messages, Some(std::path::Path::new("decoded.csv")), WriteOptions::default())?;
 ```
 
 ## Development
@@ -66,7 +69,7 @@ Three coverage aliases are pre-wired in `.cargo/config.toml`: `cargo cov`
 
 ## Crate structure
 
-```
+```text
 rust/
 ├── Cargo.toml / Cargo.lock
 ├── .cargo/          cargo-llvm-cov coverage aliases (cov / cov-lcov / cov-ci)
