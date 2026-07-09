@@ -1714,6 +1714,27 @@ class TestDumpDiagnostics:
         # assertion would fail on mojibake / '?' substitution too.
         assert any(ord(ch) > 0x7F for ch in text)
 
+    @pytest.mark.requirement("L2-CLI-009")
+    def test_dump_annotates_errored_record_with_code_and_format(self, tmp_path: Path) -> None:
+        """The record-aware dump surfaces the bit-14 error flag, the classified
+        message format, and the DDC Error Word + its description for an errored
+        record. Mirrors the Rust ``record_dump_annotates_errored_record``."""
+        from mie_decoder.dump import hex_dump_records
+
+        # Errored RT->BC (Transmit): Type 0x4604 (bit 14 set), 6 words / 12
+        # bytes, Error Word 0x0120 (No Status Response or Too Few Data Words).
+        fpath = tmp_path / "errored.mie"
+        fpath.write_bytes(bytes.fromhex("04460F18F2DA265D3E7C2001"))
+
+        out = io.StringIO()
+        hex_dump_records(fpath, max_records=1, stream=out)
+        text = out.getvalue()
+
+        assert "error flag (bit 14): SET" in text
+        assert "Format: TRANSMIT" in text
+        assert "Error:  0x0120" in text
+        assert "No Status Response or Too Few Data Words" in text
+
 
 class TestSeparateModeCommitOrder:
     """L2-WRT-019: separate mode commits the main CSV before the errors CSV.
