@@ -139,6 +139,25 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Update CSV oracles, but only when Rust and Python outputs match.",
     )
+    impl_group = parser.add_mutually_exclusive_group()
+    impl_group.add_argument(
+        "--python-only",
+        action="store_true",
+        help=(
+            "Validate only the Python implementation against the committed "
+            "expected/ oracles. Skips the Rust build/cross-check, so no cargo "
+            "toolchain is required (e.g. a Python-only air-gapped host)."
+        ),
+    )
+    impl_group.add_argument(
+        "--rust-only",
+        action="store_true",
+        help=(
+            "Validate only the Rust implementation against the committed "
+            "expected/ oracles. Skips the Python package probe/cross-check, so "
+            "the mie_decoder package need not be installed."
+        ),
+    )
     parser.add_argument(
         "--temp-root",
         type=Path,
@@ -438,11 +457,31 @@ def main() -> int:
     for index, case in enumerate(manifest["cases"]):
         validate_case_schema(case, index)
 
-    prepare_rust_bin(args)
-    prepare_python_bin(args)
+    run_rust = not args.python_only
+    run_python = not args.rust_only
 
-    # Cross-impl CLI flag-surface parity (independent of the per-case oracles).
-    check_cli_surface(args)
+    if args.update_expected and not (run_rust and run_python):
+        raise RuntimeError(
+            "--update-expected regenerates the oracles from the Rust output only "
+            "after confirming Rust and Python agree, so it needs both "
+            "implementations; drop --python-only / --rust-only."
+        )
+
+    # Only prepare the toolchain(s) we will actually run — this is what lets a
+    # single-implementation host (no cargo, or no installed mie_decoder) still
+    # validate its side against the committed oracles.
+    if run_rust:
+        prepare_rust_bin(args)
+    if run_python:
+        prepare_python_bin(args)
+
+    # Cross-impl CLI flag-surface parity needs both CLIs; skip it (with a note)
+    # when only one implementation is under test.
+    if run_rust and run_python:
+        check_cli_surface(args)
+    else:
+        only = "Python" if run_python else "Rust"
+        print(f"SKIP cli-surface-parity (single-implementation run: {only} only)")
 
     passed = 0
     if args.temp_root:
@@ -492,22 +531,28 @@ def main() -> int:
                 Path(f"{python_output}.partial") if partial_oracle and python_output else None
             )
 
-            rust, rust_stderr = run_command(
-                rust_command(args, case, sources, rust_output),
-                rust_output,
-                name,
-                "Rust",
-                expected_exit=expected_exit,
-                read_path=rust_read,
-            )
-            python, python_stderr = run_command(
-                python_command(args, case, sources, python_output),
-                python_output,
-                name,
-                "Python",
-                expected_exit=expected_exit,
-                read_path=python_read,
-            )
+            rust: bytes | None = None
+            python: bytes | None = None
+            rust_stderr = ""
+            python_stderr = ""
+            if run_rust:
+                rust, rust_stderr = run_command(
+                    rust_command(args, case, sources, rust_output),
+                    rust_output,
+                    name,
+                    "Rust",
+                    expected_exit=expected_exit,
+                    read_path=rust_read,
+                )
+            if run_python:
+                python, python_stderr = run_command(
+                    python_command(args, case, sources, python_output),
+                    python_output,
+                    name,
+                    "Python",
+                    expected_exit=expected_exit,
+                    read_path=python_read,
+                )
 
             if expected_exit != 0:
                 # Negative case — exit code alone is the assertion.
@@ -517,7 +562,11 @@ def main() -> int:
                 print(f"PASS {name} (expected_exit={expected_exit})")
                 continue
 
-            require_equal(rust, python, f"{name} Rust output", f"{name} Python output")
+            # Cross-implementation agreement is only asserted when both ran; in
+            # single-impl mode each side is validated against the oracle below,
+            # which is itself the byte-exact cross-impl contract.
+            if run_rust and run_python:
+                require_equal(rust, python, f"{name} Rust output", f"{name} Python output")
 
             # Optional stderr substring assertion. Used by ``count`` mode
             # to pin the "counted N messages in <path>" human-readable
@@ -526,7 +575,12 @@ def main() -> int:
             # temp directory and so can't be oracled directly).
             stderr_needle = case.get("expected_stderr_contains")
             if stderr_needle:
-                for impl, captured in (("Rust", rust_stderr), ("Python", python_stderr)):
+                captures = []
+                if run_rust:
+                    captures.append(("Rust", rust_stderr))
+                if run_python:
+                    captures.append(("Python", python_stderr))
+                for impl, captured in captures:
                     if stderr_needle not in captured:
                         raise AssertionError(
                             f"{name}: {impl} stderr does not contain "
@@ -544,8 +598,10 @@ def main() -> int:
                     f"{name}: expected output is missing: {expected_path}"
                 )
             expected = expected_path.read_bytes()
-            require_equal(expected, rust, str(expected_path), f"{name} Rust output")
-            require_equal(expected, python, str(expected_path), f"{name} Python output")
+            if run_rust:
+                require_equal(expected, rust, str(expected_path), f"{name} Rust output")
+            if run_python:
+                require_equal(expected, python, str(expected_path), f"{name} Python output")
 
             # Split-output cases (separate error mode) compare an
             # additional <output_stem>_errors.csv against the
@@ -554,24 +610,29 @@ def main() -> int:
             # definition), so we can reuse the canonical naming here.
             expected_errors_rel = case.get("expected_errors")
             if expected_errors_rel:
-                rust_errors_path = _errors_path(rust_output)
-                python_errors_path = _errors_path(python_output)
-                if not rust_errors_path.exists():
-                    raise RuntimeError(
-                        f"{name}: Rust did not create errors file {rust_errors_path}"
+                rust_errors: bytes | None = None
+                python_errors: bytes | None = None
+                if run_rust:
+                    rust_errors_path = _errors_path(rust_output)
+                    if not rust_errors_path.exists():
+                        raise RuntimeError(
+                            f"{name}: Rust did not create errors file {rust_errors_path}"
+                        )
+                    rust_errors = rust_errors_path.read_bytes()
+                if run_python:
+                    python_errors_path = _errors_path(python_output)
+                    if not python_errors_path.exists():
+                        raise RuntimeError(
+                            f"{name}: Python did not create errors file {python_errors_path}"
+                        )
+                    python_errors = python_errors_path.read_bytes()
+                if run_rust and run_python:
+                    require_equal(
+                        rust_errors,
+                        python_errors,
+                        f"{name} Rust errors output",
+                        f"{name} Python errors output",
                     )
-                if not python_errors_path.exists():
-                    raise RuntimeError(
-                        f"{name}: Python did not create errors file {python_errors_path}"
-                    )
-                rust_errors = rust_errors_path.read_bytes()
-                python_errors = python_errors_path.read_bytes()
-                require_equal(
-                    rust_errors,
-                    python_errors,
-                    f"{name} Rust errors output",
-                    f"{name} Python errors output",
-                )
                 expected_errors_path = SUITE / expected_errors_rel
                 if args.update_expected:
                     expected_errors_path.parent.mkdir(parents=True, exist_ok=True)
@@ -582,18 +643,20 @@ def main() -> int:
                         f"{name}: expected_errors oracle is missing: {expected_errors_path}"
                     )
                 expected_errors = expected_errors_path.read_bytes()
-                require_equal(
-                    expected_errors,
-                    rust_errors,
-                    str(expected_errors_path),
-                    f"{name} Rust errors output",
-                )
-                require_equal(
-                    expected_errors,
-                    python_errors,
-                    str(expected_errors_path),
-                    f"{name} Python errors output",
-                )
+                if run_rust:
+                    require_equal(
+                        expected_errors,
+                        rust_errors,
+                        str(expected_errors_path),
+                        f"{name} Rust errors output",
+                    )
+                if run_python:
+                    require_equal(
+                        expected_errors,
+                        python_errors,
+                        str(expected_errors_path),
+                        f"{name} Python errors output",
+                    )
 
             passed += 1
             print(f"PASS {name}")
