@@ -1,0 +1,37 @@
+# Single-file non-monotonic DELTA (L2-RDR-018 / L1-EXIT-005 timeline).
+#
+# Two NORMAL RT15 SA11 Receive records (key 15:11R) whose IRIG timestamps go
+# BACKWARD within one file: t0 = 50.500000 then t1 = 50.250000. The per-key
+# DELTA tracker must emit DELTA = 0.000000 for the first occurrence and an
+# EMPTY DELTA for the second (a negative gap is non-monotonic, not a real
+# inter-message delta), plus a one-time "non-monotonic timestamp" WARN.
+#
+# This is the SINGLE-FILE path (per-reader per-key state); the existing
+# merge-non-monotonic-* cases exercise the different merged-timeline path.
+# Record bodies are byte-identical to the normal record in
+# delta-tracking-irig.hex; only the IRIG timestamp words differ.
+
+# Record 1: normal RT15 SA11 Receive at 192:15:54:50.500000 (first 15:11R).
+# TW 0x2402 (type=0x02, Bus A, wc=36) + IRIG (upper 0x180F, middle 0xDB27,
+# lower 0xA120).
+0224 0F18 27DB 20A1
+7E79
+0004 0000 0000 2F00 22CA 2F00 22CA
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000
+71C7 0078
+
+# Record 2: normal RT15 SA11 Receive at 192:15:54:50.250000 — BACKWARD from
+# record 1, so the 15:11R DELTA is non-monotonic and must render empty.
+# TW 0x2402 + IRIG (0x180F, 0xDB23, 0xD090).
+0224 0F18 23DB 90D0
+7E79
+0004 0000 0000 2F00 22CA 2F00 22CA
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000
+71C7 0078
+
+# end-of-records terminator
+0000

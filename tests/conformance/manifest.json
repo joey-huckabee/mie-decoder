@@ -81,6 +81,11 @@
       "config": "configs/standard-tick-rate.toml"
     },
     {
+      "name": "auto-detect-standard",
+      "input": "inputs/standard-timestamps.hex",
+      "expected": "expected/standard-timestamps.csv"
+    },
+    {
       "name": "bus-b",
       "input": "inputs/bus-b.hex",
       "expected": "expected/bus-b.csv"
@@ -163,6 +168,20 @@
       "input": "inputs/errors-inline.hex",
       "expected": "expected/errors-separate.csv",
       "expected_errors": "expected/errors-separate_errors.csv"
+    },
+    {
+      "name": "spurious-standalone",
+      "input": "inputs/spurious-standalone.hex",
+      "expected": "expected/spurious-standalone.csv",
+      "args": [
+        "--inline-errors"
+      ]
+    },
+    {
+      "name": "single-file-non-monotonic",
+      "input": "inputs/single-file-non-monotonic.hex",
+      "expected": "expected/single-file-non-monotonic.csv",
+      "expected_stderr_contains": "monotonic timestamp"
     },
     {
       "name": "strict-rejects-irig-range",
