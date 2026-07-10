@@ -35,6 +35,13 @@ full release workflow.
   through one shared parser per implementation that accepts decimal and `0x` hex
   (Python also accepts `0o` / `0b`) and rejects negative values, matching the
   Rust unsigned semantics. Invalid values are a usage error (exit 4).
+- **Standard-timestamp microsecond rounding is now bit-identical across
+  implementations.** Python computed `int(x + 0.5)` while Rust used `f64::round`;
+  for a value one ULP below a half-integer these differ by 1 µs (Python rounds
+  `x + 0.5` up to `1.0`), a latent break of the byte-exact CSV contract on
+  calibrated Standard timestamps (`--standard-tick-rate-hz`). Python now rounds
+  half-away-from-zero via `floor(x) + (frac >= 0.5)`, matching `f64::round`
+  exactly. Rate-gated and rare, but the two decoders can no longer disagree.
 - **Removed two latent panic sites in the Rust decoder (L1-ROB-001).** The
   `unreachable!()` in the reader's timestamp decode and the `assert!` in the
   public `DataWords::from_slice` were both provably unreachable / uncallable past

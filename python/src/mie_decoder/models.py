@@ -327,9 +327,14 @@ class StandardTimestamp:
         — callers (DELTA computation) treat the absence explicitly rather
         than using raw ticks as if they were microseconds.
 
-        Rounding is half-away-from-zero (``int(x + 0.5)``); ticks are
-        non-negative so this matches the Rust implementation's
-        ``f64::round`` exactly (see L2-DEC-017).
+        Rounding is half-away-from-zero, matching the Rust implementation's
+        ``f64::round`` bit-for-bit (L2-DEC-017). It is computed as
+        ``floor(x) + (1 if frac >= 0.5 else 0)`` with ``frac = x - floor(x)``
+        (exact by Sterbenz for a non-negative ``x``) rather than the tempting
+        ``int(x + 0.5)``: the latter rounds a value an ULP below a half-integer
+        up to the wrong integer — e.g. ``x = 0.49999999999999994`` yields ``0``
+        here and in Rust but ``1`` via ``int(x + 0.5)`` (Python evaluates
+        ``x + 0.5 == 1.0``), which would silently diverge from Rust by 1 us.
         """
         if (
             standard_tick_rate_hz is None
@@ -338,7 +343,8 @@ class StandardTimestamp:
         ):
             return None
         micros = self.raw_value * 1_000_000 / standard_tick_rate_hz
-        return int(micros + 0.5)
+        floor_us = math.floor(micros)
+        return floor_us + 1 if micros - floor_us >= 0.5 else floor_us
 
     def format(self) -> str:
         """Format as ``0xNNNNNNNN`` hexadecimal string."""
