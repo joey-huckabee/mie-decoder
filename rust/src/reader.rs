@@ -884,7 +884,18 @@ impl<'a> RecordIter<'a> {
     /// advisories as a side effect.
     fn decode_timestamp_at(&mut self, resolved: TimestampFormat) -> Option<Timestamp> {
         match resolved {
-            TimestampFormat::Irig => {
+            TimestampFormat::Standard => {
+                let upper = read_u16(self.data, self.offset + 2)?;
+                let lower = read_u16(self.data, self.offset + 4)?;
+                Some(Timestamp::Standard(decode_standard_timestamp(upper, lower)))
+            }
+            // Irig — and Auto, which is resolved to a concrete format eagerly in
+            // `iter()` (`resolve_format_for_hit` / `default_resolved_format` map
+            // Auto → Irig). A stray Auto here is therefore decoded as Irig, the
+            // same fallback, keeping the reader total instead of panicking
+            // (L1-ROB-001) — the earlier `unreachable!()` nicked the no-panic
+            // invariant even though it was provably unreachable.
+            TimestampFormat::Irig | TimestampFormat::Auto => {
                 let upper = read_u16(self.data, self.offset + 2)?;
                 let middle = read_u16(self.data, self.offset + 4)?;
                 let lower = read_u16(self.data, self.offset + 6)?;
@@ -903,12 +914,6 @@ impl<'a> RecordIter<'a> {
                 }
                 Some(Timestamp::Irig(irig))
             }
-            TimestampFormat::Standard => {
-                let upper = read_u16(self.data, self.offset + 2)?;
-                let lower = read_u16(self.data, self.offset + 4)?;
-                Some(Timestamp::Standard(decode_standard_timestamp(upper, lower)))
-            }
-            TimestampFormat::Auto => unreachable!(),
         }
     }
 

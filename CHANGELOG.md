@@ -35,6 +35,15 @@ full release workflow.
   through one shared parser per implementation that accepts decimal and `0x` hex
   (Python also accepts `0o` / `0b`) and rejects negative values, matching the
   Rust unsigned semantics. Invalid values are a usage error (exit 4).
+- **Removed two latent panic sites in the Rust decoder (L1-ROB-001).** The
+  `unreachable!()` in the reader's timestamp decode and the `assert!` in the
+  public `DataWords::from_slice` were both provably unreachable / uncallable past
+  their guards, but they nicked the no-panic invariant. The reader now decodes a
+  stray `Auto` format as IRIG (its documented fallback) instead of panicking, and
+  `DataWords::from_slice` truncates an over-length slice to the 1553B 32-word cap
+  (matching `from_iter_capped`) instead of asserting. The `#[deny]`-on-`warn`
+  clippy gate is extended to `panic` / `unreachable` / `todo` / `unimplemented`
+  (in addition to `unwrap` / `expect`) so the invariant is now enforced in CI.
 - **Python merge output-collision guard now fires when `--allow-partial` drops a
   merge to a single surviving input.** The guard was gated on the surviving
   reader count, so a multi-input merge that lost all but one input to

@@ -377,18 +377,17 @@ impl DataWords {
         }
     }
 
-    /// Build from a slice. Panics if `slice.len() > MAX_DATA_WORDS`.
+    /// Build from a slice, keeping at most [`MAX_DATA_WORDS`] words. A longer
+    /// slice is truncated rather than panicking: MIL-STD-1553B caps a single
+    /// transaction at 32 data words, so any standard-conforming caller is
+    /// unaffected, and the over-length case stays total (L1-ROB-001) — matching
+    /// [`DataWords::from_iter_capped`]. (In-crate callers already pre-cap, so
+    /// the truncation is defensive.)
     pub fn from_slice(slice: &[u16]) -> Self {
-        assert!(
-            slice.len() <= MAX_DATA_WORDS,
-            "data words exceed 1553B max of {MAX_DATA_WORDS}"
-        );
+        let n = slice.len().min(MAX_DATA_WORDS);
         let mut buf = [0u16; MAX_DATA_WORDS];
-        buf[..slice.len()].copy_from_slice(slice);
-        Self {
-            buf,
-            len: slice.len() as u8,
-        }
+        buf[..n].copy_from_slice(&slice[..n]);
+        Self { buf, len: n as u8 }
     }
 
     /// Build from an iterator of `u16`. Stops at `MAX_DATA_WORDS`.
@@ -669,12 +668,15 @@ mod tests {
         assert_eq!(dw.len(), MAX_DATA_WORDS);
     }
 
-    /// Requirements: L3-RS-005
+    /// An over-length slice is capped at `MAX_DATA_WORDS` rather than panicking
+    /// (L1-ROB-001), matching `from_iter_capped`.
+    /// Requirements: L3-RS-005, L1-ROB-001
     #[test]
-    #[should_panic]
-    fn data_words_overflow_panics() {
-        let words: Vec<u16> = (0..(MAX_DATA_WORDS as u16 + 1)).collect();
-        let _ = DataWords::from_slice(&words);
+    fn data_words_overflow_truncates() {
+        let words: Vec<u16> = (0..(MAX_DATA_WORDS as u16 + 8)).collect();
+        let dw = DataWords::from_slice(&words);
+        assert_eq!(dw.len(), MAX_DATA_WORDS);
+        assert_eq!(dw.as_slice(), &words[..MAX_DATA_WORDS]);
     }
 
     /// Requirements: L2-DEC-004
