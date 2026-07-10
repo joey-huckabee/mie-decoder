@@ -92,7 +92,7 @@ multi-file merge — see [Merge](#merge-multi-file) below.
 
 | Flag | Value | Default | Description |
 |------|-------|---------|-------------|
-| `--time-format FORMAT` | `auto` \| `irig` \| `standard` | `auto` | Timestamp format. `auto` probes the recording; `irig` / `standard` force the choice. Overrides `[decode] time_format`. |
+| `--time-format FORMAT` | `auto` \| `irig` \| `standard` | `auto` | Timestamp format (case-insensitive). `auto` probes the recording; `irig` / `standard` force the choice. Overrides `[decode] time_format`. |
 | `--standard-tick-rate-hz HZ` | float > 0 | *(unset)* | Standard-counter frequency in Hz. When set, Standard timestamps convert to microseconds and join DELTA tracking; unset leaves an empty `DELTA` for Standard records (`L2-DEC-017`). Mirrors `[decode] standard_tick_rate_hz`. |
 | `--detect-records N` | int `1..=32` | `8` | Records the `auto` timestamp-format probe walks before committing to IRIG vs Standard (`L2-DEC-015`). Mirrors `[decode] detect_records`. |
 | `--lookahead-records N` | int `1..=32` | `2` | Total records checked per sync validation (1 candidate + `N-1` look-ahead), used for header detection, continuous validation, and recovery (`L2-SYN-026`). Mirrors `[decode] lookahead_records`. |

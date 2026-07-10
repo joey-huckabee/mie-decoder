@@ -306,6 +306,15 @@
       "expected_exit": 5
     },
     {
+      "name": "time-format-uppercase-cli",
+      "input": "inputs/mode-code-no-data.hex",
+      "expected": "expected/mode-code-no-data.csv",
+      "args": [
+        "--time-format",
+        "IRIG"
+      ]
+    },
+    {
       "name": "forced-format-mismatch-strict",
       "input": "inputs/basic-multi-record.hex",
       "config": "configs/strict.toml",

@@ -140,6 +140,30 @@ class TimestampFormat(IntEnum):
     STANDARD = 2
 
 
+_TIMESTAMP_FORMAT_BY_NAME: dict[str, TimestampFormat] = {
+    "auto": TimestampFormat.AUTO,
+    "irig": TimestampFormat.IRIG,
+    "standard": TimestampFormat.STANDARD,
+}
+
+
+def parse_timestamp_format(name: str) -> TimestampFormat:
+    """Parse a ``time_format`` name (``auto`` / ``irig`` / ``standard``).
+
+    Matching is case-insensitive. This is the single source of truth shared by
+    the CLI (``--time-format``) and the config loader (``decode.time_format``) so
+    the two can never disagree on which spellings are accepted.
+
+    Raises:
+        ValueError: if ``name`` is not one of the recognized formats. The message
+            lists the valid set.
+    """
+    fmt = _TIMESTAMP_FORMAT_BY_NAME.get(name.lower())
+    if fmt is None:
+        raise ValueError(f"Invalid time_format: {name!r}. Valid: auto, irig, standard")
+    return fmt
+
+
 @unique
 class ErrorMode(IntEnum):
     """Controls how errored messages are handled in output.

@@ -117,6 +117,22 @@ pub enum TimestampFormat {
     Standard = 2,
 }
 
+impl TimestampFormat {
+    /// Parse a `time_format` name (`auto` / `irig` / `standard`)
+    /// case-insensitively. The single source of truth shared by the CLI
+    /// (`--time-format`) and the config loader (`decode.time_format`) so the two
+    /// can never disagree on which spellings are accepted. Returns `None` for an
+    /// unrecognized name; each caller formats its own error type.
+    pub(crate) fn from_name_ci(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "irig" => Some(Self::Irig),
+            "standard" => Some(Self::Standard),
+            _ => None,
+        }
+    }
+}
+
 /// How errored messages are routed in CSV output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]

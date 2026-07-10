@@ -273,9 +273,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     decode_parser.add_argument(
         "--time-format",
-        choices=["auto", "irig", "standard"],
+        metavar="FORMAT",
         default=None,
-        help="Timestamp format. Overrides config file. Default: auto.",
+        help=(
+            "Timestamp format (auto, irig, standard; case-insensitive). "
+            "Overrides config file. Default: auto."
+        ),
     )
     # Filter flags take ONE value each, comma-separable and repeatable
     # (`--exclude-rts 15,31` == `--exclude-rts 15 --exclude-rts 31`),
@@ -650,16 +653,11 @@ def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
     (there is no "off" form on the CLI). ``--inline-errors`` flips error_mode to
     INLINE; the default IS separate.
     """
-    from mie_decoder.models import ErrorMode, TimestampFormat
+    from mie_decoder.models import ErrorMode, parse_timestamp_format
 
     overrides: dict[str, object] = {}
     if args.time_format is not None:
-        tf_map = {
-            "auto": TimestampFormat.AUTO,
-            "irig": TimestampFormat.IRIG,
-            "standard": TimestampFormat.STANDARD,
-        }
-        overrides["time_format"] = tf_map[args.time_format]
+        overrides["time_format"] = parse_timestamp_format(args.time_format)
     if args.inline_errors:
         overrides["error_mode"] = ErrorMode.INLINE
     if args.no_clobber:

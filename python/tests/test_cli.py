@@ -168,6 +168,25 @@ class TestBuildDecodeOverrides:
         assert ov["strict"] is True
         assert ov["output_format"] == "csv"
 
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("IRIG", "IRIG"),
+            ("Irig", "IRIG"),
+            ("AUTO", "AUTO"),
+            ("Standard", "STANDARD"),
+        ],
+    )
+    def test_time_format_is_case_insensitive(self, spelling: str, expected: str) -> None:
+        from mie_decoder.models import TimestampFormat
+
+        ov = cli._build_decode_overrides(_decode_ns(time_format=spelling))
+        assert ov["time_format"] == TimestampFormat[expected]
+
+    def test_time_format_invalid_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Invalid time_format"):
+            cli._build_decode_overrides(_decode_ns(time_format="bogus"))
+
     def test_detect_and_lookahead_valid_bounds(self) -> None:
         from mie_decoder.config import DETECT_RECORDS_MIN, LOOKAHEAD_RECORDS_MIN
 
