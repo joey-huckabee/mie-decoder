@@ -66,6 +66,33 @@ class TestValidators:
         with pytest.raises(ValueError, match="must be a non-empty string"):
             cli._validate_nonempty("", "--mux-delimiter")
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("0", 0),
+            ("16", 16),
+            ("0x10", 16),
+            ("0X10", 16),
+            ("0o20", 16),
+            ("0b10000", 16),
+            ("  16  ", 16),
+        ],
+    )
+    def test_nonneg_int_accepts_decimal_and_prefixed(self, text: str, expected: int) -> None:
+        assert cli._nonneg_int(text) == expected
+
+    @pytest.mark.parametrize("text", ["-1", "-0x10", "foo", "0x", "", "1.5"])
+    def test_nonneg_int_rejects_invalid(self, text: str) -> None:
+        with pytest.raises(argparse.ArgumentTypeError, match="non-negative integer"):
+            cli._nonneg_int(text)
+
+    @pytest.mark.parametrize("flag", ["--offset", "--length", "--records"])
+    def test_dump_numeric_args_accept_hex(self, flag: str) -> None:
+        # Every numeric dump argument accepts 0x hex identically (previously
+        # --records was decimal-only, an internal inconsistency).
+        args = cli.build_parser().parse_args(["dump", "f.mie", flag, "0x10"])
+        assert getattr(args, flag.lstrip("-")) == 16
+
     def test_log_safe_neutralizes_crlf(self) -> None:
         # S5145: user-controlled values (e.g. an input path) must not be able to
         # inject newlines into the log. CR/LF are escaped; plain text is intact.
