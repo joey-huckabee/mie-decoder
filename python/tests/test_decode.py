@@ -420,6 +420,13 @@ class TestDecodeStandardTimestamp:
         one = decode_standard_timestamp(0x0000, 0x0001)
         assert one.to_microseconds(2_000_000.0) == 1
 
+        # Regression / Rust parity (L2-DEC-017): 1 tick at 2000000.0000000002 Hz
+        # is x = 0.49999999999999994, one ULP below 0.5. Rust f64::round gives 0;
+        # the old int(x + 0.5) formula gave 1 (Python evaluates x + 0.5 == 1.0),
+        # a silent 1 us divergence. The floor-based rounding must return 0.
+        near_half = decode_standard_timestamp(0x0000, 0x0001)
+        assert near_half.to_microseconds(2000000.0000000002) == 0
+
 
 class TestDetectTimestampFormat:
     """Tests for auto-detection of timestamp format."""

@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn standard_to_microseconds_rounds_half_away_from_zero() {
         // 3 ticks at 2 MHz = 1.5 µs → rounds up to 2 (half-away-from-zero,
-        // matching Python's `int(x + 0.5)`).
+        // matching Python's floor-based rounding).
         let t = StandardTimestamp {
             raw_value: 3,
             upper_word: 0,
@@ -647,6 +647,10 @@ mod tests {
             lower_word: 1,
         };
         assert_eq!(one.to_microseconds(2_000_000.0), Some(1));
+        // Parity guard (L2-DEC-017): 1 tick at 2000000.0000000002 Hz is
+        // x = 0.49999999999999994, one ULP below 0.5. `f64::round` gives 0.
+        // Python's rounding must agree (its old `int(x + 0.5)` gave 1 here).
+        assert_eq!(one.to_microseconds(2_000_000.000_000_000_2), Some(0));
     }
 
     /// Requirements: L3-RS-005
