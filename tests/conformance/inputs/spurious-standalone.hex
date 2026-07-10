@@ -1,0 +1,25 @@
+# Standalone SPURIOUS_DATA → decoder code 0x2001 (L2-DEC-020).
+#
+# A SPURIOUS_DATA (type 0x20) record that is NOT preceded by an errored record
+# is classified 0x2001 (standalone), as opposed to 0x2000 (continuation of a
+# preceding error — the case exercised by errors-inline.hex). Here a clean
+# NORMAL record precedes the spurious record, so `prev_was_error` is false and
+# the standalone 0x2001 branch is taken.
+
+# Record 1: normal RT15 SA11 Receive (byte-identical to count-one.hex). A clean,
+# non-errored prior record so the following spurious record is standalone.
+02240F1826DB21F6
+7E79
+0004 0000 0000 2F00 22CA 2F00 22CA
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000
+71C7 0078
+
+# Record 2: SPURIOUS_DATA with two raw words, no preceding error → code 0x2001.
+# TW 0x0620 (type=0x20, wc=6) + IRIG (0x180F, 0xDB26, 0xF738) + raw AAAA BBBB.
+2006 0F18 26DB 38F7
+AAAA BBBB
+
+# end-of-records terminator
+0000
