@@ -350,16 +350,18 @@ class TestMergeOutputCollision:
 
 
 class TestCheckMergeOutputCollision:
-    def test_single_input_skips(self) -> None:
+    def test_no_merge_skips(self) -> None:
+        # A single-input decode (merge not requested) defers to the writer's own
+        # input/output check, so this guard is a no-op.
         args = SimpleNamespace(output=Path("out.csv"))
-        assert cli._check_merge_output_collision(args, [Path("a.mie")], [object()]) is None  # type: ignore[arg-type]
+        assert (
+            cli._check_merge_output_collision(args, [Path("a.mie")], merge_requested=False) is None
+        )
 
     def test_no_output_skips(self) -> None:
         args = SimpleNamespace(output=None)
         rc = cli._check_merge_output_collision(
-            args,
-            [Path("a.mie"), Path("b.mie")],
-            [object(), object()],  # type: ignore[arg-type]
+            args, [Path("a.mie"), Path("b.mie")], merge_requested=True
         )
         assert rc is None
 
@@ -369,10 +371,6 @@ class TestCheckMergeOutputCollision:
         f = tmp_path / "a.mie"
         f.write_bytes(b"x")
         args = SimpleNamespace(output=f)
-        rc = cli._check_merge_output_collision(
-            args,
-            [tmp_path / "b.mie", f],
-            [object(), object()],  # type: ignore[arg-type]
-        )
+        rc = cli._check_merge_output_collision(args, [tmp_path / "b.mie", f], merge_requested=True)
         assert rc == EXIT_RUNTIME
         assert "Error:" in capsys.readouterr().err

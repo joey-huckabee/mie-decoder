@@ -35,6 +35,13 @@ full release workflow.
   through one shared parser per implementation that accepts decimal and `0x` hex
   (Python also accepts `0o` / `0b`) and rejects negative values, matching the
   Rust unsigned semantics. Invalid values are a usage error (exit 4).
+- **Python merge output-collision guard now fires when `--allow-partial` drops a
+  merge to a single surviving input.** The guard was gated on the surviving
+  reader count, so a multi-input merge that lost all but one input to
+  `--allow-partial` skipped it — and because the writer's own single-input check
+  is bypassed for any requested merge, an output path pointing at one of the
+  inputs could overwrite it in place. It is now gated on whether a merge was
+  *requested* (checking the full requested input set), matching the Rust CLI.
 - **The Rust config loader now honors the `[merge]` section.** Setting
   `[merge] collapse_duplicates` / `collapse_window_us` in a TOML config file had
   no effect on the Rust CLI — the section was silently ignored and even reported

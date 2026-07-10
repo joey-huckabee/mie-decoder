@@ -277,6 +277,34 @@ def test_cli_merge_allow_partial_open_failure_writes_dot_partial(tmp_path: Path)
     assert not out.exists()
 
 
+@pytest.mark.requirement("L2-WRT-014")
+def test_cli_merge_allow_partial_single_survivor_still_guards_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression: a merge (two inputs *requested*) where ``--allow-partial``
+    drops one input to a single surviving reader must STILL reject an output path
+    that collides with an input. Previously the collision guard gated on the
+    surviving reader count (``len(readers) > 1``), so this case silently skipped
+    both it and the writer's own single-input check (``WriteOptions`` receives
+    ``input_path=None`` for any requested merge), risking an in-place overwrite of
+    the input. Now gated on ``merge_requested``, mirroring the Rust CLI."""
+    from mie_decoder.cli import EXIT_RUNTIME, main
+
+    good = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    fg = tmp_path / "good.mie"
+    fe = tmp_path / "empty.mie"
+    fg.write_bytes(good)
+    fe.write_bytes(b"")  # 0-byte → dropped at open under --allow-partial
+    before = fg.read_bytes()
+    # Output path collides with the surviving input file.
+    rc = main(["decode", str(fg), str(fe), "-o", str(fg), "--allow-partial"])
+    assert rc == EXIT_RUNTIME
+    # The collision guard fired specifically (not an incidental write error).
+    assert "resolves to merge input" in capsys.readouterr().err
+    assert fg.read_bytes() == before  # input left intact, never overwritten
+
+
 # ── CLI bad-input / cap / robustness (L2-MRG-001, L1-ROB-001) ──────────────
 
 
