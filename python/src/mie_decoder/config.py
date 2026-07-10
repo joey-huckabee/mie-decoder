@@ -28,7 +28,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from mie_decoder.models import Bus, ErrorMode, MessageType, TimestampFormat
+from mie_decoder.models import (
+    Bus,
+    ErrorMode,
+    MessageType,
+    TimestampFormat,
+    parse_timestamp_format,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,13 +142,6 @@ def _require_rt_sa_range(  # pylint: disable=redefined-outer-name
 
 #: Map of bus name strings to Bus enum values.
 _BUS_NAME_MAP: dict[str, Bus] = {"A": Bus.A, "B": Bus.B}
-
-#: Map of timestamp format names to TimestampFormat enum values.
-_TIME_FORMAT_MAP: dict[str, TimestampFormat] = {
-    "auto": TimestampFormat.AUTO,
-    "irig": TimestampFormat.IRIG,
-    "standard": TimestampFormat.STANDARD,
-}
 
 #: Map of error mode names to ErrorMode enum values.
 _ERROR_MODE_MAP: dict[str, ErrorMode] = {
@@ -560,10 +559,7 @@ def _load_logging_level(logging_section: dict[str, Any]) -> str:
 
 def _load_time_format(decode_section: dict[str, Any]) -> TimestampFormat:
     """`[decode] time_format`."""
-    tf_str = decode_section.get("time_format", "auto").lower()
-    if tf_str not in _TIME_FORMAT_MAP:
-        raise ValueError(f"Invalid time_format: {tf_str!r}. Valid: auto, irig, standard")
-    return _TIME_FORMAT_MAP[tf_str]
+    return parse_timestamp_format(decode_section.get("time_format", "auto"))
 
 
 def _load_error_mode(decode_section: dict[str, Any]) -> ErrorMode:

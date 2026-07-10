@@ -457,14 +457,11 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
 // ── Helpers for value coercion ────────────────────────────────────────
 
 fn parse_time_format(s: &str) -> Result<TimestampFormat, ConfigError> {
-    match s.to_ascii_lowercase().as_str() {
-        "auto" => Ok(TimestampFormat::Auto),
-        "irig" => Ok(TimestampFormat::Irig),
-        "standard" => Ok(TimestampFormat::Standard),
-        other => Err(ConfigError(format!(
-            "Invalid time_format: {other:?}. Valid: auto, irig, standard"
-        ))),
-    }
+    TimestampFormat::from_name_ci(s).ok_or_else(|| {
+        ConfigError(format!(
+            "Invalid time_format: {s:?}. Valid: auto, irig, standard"
+        ))
+    })
 }
 
 fn parse_error_mode(s: &str) -> Result<ErrorMode, ConfigError> {
@@ -851,6 +848,24 @@ time_format = "auto"
         let cfg = parse_into_config(text).unwrap();
         assert!(cfg.strict);
         assert_eq!(cfg.time_format, TimestampFormat::Auto);
+    }
+
+    /// Requirements: L2-CFG-001
+    #[test]
+    fn time_format_is_case_insensitive() {
+        for (spelling, expected) in [
+            ("IRIG", TimestampFormat::Irig),
+            ("Irig", TimestampFormat::Irig),
+            ("AUTO", TimestampFormat::Auto),
+            ("Standard", TimestampFormat::Standard),
+        ] {
+            let text = format!("[decode]\ntime_format = \"{spelling}\"\n");
+            let cfg = parse_into_config(&text).unwrap();
+            assert_eq!(cfg.time_format, expected, "spelling {spelling:?}");
+        }
+        // An unrecognized spelling is still rejected.
+        let bad = "[decode]\ntime_format = \"bogus\"\n";
+        assert!(parse_into_config(bad).is_err());
     }
 
     /// Requirements: L2-CFG-001

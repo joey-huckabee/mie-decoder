@@ -59,7 +59,7 @@ DECODE OPTIONS:
                                         loss, write a <output>.partial
                                         file and exit 0 instead of 3
                                         (L1-EXIT-004)
-  --time-format auto|irig|standard      Default auto
+  --time-format auto|irig|standard      Default auto (case-insensitive)
   --detect-records N                    Records probed by timestamp-
                                         format auto-detection (1..=32,
                                         default 8). L2-DEC-015.
@@ -769,14 +769,8 @@ fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, ParseError> {
 }
 
 fn parse_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "auto" => Ok(TimestampFormat::Auto),
-        "irig" => Ok(TimestampFormat::Irig),
-        "standard" => Ok(TimestampFormat::Standard),
-        other => Err(format!(
-            "invalid --time-format: {other:?}; valid: auto, irig, standard"
-        )),
-    }
+    TimestampFormat::from_name_ci(s)
+        .ok_or_else(|| format!("invalid --time-format: {s:?}; valid: auto, irig, standard"))
 }
 
 /// L2-DEC-015: validate the `--detect-records` argument against the
@@ -1401,6 +1395,30 @@ mod tests {
             Err(ParseError::HelpRequested) => {}
             other => panic!("expected HelpRequested, got {other:?}"),
         }
+    }
+
+    /// `--time-format` accepts any letter case (auto/irig/standard), matching
+    /// the config loader; an unrecognized value is a usage error.
+    /// Requirements: L2-CLI-001
+    #[test]
+    fn time_format_arg_is_case_insensitive() {
+        assert_eq!(
+            parse_time_format_arg("IRIG").unwrap(),
+            TimestampFormat::Irig
+        );
+        assert_eq!(
+            parse_time_format_arg("Irig").unwrap(),
+            TimestampFormat::Irig
+        );
+        assert_eq!(
+            parse_time_format_arg("AUTO").unwrap(),
+            TimestampFormat::Auto
+        );
+        assert_eq!(
+            parse_time_format_arg("Standard").unwrap(),
+            TimestampFormat::Standard
+        );
+        assert!(parse_time_format_arg("bogus").is_err());
     }
 
     /// Requirements: L2-CLI-008, L3-RS-008

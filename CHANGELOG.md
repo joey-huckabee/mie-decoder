@@ -15,6 +15,20 @@ full release workflow.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Version short flag parity across implementations.** Both CLIs now accept
+  `-V`, `-v`, and `--version` (with any letter case in the long form). Previously
+  Rust accepted only `-V` and Python only `-v`, so a flag that worked on one
+  implementation failed on the other.
+- **`--time-format` is now case-insensitive on both implementations.** The Python
+  CLI previously rejected `--time-format IRIG` / `Auto` (argparse `choices` are
+  case-sensitive) while Rust accepted them. Both CLIs and both config loaders now
+  route every spelling through one shared case-insensitive parser per
+  implementation, so the CLI and `[decode] time_format` can never disagree on
+  which names are accepted. An unrecognized name is still rejected (CLI: usage
+  error, exit 4; config file: config error, exit 5).
+
 ## [2.7.0] — 2026-07-08
 
 Minor release from a second round of team review. Adds a small public-API

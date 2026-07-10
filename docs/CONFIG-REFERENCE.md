@@ -123,7 +123,7 @@ Selects the timestamp format used by the binary file. DDC recording cards suppor
 
 **Tie-break (L2-DEC-012):** When `"auto"` and both formats score equally, IRIG is selected. Flight-test recordings overwhelmingly use IRIG; this tie-break preserves the most common path.
 
-**Validation:** rejected at load time if not one of the three values. An explicit `irig` or `standard` is still sanity-checked against the L2-DEC-015 detection probe — pointing the decoder at an IRIG file with `--time-format standard` surfaces a distinct error class in strict mode when the probe is decisive for the other format (L2-DEC-013).
+**Validation:** rejected at load time if not one of the three values. The name is matched case-insensitively (`IRIG`, `Auto`, and `standard` are all accepted), identically on the CLI and in the config file. An explicit `irig` or `standard` is still sanity-checked against the L2-DEC-015 detection probe — pointing the decoder at an IRIG file with `--time-format standard` surfaces a distinct error class in strict mode when the probe is decisive for the other format (L2-DEC-013).
 
 ### `strict`
 
