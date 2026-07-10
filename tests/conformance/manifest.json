@@ -348,6 +348,18 @@
       ]
     },
     {
+      "name": "merge-collapse-cross-recorder-config",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-a.hex"
+      ],
+      "expected": "expected/merge-collapse-cross-recorder.csv",
+      "config": "configs/collapse-duplicates.toml",
+      "args": [
+        "--inline-errors"
+      ]
+    },
+    {
       "name": "merge-collapse-no-op",
       "inputs": [
         "inputs/merge-a.hex",
