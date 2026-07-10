@@ -809,14 +809,21 @@ def _open_reader(path: Path, config: DecoderConfig) -> MieFileReader:
 def _check_merge_output_collision(
     args: argparse.Namespace,
     input_paths: list[Path],
-    readers: list[MieFileReader],
+    *,
+    merge_requested: bool,
 ) -> int | None:
-    """For a merge (>1 input) writing to a file, reject an output path that
-    resolves to one of the inputs (L2-WRT-014 across the set); a single input
-    uses the writer's own input/output check. Returns an exit code to
-    short-circuit on, or ``None`` to continue.
+    """For a merge writing to a file, reject an output path that resolves to any
+    of the inputs (L2-WRT-014 across the set); a single input uses the writer's
+    own input/output check. Returns an exit code to short-circuit on, or ``None``
+    to continue.
+
+    Gated on whether a merge was *requested*, not on the surviving reader count:
+    ``--allow-partial`` can drop a multi-input merge to a single open reader, and
+    in that case the writer's own single-input guard is also bypassed (it receives
+    ``input_path=None`` whenever a merge was requested), so this is the only guard
+    that runs — mirroring the Rust CLI, which gates on ``merge_requested``.
     """
-    if len(readers) > 1 and args.output is not None:
+    if merge_requested and args.output is not None:
         collision = _merge_output_collision(args.output, input_paths)
         if collision is not None:
             logger.error("%s", collision)
@@ -1095,7 +1102,9 @@ def _run_decode(args: argparse.Namespace) -> int:
     for r in readers:
         logger.info("Opened %s (%d bytes)", r.path.name, r.file_size)
 
-    collision_code = _check_merge_output_collision(args, input_paths, readers)
+    collision_code = _check_merge_output_collision(
+        args, input_paths, merge_requested=merge_requested
+    )
     if collision_code is not None:
         return collision_code
 
