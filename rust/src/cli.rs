@@ -102,8 +102,8 @@ DECODE OPTIONS:
 DUMP OPTIONS:
   --raw                                 Raw hex dump (no record parsing)
   --offset N                            Start offset (decimal or 0xHEX)
-  --length N                            Bytes to dump (raw mode)
-  --records N                           Max records to dump (record mode)
+  --length N                            Bytes to dump, raw mode (decimal or 0xHEX)
+  --records N                           Max records, record mode (decimal or 0xHEX)
 
 EXAMPLES:
   mie-decoder decode rec.mie -o out.csv
@@ -1438,6 +1438,34 @@ mod tests {
         match parse_dump(&mut it) {
             Err(ParseError::HelpRequested) => {}
             other => panic!("expected HelpRequested, got {other:?}"),
+        }
+    }
+
+    /// Every numeric `dump` argument accepts decimal and `0x` hex identically,
+    /// and rejects a negative value (the parser is unsigned). Mirrors the Python
+    /// `_nonneg_int` parity test.
+    /// Requirements: L2-CLI-009
+    #[test]
+    fn parse_dump_numeric_args_accept_hex_and_reject_negative() {
+        let d = parse_dump(&mut args(&[
+            "f.mie",
+            "--offset",
+            "0x20",
+            "--length",
+            "16",
+            "--records",
+            "0x10",
+        ]))
+        .unwrap();
+        assert_eq!(d.offset, 0x20);
+        assert_eq!(d.length, Some(16));
+        assert_eq!(d.records, Some(0x10));
+
+        for flag in ["--offset", "--length", "--records"] {
+            assert!(
+                parse_dump(&mut args(&["f.mie", flag, "-1"])).is_err(),
+                "{flag} should reject a negative value"
+            );
         }
     }
 

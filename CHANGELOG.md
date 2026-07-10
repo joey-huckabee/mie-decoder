@@ -28,6 +28,13 @@ full release workflow.
   implementation, so the CLI and `[decode] time_format` can never disagree on
   which names are accepted. An unrecognized name is still rejected (CLI: usage
   error, exit 4; config file: config error, exit 5).
+- **`dump` numeric arguments accept the same notation across both flags and
+  implementations.** Python's `dump --records` was decimal-only while its own
+  `--offset` / `--length` already accepted `0x` hex (and Rust accepted hex on all
+  three) — an internal and cross-implementation inconsistency. All three now go
+  through one shared parser per implementation that accepts decimal and `0x` hex
+  (Python also accepts `0o` / `0b`) and rejects negative values, matching the
+  Rust unsigned semantics. Invalid values are a usage error (exit 4).
 
 ## [2.7.0] — 2026-07-08
 

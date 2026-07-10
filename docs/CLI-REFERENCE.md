@@ -196,7 +196,7 @@ mie-decoder dump <INPUT> [options]
 | `--raw` | flag | off | Raw hex dump with no record parsing. |
 | `--offset N` | int (accepts `0x…`) | `0` | Start offset in bytes. |
 | `--length N` | int (accepts `0x…`) | *(all)* | Number of bytes to dump (raw mode). |
-| `--records N` | int | *(all)* | Maximum number of records to dump (record mode). |
+| `--records N` | int (accepts `0x…`) | *(all)* | Maximum number of records to dump (record mode). |
 
 `dump` consumes only the `[logging]` level from `--config`; the decode-time keys
 (`time_format`, filters, `strict`, …) do not apply to a hex dump.

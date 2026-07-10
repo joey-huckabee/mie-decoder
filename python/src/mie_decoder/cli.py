@@ -112,6 +112,32 @@ class _UsageErrorParser(argparse.ArgumentParser):
         self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
 
 
+def _nonneg_int(value: str) -> int:
+    """Parse a non-negative integer for the ``dump`` byte/record arguments.
+
+    Accepts decimal (``16``) and base-prefixed (``0x10`` / ``0o20`` / ``0b10000``)
+    notation via ``int(value, 0)``. This is the single ``type=`` used by every
+    numeric ``dump`` argument (``--offset`` / ``--length`` / ``--records``) so they
+    all accept the same notation — previously ``--records`` was decimal-only while
+    ``--offset`` / ``--length`` took hex, an internal inconsistency. Mirrors the
+    Rust ``parse_int_value`` unsigned semantics, so a negative value is rejected
+    on both implementations.
+
+    Raises:
+        argparse.ArgumentTypeError: if the value is not a non-negative integer.
+            argparse turns this into a usage error (exit 4).
+    """
+    try:
+        parsed = int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected a non-negative integer (decimal or 0x hex), got {value!r}"
+        ) from None
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"expected a non-negative integer, got {value!r}")
+    return parsed
+
+
 class _CommaSeparatedAppend(argparse.Action):
     """Collect comma-separated, repeatable filter values into a flat list.
 
@@ -519,21 +545,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dump_parser.add_argument(
         "--offset",
-        type=lambda x: int(x, 0),
+        type=_nonneg_int,
         default=0,
-        help="Start offset in bytes (supports 0x hex notation).",
+        help="Start offset in bytes (decimal or 0x hex). Default: 0.",
     )
     dump_parser.add_argument(
         "--length",
-        type=lambda x: int(x, 0),
+        type=_nonneg_int,
         default=None,
-        help="Number of bytes to dump (raw mode). Default: all.",
+        help="Number of bytes to dump (raw mode; decimal or 0x hex). Default: all.",
     )
     dump_parser.add_argument(
         "--records",
-        type=int,
+        type=_nonneg_int,
         default=None,
-        help="Max number of records to dump (record mode). Default: all.",
+        help="Max number of records to dump (record mode; decimal or 0x hex). Default: all.",
     )
     # dump only consumes [logging] level from the global --config; the
     # other decode-time keys (time_format, filters, strict, etc.) don't
