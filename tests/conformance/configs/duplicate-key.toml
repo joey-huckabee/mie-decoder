@@ -1,0 +1,7 @@
+# Conformance fixture: a duplicated key must be rejected as a config error
+# (exit 5) on BOTH implementations. Python's tomllib raises per the TOML spec;
+# the Rust hand-rolled parser matches it (it previously kept the first value
+# silently). The value here is intentionally malformed, so no CSV is produced.
+[decode]
+strict = true
+strict = false
