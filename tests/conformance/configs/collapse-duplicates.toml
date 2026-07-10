@@ -1,0 +1,11 @@
+# Conformance fixture: exercise L2-MRG-007 cross-recorder duplicate
+# collapsing via the TOML config path (the matching CLI-flag path is
+# covered by the `merge-collapse-cross-recorder` case). Both cases share
+# the `expected/merge-collapse-cross-recorder.csv` oracle, proving the
+# config and CLI paths produce byte-identical output.
+#
+# This pins the Rust `[merge]` section loader against the Python one: the
+# Rust loader previously ignored `[merge]` entirely (warning it was an
+# unknown key), so this config was a silent no-op on Rust only.
+[merge]
+collapse_duplicates = true

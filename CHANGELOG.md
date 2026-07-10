@@ -35,6 +35,15 @@ full release workflow.
   through one shared parser per implementation that accepts decimal and `0x` hex
   (Python also accepts `0o` / `0b`) and rejects negative values, matching the
   Rust unsigned semantics. Invalid values are a usage error (exit 4).
+- **The Rust config loader now honors the `[merge]` section.** Setting
+  `[merge] collapse_duplicates` / `collapse_window_us` in a TOML config file had
+  no effect on the Rust CLI — the section was silently ignored and even reported
+  as an unknown key — while the Python CLI applied it. Cross-recorder duplicate
+  collapsing (L2-MRG-007) can now be configured from a file on both
+  implementations, exactly as `config/default.toml` and `CONFIG-REFERENCE.md`
+  already document; the `--collapse-duplicates` / `--collapse-window-us` CLI
+  flags still override it. A negative `collapse_window_us` is rejected at load
+  time (exit 5). A new conformance case pins the config path to the CLI path.
 
 ## [2.7.0] — 2026-07-08
 

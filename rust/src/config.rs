@@ -269,6 +269,7 @@ pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     apply_decode_section(&toml, &mut cfg)?;
     apply_output_section(&toml, &mut cfg)?;
     apply_mux_section(&toml, &mut cfg)?;
+    apply_merge_section(&toml, &mut cfg)?;
     apply_filter_sections(&toml, &mut cfg)?;
     warn_unknown_keys(&toml);
     Ok(cfg)
@@ -387,6 +388,25 @@ fn apply_mux_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), Conf
     Ok(())
 }
 
+/// `[merge]`: cross-recorder duplicate collapsing (L2-MRG-007). Mirrors the
+/// Python `_load_merge_section` so a `[merge]` block in a shared config file
+/// behaves identically on both implementations (the CLI flags
+/// `--collapse-duplicates` / `--collapse-window-us` still override it).
+fn apply_merge_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
+    if let Some(b) = toml.get_bool("merge", "collapse_duplicates")? {
+        cfg.collapse_duplicates = b;
+    }
+    if let Some(n) = toml.get_int("merge", "collapse_window_us")? {
+        if n < 0 {
+            return Err(ConfigError(format!(
+                "Invalid merge.collapse_window_us: {n}; must be a non-negative integer"
+            )));
+        }
+        cfg.collapse_window_us = n as u64;
+    }
+    Ok(())
+}
+
 /// `[filter]`: the four exclude-array keys, each element validated on push.
 fn apply_filter_sections(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
     if let Some(types) = toml.get_array("filter", "exclude_types")? {
@@ -447,6 +467,8 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("mux", "enabled")
             | ("mux", "delimiter")
             | ("mux", "field")
+            | ("merge", "collapse_duplicates")
+            | ("merge", "collapse_window_us")
             | ("filter", "exclude_types")
             | ("filter", "exclude_rts")
             | ("filter", "exclude_buses")
@@ -1075,6 +1097,46 @@ exclude_types = ["UNICORN"]
         }
     }
 
+    /// A `[merge]` section in a config file must drive the collapse settings,
+    /// identically to the Python loader (L2-MRG-007) — previously the Rust
+    /// loader ignored the section entirely and warned it was unknown.
+    /// Requirements: L2-MRG-007, L2-CFG-001
+    #[test]
+    fn parses_merge_section() {
+        let cfg =
+            parse_into_config("[merge]\ncollapse_duplicates = true\ncollapse_window_us = 100\n")
+                .unwrap();
+        assert!(cfg.collapse_duplicates);
+        assert_eq!(cfg.collapse_window_us, 100);
+        // The keys are recognized, so they don't trip the unknown-key WARN.
+        assert!(is_known_shared_key("merge", "collapse_duplicates"));
+        assert!(is_known_shared_key("merge", "collapse_window_us"));
+    }
+
+    /// Defaults hold when the section (or a key) is absent.
+    /// Requirements: L2-MRG-007
+    #[test]
+    fn merge_section_defaults_when_absent() {
+        let cfg = parse_into_config("[merge]\ncollapse_duplicates = true\n").unwrap();
+        assert!(cfg.collapse_duplicates);
+        assert_eq!(cfg.collapse_window_us, 0);
+    }
+
+    /// A negative window is a load-time error (L2-CFG-010), and a non-integer
+    /// window is rejected by the typed getter — matching the Python loader.
+    /// Requirements: L2-MRG-007, L2-CFG-010
+    #[test]
+    fn merge_section_rejects_bad_window() {
+        let neg = parse_into_config("[merge]\ncollapse_window_us = -1\n").unwrap_err();
+        assert!(neg.0.contains("collapse_window_us"), "got {:?}", neg.0);
+        let not_int = parse_into_config("[merge]\ncollapse_window_us = true\n").unwrap_err();
+        assert!(
+            not_int.0.contains("must be an integer"),
+            "got {:?}",
+            not_int.0
+        );
+    }
+
     /// The advertised "fully-commented starter file" must actually contain
     /// every key documented in `docs/CONFIG-REFERENCE.md` (active or as a
     /// commented example), so the reference config can't silently drift
@@ -1104,6 +1166,8 @@ exclude_types = ["UNICORN"]
             "standard_tick_rate_hz",
             "format",
             "no_clobber",
+            "collapse_duplicates",
+            "collapse_window_us",
             "exclude_types",
             "exclude_rts",
             "exclude_buses",
