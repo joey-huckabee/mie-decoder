@@ -40,7 +40,7 @@ Global options are placed **before** the subcommand.
 |------|-------|---------|-------------|
 | `--config PATH` | path | *(none)* | TOML configuration file. Applies to `decode`, `count`, and `dump` (the last consumes only its `[logging]` level). |
 | `--log-level LEVEL` | `DEBUG` \| `INFO` \| `WARNING` \| `WARN` \| `ERROR` \| `CRITICAL` \| `OFF` | `WARNING` | Log verbosity (case-insensitive). Overrides the config file's `[logging] level`. Validated after `--version` / `--help`. |
-| `-V`, `--version` | — | — | Print the version and exit. |
+| `-V`, `-v`, `--version` | — | — | Print the version and exit. Both short forms are accepted, and `--version` matches in any letter case (`--VERSION`, `--Version`, …). |
 | `-h`, `--help` | — | — | Print help for the program or the given subcommand and exit. |
 
 ---

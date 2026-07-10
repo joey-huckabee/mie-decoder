@@ -198,6 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-v",
+        "-V",
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
@@ -1240,6 +1241,18 @@ def _force_utf8_streams() -> None:
             pass
 
 
+def _normalize_version_flag(argv: list[str]) -> list[str]:
+    """Accept ``--version`` in any letter case by rewriting a case-insensitive
+    long version token to the canonical ``--version`` argparse knows. The short
+    ``-v`` / ``-V`` forms are registered directly on the parser. Keeps the Python
+    and Rust CLIs in agreement on every spelling of the version flag.
+    """
+    return [
+        "--version" if arg.startswith("--") and arg[2:].lower() == "version" else arg
+        for arg in argv
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the MIE-Decoder CLI.
 
@@ -1252,6 +1265,10 @@ def main(argv: list[str] | None = None) -> int:
         error; 5 configuration error.
     """
     _force_utf8_streams()
+
+    if argv is None:
+        argv = sys.argv[1:]
+    argv = _normalize_version_flag(argv)
 
     parser = build_parser()
     args = parser.parse_args(argv)

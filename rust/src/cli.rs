@@ -39,7 +39,7 @@ GLOBAL OPTIONS:
                                         CRITICAL|OFF (default WARNING;
                                         case-insensitive; CRITICAL/OFF silence)
   --config PATH                         TOML configuration file
-  -V, --version                         Print version and exit
+  -V, -v, --version                     Print version and exit
   -h, --help                            Print this help and exit
 
 DECODE OPTIONS:
@@ -317,6 +317,18 @@ fn die(msg: &str) -> ExitCode {
 /// Consume leading global flags (`--log-level`, `--config`) and `-h`/`-V`.
 /// Returns `Ok(Some(token))` with the first non-flag token (the subcommand),
 /// `Ok(None)` if none follows, or `Err(code)` when the caller (`run`) should
+/// True for any accepted spelling of the version flag: the short `-V` / `-v`,
+/// or a `--version` long flag in any letter case (`--version`, `--VERSION`,
+/// `--Version`, …). Kept lenient on purpose so the two CLIs agree on every
+/// spelling a user might reach for.
+fn is_version_flag(arg: &str) -> bool {
+    arg == "-V"
+        || arg == "-v"
+        || arg
+            .strip_prefix("--")
+            .is_some_and(|word| word.eq_ignore_ascii_case("version"))
+}
+
 /// return that exit code immediately (help/version printed, or a usage error).
 fn parse_global_flags(
     iter: &mut ArgIter<'_>,
@@ -328,7 +340,7 @@ fn parse_global_flags(
                 print!("{HELP}");
                 return Err(ExitCode::SUCCESS);
             }
-            Some("-V") | Some("--version") => {
+            Some(s) if is_version_flag(s) => {
                 println!("mie-decoder {VERSION}");
                 return Err(ExitCode::SUCCESS);
             }

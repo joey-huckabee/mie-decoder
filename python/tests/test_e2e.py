@@ -1243,6 +1243,19 @@ class TestCliEndToEnd:
                 main(["--log-level", "BOGUS", *tail])
             assert exc_info.value.code in (0, None), f"{tail} should exit 0"
 
+    @pytest.mark.requirement("L2-CLI-005")
+    def test_cli_version_flag_all_spellings(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Every accepted spelling of the version flag — both short forms
+        (``-V``/``-v``) and the long form in any letter case — prints the version
+        and exits 0, matching the Rust CLI."""
+        from mie_decoder.cli import main
+
+        for flag in ("-V", "-v", "--version", "--VERSION", "--Version", "--vErSiOn"):
+            with pytest.raises(SystemExit) as exc_info:
+                main([flag])
+            assert exc_info.value.code in (0, None), f"{flag} should exit 0"
+            assert "mie-decoder" in capsys.readouterr().out, f"{flag} should print the version"
+
     @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_records(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """CLI dump should print record-aware hex dump to stdout."""

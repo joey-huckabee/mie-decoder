@@ -167,6 +167,31 @@ fn version_prints_crate_version() {
     );
 }
 
+/// Every accepted spelling of the version flag — both short forms (`-V`/`-v`)
+/// and the long form in any letter case — prints the version and exits 0, so
+/// the Rust and Python CLIs agree on every spelling a user might type.
+/// Requirements: L2-CLI-005
+#[test]
+fn version_flag_accepts_all_spellings() {
+    let expected = env!("CARGO_PKG_VERSION");
+    for flag in [
+        "-V",
+        "-v",
+        "--version",
+        "--VERSION",
+        "--Version",
+        "--vErSiOn",
+    ] {
+        let out = run([flag]);
+        assert_eq!(exit_code(&out), 0, "{flag} must exit 0");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains(expected),
+            "{flag} output missing crate version '{expected}'\n--- stdout ---\n{stdout}"
+        );
+    }
+}
+
 /// Requirements: L2-CLI-001, L2-CLI-002, L2-WRT-001
 #[test]
 fn decode_happy_path_writes_csv_with_header_and_one_row() {
