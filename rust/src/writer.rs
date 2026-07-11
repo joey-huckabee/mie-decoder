@@ -82,40 +82,16 @@ pub struct AtomicCsvFile {
 
 impl AtomicCsvFile {
     pub fn create(final_path: PathBuf) -> MieResult<Self> {
-        // Exclusive create (`create_new` == O_CREAT|O_EXCL): never opens an
-        // existing file, so two writers targeting the same destination in one
-        // process cannot collide on a shared name and clobber each other. On the
-        // (near-impossible) name clash we retry with the next unique name.
-        for _ in 0..TEMP_CREATE_MAX_ATTEMPTS {
-            let temp_path = make_temp_path(&final_path);
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp_path)
-            {
-                Ok(file) => {
-                    return Ok(Self {
-                        final_path,
-                        temp_path,
-                        writer: Some(BufWriter::new(file)),
-                        committed: false,
-                    });
-                }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(source) => {
-                    return Err(MieError::WriterError {
-                        destination: temp_path.display().to_string(),
-                        source,
-                    });
-                }
-            }
-        }
-        Err(MieError::WriterError {
-            destination: final_path.display().to_string(),
-            source: io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "could not create a unique temp file",
-            ),
+        let (temp_path, file) = create_exclusive_temp(&final_path, || make_temp_path(&final_path))
+            .map_err(|(path, source)| MieError::WriterError {
+                destination: path.display().to_string(),
+                source,
+            })?;
+        Ok(Self {
+            final_path,
+            temp_path,
+            writer: Some(BufWriter::new(file)),
+            committed: false,
         })
     }
 
@@ -224,6 +200,40 @@ impl Drop for AtomicCsvFile {
             let _ = std::fs::remove_file(&self.temp_path);
         }
     }
+}
+
+/// Exclusively create (`create_new` == `O_CREAT|O_EXCL`) a temp file, retrying
+/// with a fresh name from `next_temp` on a name clash. Never opens an existing
+/// file, so two writers targeting the same destination cannot collide and
+/// clobber each other. Returns the created path + open file, or the
+/// (path-for-error, io error) on a non-clash failure or after exhausting
+/// retries. `next_temp` is injected so the retry/exhaustion paths are testable.
+fn create_exclusive_temp(
+    final_path: &Path,
+    mut next_temp: impl FnMut() -> PathBuf,
+) -> Result<(PathBuf, File), (PathBuf, io::Error)> {
+    let mut last = final_path.to_path_buf();
+    for _ in 0..TEMP_CREATE_MAX_ATTEMPTS {
+        let temp_path = next_temp();
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+        {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                last = temp_path;
+            }
+            Err(source) => return Err((temp_path, source)),
+        }
+    }
+    Err((
+        last,
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not create a unique temp file",
+        ),
+    ))
 }
 
 /// Process-global monotonic counter feeding the temp-file salt, so two writers
@@ -963,6 +973,44 @@ mod tests {
         // Uncommitted: Drop unlinks both temps, leaving the destination absent.
         drop(a);
         drop(b);
+    }
+
+    /// A persistent name clash exhausts the retries and surfaces an error rather
+    /// than looping forever or overwriting.
+    /// Requirements: L2-WRT-015
+    #[test]
+    fn create_exclusive_temp_fails_after_persistent_clash() {
+        let clash = std::env::temp_dir().join("mie-persistent-clash.tmp");
+        std::fs::write(&clash, b"x").unwrap(); // exists → create_new always clashes
+        let dest = std::env::temp_dir().join("out.csv");
+        let result = create_exclusive_temp(&dest, || clash.clone());
+        let (_, err) = result.expect_err("a persistent clash must exhaust retries");
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        let _ = std::fs::remove_file(&clash);
+    }
+
+    /// A non-clash create failure (e.g. a missing parent directory) is returned
+    /// immediately, not retried.
+    /// Requirements: L2-WRT-015
+    #[test]
+    fn create_exclusive_temp_surfaces_non_clash_errors() {
+        let dest = std::env::temp_dir().join("mie-no-such-dir").join("out.csv");
+        let temp = dest.clone();
+        let result = create_exclusive_temp(&dest, || temp.clone());
+        let (_, err) = result.expect_err("a missing parent dir must fail");
+        assert_ne!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    /// `create` wraps a temp-creation failure as `MieError::WriterError` rather
+    /// than leaking the raw io error.
+    /// Requirements: L2-WRT-015
+    #[test]
+    fn create_wraps_temp_creation_failure() {
+        // Parent directory does not exist, so the temp file cannot be created.
+        let dest = std::env::temp_dir()
+            .join("mie-absent-parent-dir")
+            .join("out.csv");
+        assert!(AtomicCsvFile::create(dest).is_err());
     }
 
     /// Requirements: L2-WRT-015

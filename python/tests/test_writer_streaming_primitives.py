@@ -118,6 +118,30 @@ def test_two_writers_same_destination_use_distinct_temps(tmp_path: Path) -> None
     assert _leftover_temps(dest) == []
 
 
+@pytest.mark.requirement("L2-WRT-015")
+def test_atomic_writer_wraps_create_error(tmp_path: Path) -> None:
+    # A create failure that is not a name clash (here: a missing parent
+    # directory) is wrapped as MieWriterError rather than leaked.
+    dest = tmp_path / "no-such-dir" / "out.csv"
+    with pytest.raises(MieWriterError):
+        _AtomicCsvFile(dest)
+
+
+@pytest.mark.requirement("L2-WRT-015")
+def test_atomic_writer_fails_after_persistent_clash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # If every candidate temp name already exists, the writer exhausts its
+    # retries and raises rather than looping forever or overwriting a file.
+    from mie_decoder import writer as writer_mod
+
+    clash = tmp_path / "always-there.tmp"
+    clash.write_text("x")  # exists → open(mode="x") always raises FileExistsError
+    monkeypatch.setattr(writer_mod, "_unique_temp_path", lambda _fp: clash)
+    with pytest.raises(MieWriterError):
+        _AtomicCsvFile(tmp_path / "out.csv")
+
+
 # ── _StreamingCsvRowWriter ─────────────────────────────────────────────
 
 
