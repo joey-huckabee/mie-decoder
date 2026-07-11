@@ -762,6 +762,11 @@ class TestSchemaValidation:
             "[decode]\nx = 1979-05-27\n",  # date-time
             "[filter]\nexclude_rts = [\n1,\n]\n",  # multi-line array
             '[decode]\n"strict" = true\n',  # quoted key
+            "[decode]\ndetect_records = 08\n",  # leading zero (native i64 takes it)
+            "[decode]\nstandard_tick_rate_hz = 1.\n",  # bare trailing dot
+            "[filter]\nexclude_rts = [01]\n",  # leading zero in an array element
+            '[mux]\ndelimiter = "\\r"\n',  # \r escape — not in the supported set
+            '[mux]\ndelimiter = "\\u002C"\n',  # \u escape — not supported
         ],
     )
     def test_non_flat_toml_forms_rejected(self, tmp_path: Path, snippet: str) -> None:
@@ -784,6 +789,8 @@ class TestSchemaValidation:
             '[filter]\nexclude_buses = ["A", "B"]\n',
             "[mux]\nfield = -1\n",
             "[decode]\nstrict = true  # trailing comment\n",
+            '[mux]\ndelimiter = "\\t"\n',  # \t is a supported escape
+            '[mux]\ndelimiter = "\\""\n',  # \" is a supported escape
         ],
     )
     def test_flat_forms_still_accepted(self, tmp_path: Path, snippet: str) -> None:

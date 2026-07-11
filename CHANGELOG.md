@@ -84,6 +84,17 @@ full release workflow.
   (Rust `create_new` / Python mode `"x"`, i.e. `O_EXCL`) with retry — so
   concurrent same-destination writers can no longer share a temp file. Output
   content, permissions, and the atomic-rename behavior are unchanged.
+- **Config numeric and string-escape grammars are now aligned, and a
+  differential fuzzer guards config parsing.** Rust routed numeric literals
+  through native `i64` / `f64` parsing, which accepts non-TOML forms (`08`, `1.`,
+  `[01]`) that Python's `tomllib` rejects, and the two supported different string
+  escape sets. Both now enforce one explicit grammar: numbers match
+  `[+-]?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?` (no leading zeros / bare
+  trailing dot / `0x`-`0o`-`0b` / `_`), and strings accept only the `\"` `\\`
+  `\n` `\t` escapes on both. A new differential fuzzer
+  (`tests/conformance/config_fuzz.py`) generates config documents and asserts
+  both CLIs agree on accept/reject, so a divergence is caught in CI rather than
+  reported after the fact.
 - **Config parsing is now aligned by an explicit whitelist grammar on both
   implementations, closing a whole class of Rust↔Python divergences.** The two
   parsers accepted different TOML subsets — full-TOML `tomllib` on Python vs a

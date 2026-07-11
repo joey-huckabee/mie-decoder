@@ -139,10 +139,43 @@ def _require_table(data: dict[str, Any], section: str) -> dict[str, Any]:
 #: A simple identifier (section name or key): letters, digits, underscores.
 _IDENT_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
-#: A scalar value the flat schema accepts — matching the Rust value grammar:
-#: a double-quoted string, a plain decimal integer/float (optional sign and
-#: exponent, NO underscore separators or 0x/0o/0b prefixes), or a boolean.
-_SCALAR_RE = re.compile(r'^(?:"[^"]*"|[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false)$')
+#: A numeric literal the flat schema accepts, matching the Rust
+#: `is_toml_number_literal` grammar: `[+-]? (0 | [1-9][0-9]*) (.[0-9]+)?
+#: ([eE][+-]?[0-9]+)?`. Rejects leading zeros (`08`, `01`), a bare trailing dot
+#: (`1.`), and `0x`/`0o`/`0b` / underscore forms that `tomllib` and native Rust
+#: parsing disagree on.
+_NUMBER_RE = re.compile(r"^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$")
+
+
+def _basic_string_accepted(tok: str) -> bool:
+    """A double-quoted string using only the escapes the Rust parser supports
+    (``\\"`` ``\\\\`` ``\\n`` ``\\t``).
+
+    Rejects other escapes (``\\r``, ``\\uXXXX``) and an unescaped inner quote,
+    mirroring `rust/src/config.rs::parse_string` exactly — `tomllib` accepts the
+    full TOML escape set, so a naive regex would silently diverge from Rust.
+    """
+    if len(tok) < 2 or tok[0] != '"' or tok[-1] != '"':
+        return False
+    inner = tok[1:-1]
+    i = 0
+    while i < len(inner):
+        if inner[i] == "\\":
+            if i + 1 >= len(inner) or inner[i + 1] not in '"\\nt':
+                return False
+            i += 2
+        elif inner[i] == '"':
+            return False  # unescaped quote inside the string
+        else:
+            i += 1
+    return True
+
+
+def _scalar_accepted(tok: str) -> bool:
+    """A single scalar value the flat schema accepts: a number, a boolean, or a
+    basic string with the Rust-supported escapes."""
+    tok = tok.strip()
+    return bool(_NUMBER_RE.match(tok)) or tok in ("true", "false") or _basic_string_accepted(tok)
 
 
 def _strip_toml_comment(line: str) -> str:
@@ -192,8 +225,8 @@ def _value_accepted(value: str) -> bool:
     value parser does not."""
     value = value.strip()
     if value.startswith("[") and value.endswith("]"):
-        return all(_SCALAR_RE.match(item.strip()) for item in _split_array_items(value[1:-1]))
-    return bool(_SCALAR_RE.match(value))
+        return all(_scalar_accepted(item) for item in _split_array_items(value[1:-1]))
+    return _scalar_accepted(value)
 
 
 def _reject_unsupported_toml_forms(text: str) -> None:
