@@ -331,6 +331,12 @@
       "expected_exit": 5
     },
     {
+      "name": "config-error-duplicate-section",
+      "input": "inputs/standard-timestamps.hex",
+      "config": "configs/duplicate-section.toml",
+      "expected_exit": 5
+    },
+    {
       "name": "config-error-non-string-value",
       "input": "inputs/standard-timestamps.hex",
       "config": "configs/non-string-time-format.toml",

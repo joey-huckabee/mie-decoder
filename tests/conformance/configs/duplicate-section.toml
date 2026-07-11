@@ -1,0 +1,9 @@
+# A re-declared [decode] section header. Invalid TOML: Python tomllib rejects
+# it ("Cannot declare (decode,) twice") and the Rust hand-rolled parser must
+# match (it previously accepted a re-opened section, silently merging the
+# blocks). Both exit 5 (config error); the two blocks use different keys, so
+# the (section, key) duplicate-key guard does not catch this.
+[decode]
+strict = true
+[decode]
+time_format = "irig"

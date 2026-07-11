@@ -410,7 +410,7 @@ The following full-TOML features are **not** supported and will be rejected (or 
 - underscore digit separators in numbers (`1_000_000` — write `1000000`);
 - inline tables (`{ ... }`), dotted keys (`a.b = 1`), and date-time values.
 
-**Duplicate keys are rejected by both implementations.** A repeated `(section, key)` is a load-time config error (exit `5`) on Rust as well as Python — the hand-rolled parser previously kept the *first* value silently; it now matches `tomllib`, which raises per the TOML spec.
+**Duplicate keys and re-declared sections are rejected by both implementations.** A repeated `(section, key)`, or a `[section]` header declared more than once (even with different keys inside), is a load-time config error (exit `5`) on Rust as well as Python — the hand-rolled parser previously kept the *first* value / silently merged the re-opened section; it now matches `tomllib`, which raises per the TOML spec.
 
 The bundled `config/default.toml` stays within this subset, so a config derived from it is portable across both implementations.
 
