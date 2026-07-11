@@ -404,13 +404,15 @@ To preserve the crate's single-dependency design (only `memmap2`), Rust parses T
 - values: double-quoted strings (`"..."`), integers, floats, booleans (`true` / `false`), and **single-line** primitive arrays (`[1, 2, 3]` or `["A", "B"]`);
 - `#` line comments and trailing comments (a `#` inside a quoted string is preserved).
 
-The following full-TOML features are **not** part of the schema. Use only the flat `[section]` + `key = value` form:
+**Anything outside this flat subset is a load-time config error (exit `5`) on _both_ implementations.** Rather than accept different subsets and reconcile them one form at a time, Python validates every config line against the same grammar the Rust parser accepts (a whitelist run before `tomllib`), and both refuse the rest. The full-TOML forms that are therefore rejected include:
 
 - multi-line / spanning arrays;
-- underscore digit separators in numbers (`1_000_000` — write `1000000`);
-- inline tables (`{ ... }`) and date-time values.
+- underscore digit separators in numbers (`1_000_000` — write `1000000`) and `0x` / `0o` / `0b` integer prefixes;
+- inline tables (`{ ... }`) and date-time values;
+- quoted keys (`"strict" = ...`);
+- dotted keys (`decode.strict = true`), dotted section headers (`[output.no_clobber]`), and array-of-tables headers (`[[decode]]`).
 
-**Dotted keys, dotted section headers, and array-of-tables headers are rejected by both implementations.** A dotted key (`decode.strict = true`), a dotted section header (`[output.no_clobber]`), and an array-of-tables header (`[[decode]]`) are all load-time config errors (exit `5`) on Rust *and* Python — only the flat `[section]` + `key = value` form is accepted. `tomllib` would otherwise *nest* a dotted key or header while the Rust parser dropped it or stored it literally — a divergence that could, for example, silently ignore a mis-typed `[output.no_clobber]` (dropping overwrite protection) on one implementation — so both now refuse these forms.
+`tomllib` would otherwise *honor* several of these (nesting a dotted key/header, stripping a quoted key, normalizing `1_000`) while the Rust parser dropped or rejected them — a divergence that could, for example, silently ignore a mis-typed `[output.no_clobber]` (dropping overwrite protection) on one implementation. A differential parity corpus (`tests/conformance/config_parity.py`) drives config snippets through both CLIs in CI to keep the two aligned.
 
 **Duplicate keys and re-declared sections are rejected by both implementations.** A repeated `(section, key)`, or a `[section]` header declared more than once (even with different keys inside), is a load-time config error (exit `5`) on Rust as well as Python — the hand-rolled parser previously kept the *first* value / silently merged the re-opened section; it now matches `tomllib`, which raises per the TOML spec.
 

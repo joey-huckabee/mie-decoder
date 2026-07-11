@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -135,42 +136,118 @@ def _require_table(data: dict[str, Any], section: str) -> dict[str, Any]:
     return value
 
 
-def _reject_unsupported_toml_forms(text: str) -> None:
-    """Reject TOML forms outside the tool's flat ``[section]`` schema.
+#: A simple identifier (section name or key): letters, digits, underscores.
+_IDENT_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
-    ``tomllib`` is a full TOML parser, so it would *honor* a dotted key
-    (``decode.strict = true`` becomes ``strict`` in ``[decode]``) and accept an
-    array-of-tables header (``[[decode]]``). The Rust hand-rolled parser supports
-    neither, so without this a config would behave differently across the two
-    implementations — and, worse, a dotted safety option such as
-    ``output.no_clobber`` would be silently ignored on Rust. Both implementations
-    now reject these forms as configuration errors (exit 5, L2-CFG-010).
+#: A scalar value the flat schema accepts — matching the Rust value grammar:
+#: a double-quoted string, a plain decimal integer/float (optional sign and
+#: exponent, NO underscore separators or 0x/0o/0b prefixes), or a boolean.
+_SCALAR_RE = re.compile(r'^(?:"[^"]*"|[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false)$')
+
+
+def _strip_toml_comment(line: str) -> str:
+    """Drop a trailing ``#`` comment, preserving ``#`` inside a quoted string.
+
+    Mirrors the Rust ``strip_comment`` so both parsers see the same value text.
+    """
+    in_quote = False
+    prev_backslash = False
+    for i, ch in enumerate(line):
+        if in_quote:
+            if ch == "\\" and not prev_backslash:
+                prev_backslash = True
+                continue
+            if ch == '"' and not prev_backslash:
+                in_quote = False
+            prev_backslash = False
+        elif ch == '"':
+            in_quote = True
+        elif ch == "#":
+            return line[:i]
+    return line
+
+
+def _split_array_items(inner: str) -> list[str]:
+    """Split array element text on top-level commas, respecting quoted strings."""
+    items: list[str] = []
+    buf: list[str] = []
+    in_quote = False
+    for ch in inner:
+        if ch == '"':
+            in_quote = not in_quote
+            buf.append(ch)
+        elif ch == "," and not in_quote:
+            items.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    items.append("".join(buf))
+    return [item for item in items if item.strip()]
+
+
+def _value_accepted(value: str) -> bool:
+    """True if ``value`` is a scalar or a single-line array of scalars the flat
+    schema accepts. Rejects inline tables, multi-line arrays, date-times, and
+    ``1_000`` / ``0x08`` numeric forms that ``tomllib`` would accept but the Rust
+    value parser does not."""
+    value = value.strip()
+    if value.startswith("[") and value.endswith("]"):
+        return all(_SCALAR_RE.match(item.strip()) for item in _split_array_items(value[1:-1]))
+    return bool(_SCALAR_RE.match(value))
+
+
+def _reject_unsupported_toml_forms(text: str) -> None:
+    """Reject any config line outside the flat ``[section]`` + ``key = value``
+    schema, so Python's acceptance matches the minimal Rust parser exactly.
+
+    This is a **whitelist**: a line must be blank, a comment, a flat ``[section]``
+    header, or ``key = value`` with a simple-identifier key and a scalar / single-
+    line-array value. ``tomllib`` is a full TOML parser that would otherwise
+    *honor* forms the Rust hand-rolled parser rejects — dotted keys / headers,
+    array-of-tables, inline tables, ``1_000`` / ``0x08`` numbers, date-times,
+    multi-line arrays — so a config would behave differently across the two
+    implementations (and a dotted/mis-typed safety option like ``no_clobber``
+    could be silently ignored on Rust). Rejecting anything outside the subset up
+    front keeps the two aligned by construction (exit 5, L2-CFG-010).
     """
     for lineno, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
+        line = _strip_toml_comment(raw).strip()
+        if not line:
             continue
         if line.startswith("[["):
             raise ValueError(f"line {lineno}: array-of-tables headers ([[...]]) are not supported")
         if line.startswith("["):
-            # A dotted section header (`[output.no_clobber]`) nests a table.
-            # tomllib nests it and the loader would then reject the wrong shape
-            # (or, for a section with no typed key, silently ignore it) — reject
-            # it uniformly here so both implementations refuse the form.
-            header = line[1:].split("]", 1)[0].strip()
+            if not line.endswith("]"):
+                raise ValueError(f"line {lineno}: malformed section header: {line!r}")
+            header = line[1:-1].strip()
             if "." in header:
                 raise ValueError(
                     f"line {lineno}: dotted section headers ([a.b]) are not "
                     "supported; use a flat [section] header"
                 )
+            if not _IDENT_RE.match(header):
+                raise ValueError(
+                    f"line {lineno}: unsupported section header [{header}]; "
+                    "use a flat [section] name (letters, digits, underscore)"
+                )
             continue
-        # A `key = value` line: reject an (unquoted) dotted key. The key is the
-        # text before the first '='; a quoted key is left to the normal
-        # unknown-key path, matching the Rust parser.
-        key_part = line.split("=", 1)[0]
-        if "." in key_part and '"' not in key_part and "'" not in key_part:
+        if "=" not in line:
+            raise ValueError(f"line {lineno}: expected 'key = value' or a [section] header")
+        raw_key, value = line.split("=", 1)
+        key = raw_key.strip()
+        if "." in key and not key.startswith('"'):
             raise ValueError(
                 f"line {lineno}: dotted keys (a.b = ...) are not supported; use a [section] header"
+            )
+        if not _IDENT_RE.match(key):
+            raise ValueError(
+                f"line {lineno}: unsupported key {key!r}; keys must be simple "
+                "identifiers (letters, digits, underscore)"
+            )
+        if not _value_accepted(value):
+            raise ValueError(
+                f"line {lineno}: unsupported value for {key!r}: {value.strip()!r}; only "
+                "strings, plain numbers, booleans, and single-line arrays are allowed"
             )
 
 

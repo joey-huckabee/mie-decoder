@@ -751,6 +751,48 @@ class TestSchemaValidation:
             load_config(cfg)
 
     @pytest.mark.requirement("L2-CFG-010")
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            "[decode]\nx = { a = 1 }\n",  # inline table
+            "[decode]\ndetect_records = 1_0\n",  # underscore separator
+            "[decode]\ndetect_records = 0x08\n",  # hex integer
+            "[decode]\ndetect_records = 0o10\n",  # octal integer
+            "[decode]\ndetect_records = 0b1000\n",  # binary integer
+            "[decode]\nx = 1979-05-27\n",  # date-time
+            "[filter]\nexclude_rts = [\n1,\n]\n",  # multi-line array
+            '[decode]\n"strict" = true\n',  # quoted key
+        ],
+    )
+    def test_non_flat_toml_forms_rejected(self, tmp_path: Path, snippet: str) -> None:
+        # tomllib would accept each of these; the Rust value/key grammar does not,
+        # so the whitelist rejects them up front to keep the two aligned.
+        cfg = tmp_path / "bad.toml"
+        cfg.write_text(snippet)
+        with pytest.raises(ValueError):
+            load_config(cfg)
+
+    @pytest.mark.requirement("L2-CFG-010")
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            '[decode]\ntime_format = "irig"\n',
+            "[decode]\ndetect_records = 8\n",
+            "[decode]\nstandard_tick_rate_hz = 1000000.0\n",
+            "[decode]\nstandard_tick_rate_hz = 1e6\n",  # exponent float is fine
+            "[filter]\nexclude_rts = [0, 31]\n",
+            '[filter]\nexclude_buses = ["A", "B"]\n',
+            "[mux]\nfield = -1\n",
+            "[decode]\nstrict = true  # trailing comment\n",
+        ],
+    )
+    def test_flat_forms_still_accepted(self, tmp_path: Path, snippet: str) -> None:
+        # The whitelist must not over-reject valid flat configs.
+        cfg = tmp_path / "ok.toml"
+        cfg.write_text(snippet)
+        load_config(cfg)  # must not raise
+
+    @pytest.mark.requirement("L2-CFG-010")
     def test_dotted_section_header_rejected(self, tmp_path: Path) -> None:
         # `[output.no_clobber]` nests a table; both implementations reject the
         # dotted header rather than diverging (Rust previously stored it
