@@ -404,11 +404,13 @@ To preserve the crate's single-dependency design (only `memmap2`), Rust parses T
 - values: double-quoted strings (`"..."`), integers, floats, booleans (`true` / `false`), and **single-line** primitive arrays (`[1, 2, 3]` or `["A", "B"]`);
 - `#` line comments and trailing comments (a `#` inside a quoted string is preserved).
 
-The following full-TOML features are **not** supported and will be rejected (or mis-read) by the Rust parser even though Python's `tomllib` accepts them — avoid them for a config that must work on both implementations:
+The following full-TOML features are **not** part of the schema. Use only the flat `[section]` + `key = value` form:
 
 - multi-line / spanning arrays;
 - underscore digit separators in numbers (`1_000_000` — write `1000000`);
-- inline tables (`{ ... }`), dotted keys (`a.b = 1`), and date-time values.
+- inline tables (`{ ... }`) and date-time values.
+
+**Dotted keys and array-of-tables headers are rejected by both implementations.** A dotted key (`decode.strict = true` instead of a `[decode]` header) and an array-of-tables header (`[[decode]]`) are load-time config errors (exit `5`) on Rust *and* Python. `tomllib` would otherwise *honor* a dotted key (silently nesting it) while the Rust parser dropped it — a divergence that could, for example, silently ignore `output.no_clobber` on one implementation — so both now refuse the form.
 
 **Duplicate keys and re-declared sections are rejected by both implementations.** A repeated `(section, key)`, or a `[section]` header declared more than once (even with different keys inside), is a load-time config error (exit `5`) on Rust as well as Python — the hand-rolled parser previously kept the *first* value / silently merged the re-opened section; it now matches `tomllib`, which raises per the TOML spec.
 

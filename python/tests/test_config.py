@@ -733,6 +733,24 @@ class TestSchemaValidation:
             load_config(cfg)
 
     @pytest.mark.requirement("L2-CFG-010")
+    def test_dotted_key_rejected(self, tmp_path: Path) -> None:
+        # tomllib would honor a dotted key (nesting it), but the Rust parser does
+        # not support the form; both reject it so a config behaves identically
+        # (and a dotted safety option like output.no_clobber can't be silently
+        # dropped on one implementation).
+        cfg = tmp_path / "dotted.toml"
+        cfg.write_text("decode.strict = true\n")
+        with pytest.raises(ValueError, match="dotted keys"):
+            load_config(cfg)
+
+    @pytest.mark.requirement("L2-CFG-010")
+    def test_array_of_tables_rejected(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "arraytable.toml"
+        cfg.write_text("[[decode]]\nstrict = true\n")
+        with pytest.raises(ValueError, match="array-of-tables"):
+            load_config(cfg)
+
+    @pytest.mark.requirement("L2-CFG-010")
     @pytest.mark.parametrize("section", ["decode", "logging", "output", "mux", "merge", "filter"])
     def test_section_used_as_scalar_rejected(self, tmp_path: Path, section: str) -> None:
         # A known section name assigned a scalar (e.g. `decode = true` instead of

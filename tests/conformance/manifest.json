@@ -337,6 +337,18 @@
       "expected_exit": 5
     },
     {
+      "name": "config-error-dotted-key",
+      "input": "inputs/standard-timestamps.hex",
+      "config": "configs/dotted-key.toml",
+      "expected_exit": 5
+    },
+    {
+      "name": "config-error-array-of-tables",
+      "input": "inputs/standard-timestamps.hex",
+      "config": "configs/array-of-tables.toml",
+      "expected_exit": 5
+    },
+    {
       "name": "config-error-non-string-value",
       "input": "inputs/standard-timestamps.hex",
       "config": "configs/non-string-time-format.toml",

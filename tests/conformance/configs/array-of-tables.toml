@@ -1,0 +1,4 @@
+# An array-of-tables header. Outside the flat [section] schema: Python rejects
+# the wrong shape and the Rust parser rejects the [[...]] form, both exit 5.
+[[decode]]
+strict = true

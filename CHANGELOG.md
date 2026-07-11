@@ -75,6 +75,15 @@ full release workflow.
   is bypassed for any requested merge, an output path pointing at one of the
   inputs could overwrite it in place. It is now gated on whether a merge was
   *requested* (checking the full requested input set), matching the Rust CLI.
+- **Dotted keys and array-of-tables headers are now rejected by both
+  implementations.** `tomllib` honored a dotted key (`decode.strict = true`,
+  nesting it into `[decode]`) and accepted an array-of-tables header
+  (`[[decode]]`), while the Rust hand-rolled parser silently dropped the dotted
+  key or misread `[[decode]]` as a section literally named `[decode]` — so the
+  same config behaved differently on each implementation, and a dotted safety
+  option such as `output.no_clobber` was silently ignored on Rust. Both now
+  refuse these forms as config errors (exit 5); the config schema is the flat
+  `[section]` + `key = value` form only.
 - **The Rust config loader now rejects duplicate TOML keys and re-declared
   section headers.** A repeated `(section, key)`, or a `[section]` header
   declared more than once (even with different keys inside), previously kept the
