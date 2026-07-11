@@ -1041,7 +1041,9 @@ def _run_decode(args: argparse.Namespace) -> int:
         args: Parsed CLI arguments.
 
     Returns:
-        Exit code: 0 on success, 1 on error.
+        Process exit code from the L2-CLI-011 taxonomy documented on
+        :func:`main` — the decode path can produce any class except the
+        usage error (4), which is handled during argument parsing.
     """
     from mie_decoder.config import load_config
 
@@ -1142,7 +1144,9 @@ def _run_count(args: argparse.Namespace) -> int:
     the Rust ``count`` subcommand.
 
     Returns:
-        Exit code: 0 on success, 1 on a decode error, 5 on config error.
+        Process exit code from the L2-CLI-011 taxonomy documented on
+        :func:`main`: success (0), no valid records (2), runtime error (1),
+        or config error (5).
     """
     from mie_decoder.config import load_config
     from mie_decoder.filters import apply_filters
@@ -1211,7 +1215,8 @@ def _run_dump(args: argparse.Namespace) -> int:
         args: Parsed CLI arguments.
 
     Returns:
-        Exit code: 0 on success, 1 on error.
+        Process exit code from the L2-CLI-011 taxonomy documented on
+        :func:`main`: success (0), runtime error (1), or config error (5).
     """
     from mie_decoder.config import load_config
     from mie_decoder.dump import hex_dump_raw, hex_dump_records
@@ -1295,7 +1300,8 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Process exit code per L2-CLI-011: 0 success; 1 runtime/decode
         error; 2 no valid records; 3 unrecoverable sync loss; 4 CLI usage
-        error; 5 configuration error.
+        error; 5 configuration error; 6 incompatible merge inputs
+        (L1-EXIT-009).
     """
     _force_utf8_streams()
 
