@@ -61,7 +61,7 @@ minimal Rust parser), so `run.py` cross-checks them when both are present:
   config documents (heavily sampling numeric/escape/structural edges) and asserts
   both CLIs agree on accept/reject. Deterministic by default (fixed seed +
   iteration count); on a divergence it prints the exact config so it can be
-  pinned in `config_parity.py`. Set `MIE_FUZZ_SEED` / `MIE_FUZZ_ITERS` to explore
+  pinned in `config_parity.py`. Set `MIE_CONFIG_FUZZ_SEED` / `MIE_CONFIG_FUZZ_ITERS` to explore
   further locally.
 
 This is what stops config divergences from being found one at a time: the fuzzer

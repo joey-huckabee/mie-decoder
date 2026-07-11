@@ -8,7 +8,7 @@ edges (odd numeric literals, string escapes, exotic structures) so CI finds a
 divergence before a reviewer does.
 
 Deterministic by default (fixed seed + iteration count) so CI is reproducible;
-override with the ``MIE_FUZZ_SEED`` / ``MIE_FUZZ_ITERS`` environment variables to
+override with the ``MIE_CONFIG_FUZZ_SEED`` / ``MIE_CONFIG_FUZZ_ITERS`` environment variables to
 explore further locally. On a divergence it prints the exact config that
 disagreed, ready to paste into ``config_parity.py`` as a pinned regression.
 """
@@ -22,7 +22,7 @@ from pathlib import Path
 
 _DEFAULT_SEED = 20260711  # fixed → reproducible CI runs
 # Each iteration spawns both CLIs, so keep the default modest for CI wall-clock;
-# a fixed seed makes it a deterministic generated corpus. Bump MIE_FUZZ_ITERS
+# a fixed seed makes it a deterministic generated corpus. Bump MIE_CONFIG_FUZZ_ITERS
 # locally to explore further.
 _DEFAULT_ITERS = 100
 
@@ -122,8 +122,8 @@ def check_config_parser_fuzz(
     rust_bin: Path, python_bin: Path, root: Path, input_mie: Path, temp: Path
 ) -> None:
     """Fuzz the two config parsers; raise on the first batch of divergences."""
-    seed = int(os.environ.get("MIE_FUZZ_SEED", _DEFAULT_SEED))
-    iters = int(os.environ.get("MIE_FUZZ_ITERS", _DEFAULT_ITERS))
+    seed = int(os.environ.get("MIE_CONFIG_FUZZ_SEED", _DEFAULT_SEED))
+    iters = int(os.environ.get("MIE_CONFIG_FUZZ_ITERS", _DEFAULT_ITERS))
     rng = random.Random(seed)
     invocations = {
         "Rust": [str(rust_bin)],

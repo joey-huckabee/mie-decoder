@@ -175,6 +175,20 @@ both CLIs, and compares their CSV output byte-for-byte against checked-in
 oracles. Use `--update-expected` only for intentional shared-output changes;
 the runner updates an oracle only after Rust and Python already agree.
 
+When both CLIs are present, the same runner also cross-checks the two **config
+parsers** — a curated corpus (`tests/conformance/config_parity.py`) plus a
+differential **fuzzer** (`config_fuzz.py`) that generates config documents and
+asserts both implementations agree on accept/reject. No separate command; it
+runs inside `run.py`. For a deeper local sweep, raise the iteration count (this
+is a *different* knob from the reader/dump `MIE_FUZZ_ITERATIONS` below):
+
+```bash
+MIE_CONFIG_FUZZ_ITERS=5000 python tests/conformance/run.py
+# optionally pin a starting point: MIE_CONFIG_FUZZ_SEED=<n>
+```
+
+A divergence prints the exact config; pin it in `config_parity.py`, then fix.
+
 The current pre-commit hook runs the Rust checks documented above. Run the
 Python tests manually when changing `python/`.
 

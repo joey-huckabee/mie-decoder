@@ -92,6 +92,8 @@ poetry -C python run python ../tests/conformance/run.py
 
 The runner reads `tests/conformance/manifest.json`, materializes each `.hex` fixture into a temp `.mie` file, invokes both CLIs against it, and diffs the produced CSVs against the checked-in oracle (or asserts the exit code for negative cases).
 
+When both CLIs are present, the runner additionally cross-checks the two **config parsers** (`tomllib` vs the hand-rolled Rust parser accept different TOML subsets): a curated corpus (`config_parity.py`) plus a differential **fuzzer** (`config_fuzz.py`) that generates config documents and asserts both implementations agree on accept/reject. Both run inside `run.py` — there is no separate command. The fuzzer is deterministic (fixed seed + `MIE_CONFIG_FUZZ_ITERS` iterations, default 100); for a deeper local sweep run `MIE_CONFIG_FUZZ_ITERS=5000 python tests/conformance/run.py` (a *distinct* knob from the reader/dump `MIE_FUZZ_ITERATIONS` in §11's fuzz workflow). A divergence prints the exact config to pin in `config_parity.py`. See `tests/conformance/README.md`.
+
 ---
 
 ## 3. Daily-command cheat sheet
