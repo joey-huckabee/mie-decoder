@@ -201,18 +201,32 @@ def _strip_toml_comment(line: str) -> str:
 
 
 def _split_array_items(inner: str) -> list[str]:
-    """Split array element text on top-level commas, respecting quoted strings."""
+    """Split array element text on top-level commas, respecting quoted strings.
+
+    A backslash escapes the next character (so an escaped ``\\"`` does not close
+    the string), mirroring `rust/src/config.rs::split_array_items` /
+    ``push_quoted_char`` — otherwise ``["a\\", b"]`` would be mis-split on the
+    comma *inside* the string and rejected where Rust accepts it.
+    """
     items: list[str] = []
     buf: list[str] = []
     in_quote = False
+    prev_backslash = False
     for ch in inner:
-        if ch == '"':
-            in_quote = not in_quote
+        if in_quote:
             buf.append(ch)
-        elif ch == "," and not in_quote:
+            if ch == "\\" and not prev_backslash:
+                prev_backslash = True  # next char is escaped; stays quoted
+            else:
+                if ch == '"' and not prev_backslash:
+                    in_quote = False
+                prev_backslash = False
+        elif ch == ",":
             items.append("".join(buf))
             buf = []
         else:
+            if ch == '"':
+                in_quote = True
             buf.append(ch)
     items.append("".join(buf))
     return [item for item in items if item.strip()]
