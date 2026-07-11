@@ -178,6 +178,44 @@ the runner updates an oracle only after Rust and Python already agree.
 The current pre-commit hook runs the Rust checks documented above. Run the
 Python tests manually when changing `python/`.
 
+## Debugging in VS Code
+
+The repo ships `.vscode/launch.json` with nine debug configurations covering
+both implementations.
+
+**Rust** (needs the **CodeLLDB** extension — `vadimcn.vscode-lldb`):
+
+- `Rust: decode <file> -> CSV`
+- `Rust: count <file>`
+- `Rust: dump <file>`
+- `Rust: debug library unit tests`
+
+Each uses CodeLLDB's cargo integration — it builds the `mie-decoder` bin from
+`rust/Cargo.toml` and launches it under the debugger, so no `tasks.json` is
+needed.
+
+**Python** (needs the **Python** + **Python Debugger** extensions):
+
+- `Python: decode <file> -> CSV`
+- `Python: count <file>`
+- `Python: dump <file>` (these run `python -m mie_decoder`)
+- `Python: pytest (current file)`
+- `Python: pytest (all)`
+
+The Python configs set `justMyCode: false` (so you can step into `mie_decoder`),
+run from `python/` for pytest, and rely on the interpreter selected in VS Code.
+
+Two things to know:
+
+- **Python interpreter** — run **"Python: Select Interpreter"** and pick the
+  Poetry venv at `python/.venv` so `mie_decoder` is importable. The config uses
+  the *selected* interpreter rather than a hardcoded path, so it stays portable
+  across Windows / macOS / Linux.
+- **Input prompts** — the `decode` / `count` / `dump` configs prompt for the
+  `.mie` recording path (and output CSV) at launch via `${input:mieFile}` /
+  `${input:outCsv}`. Edit their `default` values in the `inputs` block at the
+  bottom of `launch.json` to skip retyping.
+
 ## Fuzz testing
 
 Each implementation carries a deterministic fuzz harness asserting the
