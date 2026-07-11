@@ -388,10 +388,6 @@ When a load-time validation fails, the CLI exits `5` (the configuration-error cl
 
 ## Per-implementation notes
 
-### Rust-only TOML extensions
-
-The Rust crate accepts include-filter CLI flags (L3-RS-010): `--include-types`, `--include-rts`, `--include-buses`, `--include-subaddresses`. These are **CLI-only on Rust** — they have no TOML representation. The Python implementation does not provide include filters; the shared L1-CLI-002 capability of "filter by type / RT / bus / subaddress" is met via the exclude filters in both impls.
-
 ### Python and `tomllib`
 
 Python's TOML parser is the standard-library `tomllib` on Python 3.11+ and the `tomli` package on Python 3.10 (L3-PY-005). Either way, the schema validation is identical — the TOML library only parses; the decoder validates.
