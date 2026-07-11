@@ -261,7 +261,7 @@ The project uses four test tiers, narrowest scope at the bottom:
 
 The two upper tiers both spawn the actual binary, but they serve different purposes:
 
-- **CLI acceptance** (`rust/tests/cli.rs`) is Rust-only. It covers behaviors that conformance can't or doesn't: `--no-clobber`, input/output collision rejection, `--include-*` filter syntax (a Rust-only axis per L3-RS-010), `--help` / `--version`, exit-class taxonomy, and other CLI surfaces where stdout/stderr/exit-code semantics matter more than CSV byte-equality.
+- **CLI acceptance** (`rust/tests/cli.rs`) is Rust-only. It covers behaviors that conformance can't or doesn't: `--no-clobber`, input/output collision rejection, `--include-*` filter syntax (L3-RS-010; Python provides the same filters per L3-PY-013 and covers them in its own test suite), `--help` / `--version`, exit-class taxonomy, and other CLI surfaces where stdout/stderr/exit-code semantics matter more than CSV byte-equality.
 - **Conformance** (`tests/conformance/`) holds Rust and Python to byte-identical CSV output (or matching exit code for negative cases). Anything that affects the CSV contract should land here so both implementations stay aligned.
 
 When you add a behavior, ask: **does this need to behave the same in Python?** If yes, add it to conformance. If no (Rust-only feature, atomic-write artifact, exit-class taxonomy detail), add it to `rust/tests/cli.rs`. Both tiers run on Linux and Windows automatically via `cargo test --all-targets`.

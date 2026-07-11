@@ -141,6 +141,28 @@ per-record allocation is a real bottleneck.
 Neither changes CSV output, so both are guarded by the existing byte-exact
 conformance oracle if attempted.
 
+## Config ergonomics (deferred)
+
+The two config parsers are aligned on a **whitelist** of the flat `[section]` +
+`key = value` schema: anything outside it is a config error (exit 5) on both
+implementations, and a differential parity corpus keeps them aligned. When that
+whitelist was drawn, a few *readable* full-TOML number forms were **rejected on
+both** for strictness and consistency:
+
+- underscore digit separators — `standard_tick_rate_hz = 1_000_000`;
+- `0x` / `0o` / `0b` integer prefixes — e.g. `detect_records = 0x08`.
+
+These are genuinely handy for a human writing a config, and `tomllib` already
+accepts them; the decision to reject was about keeping the Rust hand-rolled
+parser minimal and the two implementations identical, not because the forms are
+harmful. A future release could instead **accept them on both** — teach the Rust
+number parser to strip `_` and honor the `0x` / `0o` / `0b` prefixes, widen the
+Python whitelist's value grammar to match, and flip the corresponding
+`config_parity.py` snippets from `reject` to `accept`. It is an additive
+ergonomics change with no effect on `config/default.toml` (which uses plain
+numbers); not scheduled, recorded here so the option isn't lost. Any change must
+keep the two parsers byte-for-byte aligned via the parity corpus.
+
 ## Shared Commitments
 
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.
