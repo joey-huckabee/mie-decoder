@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from config_fuzz import check_config_parser_fuzz
 from config_parity import check_config_parser_parity
 
 
@@ -503,8 +504,11 @@ def main() -> int:
             check_config_parser_parity(
                 args.rust_bin, args.python_bin, ROOT, parity_input, temp
             )
+            check_config_parser_fuzz(
+                args.rust_bin, args.python_bin, ROOT, parity_input, temp
+            )
         else:
-            print("SKIP config-parser-parity (single-implementation run)")
+            print("SKIP config-parser-parity / -fuzz (single-implementation run)")
 
         for case in manifest["cases"]:
             name = case["name"]

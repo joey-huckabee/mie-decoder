@@ -810,9 +810,14 @@ fn parse_value(s: &str, lineno: usize) -> Result<TomlValue, String> {
         b'[' => parse_array(s, lineno),
         b't' | b'f' => parse_bool(s, lineno).map(TomlValue::Bool),
         // A numeric literal containing a decimal point or exponent is a
-        // float; otherwise an integer. (Hex literals like `0x02` are always
-        // quoted strings in our schema, so they never reach this branch.)
+        // float; otherwise an integer. Validate against the TOML number grammar
+        // FIRST — `i64`/`f64::from_str` are more permissive than TOML (they
+        // accept leading zeros like `08`, a bare trailing dot like `1.`, etc.),
+        // which would silently diverge from Python's strict `tomllib`.
         b'-' | b'+' | b'0'..=b'9' => {
+            if !is_toml_number_literal(s) {
+                return Err(format!("line {lineno}: invalid number literal {s:?}"));
+            }
             if s.contains('.') || s.contains('e') || s.contains('E') {
                 parse_float(s, lineno).map(TomlValue::Float)
             } else {
@@ -856,6 +861,59 @@ fn parse_bool(s: &str, lineno: usize) -> Result<bool, String> {
         "false" => Ok(false),
         _ => Err(format!("line {lineno}: expected boolean, got {s:?}")),
     }
+}
+
+/// Validate a numeric literal against the flat schema's TOML number grammar:
+/// `[+-]? ( 0 | [1-9][0-9]* ) ( . [0-9]+ )? ( [eE] [+-]? [0-9]+ )?`. Rejects the
+/// non-TOML forms Rust's native `i64`/`f64` parsing would otherwise accept —
+/// leading zeros (`08`, `01`), a bare trailing dot (`1.`), and `0x`/`0o`/`0b` /
+/// underscore forms — keeping the two implementations aligned. Hand-rolled (no
+/// regex dependency).
+fn is_toml_number_literal(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
+        i += 1;
+    }
+    // Integer part: a lone `0`, or a non-zero digit followed by more digits.
+    if i >= b.len() {
+        return false;
+    }
+    if b[i] == b'0' {
+        i += 1;
+    } else if b[i].is_ascii_digit() {
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+    } else {
+        return false;
+    }
+    // Optional fractional part: `.` MUST be followed by ≥1 digit.
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start {
+            return false;
+        }
+    }
+    // Optional exponent: `[eE] [+-]? [0-9]+`.
+    if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
+        i += 1;
+        if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
+            i += 1;
+        }
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start {
+            return false;
+        }
+    }
+    i == b.len()
 }
 
 fn parse_int(s: &str, lineno: usize) -> Result<i64, String> {
@@ -1083,6 +1141,37 @@ format = "csv#weird"
         assert!(err.contains("simple identifiers"), "got {err:?}");
         // Plain identifier keys still parse.
         assert!(parse_toml("[decode]\nstandard_tick_rate_hz = 1.0\n").is_ok());
+    }
+
+    /// The number grammar accepts plain decimal integers/floats but rejects the
+    /// non-TOML forms Rust's native `i64`/`f64` parsing would otherwise take
+    /// (leading zeros, a bare trailing dot), keeping numeric acceptance aligned
+    /// with Python's `tomllib`.
+    /// Requirements: L2-CFG-010
+    #[test]
+    fn number_literal_grammar() {
+        for ok in [
+            "0",
+            "8",
+            "-1",
+            "+8",
+            "100",
+            "1.5",
+            "0.5",
+            "1e6",
+            "1000000.0",
+            "1.5e-3",
+        ] {
+            assert!(is_toml_number_literal(ok), "{ok:?} should be accepted");
+        }
+        for bad in [
+            "08", "01", "00", "1.", ".5", "1.e3", "0x08", "1_0", "", "+", "1..2",
+        ] {
+            assert!(!is_toml_number_literal(bad), "{bad:?} should be rejected");
+        }
+        // A leading-zero literal is rejected end-to-end, not just by the helper.
+        assert!(parse_toml("[decode]\ndetect_records = 08\n").is_err());
+        assert!(parse_toml("[filter]\nexclude_rts = [01]\n").is_err());
     }
 
     /// Schema-invalid but TOML-valid values are load-time config errors, aligned

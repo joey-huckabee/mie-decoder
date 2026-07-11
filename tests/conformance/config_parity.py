@@ -64,6 +64,15 @@ CORPUS: list[tuple[str, str, str]] = [
     ("trailing-after-header", "[decode] junk\nstrict = true\n", "reject"),
     ("unterminated-section", "[decode\nstrict = true\n", "reject"),
     ("empty-section-name", "[]\nstrict = true\n", "reject"),
+    # ── numeric literals Rust's native i64/f64 accept but TOML rejects ──────
+    ("leading-zero-int", "[decode]\ndetect_records = 08\n", "reject"),
+    ("bare-trailing-dot", "[decode]\nstandard_tick_rate_hz = 1.\n", "reject"),
+    ("leading-zero-in-array", "[filter]\nexclude_rts = [01]\n", "reject"),
+    ("zero-then-zero", "[decode]\ndetect_records = 00\n", "reject"),
+    # ── string escapes: only \" \\ \n \t are supported on both ─────────────
+    ("escaped-quote-string", '[mux]\ndelimiter = "\\""\n', "accept"),
+    ("carriage-return-escape", '[mux]\ndelimiter = "\\r"\n', "reject"),
+    ("unicode-escape", '[mux]\ndelimiter = "\\u002C"\n', "reject"),
 ]
 
 

@@ -49,16 +49,23 @@ python tests/conformance/run.py --update-expected
 Keep implementation-specific CLI behavior in each implementation's own test
 suite. Add cases here only for shared MIE decoding and CSV semantics.
 
-## Config-parser parity corpus
+## Config-parser parity
 
-`config_parity.py` holds a differential corpus of TOML config snippets. When
-both implementations are under test, `run.py` drives every snippet through both
-CLIs and asserts they land in the same class — both **accept** (exit 0) or both
-**reject** (config/usage error) — and that the class matches the snippet's
-`accept` / `reject` label. The two parsers accept different TOML subsets
-(`tomllib` vs the minimal Rust parser), so this is the systematic guard that the
-flat-schema whitelist stays aligned; add a snippet here whenever a new TOML form
-could diverge, rather than chasing them one bug at a time.
+The two implementations parse config with different engines (`tomllib` vs the
+minimal Rust parser), so `run.py` cross-checks them when both are present:
+
+- **`config_parity.py`** — a *curated* corpus of TOML snippets, each labeled
+  `accept` / `reject`. Every snippet is run through both CLIs; they must land in
+  the same class and match the label. Add one whenever a new form could diverge.
+- **`config_fuzz.py`** — a differential *fuzzer* that **generates** many small
+  config documents (heavily sampling numeric/escape/structural edges) and asserts
+  both CLIs agree on accept/reject. Deterministic by default (fixed seed +
+  iteration count); on a divergence it prints the exact config so it can be
+  pinned in `config_parity.py`. Set `MIE_FUZZ_SEED` / `MIE_FUZZ_ITERS` to explore
+  further locally.
+
+This is what stops config divergences from being found one at a time: the fuzzer
+searches the space so CI catches a mismatch before a reviewer does.
 
 ## Manifest schema
 

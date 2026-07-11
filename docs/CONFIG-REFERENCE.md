@@ -396,19 +396,23 @@ Python's TOML parser is the standard-library `tomllib` on Python 3.11+ and the `
 
 To preserve the crate's single-dependency design (only `memmap2`), Rust parses TOML with a hand-rolled reader that accepts a deliberately small subset — everything the decoder's schema needs, and nothing more:
 
-- `[section]` headers and `key = value` pairs, one per line;
-- values: double-quoted strings (`"..."`), integers, floats, booleans (`true` / `false`), and **single-line** primitive arrays (`[1, 2, 3]` or `["A", "B"]`);
+- `[section]` headers (a simple identifier — letters, digits, underscore) and `key = value` pairs, one per line, where the key is a simple identifier;
+- values:
+  - **numbers** matching `[+-]? (0 | [1-9][0-9]*) (.[0-9]+)? ([eE][+-]?[0-9]+)?` — plain decimal integers and floats, **no** leading zeros (`08`), **no** bare trailing dot (`1.`), and **no** `0x` / `0o` / `0b` prefixes or `_` separators;
+  - **strings** — double-quoted, supporting exactly the escapes `\"` `\\` `\n` `\t` (not `\r`, `\uXXXX`, or others);
+  - **booleans** (`true` / `false`), and **single-line** arrays of the above (`[1, 2, 3]` or `["A", "B"]`);
 - `#` line comments and trailing comments (a `#` inside a quoted string is preserved).
 
 **Anything outside this flat subset is a load-time config error (exit `5`) on _both_ implementations.** Rather than accept different subsets and reconcile them one form at a time, Python validates every config line against the same grammar the Rust parser accepts (a whitelist run before `tomllib`), and both refuse the rest. The full-TOML forms that are therefore rejected include:
 
 - multi-line / spanning arrays;
-- underscore digit separators in numbers (`1_000_000` — write `1000000`) and `0x` / `0o` / `0b` integer prefixes;
+- underscore digit separators in numbers (`1_000_000` — write `1000000`), `0x` / `0o` / `0b` integer prefixes, leading zeros (`08`, `01`), and a bare trailing dot (`1.`);
+- string escapes beyond `\"` `\\` `\n` `\t` (e.g. `\r`, `\uXXXX`);
 - inline tables (`{ ... }`) and date-time values;
 - quoted keys (`"strict" = ...`);
 - dotted keys (`decode.strict = true`), dotted section headers (`[output.no_clobber]`), and array-of-tables headers (`[[decode]]`).
 
-`tomllib` would otherwise *honor* several of these (nesting a dotted key/header, stripping a quoted key, normalizing `1_000`) while the Rust parser dropped or rejected them — a divergence that could, for example, silently ignore a mis-typed `[output.no_clobber]` (dropping overwrite protection) on one implementation. A differential parity corpus (`tests/conformance/config_parity.py`) drives config snippets through both CLIs in CI to keep the two aligned.
+`tomllib` and Rust's native number/string parsing each accept forms the other does not (`tomllib` honors dotted keys and normalizes `1_000`; Rust's `i64`/`f64` accept `08` / `1.`), so the two are pinned to this single explicit grammar instead of reconciled form by form. Two guards run both CLIs against each other in CI: a curated parity corpus (`tests/conformance/config_parity.py`) and a differential **fuzzer** (`config_fuzz.py`) that generates config documents and asserts identical accept/reject — so a new divergence is caught by CI rather than in the field.
 
 **Duplicate keys and re-declared sections are rejected by both implementations.** A repeated `(section, key)`, or a `[section]` header declared more than once (even with different keys inside), is a load-time config error (exit `5`) on Rust as well as Python — the hand-rolled parser previously kept the *first* value / silently merged the re-opened section; it now matches `tomllib`, which raises per the TOML spec.
 
