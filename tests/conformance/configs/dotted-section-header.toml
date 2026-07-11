@@ -1,0 +1,8 @@
+# A dotted section header. tomllib nests `[output.no_clobber]` into a table and
+# the loader rejects the wrong shape (exit 5); the Rust parser previously stored
+# a section literally named `output.no_clobber` and silently ignored its keys
+# (exit 0). Both now reject the dotted header (exit 5) — this is the safety case
+# where a mis-typed `[output.no_clobber]` would otherwise drop overwrite
+# protection on Rust.
+[output.no_clobber]
+enabled = true

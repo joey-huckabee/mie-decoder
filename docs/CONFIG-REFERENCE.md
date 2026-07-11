@@ -410,7 +410,7 @@ The following full-TOML features are **not** part of the schema. Use only the fl
 - underscore digit separators in numbers (`1_000_000` — write `1000000`);
 - inline tables (`{ ... }`) and date-time values.
 
-**Dotted keys and array-of-tables headers are rejected by both implementations.** A dotted key (`decode.strict = true` instead of a `[decode]` header) and an array-of-tables header (`[[decode]]`) are load-time config errors (exit `5`) on Rust *and* Python. `tomllib` would otherwise *honor* a dotted key (silently nesting it) while the Rust parser dropped it — a divergence that could, for example, silently ignore `output.no_clobber` on one implementation — so both now refuse the form.
+**Dotted keys, dotted section headers, and array-of-tables headers are rejected by both implementations.** A dotted key (`decode.strict = true`), a dotted section header (`[output.no_clobber]`), and an array-of-tables header (`[[decode]]`) are all load-time config errors (exit `5`) on Rust *and* Python — only the flat `[section]` + `key = value` form is accepted. `tomllib` would otherwise *nest* a dotted key or header while the Rust parser dropped it or stored it literally — a divergence that could, for example, silently ignore a mis-typed `[output.no_clobber]` (dropping overwrite protection) on one implementation — so both now refuse these forms.
 
 **Duplicate keys and re-declared sections are rejected by both implementations.** A repeated `(section, key)`, or a `[section]` header declared more than once (even with different keys inside), is a load-time config error (exit `5`) on Rust as well as Python — the hand-rolled parser previously kept the *first* value / silently merged the re-opened section; it now matches `tomllib`, which raises per the TOML spec.
 

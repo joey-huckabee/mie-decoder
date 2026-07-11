@@ -751,6 +751,16 @@ class TestSchemaValidation:
             load_config(cfg)
 
     @pytest.mark.requirement("L2-CFG-010")
+    def test_dotted_section_header_rejected(self, tmp_path: Path) -> None:
+        # `[output.no_clobber]` nests a table; both implementations reject the
+        # dotted header rather than diverging (Rust previously stored it
+        # literally and silently ignored the keys).
+        cfg = tmp_path / "dotted_header.toml"
+        cfg.write_text("[output.no_clobber]\nenabled = true\n")
+        with pytest.raises(ValueError, match="dotted section headers"):
+            load_config(cfg)
+
+    @pytest.mark.requirement("L2-CFG-010")
     @pytest.mark.parametrize("section", ["decode", "logging", "output", "mux", "merge", "filter"])
     def test_section_used_as_scalar_rejected(self, tmp_path: Path, section: str) -> None:
         # A known section name assigned a scalar (e.g. `decode = true` instead of

@@ -694,6 +694,18 @@ pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
             if section.is_empty() {
                 return Err(format!("line {}: empty section name", lineno + 1));
             }
+            // A dotted section header (`[output.no_clobber]`) nests a table,
+            // which the flat schema does not model. tomllib nests it and the
+            // loader then rejects the wrong shape, so reject it here too rather
+            // than storing a section literally named `output.no_clobber` and
+            // silently ignoring its keys (L2-CFG-010).
+            if section.contains('.') {
+                return Err(format!(
+                    "line {}: dotted section headers ([a.b]) are not supported; \
+                     use a flat [section] header",
+                    lineno + 1
+                ));
+            }
             // Reject re-declaring a `[section]` header, matching Python's
             // `tomllib` (the TOML spec forbids defining a table twice). Without
             // this the parser silently merged the second block into the first,
@@ -1034,6 +1046,22 @@ format = "csv#weird"
         assert!(parse_toml("[decode]\nfoo.bar = 1\n").is_err());
         // Normal flat forms still parse.
         assert!(parse_toml("[decode]\nstrict = true\n[mux]\nenabled = false\n").is_ok());
+    }
+
+    /// A dotted section header (`[output.no_clobber]`) nests a table, which the
+    /// flat schema does not model; reject it on both implementations rather than
+    /// storing a section literally named `output.no_clobber` and dropping its
+    /// keys (which silently ignored `no_clobber` on Rust).
+    /// Requirements: L2-CFG-010
+    #[test]
+    fn rejects_dotted_section_headers() {
+        let err = parse_toml("[output.no_clobber]\nenabled = true\n").unwrap_err();
+        assert!(err.contains("dotted section headers"), "got {err:?}");
+        // A dotted header for a section with no typed key would otherwise slip
+        // through on both implementations; it is rejected too.
+        assert!(parse_toml("[decode.foo]\nx = 1\n").is_err());
+        // Flat headers still parse.
+        assert!(parse_toml("[output]\nno_clobber = true\n").is_ok());
     }
 
     /// Schema-invalid but TOML-valid values are load-time config errors, aligned

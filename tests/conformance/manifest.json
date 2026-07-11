@@ -349,6 +349,12 @@
       "expected_exit": 5
     },
     {
+      "name": "config-error-dotted-section-header",
+      "input": "inputs/standard-timestamps.hex",
+      "config": "configs/dotted-section-header.toml",
+      "expected_exit": 5
+    },
+    {
       "name": "config-error-non-string-value",
       "input": "inputs/standard-timestamps.hex",
       "config": "configs/non-string-time-format.toml",
