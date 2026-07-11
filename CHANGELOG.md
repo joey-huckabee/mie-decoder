@@ -84,6 +84,18 @@ full release workflow.
   (Rust `create_new` / Python mode `"x"`, i.e. `O_EXCL`) with retry — so
   concurrent same-destination writers can no longer share a temp file. Output
   content, permissions, and the atomic-rename behavior are unchanged.
+- **Config parsing is now aligned by an explicit whitelist grammar on both
+  implementations, closing a whole class of Rust↔Python divergences.** The two
+  parsers accepted different TOML subsets — full-TOML `tomllib` on Python vs a
+  minimal hand-rolled parser on Rust — so forms outside the flat `[section]` +
+  `key = value` schema (inline tables, multi-line arrays, `1_000` / `0x08` /
+  `0o` / `0b` numbers, date-times, quoted keys) were honored by Python but
+  rejected by Rust. Rather than continue rejecting each divergent form one at a
+  time, Python now validates every config line against the *same* flat grammar
+  the Rust parser accepts — a whitelist run before `tomllib` — and Rust rejects
+  non-identifier keys, so both refuse anything outside the subset with a config
+  error (exit 5). A new differential parity corpus (config snippets run through
+  both CLIs asserting identical accept/reject) guards the alignment in CI.
 - **Dotted keys, dotted section headers, and array-of-tables headers are now
   rejected by both implementations.** `tomllib` nested a dotted key
   (`decode.strict = true`) or dotted header (`[output.no_clobber]`) and accepted

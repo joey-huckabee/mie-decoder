@@ -49,6 +49,17 @@ python tests/conformance/run.py --update-expected
 Keep implementation-specific CLI behavior in each implementation's own test
 suite. Add cases here only for shared MIE decoding and CSV semantics.
 
+## Config-parser parity corpus
+
+`config_parity.py` holds a differential corpus of TOML config snippets. When
+both implementations are under test, `run.py` drives every snippet through both
+CLIs and asserts they land in the same class — both **accept** (exit 0) or both
+**reject** (config/usage error) — and that the class matches the snippet's
+`accept` / `reject` label. The two parsers accept different TOML subsets
+(`tomllib` vs the minimal Rust parser), so this is the systematic guard that the
+flat-schema whitelist stays aligned; add a snippet here whenever a new TOML form
+could diverge, rather than chasing them one bug at a time.
+
 ## Manifest schema
 
 `manifest.json` is a single object with one key, `"cases"`, whose value is an

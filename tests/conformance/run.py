@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from config_parity import check_config_parser_parity
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SUITE = Path(__file__).resolve().parent
@@ -492,6 +494,18 @@ def main() -> int:
         dir=args.temp_root,
     ) as temp_dir:
         temp = Path(temp_dir)
+
+        # Differential config-parser parity: needs both CLIs (it compares their
+        # accept/reject behavior), so skip in single-implementation mode.
+        if run_rust and run_python:
+            parity_input = temp / "config-parity-in.mie"
+            parity_input.write_bytes(read_hex(SUITE / "inputs" / "count-one.hex"))
+            check_config_parser_parity(
+                args.rust_bin, args.python_bin, ROOT, parity_input, temp
+            )
+        else:
+            print("SKIP config-parser-parity (single-implementation run)")
+
         for case in manifest["cases"]:
             name = case["name"]
             # One 'input' or several 'inputs' (multi-file merge). Each hex

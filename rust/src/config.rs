@@ -732,11 +732,20 @@ pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
         // Python's tomllib would nest them (honoring the value), so silently
         // dropping them here diverges — and worse, silently ignores a safety
         // option like `output.no_clobber`. Reject them so both implementations
-        // refuse the form (L2-CFG-010). Quoted keys are left to the normal
-        // unknown-key path, matching Python (which also does not dot-split them).
+        // refuse the form (L2-CFG-010).
         if !key.starts_with('"') && key.contains('.') {
             return Err(format!(
                 "line {}: dotted keys (a.b = ...) are not supported; use a [section] header",
+                lineno + 1
+            ));
+        }
+        // Keys must be simple identifiers. A quoted key (`"strict" = true`) would
+        // be honored by tomllib (stripping the quotes) but stored literally on
+        // Rust — a silent divergence — so reject anything that is not a plain
+        // identifier, matching the Python whitelist.
+        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(format!(
+                "line {}: unsupported key {key:?}; keys must be simple identifiers",
                 lineno + 1
             ));
         }
@@ -1062,6 +1071,18 @@ format = "csv#weird"
         assert!(parse_toml("[decode.foo]\nx = 1\n").is_err());
         // Flat headers still parse.
         assert!(parse_toml("[output]\nno_clobber = true\n").is_ok());
+    }
+
+    /// A non-identifier key (e.g. a quoted key) is rejected: tomllib would honor
+    /// `"strict" = true` by stripping the quotes, but Rust stored it literally —
+    /// a silent divergence. Both now reject non-identifier keys (L2-CFG-010).
+    /// Requirements: L2-CFG-010
+    #[test]
+    fn rejects_non_identifier_keys() {
+        let err = parse_toml("[decode]\n\"strict\" = true\n").unwrap_err();
+        assert!(err.contains("simple identifiers"), "got {err:?}");
+        // Plain identifier keys still parse.
+        assert!(parse_toml("[decode]\nstandard_tick_rate_hz = 1.0\n").is_ok());
     }
 
     /// Schema-invalid but TOML-valid values are load-time config errors, aligned
