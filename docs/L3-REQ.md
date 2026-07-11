@@ -45,7 +45,7 @@ Most L2 requirements are sufficiently testable at the L2 level (the statement na
 ## L3-WRT: CSV output and destination integrity
 
 **L3-WRT-001** · Parent: L2-WRT-015 · Verification: T
-The temporary file used by the atomic-write strategy SHALL be named `<destination>.mie-decoder.tmp.<pid>`, where `<pid>` is the current process ID. The `.mie-decoder.tmp.<pid>` suffix makes the temp file recognizable in directory listings and prevents collisions between concurrent decoders writing to the same directory.
+The temporary file used by the atomic-write strategy SHALL be created **beside** the destination (same directory, so the subsequent rename is atomic) with a `.mie-decoder.tmp.` name prefix that makes it recognizable in directory listings. The name SHALL be unique per writer instance — derived from the process ID, a per-process monotonic counter, and a wall-clock nanosecond timestamp — and the file SHALL be created with **exclusive create** (`O_CREAT|O_EXCL`), so two writers targeting the same destination (including within one process) cannot collide on a shared temp name and clobber each other. On the near-impossible name clash the writer SHALL retry with the next unique name.
 
 **L3-WRT-002** · Parent: L2-WRT-016 · Verification: T
 When `--allow-partial` is in effect on the L1-EXIT-004 unrecoverable path, the preserved partial output SHALL use the destination path with a literal `.partial` suffix appended (e.g., destination `out.csv` becomes `out.csv.partial`). The original destination SHALL NOT be modified.

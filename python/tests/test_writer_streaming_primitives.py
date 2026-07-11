@@ -19,12 +19,20 @@ from mie_decoder.writer import (
     CSV_HEADER,
     _AtomicCsvFile,
     _StreamingCsvRowWriter,
-    _make_temp_path,
     write_csv,
 )
 
 from tests.conftest import normal_record_rt15_sa11_us
 from mie_decoder.reader import MieFileReader
+
+
+def _leftover_temps(dest: Path) -> list[Path]:
+    """Any atomic-writer temp files still sitting next to ``dest``.
+
+    Temp names are now unique/random (``<dest>.mie-decoder.tmp.<pid>.<n>.<ns>``),
+    so tests glob for leftovers rather than reconstructing the exact path.
+    """
+    return list(dest.parent.glob(f"{dest.name}.mie-decoder.tmp.*"))
 
 
 # ── _AtomicCsvFile ─────────────────────────────────────────────────────
@@ -38,7 +46,7 @@ def test_atomic_commit_renames_temp_over_destination(tmp_path: Path) -> None:
     atomic.commit()
     assert dest.read_text() == "hello\n"
     # Temp must be gone after commit.
-    assert not _make_temp_path(dest).exists()
+    assert _leftover_temps(dest) == []
 
 
 @pytest.mark.requirement("L2-WRT-016")
@@ -47,23 +55,21 @@ def test_atomic_close_without_commit_unlinks_temp_and_keeps_destination(
 ) -> None:
     dest = tmp_path / "out.csv"
     dest.write_text("original\n")
-    tmp = _make_temp_path(dest)
     atomic = _AtomicCsvFile(dest)
     atomic.stream.write("discarded\n")
     atomic.close()  # simulates a decode failure before commit
-    assert not tmp.exists(), "temp should be unlinked on uncommitted close"
+    assert _leftover_temps(dest) == [], "temp should be unlinked on uncommitted close"
     assert dest.read_text() == "original\n", "destination must be untouched"
 
 
 @pytest.mark.requirement("L2-WRT-016")
 def test_atomic_context_manager_cleans_up_on_exception(tmp_path: Path) -> None:
     dest = tmp_path / "out.csv"
-    tmp = _make_temp_path(dest)
     with pytest.raises(RuntimeError):
         with _AtomicCsvFile(dest) as atomic:
             atomic.stream.write("partial work\n")
             raise RuntimeError("boom")
-    assert not tmp.exists(), "temp leaked after exception in context manager"
+    assert _leftover_temps(dest) == [], "temp leaked after exception in context manager"
     assert not dest.exists(), "destination must not be created on failure"
 
 
@@ -80,7 +86,7 @@ def test_atomic_commit_partial_writes_dot_partial_and_keeps_destination(
     assert partial_path.read_text() == "partial decode\n"
     # Original destination untouched; temp gone.
     assert dest.read_text() == "original\n"
-    assert not _make_temp_path(dest).exists()
+    assert _leftover_temps(dest) == []
 
 
 @pytest.mark.requirement("L2-WRT-016")
@@ -94,7 +100,22 @@ def test_atomic_commit_failure_wraps_writer_error(tmp_path: Path) -> None:
     with pytest.raises(MieWriterError):
         atomic.commit()
     # Temp must be cleaned up after the failed commit.
-    assert not _make_temp_path(dest).exists()
+    assert _leftover_temps(dest) == []
+
+
+@pytest.mark.requirement("L2-WRT-015")
+def test_two_writers_same_destination_use_distinct_temps(tmp_path: Path) -> None:
+    # Same-process concurrent writers to one destination must not share a temp
+    # name — otherwise they would clobber each other before either renames into
+    # place. The unique name + exclusive create (mode "x") prevents it.
+    dest = tmp_path / "out.csv"
+    first = _AtomicCsvFile(dest)
+    second = _AtomicCsvFile(dest)
+    assert first._temp != second._temp
+    assert first._temp.exists() and second._temp.exists()
+    first.close()
+    second.close()
+    assert _leftover_temps(dest) == []
 
 
 # ── _StreamingCsvRowWriter ─────────────────────────────────────────────

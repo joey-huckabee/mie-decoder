@@ -251,7 +251,8 @@ write_csv(messages, dest_path, opts)
   │
   ├── L2-WRT-017: if opts.no_clobber and dest_path exists → ClobberRefused
   │
-  ├── L2-WRT-015: open temp file <dest>.mie-decoder.tmp.<pid> on the SAME
+  ├── L2-WRT-015: exclusively create a unique temp file
+  │       <dest>.mie-decoder.tmp.<pid>.<counter>.<nanos> on the SAME
   │       filesystem as dest_path (so rename is atomic). Per L3-WRT-001.
   │
   ├── stream rows through BufWriter<File> wrapped around the temp

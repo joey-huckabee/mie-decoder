@@ -75,6 +75,15 @@ full release workflow.
   is bypassed for any requested merge, an output path pointing at one of the
   inputs could overwrite it in place. It is now gated on whether a merge was
   *requested* (checking the full requested input set), matching the Rust CLI.
+- **Atomic CSV writers use a unique, exclusively-created temp file.** Both
+  implementations named their temp file `<dest>.mie-decoder.tmp.<pid>` and opened
+  it with truncation, so two writers targeting the same destination *within one
+  process* could collide on the temp path and clobber each other before the
+  atomic rename. The temp name now also carries a per-process monotonic counter
+  and a nanosecond timestamp, and the file is created with exclusive-create
+  (Rust `create_new` / Python mode `"x"`, i.e. `O_EXCL`) with retry — so
+  concurrent same-destination writers can no longer share a temp file. Output
+  content, permissions, and the atomic-rename behavior are unchanged.
 - **Dotted keys and array-of-tables headers are now rejected by both
   implementations.** `tomllib` honored a dotted key (`decode.strict = true`,
   nesting it into `[decode]`) and accepted an array-of-tables header

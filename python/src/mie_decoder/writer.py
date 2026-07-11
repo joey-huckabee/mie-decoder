@@ -98,9 +98,11 @@ Output Column Definitions:
 from __future__ import annotations
 
 import csv
+import itertools
 import logging
 import os
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, TextIO
@@ -226,15 +228,27 @@ def _preflight_output(output: Path, opts: WriteOptions) -> None:
 # ── Atomic CSV write helper (L2-WRT-015, L2-WRT-016) ───────────────────
 
 
-def _make_temp_path(final_path: Path) -> Path:
-    """Build the temp file path next to ``final_path``.
+#: Process-global monotonic counter feeding the temp-file salt, so two writers
+#: created in one process never derive the same name (``next()`` is atomic under
+#: the GIL). Mirrors the Rust ``TEMP_COUNTER`` atomic.
+_temp_counter = itertools.count()
 
-    Pattern: ``<destination>.mie-decoder.tmp.<pid>``. Co-located so
-    ``os.replace`` is atomic (same filesystem). The PID suffix avoids
-    collisions when multiple processes target the same destination
-    directory.
+#: Bound on exclusive-create retries before giving up (a reused PID may leave a
+#: stale temp; each retry advances the counter so it converges immediately).
+_TEMP_MAX_ATTEMPTS = 128
+
+
+def _unique_temp_path(final_path: Path) -> Path:
+    """A fresh, hard-to-predict temp path beside ``final_path``.
+
+    Pattern: ``<destination>.mie-decoder.tmp.<pid>.<counter>.<nanos>``. Co-located
+    so ``os.replace`` is atomic (same filesystem); the per-process counter plus
+    wall-clock nanoseconds make each call unique (and unpredictable), so two
+    writers targeting the same destination cannot derive the same name. The
+    caller still creates it with exclusive-create (``O_EXCL``) as the guarantee.
     """
-    return final_path.with_name(f"{final_path.name}.mie-decoder.tmp.{os.getpid()}")
+    salt = f"{os.getpid()}.{next(_temp_counter)}.{time.time_ns()}"
+    return final_path.with_name(f"{final_path.name}.mie-decoder.tmp.{salt}")
 
 
 #: CSV column definitions in output order. Each entry is (column_name, description).
@@ -326,18 +340,33 @@ class _AtomicCsvFile:
 
     def __init__(self, final_path: Path) -> None:
         self._final = final_path
-        self._temp = _make_temp_path(final_path)
-        try:
-            # newline="" stops the csv module's terminator being
-            # re-translated by the text layer, so output is LF-only.
-            # The stream is owned by this object and closed in commit() /
-            # cleanup(), so a `with` block does not fit its lifecycle.
-            self._stream: TextIO = open(  # pylint: disable=consider-using-with
-                self._temp, "w", newline="", encoding="utf-8"
-            )
-        except OSError as exc:
-            raise MieWriterError(str(final_path), exc) from exc
-        self._committed = False
+        # Create a uniquely-named temp file beside the destination with
+        # exclusive create (mode "x" == O_CREAT|O_EXCL): it never opens an
+        # existing file, so two writers targeting the same destination in one
+        # process cannot collide on a shared name and clobber each other. On the
+        # (near-impossible) name clash we retry with the next unique name.
+        # newline="" keeps the csv terminator LF-only; the stream is owned by
+        # this object and closed in commit() / cleanup(), so a `with` block does
+        # not fit its lifecycle.
+        last_exc: OSError | None = None
+        for _ in range(_TEMP_MAX_ATTEMPTS):
+            temp = _unique_temp_path(final_path)
+            try:
+                self._stream: TextIO = open(  # pylint: disable=consider-using-with
+                    temp, "x", newline="", encoding="utf-8"
+                )
+            except FileExistsError as exc:
+                last_exc = exc
+                continue
+            except OSError as exc:
+                raise MieWriterError(str(final_path), exc) from exc
+            self._temp = temp
+            self._committed = False
+            return
+        raise MieWriterError(
+            str(final_path),
+            last_exc or OSError("could not create a unique temp file"),
+        )
 
     @property
     def stream(self) -> TextIO:

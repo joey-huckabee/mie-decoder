@@ -8,9 +8,11 @@
 //! `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are emitted as empty
 //! strings — they exist for compatibility, not because we populate them.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{MieError, MieResult};
 use crate::models::{MAX_DATA_WORDS, MieMessage};
@@ -80,16 +82,40 @@ pub struct AtomicCsvFile {
 
 impl AtomicCsvFile {
     pub fn create(final_path: PathBuf) -> MieResult<Self> {
-        let temp_path = make_temp_path(&final_path);
-        let file = File::create(&temp_path).map_err(|source| MieError::WriterError {
-            destination: temp_path.display().to_string(),
-            source,
-        })?;
-        Ok(Self {
-            final_path,
-            temp_path,
-            writer: Some(BufWriter::new(file)),
-            committed: false,
+        // Exclusive create (`create_new` == O_CREAT|O_EXCL): never opens an
+        // existing file, so two writers targeting the same destination in one
+        // process cannot collide on a shared name and clobber each other. On the
+        // (near-impossible) name clash we retry with the next unique name.
+        for _ in 0..TEMP_CREATE_MAX_ATTEMPTS {
+            let temp_path = make_temp_path(&final_path);
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_path)
+            {
+                Ok(file) => {
+                    return Ok(Self {
+                        final_path,
+                        temp_path,
+                        writer: Some(BufWriter::new(file)),
+                        committed: false,
+                    });
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(source) => {
+                    return Err(MieError::WriterError {
+                        destination: temp_path.display().to_string(),
+                        source,
+                    });
+                }
+            }
+        }
+        Err(MieError::WriterError {
+            destination: final_path.display().to_string(),
+            source: io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "could not create a unique temp file",
+            ),
         })
     }
 
@@ -200,16 +226,37 @@ impl Drop for AtomicCsvFile {
     }
 }
 
-/// Construct the temp file path: `<destination>.mie-decoder.tmp.<pid>`
-/// in the destination's parent directory. Same-directory placement
-/// guarantees the subsequent `rename()` lives on one filesystem and
-/// is therefore atomic.
+/// Process-global monotonic counter feeding the temp-file salt, so two writers
+/// created in one process never derive the same name. Mirrors the Python
+/// `_temp_counter`.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Bound on exclusive-create retries before giving up (a reused PID may leave a
+/// stale temp; each retry advances the counter so it converges immediately).
+const TEMP_CREATE_MAX_ATTEMPTS: u32 = 128;
+
+/// Construct a temp file path:
+/// `<destination>.mie-decoder.tmp.<pid>.<counter>.<nanos>` in the destination's
+/// parent directory. Same-directory placement guarantees the subsequent
+/// `rename()` lives on one filesystem and is therefore atomic; the per-process
+/// counter plus wall-clock nanoseconds make each call unique and hard to
+/// predict, so two writers targeting the same destination cannot derive the
+/// same name. The caller still creates it with `create_new` (`O_EXCL`) as the
+/// guarantee.
 fn make_temp_path(final_path: &Path) -> PathBuf {
+    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let mut name = final_path
         .file_name()
         .map(|n| n.to_os_string())
         .unwrap_or_default();
-    name.push(format!(".mie-decoder.tmp.{}", std::process::id()));
+    name.push(format!(
+        ".mie-decoder.tmp.{}.{counter}.{nanos}",
+        std::process::id()
+    ));
     match final_path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p.join(name),
         _ => PathBuf::from(name),
@@ -893,12 +940,29 @@ mod tests {
     #[test]
     fn make_temp_path_lives_next_to_destination() {
         let dest = std::env::temp_dir().join("out.csv");
-        let tmp = make_temp_path(&dest);
-        assert_eq!(tmp.parent(), dest.parent());
-        let name = tmp.file_name().unwrap().to_string_lossy().into_owned();
+        let a = make_temp_path(&dest);
+        let b = make_temp_path(&dest);
+        assert_eq!(a.parent(), dest.parent());
+        let name = a.file_name().unwrap().to_string_lossy().into_owned();
         assert!(name.starts_with("out.csv.mie-decoder.tmp."));
-        // PID suffix
-        assert!(name.ends_with(&std::process::id().to_string()));
+        assert!(name.contains(&std::process::id().to_string()));
+        // Each call yields a distinct, unique temp path.
+        assert_ne!(a, b);
+    }
+
+    /// Two writers targeting one destination must get distinct temp files
+    /// (same-process concurrency safety) — exclusive create prevents a clash.
+    /// Requirements: L2-WRT-015
+    #[test]
+    fn two_writers_same_destination_get_distinct_temps() {
+        let dest = std::env::temp_dir().join("mie-concurrent-out.csv");
+        let a = AtomicCsvFile::create(dest.clone()).unwrap();
+        let b = AtomicCsvFile::create(dest.clone()).unwrap();
+        assert_ne!(a.temp_path, b.temp_path);
+        assert!(a.temp_path.exists() && b.temp_path.exists());
+        // Uncommitted: Drop unlinks both temps, leaving the destination absent.
+        drop(a);
+        drop(b);
     }
 
     /// Requirements: L2-WRT-015
