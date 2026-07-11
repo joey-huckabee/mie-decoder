@@ -409,6 +409,12 @@ class CommandWord:
         return self.subaddress in (0, 31)
 
 
+#: MIL-STD-1553B caps a single transaction at 32 data words. Mirrors the Rust
+#: ``DataWords`` inline buffer (``[u16; 32]``), which enforces the same cap by
+#: construction, so both implementations carry an identically-bounded payload.
+MAX_DATA_WORDS: Final[int] = 32
+
+
 @dataclass(frozen=True, slots=True)
 class MieMessage:
     """A single decoded MIL-STD-1553 message from an MIE binary file.
@@ -475,6 +481,20 @@ class MieMessage:
     delta: float | None
     file_offset: int
     mux: str | None = None
+
+    def __post_init__(self) -> None:
+        """Cap ``data_words`` at :data:`MAX_DATA_WORDS`, mirroring the Rust
+        ``DataWords`` inline buffer (``[u16; 32]``).
+
+        A crafted record whose Type Word claims more than 32 data words is
+        truncated to the first 32 so both implementations carry the same
+        payload. Any standard-conforming record (≤ 32 words) is unaffected, and
+        there is no CSV impact — the writer emits at most 32 ``WDnn`` columns
+        regardless. Set via ``object.__setattr__`` because the dataclass is
+        frozen.
+        """
+        if len(self.data_words) > MAX_DATA_WORDS:
+            object.__setattr__(self, "data_words", self.data_words[:MAX_DATA_WORDS])
 
     def with_delta(self, delta: float | None) -> "MieMessage":
         """Return a copy of this message carrying a new DELTA.

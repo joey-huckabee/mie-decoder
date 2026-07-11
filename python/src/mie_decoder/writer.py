@@ -111,7 +111,7 @@ from mie_decoder.exceptions import (
     MieUnrecoverableSyncLossError,
     MieWriterError,
 )
-from mie_decoder.models import MieMessage
+from mie_decoder.models import MAX_DATA_WORDS, MieMessage
 
 logger = logging.getLogger(__name__)
 
@@ -236,9 +236,6 @@ def _make_temp_path(final_path: Path) -> Path:
     """
     return final_path.with_name(f"{final_path.name}.mie-decoder.tmp.{os.getpid()}")
 
-
-#: Maximum number of data word columns in the CSV output.
-MAX_DATA_WORDS: int = 32
 
 #: CSV column definitions in output order. Each entry is (column_name, description).
 #: The canonical column order is defined here and used by all output functions.

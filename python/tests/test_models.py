@@ -172,6 +172,29 @@ class TestMieMessage:
         assert sample_msg.command_word_2 is None
         assert sample_msg.status_word_2 is None
 
+    @pytest.mark.requirement("L1-ROB-001")
+    def test_data_words_capped_at_max(self) -> None:
+        # A crafted record with more than 32 data words is truncated to
+        # MAX_DATA_WORDS, mirroring the Rust DataWords [u16; 32] inline buffer,
+        # so both implementations carry the same payload for an oversized record.
+        from mie_decoder.models import MAX_DATA_WORDS
+
+        msg = MieMessage(
+            timestamp=IrigTimestamp(192, 15, 54, 50, 456225, False),
+            type_word=TypeWord(0x20, Bus.A, 40, False, 0x2820),
+            message_format=MessageFormat.SPURIOUS_DATA,
+            command_word=None,
+            command_word_2=None,
+            status_word=None,
+            status_word_2=None,
+            data_words=tuple(range(40)),
+            error_word=0x2001,
+            delta=None,
+            file_offset=0,
+        )
+        assert len(msg.data_words) == MAX_DATA_WORDS
+        assert msg.data_words == tuple(range(MAX_DATA_WORDS))
+
 
 class TestErrorProperties:
     """Tests for error-related MieMessage properties."""
