@@ -35,6 +35,15 @@ full release workflow.
   through one shared parser per implementation that accepts decimal and `0x` hex
   (Python also accepts `0o` / `0b`) and rejects negative values, matching the
   Rust unsigned semantics. Invalid values are a usage error (exit 4).
+- **Schema-invalid config values are now clean config errors on both
+  implementations.** A TOML-valid but schema-invalid value — a non-string
+  `time_format` / `error_mode` (e.g. `time_format = 1`), or a known section name
+  assigned a scalar (`decode = true` instead of a `[decode]` header) — previously
+  crashed the Python CLI with an unclassified `AttributeError` (exit 1), and the
+  section-as-scalar case was silently ignored by the Rust loader (exit 0). Both
+  now reject these as configuration errors (exit 5): Python validates section
+  shape and string types at load time, and Rust rejects a known section name used
+  as a scalar (the same silent-drop footgun as a section the loader never reads).
 - **Python now caps a record's data-word payload at 32, matching Rust.** A
   crafted record whose Type Word claims more than 32 data words previously left
   Python's `MieMessage.data_words` unbounded, while Rust's `DataWords` inline

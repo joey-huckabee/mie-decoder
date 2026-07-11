@@ -1,0 +1,4 @@
+# A known section name assigned a scalar (a `[decode]` header was intended).
+# A config error (exit 5) on BOTH implementations: Python previously leaked an
+# AttributeError and Rust silently ignored it as an unknown top-level key.
+decode = true

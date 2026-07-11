@@ -264,6 +264,7 @@ pub fn load_config(path: Option<&Path>) -> Result<DecoderConfig, ConfigError> {
 
 pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     let toml = parse_toml(text).map_err(ConfigError)?;
+    reject_section_used_as_scalar(&toml)?;
     let mut cfg = DecoderConfig::default();
     // Each `[section]` is applied by its own helper (all validate at load time
     // per L2-CFG-010) so no single function carries the whole schema.
@@ -448,6 +449,31 @@ fn warn_unknown_keys(toml: &TomlDoc) {
             crate::log_warn!("unknown TOML key: [{section}] {key}");
         }
     }
+}
+
+/// A known section name written as a root-level scalar (e.g. `decode = true`
+/// instead of a `[decode]` header) is a config error, matching the Python
+/// loader. Otherwise the intended section is silently dropped — the same
+/// silent-ignore class of bug as a section the loader never reads. A
+/// truly-unknown root-level key (not a section name) stays a non-fatal
+/// unknown-key WARN (L2-CFG-009).
+fn reject_section_used_as_scalar(toml: &TomlDoc) -> Result<(), ConfigError> {
+    for (section, key, _) in &toml.entries {
+        if section.is_empty() && is_known_section(key) {
+            return Err(ConfigError(format!(
+                "Invalid [{key}]: expected a table, not a value"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The six `[section]` names the schema defines.
+fn is_known_section(name: &str) -> bool {
+    matches!(
+        name,
+        "logging" | "decode" | "output" | "mux" | "merge" | "filter"
+    )
 }
 
 /// Shared schema membership check used by L2-CFG-009. Any
@@ -940,6 +966,22 @@ format = "csv#weird"
         assert!(err.contains("[decode]"), "got {err:?}");
         // The same key name in different sections is fine (distinct tables).
         assert!(parse_toml("[a]\nx = 1\n[b]\nx = 2\n").is_ok());
+    }
+
+    /// Schema-invalid but TOML-valid values are load-time config errors, aligned
+    /// with the Python loader: a non-string for a string-typed key, and a known
+    /// section name assigned a scalar (`decode = true`) rather than a `[table]`.
+    /// Requirements: L2-CFG-010
+    #[test]
+    fn rejects_non_string_and_scalar_sections() {
+        assert!(parse_into_config("[decode]\ntime_format = 1\n").is_err());
+        assert!(parse_into_config("[decode]\nerror_mode = 1\n").is_err());
+        for section in ["decode", "logging", "output", "mux", "merge", "filter"] {
+            let err = parse_into_config(&format!("{section} = true\n")).unwrap_err();
+            assert!(err.0.contains(&format!("[{section}]")), "got {:?}", err.0);
+        }
+        // A non-section unknown root-level key stays a tolerated unknown-key WARN.
+        assert!(parse_into_config("bogus = true\n").is_ok());
     }
 
     /// Requirements: L2-CFG-010

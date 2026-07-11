@@ -120,6 +120,21 @@ def _require_bool(section: str, key: str, value: object) -> bool:
     return value
 
 
+def _require_table(data: dict[str, Any], section: str) -> dict[str, Any]:
+    """Return the ``[section]`` table (or an empty dict if absent).
+
+    Raises ``ValueError`` if the name is present but is not a table — e.g.
+    ``decode = true`` written instead of a ``[decode]`` header. Without this the
+    downstream ``.get(...)`` on a scalar leaks an ``AttributeError`` (which the
+    CLI does not classify as a config error). Matches the Rust loader, which
+    rejects a known section name assigned a scalar value (L2-CFG-010).
+    """
+    value = data.get(section, {})
+    if not isinstance(value, dict):
+        raise ValueError(f"Invalid [{section}]: expected a table, got {type(value).__name__}")
+    return value
+
+
 def _require_rt_sa_range(  # pylint: disable=redefined-outer-name
     field: str, values: object
 ) -> set[int]:
@@ -487,14 +502,14 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     # load time) so no single function carries the whole schema. The loaders
     # run in the original order — all validation first, then the unknown-key
     # WARN, then assembly — so error precedence is unchanged.
-    decode_section = data.get("decode", {})
-    output_section = data.get("output", {})
+    decode_section = _require_table(data, "decode")
+    output_section = _require_table(data, "output")
 
-    log_level = _load_logging_level(data.get("logging", {}))
+    log_level = _load_logging_level(_require_table(data, "logging"))
     time_format = _load_time_format(decode_section)
     strict = _require_bool("decode", "strict", decode_section.get("strict", False))
     error_mode = _load_error_mode(decode_section)
-    filters = _load_filter_section(data.get("filter", {}))
+    filters = _load_filter_section(_require_table(data, "filter"))
     output_format = _load_output_format(output_section)
     no_clobber = _require_bool("output", "no_clobber", output_section.get("no_clobber", False))
     allow_partial = _require_bool(
@@ -513,8 +528,8 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         LOOKAHEAD_RECORDS_MAX,
     )
     standard_tick_rate_hz = _load_standard_tick_rate(decode_section)
-    mux_enabled, mux_delimiter, mux_field = _load_mux_section(data.get("mux", {}))
-    collapse_duplicates, collapse_window_us = _load_merge_section(data.get("merge", {}))
+    mux_enabled, mux_delimiter, mux_field = _load_mux_section(_require_table(data, "mux"))
+    collapse_duplicates, collapse_window_us = _load_merge_section(_require_table(data, "merge"))
 
     _warn_unknown_keys(data)
 
@@ -559,12 +574,18 @@ def _load_logging_level(logging_section: dict[str, Any]) -> str:
 
 def _load_time_format(decode_section: dict[str, Any]) -> TimestampFormat:
     """`[decode] time_format`."""
-    return parse_timestamp_format(decode_section.get("time_format", "auto"))
+    raw = decode_section.get("time_format", "auto")
+    if not isinstance(raw, str):
+        raise ValueError(f"Invalid decode.time_format: expected string, got {type(raw).__name__}")
+    return parse_timestamp_format(raw)
 
 
 def _load_error_mode(decode_section: dict[str, Any]) -> ErrorMode:
     """`[decode] error_mode`."""
-    em_str = decode_section.get("error_mode", "separate").lower()
+    raw = decode_section.get("error_mode", "separate")
+    if not isinstance(raw, str):
+        raise ValueError(f"Invalid decode.error_mode: expected string, got {type(raw).__name__}")
+    em_str = raw.lower()
     if em_str not in _ERROR_MODE_MAP:
         raise ValueError(f"Invalid error_mode: {em_str!r}. Valid: separate, inline")
     return _ERROR_MODE_MAP[em_str]
@@ -608,10 +629,11 @@ def _load_standard_tick_rate(decode_section: dict[str, Any]) -> float | None:
     return hz
 
 
-def _load_mux_section(mux_section: Any) -> tuple[bool, str, int]:
-    """`[mux]` MUX-from-filename configuration (L2-WRT-020)."""
-    if not isinstance(mux_section, dict):
-        mux_section = {}
+def _load_mux_section(mux_section: dict[str, Any]) -> tuple[bool, str, int]:
+    """`[mux]` MUX-from-filename configuration (L2-WRT-020).
+
+    The caller validates the section is a table (see :func:`_require_table`).
+    """
     mux_enabled = _require_bool("mux", "enabled", mux_section.get("enabled", True))
     mux_delimiter_raw = mux_section.get("delimiter", ".")
     if not isinstance(mux_delimiter_raw, str) or mux_delimiter_raw == "":
@@ -624,10 +646,11 @@ def _load_mux_section(mux_section: Any) -> tuple[bool, str, int]:
     return mux_enabled, mux_delimiter_raw, mux_field_raw
 
 
-def _load_merge_section(merge_section: Any) -> tuple[bool, int]:
-    """`[merge]` cross-recorder duplicate collapsing (L2-MRG-007)."""
-    if not isinstance(merge_section, dict):
-        merge_section = {}
+def _load_merge_section(merge_section: dict[str, Any]) -> tuple[bool, int]:
+    """`[merge]` cross-recorder duplicate collapsing (L2-MRG-007).
+
+    The caller validates the section is a table (see :func:`_require_table`).
+    """
     collapse_duplicates = _require_bool(
         "merge", "collapse_duplicates", merge_section.get("collapse_duplicates", False)
     )

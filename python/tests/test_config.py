@@ -715,6 +715,34 @@ class TestSchemaValidation:
         config = load_config(cfg)
         assert config.filters.exclude_rts == {0, 31}
 
+    @pytest.mark.requirement("L2-CFG-010")
+    def test_non_string_time_format_rejected(self, tmp_path: Path) -> None:
+        # TOML-valid but schema-invalid: an int where a string is expected must
+        # be a clean config error (ValueError -> exit 5), not a leaked
+        # AttributeError. Matches the Rust "must be a string" rejection.
+        cfg = tmp_path / "tf_int.toml"
+        cfg.write_text("[decode]\ntime_format = 1\n")
+        with pytest.raises(ValueError, match="decode.time_format"):
+            load_config(cfg)
+
+    @pytest.mark.requirement("L2-CFG-010")
+    def test_non_string_error_mode_rejected(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "em_int.toml"
+        cfg.write_text("[decode]\nerror_mode = 1\n")
+        with pytest.raises(ValueError, match="decode.error_mode"):
+            load_config(cfg)
+
+    @pytest.mark.requirement("L2-CFG-010")
+    @pytest.mark.parametrize("section", ["decode", "logging", "output", "mux", "merge", "filter"])
+    def test_section_used_as_scalar_rejected(self, tmp_path: Path, section: str) -> None:
+        # A known section name assigned a scalar (e.g. `decode = true` instead of
+        # a `[decode]` header) is a config error on both implementations, rather
+        # than a leaked AttributeError (Python) or a silent drop (Rust).
+        cfg = tmp_path / f"{section}_scalar.toml"
+        cfg.write_text(f"{section} = true\n")
+        with pytest.raises(ValueError, match=rf"\[{section}\]"):
+            load_config(cfg)
+
     @pytest.mark.requirement("L2-CFG-011")
     @pytest.mark.requirement("L2-DEC-017")
     def test_standard_tick_rate_hz_default_is_none(self, tmp_path: Path) -> None:
