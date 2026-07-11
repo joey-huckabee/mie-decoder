@@ -84,15 +84,17 @@ full release workflow.
   (Rust `create_new` / Python mode `"x"`, i.e. `O_EXCL`) with retry — so
   concurrent same-destination writers can no longer share a temp file. Output
   content, permissions, and the atomic-rename behavior are unchanged.
-- **Dotted keys and array-of-tables headers are now rejected by both
-  implementations.** `tomllib` honored a dotted key (`decode.strict = true`,
-  nesting it into `[decode]`) and accepted an array-of-tables header
-  (`[[decode]]`), while the Rust hand-rolled parser silently dropped the dotted
-  key or misread `[[decode]]` as a section literally named `[decode]` — so the
-  same config behaved differently on each implementation, and a dotted safety
-  option such as `output.no_clobber` was silently ignored on Rust. Both now
-  refuse these forms as config errors (exit 5); the config schema is the flat
-  `[section]` + `key = value` form only.
+- **Dotted keys, dotted section headers, and array-of-tables headers are now
+  rejected by both implementations.** `tomllib` nested a dotted key
+  (`decode.strict = true`) or dotted header (`[output.no_clobber]`) and accepted
+  an array-of-tables header (`[[decode]]`), while the Rust hand-rolled parser
+  silently dropped the dotted key, stored a dotted header as a section literally
+  named `output.no_clobber` (ignoring its keys), or misread `[[decode]]` — so the
+  same config behaved differently on each implementation, and a mis-typed safety
+  option such as `[output.no_clobber]` / `output.no_clobber = true` was silently
+  ignored on Rust (dropping overwrite protection). Both now refuse these forms as
+  config errors (exit 5); the config schema is the flat `[section]` +
+  `key = value` form only.
 - **The Rust config loader now rejects duplicate TOML keys and re-declared
   section headers.** A repeated `(section, key)`, or a `[section]` header
   declared more than once (even with different keys inside), previously kept the

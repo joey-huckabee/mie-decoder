@@ -153,6 +153,16 @@ def _reject_unsupported_toml_forms(text: str) -> None:
         if line.startswith("[["):
             raise ValueError(f"line {lineno}: array-of-tables headers ([[...]]) are not supported")
         if line.startswith("["):
+            # A dotted section header (`[output.no_clobber]`) nests a table.
+            # tomllib nests it and the loader would then reject the wrong shape
+            # (or, for a section with no typed key, silently ignore it) — reject
+            # it uniformly here so both implementations refuse the form.
+            header = line[1:].split("]", 1)[0].strip()
+            if "." in header:
+                raise ValueError(
+                    f"line {lineno}: dotted section headers ([a.b]) are not "
+                    "supported; use a flat [section] header"
+                )
             continue
         # A `key = value` line: reject an (unquoted) dotted key. The key is the
         # text before the first '='; a quoted key is left to the normal
