@@ -58,6 +58,13 @@ full release workflow.
   is bypassed for any requested merge, an output path pointing at one of the
   inputs could overwrite it in place. It is now gated on whether a merge was
   *requested* (checking the full requested input set), matching the Rust CLI.
+- **The Rust config loader now rejects duplicate TOML keys.** A repeated
+  `(section, key)` in a config file previously kept the first value silently on
+  Rust while Python's `tomllib` rejected it — so a malformed config could decode
+  differently on each implementation. Rust now raises a config error (exit 5) to
+  match, per the TOML spec. `CONFIG-REFERENCE.md` now documents the exact TOML
+  subset the hand-rolled Rust parser accepts (and the full-TOML features it does
+  not, e.g. multi-line arrays and `1_000_000` underscore separators).
 - **The Rust config loader now honors the `[merge]` section.** Setting
   `[merge] collapse_duplicates` / `collapse_window_us` in a TOML config file had
   no effect on the Rust CLI — the section was silently ignored and even reported

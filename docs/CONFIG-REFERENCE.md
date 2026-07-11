@@ -396,6 +396,24 @@ The Rust crate accepts include-filter CLI flags (L3-RS-010): `--include-types`, 
 
 Python's TOML parser is the standard-library `tomllib` on Python 3.11+ and the `tomli` package on Python 3.10 (L3-PY-005). Either way, the schema validation is identical — the TOML library only parses; the decoder validates.
 
+### Rust hand-rolled TOML parser (accepted subset)
+
+To preserve the crate's single-dependency design (only `memmap2`), Rust parses TOML with a hand-rolled reader that accepts a deliberately small subset — everything the decoder's schema needs, and nothing more:
+
+- `[section]` headers and `key = value` pairs, one per line;
+- values: double-quoted strings (`"..."`), integers, floats, booleans (`true` / `false`), and **single-line** primitive arrays (`[1, 2, 3]` or `["A", "B"]`);
+- `#` line comments and trailing comments (a `#` inside a quoted string is preserved).
+
+The following full-TOML features are **not** supported and will be rejected (or mis-read) by the Rust parser even though Python's `tomllib` accepts them — avoid them for a config that must work on both implementations:
+
+- multi-line / spanning arrays;
+- underscore digit separators in numbers (`1_000_000` — write `1000000`);
+- inline tables (`{ ... }`), dotted keys (`a.b = 1`), and date-time values.
+
+**Duplicate keys are rejected by both implementations.** A repeated `(section, key)` is a load-time config error (exit `5`) on Rust as well as Python — the hand-rolled parser previously kept the *first* value silently; it now matches `tomllib`, which raises per the TOML spec.
+
+The bundled `config/default.toml` stays within this subset, so a config derived from it is portable across both implementations.
+
 ### Implementations may add namespaced keys
 
 Per L2-CFG-008, implementations MAY add additional keys under namespaces that don't collide with the shared schema (e.g., a Rust-only `[rust]` section), and implementations that don't recognize a key warn rather than reject. Today neither impl exercises this; reserved for future per-impl features.

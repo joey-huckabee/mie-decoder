@@ -325,6 +325,12 @@
       "expected_exit": 5
     },
     {
+      "name": "config-error-duplicate-key",
+      "input": "inputs/standard-timestamps.hex",
+      "config": "configs/duplicate-key.toml",
+      "expected_exit": 5
+    },
+    {
       "name": "time-format-uppercase-cli",
       "input": "inputs/mode-code-no-data.hex",
       "expected": "expected/mode-code-no-data.csv",

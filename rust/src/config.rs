@@ -8,7 +8,9 @@
 //!   - `#` line comments and trailing comments on value lines
 //!   - Whitespace-insensitive
 //!
-//! Anything outside this subset is rejected with a line number.
+//! Anything outside this subset is rejected with a line number. A duplicated
+//! `(section, key)` is rejected too, matching Python's `tomllib` (the TOML spec
+//! forbids redefinition); see `docs/CONFIG-REFERENCE.md` for the accepted subset.
 //!
 //! Precedence: CLI args > config file > built-in defaults
 //! (implemented via [`DecoderConfig::with_overrides`]).
@@ -666,6 +668,25 @@ pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
         }
 
         let value = parse_value(value_text, lineno + 1)?;
+        // Reject a duplicate `(section, key)`, matching Python's `tomllib`
+        // (which raises on redefinition per the TOML spec). Without this the
+        // parser silently kept the FIRST value (`TomlDoc::get` finds the head),
+        // so a config with a repeated key decoded differently on each impl.
+        if doc
+            .entries
+            .iter()
+            .any(|(s, k, _)| s == &section && k == &key)
+        {
+            return Err(format!(
+                "line {}: duplicate key '{key}'{}",
+                lineno + 1,
+                if section.is_empty() {
+                    String::new()
+                } else {
+                    format!(" in section '[{section}]'")
+                }
+            ));
+        }
         doc.entries.push((section.clone(), key, value));
     }
 
@@ -907,6 +928,18 @@ format = "csv#weird"
             Some(TomlValue::String(s)) => assert_eq!(s, "csv#weird"),
             other => panic!("expected String(\"csv#weird\"), got {other:?}"),
         }
+    }
+
+    /// A repeated `(section, key)` is rejected, matching Python's `tomllib`,
+    /// rather than silently keeping the first value (L2-CFG-010).
+    /// Requirements: L2-CFG-010
+    #[test]
+    fn rejects_duplicate_key() {
+        let err = parse_toml("[decode]\nstrict = true\nstrict = false\n").unwrap_err();
+        assert!(err.contains("duplicate key 'strict'"), "got {err:?}");
+        assert!(err.contains("[decode]"), "got {err:?}");
+        // The same key name in different sections is fine (distinct tables).
+        assert!(parse_toml("[a]\nx = 1\n[b]\nx = 2\n").is_ok());
     }
 
     /// Requirements: L2-CFG-010
