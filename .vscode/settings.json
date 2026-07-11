@@ -1,0 +1,59 @@
+{
+  // Workspace settings for the MIE-Decoder Rust + Python repo. These align the
+  // editor with the CI gates (rustfmt / clippy, ruff format / ruff check,
+  // pytest) so what you see locally matches what CI enforces.
+
+  // ── Rust ───────────────────────────────────────────────────────────────────
+  // The crate lives in rust/ — there is no Cargo.toml at the repo root — so point
+  // rust-analyzer at it explicitly, otherwise it may not discover the project.
+  "rust-analyzer.linkedProjects": ["rust/Cargo.toml"],
+  // Match CI: use `cargo clippy --all-targets` for on-save diagnostics.
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.allTargets": true,
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true
+  },
+
+  // ── Python ─────────────────────────────────────────────────────────────────
+  // Default to the Poetry venv. This is the Windows path; on macOS/Linux the
+  // interpreter is python/.venv/bin/python — if this does not resolve, run
+  // "Python: Select Interpreter" and pick the python/.venv environment.
+  "python.defaultInterpreterPath": "${workspaceFolder}/python/.venv/Scripts/python.exe",
+  // Tests: pytest, discovered from python/ where pyproject.toml + tests/ live.
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.cwd": "${workspaceFolder}/python",
+  "python.testing.pytestArgs": ["tests"],
+  // Format with ruff on save, matching the `ruff format --check` CI gate.
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true
+  },
+
+  // ── Editor / files ─────────────────────────────────────────────────────────
+  // The repo caps lines at 100 (rustfmt default + ruff line-length = 100).
+  "editor.rulers": [100],
+  // NOTE: `files.insertFinalNewline` / `files.trimTrailingWhitespace` are left
+  // OFF on purpose. The conformance suite compares .csv oracles and .hex
+  // fixtures byte-for-byte, and a global whitespace/newline fixup on save could
+  // silently alter one and break the oracle. The pre-commit hook already
+  // enforces trailing-whitespace and final-newline on staged source files.
+  // Hide tool caches from the explorer (kept target/ and .venv/ visible).
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true
+  },
+  // Keep search and the file watcher out of heavy build/venv trees for speed.
+  "search.exclude": {
+    "**/target": true,
+    "**/.venv": true,
+    "**/__pycache__": true
+  },
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/.venv/**": true
+  }
+}
