@@ -37,6 +37,9 @@ _SECTIONS = [
     "bogus",
     "output.no_clobber",  # dotted header
     "decode.foo",
+    "bad-section",  # non-identifier: hyphen
+    '"bad"',  # non-identifier: quoted
+    "bad section",  # non-identifier: space
 ]
 # Keys: real identifiers plus a few that stress the key grammar.
 _KEYS = [

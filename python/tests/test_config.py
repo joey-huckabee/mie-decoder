@@ -814,6 +814,19 @@ class TestSchemaValidation:
         assert len(_split_array_items("0, 31")) == 2
         assert len(_split_array_items(r'"A", "B"')) == 2
 
+    @pytest.mark.requirement("L2-CFG-009")
+    def test_root_level_scalar_key_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A root-level scalar key is unknown (the schema has no root keys); both
+        # implementations warn-and-continue. Rust logs `[] bogus`; Python must
+        # too, rather than dropping it silently.
+        cfg = tmp_path / "root.toml"
+        cfg.write_text("bogus = true\n")
+        with caplog.at_level("WARNING"):
+            load_config(cfg)  # accepts (does not raise)
+        assert "[] bogus" in caplog.text
+
     @pytest.mark.requirement("L2-CFG-010")
     def test_dotted_section_header_rejected(self, tmp_path: Path) -> None:
         # `[output.no_clobber]` nests a table; both implementations reject the

@@ -84,6 +84,17 @@ full release workflow.
   (Rust `create_new` / Python mode `"x"`, i.e. `O_EXCL`) with retry — so
   concurrent same-destination writers can no longer share a temp file. Output
   content, permissions, and the atomic-rename behavior are unchanged.
+- **The Rust config loader now rejects non-identifier section headers.** A
+  section name with a hyphen, space, or quote (`[bad-section]`, `[bad section]`,
+  `["bad"]`) was stored as an oddly-named section on Rust while Python's whitelist
+  rejected it. Rust now applies the same simple-identifier check to section
+  headers that it already applied to keys, so both reject the form (exit 5).
+- **Python now warns for a root-level unknown scalar key, matching Rust.** A
+  stray top-level key such as `bogus = true` loaded silently on Python
+  (`_warn_unknown_keys` skipped non-table entries), while Rust logged
+  `unknown TOML key: [] bogus`. Python now emits the same warning, honoring the
+  documented WARN-and-continue contract for unknown keys. (Both still accept the
+  config — this is observability only.)
 - **Python's config array splitter now handles escaped quotes like Rust.** An
   array whose string element contained an escaped quote followed by a comma
   (e.g. `["a\", b"]`) was mis-split on the interior comma and rejected on Python,
