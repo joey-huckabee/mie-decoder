@@ -135,6 +135,35 @@ def _require_table(data: dict[str, Any], section: str) -> dict[str, Any]:
     return value
 
 
+def _reject_unsupported_toml_forms(text: str) -> None:
+    """Reject TOML forms outside the tool's flat ``[section]`` schema.
+
+    ``tomllib`` is a full TOML parser, so it would *honor* a dotted key
+    (``decode.strict = true`` becomes ``strict`` in ``[decode]``) and accept an
+    array-of-tables header (``[[decode]]``). The Rust hand-rolled parser supports
+    neither, so without this a config would behave differently across the two
+    implementations — and, worse, a dotted safety option such as
+    ``output.no_clobber`` would be silently ignored on Rust. Both implementations
+    now reject these forms as configuration errors (exit 5, L2-CFG-010).
+    """
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[["):
+            raise ValueError(f"line {lineno}: array-of-tables headers ([[...]]) are not supported")
+        if line.startswith("["):
+            continue
+        # A `key = value` line: reject an (unquoted) dotted key. The key is the
+        # text before the first '='; a quoted key is left to the normal
+        # unknown-key path, matching the Rust parser.
+        key_part = line.split("=", 1)[0]
+        if "." in key_part and '"' not in key_part and "'" not in key_part:
+            raise ValueError(
+                f"line {lineno}: dotted keys (a.b = ...) are not supported; use a [section] header"
+            )
+
+
 def _require_rt_sa_range(  # pylint: disable=redefined-outer-name
     field: str, values: object
 ) -> set[int]:
@@ -495,8 +524,9 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         )
 
     logger.info("Loading config from %s", config_path)
-    with open(config_path, "rb") as f:
-        data = tomllib.load(f)
+    text = config_path.read_text(encoding="utf-8")
+    _reject_unsupported_toml_forms(text)
+    data = tomllib.loads(text)
 
     # Each `[section]` is validated by its own loader (L2-CFG-010: validate at
     # load time) so no single function carries the whole schema. The loaders

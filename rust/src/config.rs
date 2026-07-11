@@ -676,6 +676,17 @@ pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
         }
 
         if let Some(stripped) = line.strip_prefix('[') {
+            // `[[section]]` array-of-tables headers are not part of the flat
+            // schema; reject them rather than misreading `[[decode]]` as a
+            // section literally named `[decode]`. Python's tomllib parses the
+            // array-of-tables and the loader then rejects the wrong shape, so
+            // both implementations refuse it (L2-CFG-010).
+            if stripped.starts_with('[') {
+                return Err(format!(
+                    "line {}: array-of-tables headers ([[...]]) are not supported",
+                    lineno + 1
+                ));
+            }
             let inner = stripped
                 .strip_suffix(']')
                 .ok_or_else(|| format!("line {}: unterminated section header", lineno + 1))?;
@@ -704,6 +715,18 @@ pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
         let value_text = line[eq + 1..].trim();
         if key.is_empty() {
             return Err(format!("line {}: empty key", lineno + 1));
+        }
+        // Dotted keys (`decode.strict = true`) are not part of the flat schema.
+        // Python's tomllib would nest them (honoring the value), so silently
+        // dropping them here diverges — and worse, silently ignores a safety
+        // option like `output.no_clobber`. Reject them so both implementations
+        // refuse the form (L2-CFG-010). Quoted keys are left to the normal
+        // unknown-key path, matching Python (which also does not dot-split them).
+        if !key.starts_with('"') && key.contains('.') {
+            return Err(format!(
+                "line {}: dotted keys (a.b = ...) are not supported; use a [section] header",
+                lineno + 1
+            ));
         }
 
         let value = parse_value(value_text, lineno + 1)?;
@@ -993,6 +1016,23 @@ format = "csv#weird"
         assert!(err.contains("declared more than once"), "got {err:?}");
         assert!(err.contains("[decode]"), "got {err:?}");
         // Distinct section headers are fine.
+        assert!(parse_toml("[decode]\nstrict = true\n[mux]\nenabled = false\n").is_ok());
+    }
+
+    /// TOML forms outside the flat `[section] key = value` schema are rejected,
+    /// matching Python: array-of-tables headers (`[[decode]]`) and dotted keys
+    /// (`a.b = ...`). Otherwise Rust would misread `[[decode]]` and silently
+    /// drop `decode.strict` (including a safety option like `output.no_clobber`).
+    /// Requirements: L2-CFG-010
+    #[test]
+    fn rejects_dotted_keys_and_array_tables() {
+        let at = parse_toml("[[decode]]\nstrict = true\n").unwrap_err();
+        assert!(at.contains("array-of-tables"), "got {at:?}");
+        let dk = parse_toml("decode.strict = true\n").unwrap_err();
+        assert!(dk.contains("dotted keys"), "got {dk:?}");
+        // A dotted key inside a section is rejected too.
+        assert!(parse_toml("[decode]\nfoo.bar = 1\n").is_err());
+        // Normal flat forms still parse.
         assert!(parse_toml("[decode]\nstrict = true\n[mux]\nenabled = false\n").is_ok());
     }
 

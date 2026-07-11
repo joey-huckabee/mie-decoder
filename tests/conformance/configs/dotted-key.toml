@@ -1,0 +1,5 @@
+# A dotted key. tomllib honors it (nesting `decode.strict` into [decode]) but
+# the Rust hand-rolled parser does not support the form; both reject it as a
+# config error (exit 5) so a config behaves identically — and a dotted safety
+# option like `output.no_clobber` cannot be silently ignored on Rust.
+decode.strict = true
