@@ -791,6 +791,9 @@ class TestSchemaValidation:
             "[decode]\nstrict = true  # trailing comment\n",
             '[mux]\ndelimiter = "\\t"\n',  # \t is a supported escape
             '[mux]\ndelimiter = "\\""\n',  # \" is a supported escape
+            # array string with an escaped quote + comma: one element, accepted
+            # (unknown key → warn-and-continue on both).
+            '[bogus]\nunknown_key = ["a\\", b"]\n',
         ],
     )
     def test_flat_forms_still_accepted(self, tmp_path: Path, snippet: str) -> None:
@@ -798,6 +801,18 @@ class TestSchemaValidation:
         cfg = tmp_path / "ok.toml"
         cfg.write_text(snippet)
         load_config(cfg)  # must not raise
+
+    @pytest.mark.requirement("L2-CFG-010")
+    def test_array_splitter_respects_escaped_quotes(self) -> None:
+        from mie_decoder.config import _split_array_items
+
+        # A comma that follows an escaped quote is *inside* the string, so this
+        # array has exactly one element — mirroring the Rust splitter. Before the
+        # fix Python broke it into two and rejected the config where Rust accepts.
+        assert _split_array_items(r'"a\", b"') == [r'"a\", b"']
+        # A plain top-level comma still separates.
+        assert len(_split_array_items("0, 31")) == 2
+        assert len(_split_array_items(r'"A", "B"')) == 2
 
     @pytest.mark.requirement("L2-CFG-010")
     def test_dotted_section_header_rejected(self, tmp_path: Path) -> None:

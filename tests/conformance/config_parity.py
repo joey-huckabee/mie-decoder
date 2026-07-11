@@ -73,6 +73,10 @@ CORPUS: list[tuple[str, str, str]] = [
     ("escaped-quote-string", '[mux]\ndelimiter = "\\""\n', "accept"),
     ("carriage-return-escape", '[mux]\ndelimiter = "\\r"\n', "reject"),
     ("unicode-escape", '[mux]\ndelimiter = "\\u002C"\n', "reject"),
+    # An array string containing an escaped quote AND a comma: the comma is
+    # inside the string, so the array has one element — the splitter must not
+    # break on it. Under an unknown key both just warn-and-accept.
+    ("array-escaped-quote", '[bogus]\nunknown_key = ["a\\", b"]\n', "accept"),
 ]
 
 

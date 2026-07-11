@@ -93,6 +93,11 @@ _VALUES = [
     "1979-05-27",
     "[01]",
     "[\n1,\n]",
+    # arrays whose string elements contain an escaped quote and/or a comma,
+    # stressing the quote-aware, backslash-tracking array splitter.
+    '["a\\", b"]',
+    '["x,y", "z"]',
+    '["p\\"q"]',
 ]
 
 

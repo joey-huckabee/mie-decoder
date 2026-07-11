@@ -84,6 +84,12 @@ full release workflow.
   (Rust `create_new` / Python mode `"x"`, i.e. `O_EXCL`) with retry — so
   concurrent same-destination writers can no longer share a temp file. Output
   content, permissions, and the atomic-rename behavior are unchanged.
+- **Python's config array splitter now handles escaped quotes like Rust.** An
+  array whose string element contained an escaped quote followed by a comma
+  (e.g. `["a\", b"]`) was mis-split on the interior comma and rejected on Python,
+  while Rust (which tracks the preceding backslash) accepted it. The Python
+  splitter now mirrors Rust's `push_quoted_char`, so both treat the comma as
+  inside the string. Added to the parity corpus and the fuzzer's value set.
 - **Config numeric and string-escape grammars are now aligned, and a
   differential fuzzer guards config parsing.** Rust routed numeric literals
   through native `i64` / `f64` parsing, which accepts non-TOML forms (`08`, `1.`,
