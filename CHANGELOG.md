@@ -15,6 +15,19 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.7.1] — 2026-07-11
+
+Patch release from an extended round of team review. Resolves a large batch of
+Rust↔Python parity findings — most of them in the hand-rolled TOML config
+parser, now aligned to a single explicit grammar and guarded by a curated parity
+corpus plus a differential fuzzer — alongside `-V` / `-v` and `--time-format` CLI
+parity, hex `dump` arguments, `[merge]` config-file support on Rust, merge
+output-collision safety, removal of two latent Rust panic sites, Standard-
+timestamp rounding parity, atomic-writer temp-file safety, and expanded
+conformance coverage. No decode-output or public-API change: the full Rust and
+Python suites, the byte-exact conformance oracle, and the new config parity
+corpus and fuzzer all pass.
+
 ### Fixed
 
 - **Version short flag parity across implementations.** Both CLIs now accept
