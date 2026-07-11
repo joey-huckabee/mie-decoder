@@ -9,8 +9,9 @@
 //!   - Whitespace-insensitive
 //!
 //! Anything outside this subset is rejected with a line number. A duplicated
-//! `(section, key)` is rejected too, matching Python's `tomllib` (the TOML spec
-//! forbids redefinition); see `docs/CONFIG-REFERENCE.md` for the accepted subset.
+//! `(section, key)`, or a `[section]` header declared more than once, is
+//! rejected too, matching Python's `tomllib` (the TOML spec forbids
+//! redefinition); see `docs/CONFIG-REFERENCE.md` for the accepted subset.
 //!
 //! Precedence: CLI args > config file > built-in defaults
 //! (implemented via [`DecoderConfig::with_overrides`]).
@@ -666,6 +667,7 @@ impl TomlDoc {
 pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
     let mut doc = TomlDoc::default();
     let mut section = String::new();
+    let mut seen_sections: Vec<String> = Vec::new();
 
     for (lineno, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
@@ -681,6 +683,17 @@ pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
             if section.is_empty() {
                 return Err(format!("line {}: empty section name", lineno + 1));
             }
+            // Reject re-declaring a `[section]` header, matching Python's
+            // `tomllib` (the TOML spec forbids defining a table twice). Without
+            // this the parser silently merged the second block into the first,
+            // so a config that Python rejects was accepted on Rust.
+            if seen_sections.iter().any(|s| s == &section) {
+                return Err(format!(
+                    "line {}: section [{section}] declared more than once",
+                    lineno + 1
+                ));
+            }
+            seen_sections.push(section.clone());
             continue;
         }
 
@@ -966,6 +979,21 @@ format = "csv#weird"
         assert!(err.contains("[decode]"), "got {err:?}");
         // The same key name in different sections is fine (distinct tables).
         assert!(parse_toml("[a]\nx = 1\n[b]\nx = 2\n").is_ok());
+    }
+
+    /// A re-declared `[section]` header is rejected, matching Python's `tomllib`
+    /// (the TOML spec forbids defining a table twice) — even when the repeated
+    /// block uses different keys, which the `(section, key)` dup-key guard would
+    /// not catch.
+    /// Requirements: L2-CFG-010
+    #[test]
+    fn rejects_duplicate_section_header() {
+        let err =
+            parse_toml("[decode]\nstrict = true\n[decode]\ntime_format = \"irig\"\n").unwrap_err();
+        assert!(err.contains("declared more than once"), "got {err:?}");
+        assert!(err.contains("[decode]"), "got {err:?}");
+        // Distinct section headers are fine.
+        assert!(parse_toml("[decode]\nstrict = true\n[mux]\nenabled = false\n").is_ok());
     }
 
     /// Schema-invalid but TOML-valid values are load-time config errors, aligned
