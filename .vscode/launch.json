@@ -1,0 +1,144 @@
+{
+  // Debug configurations for the MIE-Decoder Rust + Python implementations.
+  //
+  // Requires:
+  //   - Rust configs: the "CodeLLDB" extension (vadimcn.vscode-lldb). Each one
+  //     builds the `mie-decoder` bin from rust/Cargo.toml first (no tasks.json
+  //     needed) and launches it under the debugger.
+  //   - Python configs: the "Python" + "Python Debugger" extensions. They use
+  //     the interpreter selected in VS Code — pick the Poetry venv at
+  //     `python/.venv` (Python: Select Interpreter) so `mie_decoder` is importable.
+  //
+  // The `${input:*}` prompts below let you enter the recording / output paths at
+  // launch; edit their defaults under "inputs" to skip retyping.
+  "version": "0.2.0",
+  "configurations": [
+    // ── Rust (CodeLLDB) ────────────────────────────────────────────────────
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Rust: decode <file> -> CSV",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=mie-decoder",
+          "--manifest-path=${workspaceFolder}/rust/Cargo.toml"
+        ],
+        "filter": { "name": "mie-decoder", "kind": "bin" }
+      },
+      "args": ["decode", "${input:mieFile}", "-o", "${input:outCsv}"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Rust: count <file>",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=mie-decoder",
+          "--manifest-path=${workspaceFolder}/rust/Cargo.toml"
+        ],
+        "filter": { "name": "mie-decoder", "kind": "bin" }
+      },
+      "args": ["count", "${input:mieFile}"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Rust: dump <file>",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=mie-decoder",
+          "--manifest-path=${workspaceFolder}/rust/Cargo.toml"
+        ],
+        "filter": { "name": "mie-decoder", "kind": "bin" }
+      },
+      "args": ["dump", "${input:mieFile}", "--records", "10"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Rust: debug library unit tests",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--manifest-path=${workspaceFolder}/rust/Cargo.toml"
+        ],
+        "filter": { "kind": "lib" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}/rust"
+    },
+    // ── Python (debugpy) ───────────────────────────────────────────────────
+    {
+      "type": "debugpy",
+      "request": "launch",
+      "name": "Python: decode <file> -> CSV",
+      "module": "mie_decoder",
+      "args": ["decode", "${input:mieFile}", "-o", "${input:outCsv}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "type": "debugpy",
+      "request": "launch",
+      "name": "Python: count <file>",
+      "module": "mie_decoder",
+      "args": ["count", "${input:mieFile}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "type": "debugpy",
+      "request": "launch",
+      "name": "Python: dump <file>",
+      "module": "mie_decoder",
+      "args": ["dump", "${input:mieFile}", "--records", "10"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "type": "debugpy",
+      "request": "launch",
+      "name": "Python: pytest (current file)",
+      "module": "pytest",
+      "args": ["${file}", "-v"],
+      "cwd": "${workspaceFolder}/python",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "type": "debugpy",
+      "request": "launch",
+      "name": "Python: pytest (all)",
+      "module": "pytest",
+      "args": ["-q"],
+      "cwd": "${workspaceFolder}/python",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "mieFile",
+      "type": "promptString",
+      "description": "Path to the .mie recording",
+      "default": "${workspaceFolder}/recording.mie"
+    },
+    {
+      "id": "outCsv",
+      "type": "promptString",
+      "description": "Output CSV path",
+      "default": "${workspaceFolder}/decoded.csv"
+    }
+  ]
+}
