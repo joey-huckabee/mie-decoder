@@ -122,6 +122,25 @@ so the request isn't folded into the time-merge contract without separate design
   equal-score IRIG/Standard detection tie requires reverse-engineering the
   auto-detection heuristic. Deferred until a crafted fixture can force the tie.
 
+## Performance refinements (deferred)
+
+Surfaced by a source review and **verified real but deliberately deferred** —
+these are per-record heap churn, not unbounded growth. Both implementations
+already stream in constant memory (the design guarantee that matters), so these
+would trade code churn in the hottest paths for a marginal, unprofiled gain.
+Recorded here so the option isn't lost; revisit only if profiling shows
+per-record allocation is a real bottleneck.
+
+- **Rust per-row allocations.** The writer/merge path allocates a `String` DELTA
+  key and a `Vec<u16>` dedup key, and formats `format!`/`msg_label()` strings per
+  row. Candidate: borrow or intern the keys and reuse scratch buffers so a decode
+  makes O(1) allocations rather than O(rows).
+- **Python double-build on the error path.** The reader constructs a `MieMessage`
+  twice for an errored record. Candidate: build it once and reuse.
+
+Neither changes CSV output, so both are guarded by the existing byte-exact
+conformance oracle if attempted.
+
 ## Shared Commitments
 
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.

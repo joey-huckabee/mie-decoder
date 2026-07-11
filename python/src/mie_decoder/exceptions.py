@@ -12,14 +12,19 @@ Exception hierarchy::
     │   ├── MieFileEmptyError
     │   ├── MieNoValidRecordsError
     │   ├── MieInputOutputCollisionError
-    │   └── MieClobberRefusedError
+    │   ├── MieClobberRefusedError
+    │   ├── MieIncompatibleMergeInputsError
+    │   ├── MieHomogeneousPayloadError
+    │   └── MieTimestampFormatMismatchError
     ├── MieRecordError
     │   ├── MieInvalidTypeWordError
     │   ├── MieUnknownTypeWordError
     │   ├── MieRecordTruncatedError
+    │   ├── MieFirstRecordTruncatedError
     │   ├── MiePayloadError
     │   ├── MieUnknownErrorCodeError
     │   └── MieUnrecoverableSyncLossError
+    ├── MieNonMonotonicInputError
     └── MieWriterError
 """
 
