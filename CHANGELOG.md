@@ -35,6 +35,14 @@ full release workflow.
   through one shared parser per implementation that accepts decimal and `0x` hex
   (Python also accepts `0o` / `0b`) and rejects negative values, matching the
   Rust unsigned semantics. Invalid values are a usage error (exit 4).
+- **Python now caps a record's data-word payload at 32, matching Rust.** A
+  crafted record whose Type Word claims more than 32 data words previously left
+  Python's `MieMessage.data_words` unbounded, while Rust's `DataWords` inline
+  buffer (`[u16; 32]`) truncates it — so a library consumer saw different payload
+  lengths across implementations for such a record. `MieMessage` now truncates to
+  32 on construction. No CSV impact (the writer emits at most 32 `WDnn` columns
+  either way), and MIL-STD-1553B caps a transaction at 32 words, so conforming
+  records are unaffected.
 - **Standard-timestamp microsecond rounding is now bit-identical across
   implementations.** Python computed `int(x + 0.5)` while Rust used `f64::round`;
   for a value one ULP below a half-integer these differ by 1 µs (Python rounds
