@@ -178,10 +178,35 @@ the runner updates an oracle only after Rust and Python already agree.
 The current pre-commit hook runs the Rust checks documented above. Run the
 Python tests manually when changing `python/`.
 
-## Debugging in VS Code
+## VS Code setup
 
-The repo ships `.vscode/launch.json` with nine debug configurations covering
-both implementations.
+The repo ships a `.vscode/` folder so the editor matches the CI gates out of the
+box: `settings.json` (workspace settings) and `launch.json` (debug configs).
+
+### Workspace settings (`settings.json`)
+
+Recommended extensions to get the full benefit:
+
+- **rust-analyzer** (`rust-lang.rust-analyzer`)
+- **CodeLLDB** (`vadimcn.vscode-lldb`) — Rust debugging
+- **Python** + **Python Debugger** (`ms-python.python`, `ms-python.debugpy`)
+- **Ruff** (`charliermarsh.ruff`) — Python format + lint
+
+What the settings do:
+
+- **rust-analyzer** is pointed at `rust/Cargo.toml` (there is no root
+  `Cargo.toml`) and runs `clippy --all-targets` for on-save diagnostics, matching
+  CI. Format-on-save uses rustfmt.
+- **Python** format-on-save uses Ruff (matching the `ruff format --check` gate),
+  and test discovery is pytest run from `python/`.
+- `files.insertFinalNewline` / `trimTrailingWhitespace` are deliberately **off**:
+  the conformance suite compares `.csv` oracles and `.hex` fixtures byte-for-byte,
+  so a global whitespace fixup on save could silently break an oracle. The
+  pre-commit hook already enforces these on staged source.
+
+### Debug configurations (`launch.json`)
+
+`launch.json` ships nine debug configurations covering both implementations.
 
 **Rust** (needs the **CodeLLDB** extension — `vadimcn.vscode-lldb`):
 
