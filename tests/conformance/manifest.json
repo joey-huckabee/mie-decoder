@@ -331,6 +331,18 @@
       "expected_exit": 5
     },
     {
+      "name": "config-error-non-string-value",
+      "input": "inputs/standard-timestamps.hex",
+      "config": "configs/non-string-time-format.toml",
+      "expected_exit": 5
+    },
+    {
+      "name": "config-error-section-as-scalar",
+      "input": "inputs/standard-timestamps.hex",
+      "config": "configs/section-as-scalar.toml",
+      "expected_exit": 5
+    },
+    {
       "name": "time-format-uppercase-cli",
       "input": "inputs/mode-code-no-data.hex",
       "expected": "expected/mode-code-no-data.csv",

@@ -1,0 +1,5 @@
+# A non-string value for a string-typed key. TOML-valid but schema-invalid:
+# must be a config error (exit 5) on BOTH implementations, not a Python crash
+# or a Rust silent-accept.
+[decode]
+time_format = 1
