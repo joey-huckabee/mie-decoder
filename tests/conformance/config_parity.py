@@ -64,6 +64,9 @@ CORPUS: list[tuple[str, str, str]] = [
     ("trailing-after-header", "[decode] junk\nstrict = true\n", "reject"),
     ("unterminated-section", "[decode\nstrict = true\n", "reject"),
     ("empty-section-name", "[]\nstrict = true\n", "reject"),
+    ("hyphen-section-name", "[bad-section]\nstrict = true\n", "reject"),
+    ("quoted-section-name", '["bad"]\nstrict = true\n', "reject"),
+    ("space-in-section-name", "[bad section]\nstrict = true\n", "reject"),
     # ── numeric literals Rust's native i64/f64 accept but TOML rejects ──────
     ("leading-zero-int", "[decode]\ndetect_records = 08\n", "reject"),
     ("bare-trailing-dot", "[decode]\nstandard_tick_rate_hz = 1.\n", "reject"),

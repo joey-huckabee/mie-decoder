@@ -706,6 +706,20 @@ pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
                     lineno + 1
                 ));
             }
+            // A section name must be a simple identifier, matching Python's
+            // `_IDENT_RE`. Otherwise `[bad-section]` / `["bad"]` / `[bad section]`
+            // would be stored as an oddly-named section on Rust while Python
+            // rejects them (L2-CFG-010).
+            if !section
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                return Err(format!(
+                    "line {}: unsupported section header [{section}]; use a flat \
+                     [section] name (letters, digits, underscore)",
+                    lineno + 1
+                ));
+            }
             // Reject re-declaring a `[section]` header, matching Python's
             // `tomllib` (the TOML spec forbids defining a table twice). Without
             // this the parser silently merged the second block into the first,
@@ -1129,6 +1143,21 @@ format = "csv#weird"
         assert!(parse_toml("[decode.foo]\nx = 1\n").is_err());
         // Flat headers still parse.
         assert!(parse_toml("[output]\nno_clobber = true\n").is_ok());
+    }
+
+    /// A section name must be a simple identifier, matching Python's `_IDENT_RE`;
+    /// a hyphen, space, or quote in the header is a config error rather than an
+    /// oddly-named section stored on Rust only.
+    /// Requirements: L2-CFG-010
+    #[test]
+    fn rejects_non_identifier_section_headers() {
+        for bad in ["[bad-section]\n", "[\"bad\"]\n", "[bad section]\n"] {
+            let err = parse_toml(bad).unwrap_err();
+            assert!(err.contains("unsupported section header"), "got {err:?}");
+        }
+        // A valid-identifier (even if unknown) section still parses.
+        assert!(parse_toml("[bogus]\nx = 1\n").is_ok());
+        assert!(parse_toml("[decode]\nstrict = true\n").is_ok());
     }
 
     /// A non-identifier key (e.g. a quoted key) is rejected: tomllib would honor

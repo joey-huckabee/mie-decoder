@@ -846,6 +846,10 @@ def _warn_unknown_keys(data: dict[str, Any]) -> None:
     the operator instead of being silently dropped. Non-fatal."""
     for section_name, section_dict in data.items():
         if not isinstance(section_dict, dict):
+            # A root-level scalar key (`bogus = true`) — the schema defines no
+            # root keys, so it is always unknown. Rust logs `[] bogus`; match it
+            # rather than dropping the entry without a warning.
+            logger.warning("unknown TOML key: [] %s", section_name)
             continue
         for key in section_dict:
             if (section_name, key) not in _KNOWN_SHARED_KEYS:
