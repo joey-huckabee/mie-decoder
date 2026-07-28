@@ -76,10 +76,11 @@ def test_console_script_entry_point_registered() -> None:
     The conformance suite drives the CLI via ``python -m mie_decoder`` (the
     ``__main__`` shim), so the ``[project.scripts]`` console-script entry
     point is otherwise only exercised manually. This pins that it is
-    installed and points at ``cli:main`` — catching a packaging regression
-    that the rest of the suite would miss.
+    installed and points at ``cli:main_cli`` — the process-entry wrapper,
+    not the importable ``main`` — catching a packaging regression that the
+    rest of the suite would miss.
     """
     scripts = entry_points(group="console_scripts")
     mie = [e for e in scripts if e.name == "mie-decoder"]
     assert mie, "mie-decoder console script is not registered"
-    assert mie[0].value == "mie_decoder.cli:main"
+    assert mie[0].value == "mie_decoder.cli:main_cli"

@@ -77,6 +77,16 @@ full release workflow.
   - Python no longer logs a second write summary duplicating the writer's own,
     and the split-mode wording matches on both.
 - `Bus` derives `Ord` so filter diagnostics can sort it (additive; no API break).
+- **A broken pipe no longer leaks CPython's shutdown-failure exit code.** The CLI
+  returned `0` correctly, but the interpreter then flushed `sys.stdout`, hit the
+  dead pipe, and overrode the status with **120** — so `decode … | head` still
+  exited non-zero, violating L2-WRT-018. Caught by the new real-pipe subprocess
+  test on Python 3.14 / Linux (earlier versions happened to leave an empty buffer
+  and escaped it). The console script and `python -m mie_decoder` now run through
+  a `main_cli` wrapper that repoints fd 1 at the null device once stdout is known
+  to be dead. `main()` itself is unchanged and side-effect-free, so in-process
+  callers (tests, embedders) are unaffected — the fd surgery happens only at the
+  real process boundary.
 
 Findings from a no-change audit of both implementations and the full document
 set. Four behavioral defects — one of them silent data loss — plus a sweep of

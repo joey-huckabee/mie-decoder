@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
@@ -1306,6 +1307,50 @@ def _normalize_version_flag(argv: list[str]) -> list[str]:
         "--version" if arg.startswith("--") and arg[2:].lower() == "version" else arg
         for arg in argv
     ]
+
+
+def _neutralise_dead_stdout() -> None:
+    """Point fd 1 at the null device once stdout is known to be unwritable.
+
+    CPython flushes ``sys.stdout`` during interpreter shutdown. If the pipe is
+    already gone that flush raises, CPython prints "Exception ignored while
+    flushing sys.stdout" and — the part that actually matters — **overrides the
+    process exit status with 120**. So a decode that correctly returned 0 after
+    a broken pipe still exited non-zero, violating L2-WRT-018 (observed on
+    Python 3.14 / Linux; earlier versions happened to leave an empty buffer and
+    so escaped it).
+
+    Repointing the file descriptor makes the shutdown flush a silent no-op.
+    This is deliberately *not* done inside :func:`main`: it is fd-level surgery
+    that would corrupt the output capture of any in-process caller (pytest, an
+    embedding application). It belongs at the real process boundary, which is
+    what :func:`main_cli` is.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+    except OSError:  # pragma: no cover - os.devnull is always openable
+        return
+    try:
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):  # pragma: no cover
+        pass
+    finally:
+        os.close(devnull)
+
+
+def main_cli(argv: list[str] | None = None) -> int:
+    """Console-script / ``python -m`` entry point.
+
+    Runs :func:`main` and then makes sure a dead stdout cannot turn a clean exit
+    code into CPython's shutdown-failure 120. Kept separate from :func:`main`
+    so importing callers get a side-effect-free function.
+    """
+    code = main(argv)
+    try:
+        sys.stdout.flush()
+    except (BrokenPipeError, OSError):
+        _neutralise_dead_stdout()
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:

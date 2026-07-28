@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mie-decoder = "mie_decoder.cli:main"
+mie-decoder = "mie_decoder.cli:main_cli"
 
 [tool.poetry]
 packages = [{include = "mie_decoder", from = "src"}]
