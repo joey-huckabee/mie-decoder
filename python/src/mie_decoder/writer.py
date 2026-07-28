@@ -43,10 +43,12 @@ Output Column Definitions:
         the RT address, T/R bit, subaddress, and word count.
 
     MUX
-        Multiplexer label or subchannel identifier. Derived from
-        external configuration (TMATS or recording software setup).
-        Not decoded from the binary record; emitted as an empty column
-        to preserve the vendor CSV layout (L2-WRT-013).
+        Multiplexer label / source identifier. Not decoded from the binary
+        record: by default it is derived from a field of the input **file
+        name** (L2-WRT-020) so a decoded CSV carries the recorder identity
+        encoded in the name. Emitted empty when MUX population is disabled
+        (``--no-mux`` / ``[mux] enabled = false``, which restores the
+        vendor-exact layout) or when the configured field is absent.
 
     TERM_NAME
         Terminal or equipment name associated with the RT/SA combination.
@@ -98,6 +100,7 @@ Output Column Definitions:
 from __future__ import annotations
 
 import csv
+import errno
 import itertools
 import logging
 import os
@@ -105,7 +108,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, TextIO
+from typing import Final, Iterable, TextIO
 
 from mie_decoder.exceptions import (
     MieClobberRefusedError,
@@ -116,6 +119,48 @@ from mie_decoder.exceptions import (
 from mie_decoder.models import MAX_DATA_WORDS, MieMessage
 
 logger = logging.getLogger(__name__)
+
+
+# ── Broken-pipe classification (L2-WRT-018) ────────────────────────────
+
+#: ``errno`` values that mean "the downstream consumer closed the pipe" on
+#: Windows. POSIX surfaces this as ``EPIPE``, which CPython raises as a
+#: ``BrokenPipeError``; Windows does **not** — writing to a pipe whose read end
+#: has closed comes out of the text layer as a plain ``OSError`` with ``EINVAL``
+#: (22), occasionally ``EPIPE`` (32). A bare ``except BrokenPipeError`` therefore
+#: never fires there, which made ``mie-decoder decode rec.mie | head`` exit 1
+#: with an error on Windows while the Rust CLI exited 0.
+_WINDOWS_BROKEN_PIPE_ERRNOS: Final[frozenset[int]] = frozenset({errno.EINVAL, errno.EPIPE})
+
+
+def is_broken_pipe(exc: BaseException) -> bool:
+    """Whether ``exc`` is a downstream-consumer-closed-the-pipe condition.
+
+    The Python analogue of Rust's ``MieError::is_broken_pipe`` (``rust/src/error.rs``),
+    which tests ``io::ErrorKind::BrokenPipe`` — a kind the Rust standard library
+    already normalizes across platforms. Python has no such normalization, so the
+    Windows ``errno`` values are matched explicitly (see
+    :data:`_WINDOWS_BROKEN_PIPE_ERRNOS`).
+
+    The extra ``errno`` matching is deliberately scoped to Windows: on POSIX,
+    ``EINVAL`` from a write is a genuine failure and must stay one, so widening
+    the match there would silently turn real write errors into clean exits.
+    """
+    if isinstance(exc, BrokenPipeError):
+        return True
+    if sys.platform == "win32" and isinstance(exc, OSError):
+        return exc.errno in _WINDOWS_BROKEN_PIPE_ERRNOS
+    return False
+
+
+# NOTE: no "silence stdout after the pipe breaks" step is performed here.
+# The usual recipe for that (`os.dup2(devnull, sys.stdout.fileno())`, from
+# CPython's own SIGPIPE note) is written for a process about to call
+# `sys.exit`, and is wrong for this module: `cli.main()` is an ordinary
+# function that tests and embedders call in-process, and rebinding file
+# descriptor 1 underneath them corrupts the caller's own output capture.
+# The observable contract of L2-WRT-018 — exit 0, and no error text from us —
+# holds without it.
 
 
 # ── Path identity check (L2-WRT-014) ───────────────────────────────────
@@ -260,7 +305,7 @@ CSV_COLUMNS: list[tuple[str, str]] = [
     *[(f"WD{i:02d}", f"Data word {i} (hex)") for i in range(1, MAX_DATA_WORDS + 1)],
     ("STAT", "MIL-STD-1553 Status Word (hex)"),
     ("CMD", "MIL-STD-1553 Command Word (hex)"),
-    ("MUX", "Multiplexer label (external config, empty by spec L2-WRT-013)"),
+    ("MUX", "Source label from the input file name (L2-WRT-020; empty with --no-mux)"),
     ("TERM_NAME", "Terminal name (external config, empty by spec L2-WRT-013)"),
     ("BUS", "Bus identifier: A or B"),
     ("DELTA", "Seconds since prior message with same RT+MSG"),
@@ -432,10 +477,10 @@ class _StreamingCsvRowWriter:
     (L3-PY-012 / L3-RS-012). ``lineterminator="\\n"`` keeps output
     byte-stable across platforms and aligned with the Rust writer.
 
-    ``BrokenPipeError`` is allowed to propagate (the stdout consumer
-    closed early); callers map it to a clean exit per L2-WRT-018. Other
-    ``OSError``\\ s (disk full, permission) are wrapped as
-    :class:`MieWriterError`.
+    A broken pipe is allowed to propagate unchanged (the stdout consumer
+    closed early); callers classify it with :func:`is_broken_pipe` and map it
+    to a clean exit per L2-WRT-018. Other ``OSError``\\ s (disk full,
+    permission) are wrapped as :class:`MieWriterError`.
     """
 
     def __init__(self, stream: TextIO, destination: str) -> None:
@@ -444,20 +489,28 @@ class _StreamingCsvRowWriter:
         self._rows_written = 0
         try:
             self._writer.writeheader()
-        except BrokenPipeError:
-            raise
         except OSError as exc:
-            raise MieWriterError(destination, exc) from exc
+            self._reraise_or_wrap(exc)
 
     def write_message(self, msg: MieMessage) -> None:
         """Write one decoded message as a CSV row."""
         try:
             self._writer.writerow(message_to_row(msg))
-        except BrokenPipeError:
-            raise
         except OSError as exc:
-            raise MieWriterError(self._destination, exc) from exc
+            self._reraise_or_wrap(exc)
         self._rows_written += 1
+
+    def _reraise_or_wrap(self, exc: OSError) -> None:
+        """Let a broken pipe through untouched (L2-WRT-018 — the caller decides
+        it is a clean stop); wrap every other OS error as a writer failure.
+
+        Matching on :func:`is_broken_pipe` rather than the ``BrokenPipeError``
+        type is what makes this correct on Windows, where the pipe-closed
+        condition arrives as a bare ``OSError``.
+        """
+        if is_broken_pipe(exc):
+            raise exc
+        raise MieWriterError(self._destination, exc) from exc
 
     @property
     def rows_written(self) -> int:
@@ -562,8 +615,13 @@ def _write_csv_to_stream(
     try:
         for msg in messages:
             writer.write_message(msg)
-    except BrokenPipeError:
-        # L2-WRT-018: downstream consumer closed early. Treat as success.
+    except OSError as exc:
+        # L2-WRT-018: downstream consumer closed early. Treat as success. Any
+        # other OSError is a real write failure and must keep propagating (the
+        # row writer has already wrapped those as MieWriterError, so reaching
+        # here with one is defensive).
+        if not is_broken_pipe(exc):
+            raise
         logger.info("Stdout consumer closed early (broken pipe) — exit 0")
         return WriteOutcome(normal_count=writer.rows_written, error_count=0, partial=None)
     except MieUnrecoverableSyncLossError:

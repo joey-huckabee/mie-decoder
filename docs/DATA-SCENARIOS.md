@@ -111,7 +111,7 @@ below calls out where the two differ.
 | **Empty *recording*** (captured nothing) | A **valid** MIE recording that captured zero records — its stream is just the `0x0000` end-of-records terminator (e.g. an unused MIL-STD-1553 channel; on disk, the two bytes `00 00`). Writes a **header-only CSV**, WARNs "empty capture", and exits cleanly. `count` prints `0`. This is *not* a wrong-file error — it's recognized by the terminator. | 0 |
 | **Not an MIE file** (wrong type) | Scans the first 64 KB, finds no valid record, reports "no valid records." Try `dump` to inspect the bytes. | 2 |
 | **All-0xFF / single-byte padding** ("homogeneous payload") | A defensive check rejects a file whose candidate records are byte-identical except for the timestamp — almost always a pad, not data. | 2 |
-| **Truncated first record** | A valid header is found but the record runs past end-of-file. Strict: error; lenient: reported and skipped. | 1 / 0 |
+| **Truncated first record** | A valid Type Word is found but the record runs past end-of-file. Strict: error; lenient: reported, and the decode terminates cleanly with **zero** records (there is nothing after it to skip to). | 1 / 0 |
 | **Truncated mid-file record** | Same idea further in: strict errors; lenient skips the short record and continues. | 1 / 0 |
 | **Records start past the 64 KB scan window** | Not detected; reported as "no valid records." | 2 |
 
@@ -291,7 +291,7 @@ over-collapses. See [`USER-GUIDE.md`](USER-GUIDE.md) for worked examples.
 |---|---|---|
 | **Separate** (default) | (nothing) | Clean rows → main CSV; error + spurious rows → `<stem>_errors.csv` (created only if such rows exist). Matches vendor layout. |
 | **Inline** | `--inline-errors` | One CSV with the `ERROR` / `ERROR_CODE` columns populated. |
-| **Stdout** | `-o -` or piping | Streams to stdout; forces inline mode (a stream can't be split). A consumer that closes early (`… \| head`) is fine — exit 0. |
+| **Stdout** | omit `-o` | Streams to stdout; forces inline mode (a stream can't be split). A consumer that closes early (`… \| head`) is fine — exit 0. There is no `-` filename convention: `-o -` writes a file literally named `-`. |
 | **Count** | `count` subcommand | Just the integer message count on stdout; no CSV. |
 | **Dump** | `dump` subcommand | A hex view of the bytes for debugging; no CSV. |
 

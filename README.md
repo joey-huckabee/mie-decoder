@@ -175,6 +175,7 @@ docs/
 ├── ARCHITECTURE.md     Module diagram, sync strategy, data flow
 ├── CLI-REFERENCE.md    Complete per-flag CLI reference (all subcommands)
 ├── CONFIG-REFERENCE.md Normative TOML key reference (type / default / CLI override)
+├── DATA-SCENARIOS.md   Every data condition mapped to its CSV / log / exit outcome
 ├── ERROR-CATALOG.md    Operator reference: exit codes, error classes, DDC codes
 ├── EXAMPLES.md         Runnable cookbook of common operator tasks
 ├── L1-REQ.md           Level 1 SHALL statements (system requirements)
@@ -205,10 +206,12 @@ Per-implementation development commands (build, test, lint, coverage) live in
 [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 [`docs/MAINTAINER-GUIDE.md`](docs/MAINTAINER-GUIDE.md) cover the full workflow.
 
-Shared Rust/Python conformance suite:
+Shared Rust/Python conformance suite (run with an interpreter that has
+`mie_decoder` installed, and build the Rust binary first):
 
 ```bash
-python tests/conformance/run.py
+(cd rust && cargo build)
+poetry -C python run python ../tests/conformance/run.py
 ```
 
 ## Known Limitations

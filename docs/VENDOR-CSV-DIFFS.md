@@ -14,7 +14,7 @@ The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **col
 
 | Category | Status |
 |----------|--------|
-| Column names | **Match** (15 columns in the spec order) |
+| Column names | **Match** (46 columns in the spec order) |
 | Column order | **Match** |
 | Cell formatting (hex width, casing, decimal precision) | **Match** |
 | Line endings | **Match** (both produce LF; see §4) |
@@ -28,7 +28,7 @@ If you find a divergence outside the documented exceptions, **it is a bug** in M
 
 ---
 
-## 2. The 15 CSV columns
+## 2. The CSV columns
 
 In order, exactly as both tools emit them:
 
@@ -36,7 +36,7 @@ In order, exactly as both tools emit them:
 TIME_STAMP, RT, MSG, WD01, WD02, ..., WD32, STAT, CMD, MUX, TERM_NAME, BUS, DELTA, ERROR, ERROR_CODE, IM_GAP, RCV_GAP, XMT_GAP
 ```
 
-That's 1 + 1 + 1 + 32 (data words) + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = **46 columns** total. Reordering or renaming any column would break the L1-OUT-001 byte-compat contract.
+That's **46 columns** total, in 15 named groups: 1 + 1 + 1 + 32 (data words) + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = 46. Reordering or renaming any column would break the L1-OUT-001 byte-compat contract.
 
 ### Cells that match exactly
 
@@ -81,12 +81,12 @@ To make the diff easier to read, filter the comparison to the meaningful columns
 
 ```bash
 # Compare only the columns we're known to populate
-awk -F, '{print $1, $2, $3, $36, $37, $39, $40, $41, $42}' OFS=, vendor.csv > vendor-cmp.csv
-awk -F, '{print $1, $2, $3, $36, $37, $39, $40, $41, $42}' OFS=, mie.csv    > mie-cmp.csv
+awk -F, '{print $1, $2, $3, $36, $37, $40, $41, $42, $43}' OFS=, vendor.csv > vendor-cmp.csv
+awk -F, '{print $1, $2, $3, $36, $37, $40, $41, $42, $43}' OFS=, mie.csv    > mie-cmp.csv
 diff vendor-cmp.csv mie-cmp.csv
 ```
 
-(Columns 1–3 are `TIME_STAMP`, `RT`, `MSG`; 36–37 are `STAT`, `CMD`; 39–42 are `BUS`, `DELTA`, `ERROR`, `ERROR_CODE`. Data word columns 4–35 are also typically worth including — adjust as fits your validation needs.)
+(Columns 1–3 are `TIME_STAMP`, `RT`, `MSG`; 36–37 are `STAT`, `CMD`; 40–43 are `BUS`, `DELTA`, `ERROR`, `ERROR_CODE`. Data word columns 4–35 are also typically worth including — adjust as fits your validation needs. The full 1-based index map is in [`EXAMPLES.md`](EXAMPLES.md) §12; note that 38 is `MUX` and 39 is `TERM_NAME`, which is why the populated tail starts at 40.)
 
 ---
 

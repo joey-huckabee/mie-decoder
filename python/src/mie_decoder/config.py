@@ -491,33 +491,38 @@ class DecoderConfig:
             A new DecoderConfig with the overrides applied.
         """
         return DecoderConfig(
-            log_level=self._override_or(kwargs, "log_level"),
-            time_format=self._override_or(kwargs, "time_format"),
+            log_level=self._override_present(kwargs, "log_level"),
+            time_format=self._override_present(kwargs, "time_format"),
             strict=self._override_present(kwargs, "strict"),
-            error_mode=self._override_or(kwargs, "error_mode"),
+            error_mode=self._override_present(kwargs, "error_mode"),
             filters=self._merge_filter_overrides(kwargs),
-            output_format=self._override_or(kwargs, "output_format"),
+            output_format=self._override_present(kwargs, "output_format"),
             no_clobber=self._override_present(kwargs, "no_clobber"),
             allow_partial=self._override_present(kwargs, "allow_partial"),
             detect_records=self._override_present(kwargs, "detect_records"),
             lookahead_records=self._override_present(kwargs, "lookahead_records"),
             standard_tick_rate_hz=self._override_present(kwargs, "standard_tick_rate_hz"),
             mux_enabled=self._override_present(kwargs, "mux_enabled"),
-            mux_delimiter=self._override_or(kwargs, "mux_delimiter"),
+            mux_delimiter=self._override_present(kwargs, "mux_delimiter"),
             mux_field=self._override_present(kwargs, "mux_field"),
             collapse_duplicates=self._override_present(kwargs, "collapse_duplicates"),
             collapse_window_us=self._override_present(kwargs, "collapse_window_us"),
         )
 
-    def _override_or(self, kwargs: dict[str, Any], name: str) -> Any:
-        """Override resolution for enum / non-empty-string fields: a falsy or
-        absent override keeps the current value (``kwargs.get(name) or self.name``)."""
-        return kwargs.get(name) or getattr(self, name)
-
     def _override_present(self, kwargs: dict[str, Any], name: str) -> Any:
-        """Override resolution for bool / int / float fields: only an explicit
+        """Override resolution for every scalar field: only an explicit
         non-``None`` override replaces the current value, so an omitted CLI flag
-        never resets a config-file value (e.g. ``no_clobber = true``)."""
+        never resets a config-file value (e.g. ``no_clobber = true``).
+
+        Presence — not truthiness — is the test, mirroring Rust's
+        ``Option<T>``-based ``DecoderConfig::with_overrides`` (``rust/src/config.rs``)
+        exactly. An earlier truthiness-based variant silently **dropped** any
+        override whose value was falsy, which made ``--time-format auto``
+        (``TimestampFormat.AUTO == 0``) a no-op against a config file that set
+        ``time_format = "irig"`` — the config value won, Rust used ``auto``, and
+        the two implementations decoded the same file differently. The same trap
+        applied to ``ErrorMode.SEPARATE == 0`` and to any empty-string value.
+        """
         value = kwargs.get(name)
         return value if value is not None else getattr(self, name)
 

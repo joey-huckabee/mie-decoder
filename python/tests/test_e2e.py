@@ -10,6 +10,8 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1791,3 +1793,77 @@ class TestSeparateModeCommitOrder:
         # No leftover temp files anywhere in the directory.
         leftover = list(tmp_path.glob("*.mie-decoder.tmp.*"))
         assert leftover == [], f"temp file leaked after failed commit: {leftover}"
+
+
+class TestBrokenPipeSubprocess:
+    """Real-OS-pipe coverage for L2-WRT-018.
+
+    The in-process tests simulate a closed consumer by raising from a fake
+    stream. That cannot catch a platform *mismatch* in how the pipe-closed
+    condition is reported — and Windows reports it as a bare ``OSError``
+    (``EINVAL``) rather than ``BrokenPipeError``, so both ``decode`` (whose
+    guard caught only ``BrokenPipeError``) and ``dump`` (which had no guard at
+    all) exited 1 with a traceback there while the Rust CLI exited 0. These
+    tests spawn the real CLI against a real pipe and close the read end, so the
+    platform decides the exception type.
+    """
+
+    @staticmethod
+    def _big_recording(tmp_path: Path) -> Path:
+        """A recording large enough that the CLI is still writing when the
+        consumer closes the pipe (comfortably past the OS pipe buffer).
+
+        Built from three *structurally different* records rather than one
+        repeated record: the L2-SYN-018 homogeneous-payload defense compares
+        candidate records while deliberately ignoring the timestamp bytes, so a
+        run of one record varying only in timestamp is still "homogeneous" and
+        the decode would be rejected (exit 2) before any pipe could break.
+        """
+        from tests.conftest import (
+            RECORD_RT15_SA11_RCV,
+            RECORD_RT15_SA22_RCV,
+            RECORD_RT15_SA22_XMT,
+        )
+
+        triple = RECORD_RT15_SA11_RCV + RECORD_RT15_SA22_RCV + RECORD_RT15_SA22_XMT
+        mie = tmp_path / "big.mie"
+        mie.write_bytes(triple * 20_000)
+        return mie
+
+    @staticmethod
+    def _run_and_close_pipe(argv: list[str]) -> tuple[int, str]:
+        """Run the CLI, read a little stdout, close the pipe, return (rc, stderr)."""
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "mie_decoder", *argv],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert proc.stdout is not None
+            assert proc.stderr is not None
+            proc.stdout.read(64)
+            proc.stdout.close()  # the consumer goes away mid-write
+            stderr = proc.stderr.read()
+            proc.stderr.close()
+            return proc.wait(timeout=120), stderr
+        finally:
+            if proc.poll() is None:  # pragma: no cover - only on a hang
+                proc.kill()
+                proc.wait(timeout=30)
+
+    @pytest.mark.requirement("L2-WRT-018")
+    def test_decode_to_closed_pipe_exits_zero(self, tmp_path: Path) -> None:
+        mie = self._big_recording(tmp_path)
+        rc, stderr = self._run_and_close_pipe(["decode", str(mie), "--inline-errors"])
+        assert rc == 0, f"expected clean exit on broken pipe, got {rc}; stderr:\n{stderr}"
+        assert "Traceback" not in stderr
+        assert "Exception ignored" not in stderr
+
+    @pytest.mark.requirement("L2-WRT-018")
+    def test_dump_to_closed_pipe_exits_zero(self, tmp_path: Path) -> None:
+        mie = self._big_recording(tmp_path)
+        rc, stderr = self._run_and_close_pipe(["dump", str(mie)])
+        assert rc == 0, f"expected clean exit on broken pipe, got {rc}; stderr:\n{stderr}"
+        assert "Traceback" not in stderr
+        assert "Exception ignored" not in stderr

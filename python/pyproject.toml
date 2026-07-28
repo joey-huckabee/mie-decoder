@@ -123,4 +123,10 @@ target-version = "py310"
 # Run: `poetry -C python run vulture`.
 [tool.vulture]
 paths = ["src", "tests"]
-ignore_names = ["option_string", "MAX_RECORD_BYTES", "ALL_KNOWN_ERROR_CODES"]
+ignore_names = [
+    "option_string",
+    "MAX_RECORD_BYTES",
+    "ALL_KNOWN_ERROR_CODES",
+    # pytest autouse fixtures are invoked by the framework, never by name.
+    "_restore_package_logger_state",
+]

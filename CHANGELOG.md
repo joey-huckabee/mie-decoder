@@ -15,6 +15,93 @@ full release workflow.
 
 ## [Unreleased]
 
+Findings from a no-change audit of both implementations and the full document
+set. Four behavioral defects — one of them silent data loss — plus a sweep of
+documentation that had drifted from the code.
+
+### Fixed
+
+- **Python: `--time-format auto` was silently ignored when a config file set a
+  different format.** `DecoderConfig.with_overrides` resolved each override by
+  truthiness, and `TimestampFormat.AUTO` is `0`, so the override was discarded
+  and the config-file value won. Decoding an IRIG recording with
+  `--config <file setting standard> --time-format auto` therefore dropped every
+  record as a structural-invariant violation and still reported **exit 0 /
+  `complete`** — silent data loss — while Rust honored `auto` and decoded
+  normally. Override resolution is now presence-based, matching Rust's
+  `Option<T>` semantics exactly. The same defect silently discarded
+  `--format ''` (Rust exits 1, Python exited 0) and would have discarded an
+  `ErrorMode.SEPARATE` override.
+- **Python: `dump` had no broken-pipe handling at all** (L2-WRT-018).
+  `mie-decoder dump big.mie | head` aborted with an uncaught traceback and
+  exit 1, where the Rust CLI exits 0. `dump` now classifies a closed consumer
+  as a clean stop and keeps real output failures (disk full, permission) as
+  runtime errors.
+- **Python: broken pipes were not recognized on Windows.** CPython raises
+  `BrokenPipeError` only on POSIX; on Windows a write to a closed pipe surfaces
+  as a bare `OSError` with `EINVAL`, so the `except BrokenPipeError` guard in
+  the streaming writer never fired and `decode … | head` exited 1 with an error.
+  A shared `is_broken_pipe` predicate (the analogue of Rust's
+  `MieError::is_broken_pipe`) now classifies both forms; the widened `errno`
+  match is scoped to Windows so a genuine POSIX `EINVAL` write failure stays a
+  failure.
+- **Rust: a strict-mode error-record failure left the iterator live.** The
+  error-record arm yielded its `Err` (`UnknownErrorCode`, or an out-of-bounds
+  Error Word) without setting `done`, unlike every other error path in the
+  reader, so a library caller iterating `RecordIter` directly kept receiving
+  records after the failure — where the Python reader's generator is already
+  dead. The CLI masked it because the writer returns on the first `Err`.
+- **Test isolation:** `configure_logging()` leaked the `mie_decoder` logger
+  level across tests, so a bare `caplog.at_level(...)` captured nothing once any
+  earlier test had reconfigured logging. The full suite passed only by accident
+  of file ordering (`pytest tests/test_config.py tests/test_cli.py` failed). An
+  autouse fixture now restores the package logger, and the two bare `at_level`
+  call sites name their logger like every other one.
+
+### Documentation
+
+- `VENDOR-CSV-DIFFS.md`: the vendor-diff `awk` recipe had off-by-one column
+  indices — it compared the always-empty `TERM_NAME` and silently dropped
+  `ERROR_CODE` from the comparison. Also corrects the "15 CSV columns" heading
+  (there are 46, in 15 named groups).
+- `EXAMPLES.md`: removes an unfinished editing note (`← no, see actual`) that
+  shipped in the `--allow-partial` walkthrough with the wrong exit-class line;
+  corrects "one of four codes" (there are seven) and adds the missing exit-6 arm
+  to the canonical batch script; refreshes the stale `dump` sample output.
+- `CONFIG-REFERENCE.md`: `decode.strict` and `output.format` were both
+  documented as having no CLI flag; `--strict` and `--format` exist on both
+  CLIs. Also completes the quick-reference block, which omitted `[merge]`,
+  `detect_records`, and `lookahead_records`.
+- `config/default.toml`: the `detect_records` comment described the sync
+  look-ahead (which is `lookahead_records`, documented correctly directly
+  below) rather than the timestamp-format detection probe it actually controls.
+- `DATA-SCENARIOS.md`: documented `-o -` for stdout output; there is no such
+  convention — it writes a file literally named `-`. Omitting `-o` is the
+  mechanism.
+- `USER-GUIDE.md`: the exit-code table omitted exit 6 entirely and miscounted
+  the classes; the exit-class list omitted `empty-recording` and
+  `merge-incompatible`.
+- `ARCHITECTURE.md`: documented six structural invariants (there are seven —
+  `L2-SYN-027` was absent from the file), and both error-type listings omitted
+  `TimestampFormatMismatch`, `IncompatibleMergeInputs`, and `NonMonotonicInput`.
+- Writer docstrings in both implementations still described `MUX` as an
+  always-empty vendor placeholder; it has been populated from the input file
+  name by default since `L2-WRT-020`.
+- `decode.py`: the mode-code decision tree contradicted the implementation for
+  transmit mode codes with no data word.
+- `L3-PY-014` mandated `dataclasses.replace` for the merged-DELTA stage, which
+  the implementation deliberately avoids (it erases the concrete return type
+  under strict `mypy`); the requirement now describes `with_delta`.
+  `L3-RS-001` understated the MSRV floor as 1.85 where the crate pins and CI
+  gates 1.88.
+- Repairs a scrambled rustdoc comment block in `cli.rs` (two functions' docs had
+  been interleaved), a stale "exit 2" comment on a path that exits 4, and drops
+  a dead `Ok(None)` branch. Removes a vacuous `us_hi < 16` term from the
+  timestamp-detection score in both implementations (`ts_middle & 0xF` is always
+  below 16). Doc indexes in `README.md` and `MAINTAINER-GUIDE.md` were missing
+  entries, and the documented conformance command omitted its interpreter
+  requirement.
+
 ## [2.7.1] — 2026-07-11
 
 Patch release from an extended round of team review. Resolves a large batch of

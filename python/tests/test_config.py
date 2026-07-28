@@ -18,6 +18,7 @@ from mie_decoder.models import (
     Bus,
     CommandWord,
     Direction,
+    ErrorMode,
     IrigTimestamp,
     MessageFormat,
     MieMessage,
@@ -205,6 +206,46 @@ class TestDecoderConfig:
         config = DecoderConfig(filters=FilterConfig(exclude_types={0x20}))
         updated = config.with_overrides(exclude_types={0x01})
         assert updated.filters.exclude_types == {0x20, 0x01}
+
+    @pytest.mark.requirement("L2-CFG-003")
+    def test_zero_valued_enum_override_is_applied(self) -> None:
+        """An override whose value is falsy still wins over the config file.
+
+        ``TimestampFormat.AUTO`` and ``ErrorMode.SEPARATE`` are both ``0``. A
+        truthiness-based override check silently discarded them, so
+        ``--time-format auto`` was a no-op against ``time_format = "irig"`` while
+        Rust honored it — the two implementations then decoded the same file
+        differently. Presence, not truthiness, decides (Rust ``Option<T>``).
+        """
+        config = DecoderConfig(
+            time_format=TimestampFormat.IRIG,
+            error_mode=ErrorMode.INLINE,
+        )
+        updated = config.with_overrides(
+            time_format=TimestampFormat.AUTO,
+            error_mode=ErrorMode.SEPARATE,
+        )
+        assert updated.time_format == TimestampFormat.AUTO
+        assert updated.error_mode == ErrorMode.SEPARATE
+
+    @pytest.mark.requirement("L2-CFG-003")
+    def test_empty_string_override_is_applied(self) -> None:
+        """An empty-string override is applied, not silently ignored.
+
+        ``--format ''`` must reach the ``output.format`` validity check (a
+        runtime error, exit 1) exactly as it does on Rust, rather than falling
+        back to ``"csv"`` and decoding as if nothing were wrong.
+        """
+        updated = DecoderConfig().with_overrides(output_format="")
+        assert updated.output_format == ""
+
+    @pytest.mark.requirement("L2-CFG-003")
+    def test_omitted_override_keeps_config_value(self) -> None:
+        """An absent (``None``) override never resets a config-file value."""
+        config = DecoderConfig(time_format=TimestampFormat.IRIG, no_clobber=True)
+        updated = config.with_overrides(time_format=None, no_clobber=None)
+        assert updated.time_format == TimestampFormat.IRIG
+        assert updated.no_clobber is True
 
 
 class TestLoadConfig:
@@ -823,7 +864,7 @@ class TestSchemaValidation:
         # too, rather than dropping it silently.
         cfg = tmp_path / "root.toml"
         cfg.write_text("bogus = true\n")
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("WARNING", logger="mie_decoder"):
             load_config(cfg)  # accepts (does not raise)
         assert "[] bogus" in caplog.text
 

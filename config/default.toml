@@ -111,12 +111,16 @@ error_mode = "separate"
 allow_partial = false
 
 # ──────────────────────────────────────────────────────────────────────────
-# Header-detection confirmation depth.
+# Timestamp-format auto-detection probe size.
 #
-# When locating the first record, the decoder confirms a candidate header
-# by checking that this many consecutive records also validate. Higher
-# values make header detection more robust on noisy captures at a small
-# startup cost; the walk is bounded by the file's actual record count.
+# Only used when time_format = "auto". The decoder probes this many records
+# from the start of the record stream, scoring each one as IRIG and as
+# Standard, then commits to whichever wins (IRIG on a tie). Higher values
+# make the IRIG-vs-Standard call more robust on recordings whose leading
+# records score weakly, at a small startup cost; the walk is bounded by the
+# file's actual record count.
+#
+# This is NOT the sync look-ahead — that is lookahead_records, below.
 #
 # Must be an integer in [1, 32]. Overridden by --detect-records.
 #

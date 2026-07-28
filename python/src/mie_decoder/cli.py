@@ -934,6 +934,8 @@ def _classify_decode_error(exc: Exception) -> int:
     """Map a decode-time exception to its exit code, emitting the stderr and
     exit-class log lines. Mirrors ``classify_decode_exit`` in ``rust/src/cli.rs``.
     """
+    from mie_decoder.writer import is_broken_pipe
+
     for exc_types, code, exit_class in _SIMPLE_DECODE_ERRORS:
         if isinstance(exc, exc_types):
             return _report_decode_error(exc, code, exit_class)
@@ -948,9 +950,11 @@ def _classify_decode_error(exc: Exception) -> int:
             exc.sync_losses,
         )
         return EXIT_SYNC_LOSS
-    if isinstance(exc, BrokenPipeError):
+    if is_broken_pipe(exc):
         # L2-WRT-018 — usually handled inside the streaming writer; cover the
-        # edge case where it escapes.
+        # edge case where it escapes. Classified by `is_broken_pipe` rather than
+        # `isinstance(exc, BrokenPipeError)` so the Windows form (a bare
+        # `OSError` with EINVAL) is recognized too.
         logger.info("decode exit class: complete (broken-pipe on stdout)")
         return EXIT_OK
     if isinstance(exc, MieWriterError):
@@ -1129,7 +1133,11 @@ def _run_decode(args: argparse.Namespace) -> int:
             readers, config, merge_requested=merge_requested, open_dropped=open_dropped
         )
         outcome = _write_messages(messages, args.output, config.error_mode, write_opts)
-    except (MieDecoderError, BrokenPipeError) as exc:
+    except (MieDecoderError, OSError) as exc:
+        # OSError (rather than just BrokenPipeError) so the Windows broken-pipe
+        # form reaches the classifier as a clean exit per L2-WRT-018; any other
+        # OSError that escapes the writer is classified as a runtime failure
+        # there, which beats surfacing a traceback.
         return _classify_decode_error(exc)
 
     return _classify_decode_success(outcome, readers)
@@ -1220,6 +1228,7 @@ def _run_dump(args: argparse.Namespace) -> int:
     """
     from mie_decoder.config import load_config
     from mie_decoder.dump import hex_dump_raw, hex_dump_records
+    from mie_decoder.writer import is_broken_pipe
 
     # dump only consumes log_level from config (time_format, strict,
     # filters, etc. don't apply to a raw / record hex dump). Load so
@@ -1248,6 +1257,16 @@ def _run_dump(args: argparse.Namespace) -> int:
     except MieFileError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return EXIT_RUNTIME
+    except OSError as exc:
+        # L2-WRT-018: `mie-decoder dump big.mie | head` closes the pipe long
+        # before the dump finishes. That is a clean termination, not a failure —
+        # mirrors `finish_dump` in `rust/src/cli.rs`. Any other output error
+        # (disk full, permission) is a runtime failure, as it is for decode.
+        if not is_broken_pipe(exc):
+            print(f"Error: {exc}", file=sys.stderr)
+            return EXIT_RUNTIME
+        logger.info("dump: broken-pipe on stdout, exiting 0")
+        return EXIT_OK
 
     return EXIT_OK
 

@@ -65,8 +65,10 @@ poetry -C python run bandit -r src/mie_decoder # security scan / SAST (CI-gated)
 poetry -C python run mie-decoder --help
 poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P needs Poetry >= 2.0
 
-# Shared Rust/Python behavior
-python tests/conformance/run.py
+# Shared Rust/Python behavior (needs the Rust binary built and an interpreter
+# with mie_decoder installed; `--python-bin` overrides the interpreter)
+(cd rust && cargo build)
+poetry -C python run python ../tests/conformance/run.py
 ```
 
 ## Architecture

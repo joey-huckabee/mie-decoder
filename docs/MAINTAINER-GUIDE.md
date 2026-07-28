@@ -47,9 +47,15 @@ mie-decoder/
 │   ├── L1-REQ.md / L2-REQ.md / L3-REQ.md   spec docs (source of truth)
 │   ├── TRACE-MATRIX.md     auto-generated from L1/L2/L3 + test markers
 │   ├── ARCHITECTURE.md     module diagram, error pipeline, configuration hierarchy
+│   ├── CLI-REFERENCE.md    complete per-flag CLI reference
+│   ├── CONFIG-REFERENCE.md normative TOML key reference
+│   ├── DATA-SCENARIOS.md   data conditions -> CSV / log / exit outcomes
 │   ├── ERROR-CATALOG.md    operator reference for every error / exit code
+│   ├── EXAMPLES.md         runnable cookbook of operator tasks
 │   ├── MIE-FORMAT.md       comprehensive binary format + CSV column reference
 │   ├── ROADMAP.md          forward-looking roadmap (planned work + commitments)
+│   ├── USER-GUIDE.md       end-to-end walkthrough for analysts / operators
+│   ├── VENDOR-CSV-DIFFS.md alignment statement vs DDC vendor CSV
 │   ├── MAINTAINER-GUIDE.md (this file)
 │   └── diagrams/           PlantUML sources and rendered SVGs
 ├── config/default.toml     fully-commented reference TOML schema

@@ -55,7 +55,7 @@ When `--allow-partial` is in effect on the L1-EXIT-004 unrecoverable path, the p
 ## L3-PY: Python implementation technology
 
 **L3-PY-001** · Parent: L2-CONF-005 · Verification: I
-The Python implementation SHALL support Python `>=3.10,<3.15`. The supported version set is fixed for v1.x; the CI matrix mechanics that exercise every supported version are pinned separately by L3-PY-008.
+The Python implementation SHALL support Python `>=3.10,<3.15`. Changing the supported version set is a breaking change to this requirement, not an incidental packaging edit; the CI matrix mechanics that exercise every supported version are pinned separately by L3-PY-008.
 
 **L3-PY-002** · Parent: L2-CONF-005 · Verification: I
 Python dependencies and packaging SHALL be managed by Poetry. The committed lockfile SHALL be `python/poetry.lock`. CI builds SHALL use `poetry sync` or `poetry install --no-root` with the committed lockfile to ensure reproducible dependency resolution.
@@ -94,7 +94,7 @@ Python memory usage during decode SHALL be O(1) in the number of records: the wr
 The Python package SHALL provide include filters equivalent to the Rust crate (`L3-RS-010`): `--include-types`, `--include-rts`, `--include-buses`, `--include-subaddresses` on the `decode` subcommand, with the same "passes only if contained in every active include set" semantics and the same comma-separated, repeatable argument syntax. Include filters are CLI-only overrides (no config-file key), matching Rust.
 
 **L3-PY-014** · Parent: L2-MRG-002 · Verification: T
-The Python multi-file merge SHALL be implemented in `mie_decoder/merge.py` using the standard-library `heapq` as the k-way merge heap (no new dependency). The global-DELTA stage SHALL overwrite each message's `delta` via `dataclasses.replace` on the frozen `MieMessage`. The `--glob` expansion SHALL be constrained to the single-directory `*`/`?` filename semantics shared with Rust (`L3-RS-014`) and sorted lexicographically, so the resolved input set is byte-identical across implementations. The file-count cap `MAX_MERGE_FILES` SHALL match the Rust constant.
+The Python multi-file merge SHALL be implemented in `mie_decoder/merge.py` using the standard-library `heapq` as the k-way merge heap (no new dependency). The global-DELTA stage SHALL replace each message's `delta` by constructing a new frozen `MieMessage` via its `with_delta` helper (the earlier `dataclasses.replace` spelling erased the concrete return type for the CI-gated strict `mypy` run, so the helper rebuilds the record field by field instead). The `--glob` expansion SHALL be constrained to the single-directory `*`/`?` filename semantics shared with Rust (`L3-RS-014`) and sorted lexicographically, so the resolved input set is byte-identical across implementations. The file-count cap `MAX_MERGE_FILES` SHALL match the Rust constant.
 
 **L3-PY-015** · Parent: L2-MRG-007 · Verification: T
 The Python cross-recorder collapsing SHALL be implemented in `mie_decoder/merge.py` as a `_DedupWindow` helper (a `collections.deque` of `(microseconds, file_index, content-key)` survivors) driven inside `_merge_drain` before the global-DELTA stage. The content key SHALL be a tuple of the decoded Type Word, Command/Status Words, Error Word, and `data_words`. The suppressed-duplicate count SHALL be logged at INFO once the merged stream is drained. The `merge.collapse_duplicates` / `merge.collapse_window_us` config keys and the `--collapse-duplicates` / `--collapse-window-us` CLI flags SHALL match the Rust surface (`L3-RS-015`).
@@ -104,7 +104,7 @@ The Python cross-recorder collapsing SHALL be implemented in `mie_decoder/merge.
 ## L3-RS: Rust implementation technology
 
 **L3-RS-001** · Parent: L2-CONF-005 · Verification: I
-The Rust crate SHALL declare `edition = "2024"` in `rust/Cargo.toml` and SHALL declare a Minimum Supported Rust Version (MSRV) of 1.85 or newer.
+The Rust crate SHALL declare `edition = "2024"` in `rust/Cargo.toml` and SHALL declare a Minimum Supported Rust Version (MSRV) via `rust-version`. The floor is **1.88**: edition 2024 itself only requires 1.85, but the crate's sole dependency `memmap2` requires 1.88. CI gates the declared floor with `cargo +1.88 check --all-targets`.
 
 **L3-RS-002** · Parent: L2-CONF-005 · Verification: I
 The Rust crate SHALL declare `memmap2` as its only external runtime dependency. Additional dependencies SHALL require explicit justification; argument parsing, CSV writing, TOML parsing, logging, and error types are hand-rolled by design.
