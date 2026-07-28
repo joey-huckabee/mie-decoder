@@ -370,13 +370,15 @@ def _score_irig_candidate(data: ByteSource, offset: int, type_word: TypeWord) ->
     # IRIG overhead = TS(3) + Cmd(1) + Stat(1) + Type(1) = 6
     if type_word.word_count - 6 == cmd.data_word_count:
         score += 2
+    # Only the fields with a semantic range are worth scoring. The microsecond
+    # high nibble (``ts_middle & 0xF``) is *always* < 16 by construction, so
+    # testing it added nothing to the score.
     ts_upper = read_u16(data, offset + 2)
     ts_middle = read_u16(data, offset + 4)
     hour = ts_upper & 0x1F
     minute = (ts_middle >> 10) & 0x3F
     second = (ts_middle >> 4) & 0x3F
-    us_hi = ts_middle & 0xF
-    if hour < 24 and minute < 60 and second < 60 and us_hi < 16:
+    if hour < 24 and minute < 60 and second < 60:
         score += 1
     return score
 
@@ -449,17 +451,19 @@ def classify_message_format(
        - 0x10 → RECEIVE_BROADCAST
        - 0x18 → RT_TO_RT_BROADCAST
 
-    2. For 0x01 (MODE_COMMAND), the Command Word is inspected:
-       a. RT address == 31 → broadcast mode code
-          - Record word count > 5 (has data word) → MODE_CODE_BCAST_DATA
+    2. For 0x01 (MODE_COMMAND), the record word count is inspected first —
+       it decides whether a data word is present at all — and only then the
+       Command Word's direction:
+       a. RT address == 31 → broadcast mode code (no status word)
+          - WC >= ts + 3 (has data word) → MODE_CODE_BCAST_DATA
           - Else → MODE_CODE_BCAST_NO_DATA
-       b. RT address != 31 → non-broadcast mode code
-          - T/R bit == 1 (transmit) → MODE_CODE_TX_DATA
-          - T/R bit == 0 (receive) and word count indicates data
-            → MODE_CODE_RX_DATA
-          - T/R bit == 0 and no data → MODE_CODE_NO_DATA
+       b. RT address != 31 → non-broadcast mode code (always has a status word)
+          - WC >= ts + 4 (has data word) and T/R == 1 → MODE_CODE_TX_DATA
+          - WC >= ts + 4 (has data word) and T/R == 0 → MODE_CODE_RX_DATA
+          - WC <  ts + 4 (no data word), either direction → MODE_CODE_NO_DATA
 
-       The word count cross-check adds robustness:
+       ``ts`` is the timestamp word count for the resolved format (IRIG = 3,
+       Standard = 2), so the thresholds below are the IRIG case:
        - MODE_CODE_BCAST_NO_DATA: WC = 5 (Type + 3×TS + ModeCmd)
        - MODE_CODE_BCAST_DATA:    WC = 6 (+ 1 DataWord)
        - MODE_CODE_NO_DATA:       WC = 6 (+ Status)
@@ -521,13 +525,19 @@ def _classify_mode_code(cmd: CommandWord, word_count: int, timestamp_words: int)
     thresholds are relative to the timestamp word count (IRIG = 3, Standard = 2),
     so a Standard record (one word shorter) classifies correctly (L2-MSG-004).
 
-    Decision tree (``ts`` = ``timestamp_words``):
+    Decision tree (``ts`` = ``timestamp_words``). Note the word-count test comes
+    **before** the direction test on the non-broadcast branch: a transmit mode
+    code with no data word is ``MODE_CODE_NO_DATA``, not ``MODE_CODE_TX_DATA``
+    (its wire shape is ModeCmd + Status either way; the ``CMD`` column preserves
+    the direction).
+
         ┌─ RT == 31 (broadcast, no status word)?
         │  ├─ WC >= ts + 3 → MODE_CODE_BCAST_DATA    (Type+TS+ModeCmd+Data)
         │  └─ WC <  ts + 3 → MODE_CODE_BCAST_NO_DATA (Type+TS+ModeCmd)
         └─ RT != 31 (non-broadcast, has status word)?
-           ├─ T/R == 1 (transmit) → MODE_CODE_TX_DATA (ModeCmd+Status+Data)
-           ├─ WC >= ts + 4 → MODE_CODE_RX_DATA  (ModeCmd+Data+Status)
+           ├─ WC >= ts + 4 (a data word is present)?
+           │  ├─ T/R == 1 (transmit) → MODE_CODE_TX_DATA (ModeCmd+Status+Data)
+           │  └─ T/R == 0 (receive)  → MODE_CODE_RX_DATA (ModeCmd+Data+Status)
            └─ WC <  ts + 4 → MODE_CODE_NO_DATA  (ModeCmd+Status)
 
     Args:

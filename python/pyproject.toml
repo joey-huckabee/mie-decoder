@@ -1,6 +1,6 @@
 [project]
 name = "mie-decoder"
-version = "2.7.1"
+version = "2.8.0"
 description = "Decoder for DDC MIL-STD-1553 MIE binary recording files"
 authors = [
     { name = "Joey" },
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mie-decoder = "mie_decoder.cli:main"
+mie-decoder = "mie_decoder.cli:main_cli"
 
 [tool.poetry]
 packages = [{include = "mie_decoder", from = "src"}]
@@ -123,4 +123,10 @@ target-version = "py310"
 # Run: `poetry -C python run vulture`.
 [tool.vulture]
 paths = ["src", "tests"]
-ignore_names = ["option_string", "MAX_RECORD_BYTES", "ALL_KNOWN_ERROR_CODES"]
+ignore_names = [
+    "option_string",
+    "MAX_RECORD_BYTES",
+    "ALL_KNOWN_ERROR_CODES",
+    # pytest autouse fixtures are invoked by the framework, never by name.
+    "_restore_package_logger_state",
+]

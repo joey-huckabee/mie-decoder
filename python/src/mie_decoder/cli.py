@@ -30,8 +30,8 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import os
 import sys
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
@@ -381,14 +381,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include only these subaddresses. Comma-separated, repeatable. CLI-only.",
     )
     decode_parser.add_argument(
-        "--inline-errors",
+        "--separate-errors",
         action="store_true",
         default=False,
         help=(
-            "Include errored/spurious messages inline in the main CSV with "
-            "the ERROR/ERROR_CODE columns populated. Default (omitted): "
-            "errors go to a separate <output>_errors.csv. Stdout output "
-            "always uses inline mode (you cannot split stdout)."
+            "Route errored and SPURIOUS_DATA records to a separate "
+            "<output>_errors.csv, leaving only clean records in the main CSV. "
+            "Default (omitted): every record goes to one CSV with the "
+            "ERROR/ERROR_CODE columns populated. Stdout output is always "
+            "inline (you cannot split stdout), so this flag is ignored there "
+            'with a WARN. Mirrors [decode] error_mode = "separate".'
         ),
     )
     decode_parser.add_argument(
@@ -676,16 +678,16 @@ def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
     """Build the passthrough CLI overrides that need no validation.
 
     A boolean flag flips a value on; its absence leaves the config value intact
-    (there is no "off" form on the CLI). ``--inline-errors`` flips error_mode to
-    INLINE; the default IS separate.
+    (there is no "off" form on the CLI). ``--separate-errors`` flips error_mode to
+    SEPARATE; the default IS inline.
     """
     from mie_decoder.models import ErrorMode, parse_timestamp_format
 
     overrides: dict[str, object] = {}
     if args.time_format is not None:
         overrides["time_format"] = parse_timestamp_format(args.time_format)
-    if args.inline_errors:
-        overrides["error_mode"] = ErrorMode.INLINE
+    if args.separate_errors:
+        overrides["error_mode"] = ErrorMode.SEPARATE
     if args.no_clobber:
         overrides["no_clobber"] = True
     if args.allow_partial:
@@ -888,28 +890,28 @@ def _write_messages(
     from mie_decoder.models import ErrorMode
     from mie_decoder.writer import write_csv, write_csv_split
 
-    t0 = time.perf_counter()
+    if error_mode == ErrorMode.SEPARATE and output is None:
+        # A stream cannot be split in two, so separate mode degrades to inline.
+        # Now that separate is opt-in this WARN reports an explicit request the
+        # writer could not honour, rather than (as before) firing on every
+        # stdout decode because separate happened to be the default. Mirrors the
+        # same warning in `write_messages` (rust/src/cli.rs).
+        logger.warning("stdout output forces inline error mode")
+
     if error_mode == ErrorMode.SEPARATE and output is not None:
         outcome = write_csv_split(messages, output=output, opts=write_opts)
-        elapsed = time.perf_counter() - t0
         logger.info(
-            "Wrote %d messages + %d errors to %s in %.3fs",
+            "wrote %d messages + %d errors to %s",
             outcome.normal_count,
             outcome.error_count,
             output,
-            elapsed,
         )
     else:
-        # INLINE mode, or stdout (can't split stdout).
+        # INLINE mode, or stdout (can't split stdout). The writer already logs
+        # the row count and destination, so there is no second summary here —
+        # Rust logs exactly one line for this path and a duplicate on only one
+        # implementation is the kind of drift this file exists to avoid.
         outcome = write_csv(messages, output=output, opts=write_opts)
-        elapsed = time.perf_counter() - t0
-        dest = str(output) if output else "stdout"
-        logger.info(
-            "Wrote %d messages to %s in %.3fs",
-            outcome.normal_count,
-            dest,
-            elapsed,
-        )
     return outcome
 
 
@@ -934,6 +936,8 @@ def _classify_decode_error(exc: Exception) -> int:
     """Map a decode-time exception to its exit code, emitting the stderr and
     exit-class log lines. Mirrors ``classify_decode_exit`` in ``rust/src/cli.rs``.
     """
+    from mie_decoder.writer import is_broken_pipe
+
     for exc_types, code, exit_class in _SIMPLE_DECODE_ERRORS:
         if isinstance(exc, exc_types):
             return _report_decode_error(exc, code, exit_class)
@@ -948,9 +952,11 @@ def _classify_decode_error(exc: Exception) -> int:
             exc.sync_losses,
         )
         return EXIT_SYNC_LOSS
-    if isinstance(exc, BrokenPipeError):
+    if is_broken_pipe(exc):
         # L2-WRT-018 — usually handled inside the streaming writer; cover the
-        # edge case where it escapes.
+        # edge case where it escapes. Classified by `is_broken_pipe` rather than
+        # `isinstance(exc, BrokenPipeError)` so the Windows form (a bare
+        # `OSError` with EINVAL) is recognized too.
         logger.info("decode exit class: complete (broken-pipe on stdout)")
         return EXIT_OK
     if isinstance(exc, MieWriterError):
@@ -959,7 +965,7 @@ def _classify_decode_error(exc: Exception) -> int:
         return EXIT_RUNTIME
 
     # Any remaining MieDecoderError (record errors, generic file errors).
-    logger.error("Decode failed: %s", exc)
+    logger.error("%s", exc)
     print(f"Error: {exc}", file=sys.stderr)
     return EXIT_RUNTIME
 
@@ -1129,7 +1135,11 @@ def _run_decode(args: argparse.Namespace) -> int:
             readers, config, merge_requested=merge_requested, open_dropped=open_dropped
         )
         outcome = _write_messages(messages, args.output, config.error_mode, write_opts)
-    except (MieDecoderError, BrokenPipeError) as exc:
+    except (MieDecoderError, OSError) as exc:
+        # OSError (rather than just BrokenPipeError) so the Windows broken-pipe
+        # form reaches the classifier as a clean exit per L2-WRT-018; any other
+        # OSError that escapes the writer is classified as a runtime failure
+        # there, which beats surfacing a traceback.
         return _classify_decode_error(exc)
 
     return _classify_decode_success(outcome, readers)
@@ -1174,9 +1184,7 @@ def _run_count(args: argparse.Namespace) -> int:
 
     messages = apply_filters(reader, config.filters)
     try:
-        t0 = time.perf_counter()
         count = sum(1 for _ in messages)
-        elapsed = time.perf_counter() - t0
     except (
         MieNoValidRecordsError,
         MieHomogeneousPayloadError,
@@ -1192,7 +1200,6 @@ def _run_count(args: argparse.Namespace) -> int:
         # (exit 1), matching the Rust count subcommand.
         return _report_error("Count failed", exc, EXIT_RUNTIME)
 
-    logger.info("Counted %d messages in %.3fs", count, elapsed)
     # L3-PY-010: integer count to stdout (the machine-readable datum),
     # human-friendly status with path context to stderr (always emitted,
     # not gated by --log-level so an interactive operator sees context).
@@ -1220,6 +1227,7 @@ def _run_dump(args: argparse.Namespace) -> int:
     """
     from mie_decoder.config import load_config
     from mie_decoder.dump import hex_dump_raw, hex_dump_records
+    from mie_decoder.writer import is_broken_pipe
 
     # dump only consumes log_level from config (time_format, strict,
     # filters, etc. don't apply to a raw / record hex dump). Load so
@@ -1248,6 +1256,16 @@ def _run_dump(args: argparse.Namespace) -> int:
     except MieFileError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return EXIT_RUNTIME
+    except OSError as exc:
+        # L2-WRT-018: `mie-decoder dump big.mie | head` closes the pipe long
+        # before the dump finishes. That is a clean termination, not a failure —
+        # mirrors `finish_dump` in `rust/src/cli.rs`. Any other output error
+        # (disk full, permission) is a runtime failure, as it is for decode.
+        if not is_broken_pipe(exc):
+            print(f"Error: {exc}", file=sys.stderr)
+            return EXIT_RUNTIME
+        logger.info("dump: broken-pipe on stdout, exiting 0")
+        return EXIT_OK
 
     return EXIT_OK
 
@@ -1289,6 +1307,50 @@ def _normalize_version_flag(argv: list[str]) -> list[str]:
         "--version" if arg.startswith("--") and arg[2:].lower() == "version" else arg
         for arg in argv
     ]
+
+
+def _neutralise_dead_stdout() -> None:
+    """Point fd 1 at the null device once stdout is known to be unwritable.
+
+    CPython flushes ``sys.stdout`` during interpreter shutdown. If the pipe is
+    already gone that flush raises, CPython prints "Exception ignored while
+    flushing sys.stdout" and — the part that actually matters — **overrides the
+    process exit status with 120**. So a decode that correctly returned 0 after
+    a broken pipe still exited non-zero, violating L2-WRT-018 (observed on
+    Python 3.14 / Linux; earlier versions happened to leave an empty buffer and
+    so escaped it).
+
+    Repointing the file descriptor makes the shutdown flush a silent no-op.
+    This is deliberately *not* done inside :func:`main`: it is fd-level surgery
+    that would corrupt the output capture of any in-process caller (pytest, an
+    embedding application). It belongs at the real process boundary, which is
+    what :func:`main_cli` is.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+    except OSError:  # pragma: no cover - os.devnull is always openable
+        return
+    try:
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):  # pragma: no cover
+        pass
+    finally:
+        os.close(devnull)
+
+
+def main_cli(argv: list[str] | None = None) -> int:
+    """Console-script / ``python -m`` entry point.
+
+    Runs :func:`main` and then makes sure a dead stdout cannot turn a clean exit
+    code into CPython's shutdown-failure 120. Kept separate from :func:`main`
+    so importing callers get a side-effect-free function.
+    """
+    code = main(argv)
+    try:
+        sys.stdout.flush()
+    except (BrokenPipeError, OSError):
+        _neutralise_dead_stdout()
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:

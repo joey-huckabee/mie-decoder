@@ -647,11 +647,13 @@ fn score_irig_candidate(data: &[u8], offset: usize, type_word: &TypeWord) -> i32
     if let (Some(ts_upper), Some(ts_middle)) =
         (read_u16(data, offset + 2), read_u16(data, offset + 4))
     {
+        // Only the fields with a semantic range are worth scoring. The
+        // microsecond high nibble (`ts_middle & 0xF`) is *always* < 16 by
+        // construction, so testing it added nothing to the score.
         let hour = ts_upper & 0x1F;
         let minute = (ts_middle >> 10) & 0x3F;
         let second = (ts_middle >> 4) & 0x3F;
-        let us_hi = ts_middle & 0xF;
-        if hour < 24 && minute < 60 && second < 60 && us_hi < 16 {
+        if hour < 24 && minute < 60 && second < 60 {
             score += 1;
         }
     }

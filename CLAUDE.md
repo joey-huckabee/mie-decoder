@@ -65,8 +65,10 @@ poetry -C python run bandit -r src/mie_decoder # security scan / SAST (CI-gated)
 poetry -C python run mie-decoder --help
 poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P needs Poetry >= 2.0
 
-# Shared Rust/Python behavior
-python tests/conformance/run.py
+# Shared Rust/Python behavior (needs the Rust binary built and an interpreter
+# with mie_decoder installed; `--python-bin` overrides the interpreter)
+(cd rust && cargo build)
+poetry -C python run python ../tests/conformance/run.py
 ```
 
 ## Architecture
@@ -80,7 +82,7 @@ The decoder is a unidirectional pipeline. The big picture is best understood by 
 5. **`filter.rs` — `FilterIterExt::filter_messages`**: Iterator adapter. Both `exclude_*` and `include_*` filters are supported (the include set is the v2 redesign).
 6. **`writer.rs`**: `write_csv` (single file) and `write_csv_split` (separate `_errors.csv`). Streams rows through a `BufWriter` — no DataFrame buffering. Column names and ordering match DDC vendor CSV byte-for-byte.
 7. **`config.rs`**: Hand-rolled TOML loader for our schema (sections + key=value with strings/ints/bools/primitive arrays). Produces `DecoderConfig`. Precedence: **CLI overrides > config file > defaults**, applied via `DecoderConfig::with_overrides(ConfigOverrides)`.
-8. **`cli.rs` — `run(argv)`**: Hand-rolled argparse with three subcommands (`decode`, `count`, `dump`). `count` is its own subcommand in v2 (was `--count` flag in v1). Default error mode is `separate` (was an explicit `--error-mode` flag); `--inline-errors` toggles inline mode.
+8. **`cli.rs` — `run(argv)`**: Hand-rolled argparse with three subcommands (`decode`, `count`, `dump`). `count` is its own subcommand in v2 (was `--count` flag in v1). Default error mode is `inline` (every record in one CSV with `ERROR`/`ERROR_CODE` populated); `--separate-errors` toggles the split-file mode. The polarity was reversed and the former `--inline-errors` flag removed — passing it is a usage error.
 9. **`log.rs`**: Tiny stderr logger. Single `AtomicU8` for the global level + `log_debug!`/`log_info!`/`log_warn!`/`log_error!` macros that format only when the level passes.
 10. **`merge.rs` — `MergedRecordIter`** (mirrored by `python/src/mie_decoder/merge.py`): multi-file time-sorted k-way merge (L1-MRG / L2-MRG). When `decode` resolves more than one input (positionals / `--manifest` / `--glob`, mutually exclusive, capped at `MAX_MERGE_FILES = 256`), this holds one record per open reader in a min-heap (`BinaryHeap`+`Reverse` in Rust, `heapq` in Python), ordered by absolute IRIG microseconds with a `(us, file_index, seq)` tiebreak — O(files) memory, O(1) in records. It validates every input is calendar-locked IRIG up front (Standard / freerun / mixed → `IncompatibleMergeInputs`, exit 6) and recomputes DELTA on the merged global timeline. A single input bypasses this module entirely. No new dependency (hand-rolled `*`/`?` glob matcher in Rust).
 
@@ -95,7 +97,7 @@ Error records and SPURIOUS_DATA continuations are **valid records** that pass sy
 ### Output modes
 
 - Default (`error_mode = separate`): clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — file isn't created if no error rows). Calls `write_csv_split`.
-- `--inline-errors`: everything → one CSV with `ERROR` and `ERROR_CODE` columns populated. Calls `write_csv`. Stdout output forces inline mode (you can't split stdout).
+- `--separate-errors`: clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — the file isn't created if there are no error rows). Calls `write_csv_split`. Ignored on stdout (you can't split stdout), with a WARN.
 
 ### Error type
 
@@ -130,7 +132,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - **N-record look-ahead in `sync.rs`** (default 2, configurable per L2-SYN-026). Don't remove it. Removing the look-ahead reintroduces false-positive resyncs.
 - **`DataWords` is fixed-capacity by design.** MIL-STD-1553B caps a single transaction at 32 data words. Don't switch to `Vec<u16>` "for flexibility."
 - **CSV column names and order are dictated by DDC vendor output.** Don't "clean up" `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` — they're columns by spec (`L2-WRT-013`). `TERM_NAME`/`IM_GAP`/`RCV_GAP`/`XMT_GAP` stay empty; `MUX` is populated from the input file name by default (`L2-WRT-020`) and is restored to empty (vendor-exact) by `--no-mux` / `[mux] enabled = false`.
-- **`sync.rs` is pure** (no logging, no I/O). The reader handles any user-facing messaging based on returned values. Don't move logging into validation helpers.
+- **The sync modules are pure** (no logging, no I/O) in **both** implementations — `rust/src/sync.rs` and `python/src/mie_decoder/sync.py`. The reader handles all user-facing messaging based on the values they return. Don't move logging into validation helpers: they lack the caller's context, so they narrate outcomes wrongly (`find_first_record` returning `None` is the *expected* result for a valid empty recording, and logging "no valid record found" there contradicted the reader's own correct message).
 - **Shared conformance fixtures are byte-exact.** Treat
   `tests/conformance/` as the cross-implementation oracle; update expected CSV
   only after both implementations agree.

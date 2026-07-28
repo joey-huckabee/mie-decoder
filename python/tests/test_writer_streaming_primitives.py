@@ -9,7 +9,9 @@ by ``test_writer_streaming_golden.py``.
 
 from __future__ import annotations
 
+import errno
 import io
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,7 @@ from mie_decoder.writer import (
     CSV_HEADER,
     _AtomicCsvFile,
     _StreamingCsvRowWriter,
+    is_broken_pipe,
     write_csv,
 )
 
@@ -211,3 +214,94 @@ def test_write_csv_to_stream_swallows_broken_pipe(tmp_path: Path) -> None:
 
     # No exception escaped; the run reports success.
     assert outcome.partial is None
+
+
+# ── broken-pipe classification (L2-WRT-018) ────────────────────────────
+
+
+@pytest.mark.requirement("L2-WRT-018")
+def test_is_broken_pipe_accepts_broken_pipe_error() -> None:
+    assert is_broken_pipe(BrokenPipeError(errno.EPIPE, "Broken pipe"))
+
+
+@pytest.mark.requirement("L2-WRT-018")
+@pytest.mark.parametrize("code", [errno.EINVAL, errno.EPIPE])
+def test_is_broken_pipe_accepts_windows_oserror(code: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows surfaces a closed pipe as a bare ``OSError``, not ``BrokenPipeError``.
+
+    Writing to a pipe whose read end has closed comes out of CPython's text
+    layer as ``OSError(EINVAL)`` there, so a plain ``except BrokenPipeError``
+    never fires — which is why ``decode … | head`` and ``dump … | head`` exited
+    1 with a traceback on Windows while the Rust CLI exited 0.
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert is_broken_pipe(OSError(code, "Invalid argument"))
+
+
+@pytest.mark.requirement("L2-WRT-018")
+def test_is_broken_pipe_rejects_real_write_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A genuine write failure must stay a failure on both platforms."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert not is_broken_pipe(OSError(errno.ENOSPC, "No space left on device"))
+    assert not is_broken_pipe(ValueError("not an OSError"))
+
+
+@pytest.mark.requirement("L2-WRT-018")
+def test_is_broken_pipe_does_not_widen_on_posix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``EINVAL`` is only pipe-closed on Windows.
+
+    On POSIX an ``EINVAL`` write error is a real failure, so widening the match
+    there would silently convert write failures into clean exits.
+    """
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert not is_broken_pipe(OSError(errno.EINVAL, "Invalid argument"))
+
+
+class _WindowsPipeBreaker(io.StringIO):
+    """Like :class:`_PipeBreaker`, but raising the *Windows* form of the
+    pipe-closed condition (a bare ``OSError``) rather than ``BrokenPipeError``."""
+
+    def __init__(self, break_after: int) -> None:
+        super().__init__()
+        self._writes = 0
+        self._break_after = break_after
+
+    def write(self, s: str) -> int:
+        self._writes += 1
+        if self._writes > self._break_after:
+            raise OSError(errno.EINVAL, "Invalid argument")
+        return super().write(s)
+
+
+@pytest.mark.requirement("L2-WRT-018")
+def test_write_csv_to_stream_swallows_windows_broken_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Windows pipe-closed form is a clean success too, not a writer error."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    data = normal_record_rt15_sa11_us(100) + normal_record_rt15_sa11_us(16100)
+    mie = tmp_path / "two.mie"
+    mie.write_bytes(data)
+
+    outcome = write_csv(MieFileReader(mie), output=_WindowsPipeBreaker(break_after=1))
+
+    assert outcome.partial is None
+
+
+@pytest.mark.requirement("L2-WRT-018")
+def test_write_csv_to_stream_still_raises_on_real_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-pipe ``OSError`` must still surface as a writer error (exit 1)."""
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    class _DiskFull(io.StringIO):
+        def write(self, s: str) -> int:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    data = normal_record_rt15_sa11_us(100)
+    mie = tmp_path / "one.mie"
+    mie.write_bytes(data)
+
+    with pytest.raises(MieWriterError):
+        write_csv(MieFileReader(mie), output=_DiskFull())

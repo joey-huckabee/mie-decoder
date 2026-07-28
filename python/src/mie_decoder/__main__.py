@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sys
 
-from mie_decoder.cli import main
+from mie_decoder.cli import main_cli
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main_cli())

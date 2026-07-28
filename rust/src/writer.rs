@@ -4,9 +4,12 @@
 //! intermediate `Vec<Row>` or DataFrame buffering. Memory usage is constant
 //! regardless of file size.
 //!
-//! Column order matches the DDC vendor CSV byte-for-byte. The `MUX`,
-//! `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are emitted as empty
-//! strings — they exist for compatibility, not because we populate them.
+//! Column order matches the DDC vendor CSV byte-for-byte. `TERM_NAME`,
+//! `IM_GAP`, `RCV_GAP`, and `XMT_GAP` are emitted as empty strings — they exist
+//! for layout compatibility, not because we populate them. `MUX` is the
+//! exception: it carries a value derived from the input file name by default
+//! (L2-WRT-020), and is empty only when that is disabled (`--no-mux`) or the
+//! configured field is absent.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};

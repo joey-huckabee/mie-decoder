@@ -2,7 +2,7 @@
 !theme plain
 !pragma layout smetana
 scale max 4000*4000
-title MIE-Decoder v2.0 - Class Diagram (Rust + Python)
+title MIE-Decoder - Class Diagram (Rust + Python)
 
 ' ============================================================================
 '  Cross-implementation note

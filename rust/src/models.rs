@@ -11,7 +11,10 @@ use core::fmt;
 // ── Enums ─────────────────────────────────────────────────────────────
 
 /// MIL-STD-1553 redundant bus identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// `Ord` is derived (A < B, by discriminant) so filter-set diagnostics can
+/// render a stable, sorted list — see `filter::log_active_filters`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Bus {
     A = 0,
@@ -187,6 +190,23 @@ pub fn is_known_custom_error_code(code: u16) -> bool {
 #[inline]
 pub fn is_known_error_code(code: u16) -> bool {
     is_known_ddc_error_code(code) || is_known_custom_error_code(code)
+}
+
+/// Human-readable description for a known error code, else the
+/// `"unknown DDC error code"` fallback.
+///
+/// Prefer this over [`ddc_error_description`] anywhere the result is rendered
+/// for a human: that function returns an empty string for an unrecognized
+/// code, which formats as an uninformative `code=0x0199 ()`. Python's
+/// equivalent lookups always carry a fallback, so this keeps the two
+/// implementations' operator-facing text aligned.
+pub fn ddc_error_description_or_unknown(code: u16) -> &'static str {
+    let desc = ddc_error_description(code);
+    if desc.is_empty() {
+        "unknown DDC error code"
+    } else {
+        desc
+    }
 }
 
 /// Human-readable description for a known error code, else empty string.

@@ -54,9 +54,13 @@ mie-decoder --config config/default.toml decode recording.mie -o decoded.csv
 `dump` — with an identical flag surface in the Rust and Python builds. The
 **complete per-flag reference** (every option, with its default, value range, and
 config-key equivalent) lives in
-**[`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md)**. The CLI's own
-`mie-decoder <subcommand> --help` is generated from the same definitions and is
-always current.
+**[`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md)**. Each CLI's own
+`mie-decoder <subcommand> --help` lists the same flags, but they are not one
+generated source: Python's help is produced by `argparse` from its argument
+definitions, while Rust's is a hand-maintained help string. The
+`cli-surface-parity` check in `tests/conformance/run.py` fails CI if the two ever
+advertise a different set of long options — including a flag the Rust parser
+still accepts but its help stopped listing.
 
 Config-file keys are documented in
 [`docs/CONFIG-REFERENCE.md`](docs/CONFIG-REFERENCE.md); task-oriented
@@ -77,7 +81,7 @@ mie-decoder decode rec.mie -o clean.csv \
 mie-decoder decode rec.mie -o rt15.csv --include-buses A --include-rts 15
 
 # Errors inline with normal messages
-mie-decoder decode rec.mie -o all.csv --inline-errors
+mie-decoder decode rec.mie -o clean-plus-errors.csv --separate-errors
 
 # Multi-file, time-sorted merge; de-dup overlapping recorders
 mie-decoder decode a.mie b.mie -o merged.csv --collapse-duplicates
@@ -97,15 +101,20 @@ When the DDC card detects an error mid-transaction (Manchester error, parity err
 
 ### Error modes
 
-> **By default, errored and SPURIOUS records are not in the main CSV** — they are
-> written to a separate `<output>_errors.csv` so the main file stays clean. If you
-> expected an errored record (a Type Word with bit 14 set) in the main output,
-> that is why. Pass **`--inline-errors`** to put every record in one CSV with the
-> `ERROR`/`ERROR_CODE` columns populated — which is also the layout that matches
-> the DDC vendor tool (see [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md)).
+> **By default every record — clean, errored, and SPURIOUS — goes to one CSV**,
+> with the `ERROR`/`ERROR_CODE` columns populated. That is also the layout the DDC
+> vendor tool emits, so a default decode diffs against vendor output directly (see
+> [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md)). Pass
+> **`--separate-errors`** if you want the errored and SPURIOUS records pulled out
+> into a sibling `<output>_errors.csv` so the main file holds only clean rows.
 
-- **Default (separate)**: Normal messages go to the main CSV. Errored and spurious records go to `<output>_errors.csv` (created only if there are error rows).
-- **`--inline-errors`**: All messages in one CSV. `ERROR` column is `"ERROR"` or `"SPURIOUS"`; `ERROR_CODE` holds the code.
+- **Default (inline)**: All messages in one CSV. `ERROR` column is `"ERROR"` or `"SPURIOUS"` (empty for clean rows); `ERROR_CODE` holds the code.
+- **`--separate-errors`**: Normal messages go to the main CSV; errored and spurious records go to `<output>_errors.csv` (created only if there are error rows).
+
+> **Changed in this release:** inline used to be opt-in via `--inline-errors`, and
+> separate was the default. The polarity is now reversed and `--inline-errors` has
+> been **removed** — passing it is a usage error (exit 4). Drop the flag to keep
+> the same output, or add `--separate-errors` for the old default layout.
 
 ### Error codes
 
@@ -175,6 +184,7 @@ docs/
 ├── ARCHITECTURE.md     Module diagram, sync strategy, data flow
 ├── CLI-REFERENCE.md    Complete per-flag CLI reference (all subcommands)
 ├── CONFIG-REFERENCE.md Normative TOML key reference (type / default / CLI override)
+├── DATA-SCENARIOS.md   Every data condition mapped to its CSV / log / exit outcome
 ├── ERROR-CATALOG.md    Operator reference: exit codes, error classes, DDC codes
 ├── EXAMPLES.md         Runnable cookbook of common operator tasks
 ├── L1-REQ.md           Level 1 SHALL statements (system requirements)
@@ -205,10 +215,12 @@ Per-implementation development commands (build, test, lint, coverage) live in
 [`CONTRIBUTING.md`](CONTRIBUTING.md) and
 [`docs/MAINTAINER-GUIDE.md`](docs/MAINTAINER-GUIDE.md) cover the full workflow.
 
-Shared Rust/Python conformance suite:
+Shared Rust/Python conformance suite (run with an interpreter that has
+`mie_decoder` installed, and build the Rust binary first):
 
 ```bash
-python tests/conformance/run.py
+(cd rust && cargo build)
+poetry -C python run python ../tests/conformance/run.py
 ```
 
 ## Known Limitations

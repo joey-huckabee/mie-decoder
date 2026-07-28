@@ -28,6 +28,8 @@ MIE-Decoder ships as a Rust crate (`rust/src/`) and a Python package (`python/sr
 | Logging | `rust/src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) |
 | Hex dump | `rust/src/dump.rs` | `python/src/mie_decoder/dump.py` |
 
+The sync helpers (`sync.rs` / `sync.py`) are **pure** in both implementations — no logging, no I/O. Everything an operator sees about header detection, sync loss, and recovery is emitted by the reader, which is what keeps the two implementations' log output aligned and stops a helper from narrating an outcome the caller has more context about.
+
 Per L1-CONF-001 the two implementations must remain aligned on shared format and CSV semantics. Per-implementation requirements (`L3-PY-*` / `L3-RS-*`) cover the technology-specific obligations (stdlib `csv` / tomllib for Python; memmap2 / streaming `BufWriter` for Rust). See [`L3-REQ.md`](L3-REQ.md) for the per-impl details.
 
 The `MUX` column value (L2-WRT-020) is resolved **once per input file** from its name when the reader is constructed (config → `ReaderOptions` / reader kwargs), and attached to every `MieMessage` the reader yields — Rust as a shared `Arc<str>` (a refcount-bump clone per record), Python as a shared `str` reference. The value therefore rides along through the filter and merge iterators unchanged (so a merged stream keeps each record's source-file MUX), and the writer emits it without any extra per-record allocation — preserving the O(1)-in-record-count streaming guarantee.
@@ -163,7 +165,7 @@ Error records (Type Word bit 14 set) and SPURIOUS_DATA records are valid records
 
 ## 4. Structural invariants subsystem
 
-Beyond the five sync validation checks, the reader applies six **structural invariants** to every decoded record (L2-SYN-020 through L2-SYN-025). These catch corruption patterns where the Type Word + word count are structurally valid but the record's internal fields contradict each other.
+Beyond the five sync validation checks, the reader applies seven **structural invariants** to every decoded record (L2-SYN-020 through L2-SYN-025, plus L2-SYN-027). These catch corruption patterns where the Type Word + word count are structurally valid but the record's internal fields contradict each other.
 
 Invariants are classified into two severity classes:
 
@@ -172,7 +174,7 @@ Invariants are classified into two severity classes:
 | `Reject` | Surface `MieError::PayloadError` and stop | Log WARN and skip the record (advance past it without emission) | Internally inconsistent records that almost certainly indicate corruption |
 | `AnomalyWarn` | Log WARN and continue emitting the record | Same | Patterns that may be legitimate (real-bus noise, undocumented vendor extensions) so outright rejection produces false negatives |
 
-The six invariants:
+The seven invariants:
 
 | ID | Severity | What it catches |
 |----|----------|-----------------|
@@ -182,6 +184,7 @@ The six invariants:
 | L2-SYN-023 | Reject | RT-to-RT records (`0x08` / `0x18`) where the second Cmd Word's direction isn't Receive |
 | L2-SYN-024 | AnomalyWarn | Status Word's RT field doesn't match the Cmd Word's RT (possible multi-drop bus interference) |
 | L2-SYN-025 | AnomalyWarn | Type Word bit 15 (reserved) is set (possible undocumented vendor extension) |
+| L2-SYN-027 | Reject | RT-to-RT records where Cmd1 and Cmd2 disagree on `data_word_count`. Checked post-extract: the L2-SYN-022 capacity invariant is computed from Cmd1 alone and cannot see a Cmd2 that over-claims. |
 
 Implementation: a `WhichInvariant` enum names which specific invariant fired; the reader logs an L2-SYN diagnostic line containing the offset, the invariant name, and the raw bytes. The same enum is exposed in both crates so callers can branch on the specific failure rather than parsing the diagnostic string.
 
@@ -224,7 +227,8 @@ Implementation: a `WhichInvariant` enum names which specific invariant fired; th
                 │
                 ├── extract payload per message format
                 │
-                ├── validate_post_extract_invariants (L2-SYN-023 Cmd2 check)
+                ├── validate_post_extract_invariants (L2-SYN-023 Cmd2 direction,
+                │       L2-SYN-027 Cmd1/Cmd2 data_word_count agreement)
                 │       same strict/lenient policy
                 │
                 ├── detect_record_anomalies (L2-SYN-024 / 025)
@@ -288,6 +292,8 @@ MieError {
     FileIo                { path, source: io::Error }
     NoValidRecords        { path, scan_bytes }
     HomogeneousPayload    { path, offset, sample_records }
+    TimestampFormatMismatch { offset, irig_score, std_score, records_probed }
+    IncompatibleMergeInputs { file_index, path, detail }
     InputOutputCollision  { path }
     ClobberRefused        { path }
 
@@ -299,6 +305,9 @@ MieError {
     PayloadError          { offset, detail }
     UnknownErrorCode      { offset, error_code }
     UnrecoverableSyncLoss { offset, sync_losses }
+
+    // Merge
+    NonMonotonicInput     { file_index, path, prev_us, curr_us }
 
     // Output
     WriterError           { destination, source: io::Error }
@@ -316,6 +325,8 @@ MieDecoderError                          (base, catches everything)
 │   ├── MieFileEmptyError
 │   ├── MieNoValidRecordsError
 │   ├── MieHomogeneousPayloadError
+│   ├── MieTimestampFormatMismatchError
+│   ├── MieIncompatibleMergeInputsError
 │   ├── MieInputOutputCollisionError
 │   └── MieClobberRefusedError
 ├── MieRecordError                       (carries `offset`)
@@ -326,6 +337,7 @@ MieDecoderError                          (base, catches everything)
 │   ├── MiePayloadError
 │   ├── MieUnknownErrorCodeError
 │   └── MieUnrecoverableSyncLossError
+├── MieNonMonotonicInputError
 └── MieWriterError
 ```
 
@@ -338,7 +350,7 @@ For per-variant cause / lenient-vs-strict behavior / exit-code mapping, see [`ER
 ## 8. Error-mode output
 
 ```
-  separate (default):                     --inline-errors:
+  --separate-errors:                      inline (default):
   ┌──────────────────────┐                ┌──────────────────────┐
   │  main.csv            │                │  output.csv          │
   │  Normal messages     │                │  All messages        │
@@ -436,14 +448,28 @@ CLI arguments > config file > built-in defaults (L2-CFG-003). Filter arrays merg
     ├── strict                decode.strict
     ├── error_mode            decode.error_mode
     ├── allow_partial         decode.allow_partial      (L2-WRT-016)
+    ├── detect_records        decode.detect_records     (L2-DEC-015)
+    ├── lookahead_records     decode.lookahead_records  (L2-SYN-026)
+    ├── standard_tick_rate_hz decode.standard_tick_rate_hz (L2-DEC-017)
     ├── filters
     │   ├── exclude_types     filter.exclude_types
     │   ├── exclude_rts       filter.exclude_rts
     │   ├── exclude_buses     filter.exclude_buses
-    │   └── exclude_subaddrs  filter.exclude_subaddresses
+    │   ├── exclude_subaddrs  filter.exclude_subaddresses
+    │   └── include_*         (CLI-only; no config key — L3-RS-010 / L3-PY-013)
     ├── output_format         output.format
-    └── no_clobber            output.no_clobber         (L2-WRT-017)
+    ├── no_clobber            output.no_clobber         (L2-WRT-017)
+    ├── mux_enabled           mux.enabled               (L2-WRT-020)
+    ├── mux_delimiter         mux.delimiter
+    ├── mux_field             mux.field
+    ├── collapse_duplicates   merge.collapse_duplicates (L2-MRG-007)
+    └── collapse_window_us    merge.collapse_window_us
 ```
+
+An override is applied when it is **present**, not when it is truthy — Rust
+models that with `Option<T>` and Python matches it by testing for `None`. A
+truthiness test would silently drop a zero-valued override such as
+`--time-format auto` (`TimestampFormat::Auto == 0`).
 
 For the full schema reference (every key, its type, valid values, validation behavior, CLI override), see [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md).
 
@@ -458,7 +484,7 @@ The level is set from the CLI `--log-level` flag or the config file's `logging.l
 | Level | What gets logged |
 |-------|-----------------|
 | DEBUG | Per-record decode trace, CLI parsed arguments, header-skip-zero (`first record at offset 0 (no header)`), record-class details |
-| INFO | File open, header detected with size (L2-SYN-012), timestamp format auto-detect, sync recoveries (L2-SYN-013), decode complete with counts, **exit-class summary** (L1-EXIT-005), CSV row counts, progress every 100k msgs |
+| INFO | File open, header detected with size (L2-SYN-012), timestamp format auto-detect, sync recoveries (L2-SYN-013), decode complete with counts, **exit-class summary** (L1-EXIT-005), CSV row counts, progress every 100k msgs, merge duplicate-collapse count (L2-MRG-007), active-filter summary and passed/excluded tally. |
 | WARN | Sync loss (L2-SYN-013), unknown error codes (lenient), freerun timestamps, structural invariant violations (lenient skip), L2-SYN anomalies (L2-SYN-024 status RT mismatch / L2-SYN-025 reserved bit set), non-monotonic timestamps (L2-RDR-017, once per RT/MSG), unclassifiable records (lenient), stdout-forces-inline-mode |
 | ERROR | No valid records found, homogeneous-payload rejection, unrecoverable sync loss, file/write failures, first-record truncated (strict) |
 

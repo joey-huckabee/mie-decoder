@@ -29,7 +29,7 @@ The decoder is shipped as two interoperable implementations — a Rust crate + C
 
 | Implementation | Use when |
 |----------------|----------|
-| **Rust** | You want a native compiled binary, a dependency-free static install, or the fastest decode throughput. |
+| **Rust** | You want a single self-contained native binary with no runtime to install, or the fastest decode throughput. |
 | **Python** | You want to drop into an existing Python analysis pipeline, you're on Windows / macOS for ad-hoc work, or you'd rather `pip install` than build from source. |
 
 Both decode in constant memory and handle multi-GB / 10M+-record recordings — the choice is about ecosystem, not file size (see [§10 Performance and large recordings](#10-performance-and-large-recordings)).
@@ -91,7 +91,7 @@ INFO  decode complete: 14523 messages, 0 sync recoveries, format=Irig
 INFO  decode exit class: complete (sync_losses=0)
 ```
 
-The `decode exit class:` line is always emitted at INFO; it names one of `complete`, `partial-recovered`, `partial-unrecoverable`, or `no-records` so pipeline logs can grep for it.
+The `decode exit class:` line is always emitted at INFO; it names one of `complete`, `partial-recovered`, `partial-unrecoverable`, `empty-recording`, `no-records`, `merge-incompatible`, or `non-monotonic-input (strict)` so pipeline logs can grep for it.
 
 ---
 
@@ -104,7 +104,7 @@ Reads an MIE file and writes CSV. The command you'll use most.
 ```bash
 mie-decoder decode flight.mie -o flight.csv
 mie-decoder decode flight.mie > flight.csv    # stdout
-mie-decoder decode flight.mie --inline-errors -o everything.csv
+mie-decoder decode flight.mie --separate-errors -o clean.csv
 mie-decoder --config site.toml decode flight.mie -o flight.csv
 ```
 
@@ -154,21 +154,23 @@ mie-decoder decode flight.mie | awk -F, '$2=="15"'   # only RT 15
 
 ### Separate vs inline error handling
 
-By default, **errored records** (DDC card detected a bus error) and **SPURIOUS_DATA** records (orphan data fragments) are written to a *separate* file so the main CSV stays clean. The errors file is named `<output_stem>_errors<output_suffix>`:
+By default, **errored records** (DDC card detected a bus error) and **SPURIOUS_DATA** records (orphan data fragments) stay in the main CSV alongside clean records, flagged by the `ERROR` / `ERROR_CODE` columns. One file, nothing hidden, and the same layout the vendor tool produces:
 
 ```bash
 $ mie-decoder decode flight.mie -o flight.csv
 $ ls
+flight.csv                        # every record, errors flagged in-row
+```
+
+If you would rather keep the main CSV to clean records only, `--separate-errors` routes the errored and spurious rows to a sibling file named `<output_stem>_errors<output_suffix>`:
+
+```bash
+$ mie-decoder decode flight.mie --separate-errors -o flight.csv
+$ ls
 flight.csv flight_errors.csv      # errors file only created if error rows exist
 ```
 
-For diffing against vendor-generated CSV (which is always inline), or for any analysis pipeline that wants every row in one file, use inline mode:
-
-```bash
-mie-decoder decode flight.mie --inline-errors -o flight.csv
-```
-
-In inline mode the `ERROR` column contains `ERROR` / `SPURIOUS` / empty and `ERROR_CODE` contains the hardware code (`011E`, `0120`, etc.) or the decoder-assigned code (`2000` continuation, `2001` standalone). See `ERROR-CATALOG.md` sections 6 and 7 for the full code reference.
+In inline mode (the default) the `ERROR` column contains `ERROR` / `SPURIOUS` / empty and `ERROR_CODE` contains the hardware code (`011E`, `0120`, etc.) or the decoder-assigned code (`2000` continuation, `2001` standalone). See `ERROR-CATALOG.md` sections 6 and 7 for the full code reference.
 
 ### Recovering data from a corrupt recording
 
@@ -437,13 +439,16 @@ The column layout matches DDC vendor output byte-for-byte. Columns in order:
 | `DELTA` | Seconds since the previous message on the same RT/MSG key. `0.000000` on first occurrence. Empty when the timestamp basis is unknown (uncalibrated Standard format — see [Calibrating Standard timestamps](#calibrating-standard-timestamps)), the record is SPURIOUS_DATA, or the timestamp is non-monotonic. |
 | `ERROR` | `ERROR`, `SPURIOUS`, or empty. Empty in clean rows of separate-mode CSV. |
 | `ERROR_CODE` | DDC hardware code (`011E`, `0120`, `0136`, `0140`, `0150`) or decoder-assigned code (`2000`, `2001`). Empty in clean rows of separate-mode CSV. |
-| `IM_GAP`, `RCV_GAP`, `XMT_GAP` | Vendor compatibility columns. Always empty in v1; reserved for future inter-message gap timing. |
+| `IM_GAP`, `RCV_GAP`, `XMT_GAP` | Vendor compatibility columns. Always empty; reserved for future inter-message gap timing. |
 
 A typical receive row looks like:
 
 ```
-192:15:54:50.456225,15,11R,0400,,,002F,CA22,...,7800,797E,,,A,0.000000,,,,,
+192:15:54:50.456225,15,11R,0400,0000,0000,002F,CA22,...,7800,797E,,,A,0.000000,,,,,
 ```
+
+(Only *trailing* `WD` columns are empty — the ones past this message's data-word
+count. A `0000` data word inside the payload is written as `0000`, not left blank.)
 
 Line endings are LF (`\n`) on every platform — including Windows — so the CSV diffs cleanly between machines (L2-WRT-012).
 
@@ -453,17 +458,20 @@ For the binary-level field reference (what's in the Type Word, how IRIG packing 
 
 ## 8. When something goes wrong
 
-The CLI exits with one of six codes (L1-EXIT-001 through L1-EXIT-008), identical across the Rust and Python implementations:
+The CLI exits with one of seven codes (L1-EXIT-001 through L1-EXIT-010), identical across the Rust and Python implementations:
 
 | Code | Class | Likely cause |
 |------|-------|--------------|
 | **0** | `complete` / `partial-recovered` | Decoded successfully (possibly after auto-recovery from in-stream corruption). |
 | **0** | `complete (broken-pipe)` | stdout consumer closed early. Not an error. |
+| **0** | `partial-unrecoverable` (with `--allow-partial`) | Unrecoverable corruption, but the rows decoded before it were preserved as `<output>.partial`. |
+| **0** | `empty-recording` | A valid MIE recording that captured **zero** records (its stream is just the `0x0000` terminator). A header-only CSV is written. Distinct from exit 2. |
 | **1** | runtime / decode error | Per-record validation failed in strict mode, the input couldn't be opened, or the output sink failed. Read the stderr error line. |
 | **2** | `no-records` | The input file isn't an MIE recording at all (wrong file type, single-byte pad). No output file created. |
 | **3** | `partial-unrecoverable` | Mid-file sync loss that couldn't be recovered. Re-run with `--allow-partial` to keep what was decoded. |
-| **4** | usage error | The command line is wrong — unknown/invalid flag or argument, bad flag value, or no subcommand. Run `--help`. |
+| **4** | usage error | The command line is wrong — unknown/invalid flag or argument, bad flag value, combined input methods, more than 256 merge inputs, or no subcommand. Run `--help`. |
 | **5** | configuration error | The `--config` TOML file can't be found, parsed, or fails validation. Fix the file named in the error. |
+| **6** | `merge-incompatible` | A multi-file merge whose inputs can't share an absolute IRIG timeline (a Standard-format, freerun-leading, or mixed-format set). Nothing is written. Decode those inputs individually. |
 
 The `decode exit class:` summary log line names the class explicitly, even when stderr is captured to a pipeline log.
 
@@ -516,7 +524,7 @@ Both implementations produce byte-identical CSV, decode at broadly similar speed
 | **Rust** | Constant — `O(1)` in the record count. | Bounded by disk, not RAM. |
 | **Python** | Constant — `O(1)` in the record count. Each row streams to the output through the standard-library `csv` module; nothing accumulates across records. | Bounded by disk, not RAM. |
 
-**Rule of thumb:** either CLI handles multi-GB recordings and **10M+ record** files without memory becoming a concern — the output is identical. Choose by ecosystem: the Rust CLI for a dependency-free static binary, the Python CLI to stay inside a Python pipeline.
+**Rule of thumb:** either CLI handles multi-GB recordings and **10M+ record** files without memory becoming a concern — the output is identical. Choose by ecosystem: the Rust CLI for a single self-contained binary, the Python CLI to stay inside a Python pipeline.
 
 The constant-memory guarantee is tracked as `L3-PY-012` (Python) / `L3-RS-012` (Rust) and is load-bearing: a change that buffers rows would regress it. See [`ARCHITECTURE.md`](ARCHITECTURE.md) §12 (memory profile) and §14 (operational limits) for the underlying detail.
 

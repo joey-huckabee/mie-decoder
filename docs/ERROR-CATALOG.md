@@ -13,14 +13,14 @@ This doc covers the **observable surface**. Spec rationale lives in [`L1-REQ.md`
 
 ## 1. CLI exit codes
 
-The exit-code taxonomy is pinned by L1-EXIT-001 through L1-EXIT-009 and the L2-CLI-011 table, and is identical across both implementations. Every decode invocation logs a one-line `decode exit class:` summary (L1-EXIT-005) so the class is grep-able even when only stderr is captured.
+The exit-code taxonomy is pinned by L1-EXIT-001 through L1-EXIT-010 and the L2-CLI-011 table, and is identical across both implementations. Every decode invocation logs a one-line `decode exit class:` summary (L1-EXIT-005) so the class is grep-able even when only stderr is captured.
 
 | Code | Class | Triggering errors | What it means | Operator action |
 |------|-------|-------------------|---------------|-----------------|
 | **0** | `complete` | (none — decode finished normally) | Every record decoded without sync loss. | None. |
 | **0** | `partial-recovered` | (none — decode finished after sync loss recovery) | At least one mid-file sync loss occurred and was recovered. INFO summary names the recovery count. | Investigate the recording source if recovery counts are high or trending up. |
 | **0** | `complete` (`--allow-partial`) | `UnrecoverableSyncLoss` on the unrecoverable-but-tolerated path | An unrecoverable sync loss occurred but `--allow-partial` preserved the rows decoded so far as `<dest>.partial`. | Inspect the `.partial` output, then triage the recording. |
-| **0** | `complete (broken-pipe on stdout)` | `BrokenPipeError` on stdout output | A downstream consumer closed early (e.g. `mie-decoder decode … \| head`). Not an error. | None. |
+| **0** | `complete (broken-pipe on stdout)` | a broken pipe on stdout output | A downstream consumer closed early (e.g. `mie-decoder decode … \| head`). Not an error. | None. |
 | **0** | `empty-recording` | (none — a valid but empty recording) | The input is a genuine MIE recording that captured **zero records**: its stream opens directly on the `0x0000` end-of-records terminator (e.g. an unused MIL-STD-1553 channel — literally the two bytes `00 00`). A **header-only CSV** is written and a WARN names the empty capture (L1-EXIT-010 / L2-RDR-021). Distinct from exit `2`, which is a *wrong-file* rejection. | None — the recording simply captured nothing. |
 | **1** | runtime / decode error | `RecordTruncated`, `FirstRecordTruncated`, `PayloadError`, `InvalidTypeWord`, `UnknownTypeWord`, `UnknownErrorCode`, `WriterError` (non-broken-pipe), file I/O errors (incl. input not found) | Per-record validation failed in strict mode, the input couldn't be opened, or the output sink failed. | Read the stderr message; if it's a record error, lenient mode (`decode.strict = false`) usually skips and continues. |
 | **2** | `no-records` | `NoValidRecords`, `HomogeneousPayload`, `TimestampFormatMismatch` (strict mode only — ambiguous auto-detection per L2-DEC-016, or a forced `--time-format` the recording decisively contradicts per L2-DEC-013) | The input file isn't an MIE recording at all (wrong file type, single-byte-pad, ambiguous timestamp format), or the forced timestamp format is wrong for the file. No output file is created. **Not** the same as a valid empty recording (exit `0`, `empty-recording`): that case is recognized by the `0x0000` terminator at offset 0. | Verify the input path. If it's actually a recording, check that records begin within the first 64 KB and that the timestamp format is recognizable; drop `--time-format` to auto-detect, or pass the correct `--time-format irig\|standard`. |
@@ -141,7 +141,7 @@ context line capped at 32 bytes; normal WARNING output remains compact.
 | Variant | When it fires | Exit |
 |---------|---------------|------|
 | `MieWriterError` / `WriterError` | An underlying `io::Error` from the CSV writer (disk full, permission denied, etc.). Preserves the source OS error message. | 1 |
-| `MieWriterError` / `WriterError` (broken-pipe variant) | The stdout consumer closed before the writer flushed. Detected by `MieError::is_broken_pipe()` in Rust; raised as `BrokenPipeError` in Python. (L2-WRT-018) | **0** |
+| `MieWriterError` / `WriterError` (broken-pipe variant) | The stdout consumer closed before the writer flushed. Classified by `MieError::is_broken_pipe()` in Rust and `mie_decoder.writer.is_broken_pipe()` in Python. Note the Python predicate is **not** just `isinstance(exc, BrokenPipeError)`: CPython raises that only on POSIX, while Windows reports a closed pipe as a bare `OSError` with `EINVAL`, so both forms are matched (the widened `errno` match is scoped to Windows so a real POSIX `EINVAL` write failure stays a failure). Applies to `decode` and `dump` alike. (L2-WRT-018) | **0** |
 
 Disk-full and permission failures during the atomic temp-file write are surfaced via `WriterError` and the temp file is unlinked before the process exits (L2-WRT-015 / L2-WRT-016).
 

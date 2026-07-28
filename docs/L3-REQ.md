@@ -55,7 +55,7 @@ When `--allow-partial` is in effect on the L1-EXIT-004 unrecoverable path, the p
 ## L3-PY: Python implementation technology
 
 **L3-PY-001** · Parent: L2-CONF-005 · Verification: I
-The Python implementation SHALL support Python `>=3.10,<3.15`. The supported version set is fixed for v1.x; the CI matrix mechanics that exercise every supported version are pinned separately by L3-PY-008.
+The Python implementation SHALL support Python `>=3.10,<3.15`. Changing the supported version set is a breaking change to this requirement, not an incidental packaging edit; the CI matrix mechanics that exercise every supported version are pinned separately by L3-PY-008.
 
 **L3-PY-002** · Parent: L2-CONF-005 · Verification: I
 Python dependencies and packaging SHALL be managed by Poetry. The committed lockfile SHALL be `python/poetry.lock`. CI builds SHALL use `poetry sync` or `poetry install --no-root` with the committed lockfile to ensure reproducible dependency resolution.
@@ -85,7 +85,7 @@ The Python reader SHALL open the input file with `mmap.mmap(fileno, 0, access=mm
 Python message counting SHALL be available through the `count` subcommand (matching the Rust CLI, `L3-RS-008`), counting valid records after the config file's `[filter]` section is applied. Stdout SHALL contain only the integer record count followed by a single newline — no prose, no path, no leading or trailing whitespace beyond that newline — so the output is directly consumable in shell pipelines (`n=$(mie-decoder count rec.mie)`). A human-readable status line including the input path name SHALL be written to stderr so an interactive operator still sees context; this stderr line is not gated by `--log-level` and is always emitted on a successful count.
 
 **L3-PY-011** · Parent: L2-ERR-011 · Verification: T
-Python inline error output SHALL be available through the `--inline-errors` flag on the `decode` subcommand (matching the Rust CLI, `L3-RS-009`). When set, error and SPURIOUS_DATA records SHALL appear in the same CSV as clean records, with the `ERROR` and `ERROR_CODE` columns populated per L2-ERR-010. Default (omitted) is separate-file mode; stdout output forces inline mode automatically (you cannot split stdout).
+Python inline error output SHALL be the default: error and SPURIOUS_DATA records appear in the same CSV as clean records, with the `ERROR` and `ERROR_CODE` columns populated per L2-ERR-010. Separate-file output SHALL be available through the `--separate-errors` flag on the `decode` subcommand (matching the Rust CLI, `L3-RS-009`). Stdout output is always inline (you cannot split stdout), so `--separate-errors` SHALL be ignored there with a WARN. The former `--inline-errors` flag SHALL NOT be accepted — it was removed when inline became the default, and passing it SHALL be a usage error (exit 4) rather than a silent no-op.
 
 **L3-PY-012** · Parent: L2-WRT-001 · Verification: T
 Python memory usage during decode SHALL be O(1) in the number of records: the writer streams each row straight to the output handle via the standard-library `csv` module with no DataFrame or full-file buffering. Constant overhead is bounded by the output stream's buffer plus the `delta` tracker, whose keys are bounded by `RT × SA × direction`. This matches the Rust guarantee (`L3-RS-012`) and is verified by a memory test asserting the write-side peak stays within a small constant factor as the record count grows ~33x.
@@ -94,7 +94,7 @@ Python memory usage during decode SHALL be O(1) in the number of records: the wr
 The Python package SHALL provide include filters equivalent to the Rust crate (`L3-RS-010`): `--include-types`, `--include-rts`, `--include-buses`, `--include-subaddresses` on the `decode` subcommand, with the same "passes only if contained in every active include set" semantics and the same comma-separated, repeatable argument syntax. Include filters are CLI-only overrides (no config-file key), matching Rust.
 
 **L3-PY-014** · Parent: L2-MRG-002 · Verification: T
-The Python multi-file merge SHALL be implemented in `mie_decoder/merge.py` using the standard-library `heapq` as the k-way merge heap (no new dependency). The global-DELTA stage SHALL overwrite each message's `delta` via `dataclasses.replace` on the frozen `MieMessage`. The `--glob` expansion SHALL be constrained to the single-directory `*`/`?` filename semantics shared with Rust (`L3-RS-014`) and sorted lexicographically, so the resolved input set is byte-identical across implementations. The file-count cap `MAX_MERGE_FILES` SHALL match the Rust constant.
+The Python multi-file merge SHALL be implemented in `mie_decoder/merge.py` using the standard-library `heapq` as the k-way merge heap (no new dependency). The global-DELTA stage SHALL replace each message's `delta` by constructing a new frozen `MieMessage` via its `with_delta` helper (the earlier `dataclasses.replace` spelling erased the concrete return type for the CI-gated strict `mypy` run, so the helper rebuilds the record field by field instead). The `--glob` expansion SHALL be constrained to the single-directory `*`/`?` filename semantics shared with Rust (`L3-RS-014`) and sorted lexicographically, so the resolved input set is byte-identical across implementations. The file-count cap `MAX_MERGE_FILES` SHALL match the Rust constant.
 
 **L3-PY-015** · Parent: L2-MRG-007 · Verification: T
 The Python cross-recorder collapsing SHALL be implemented in `mie_decoder/merge.py` as a `_DedupWindow` helper (a `collections.deque` of `(microseconds, file_index, content-key)` survivors) driven inside `_merge_drain` before the global-DELTA stage. The content key SHALL be a tuple of the decoded Type Word, Command/Status Words, Error Word, and `data_words`. The suppressed-duplicate count SHALL be logged at INFO once the merged stream is drained. The `merge.collapse_duplicates` / `merge.collapse_window_us` config keys and the `--collapse-duplicates` / `--collapse-window-us` CLI flags SHALL match the Rust surface (`L3-RS-015`).
@@ -104,7 +104,7 @@ The Python cross-recorder collapsing SHALL be implemented in `mie_decoder/merge.
 ## L3-RS: Rust implementation technology
 
 **L3-RS-001** · Parent: L2-CONF-005 · Verification: I
-The Rust crate SHALL declare `edition = "2024"` in `rust/Cargo.toml` and SHALL declare a Minimum Supported Rust Version (MSRV) of 1.85 or newer.
+The Rust crate SHALL declare `edition = "2024"` in `rust/Cargo.toml` and SHALL declare a Minimum Supported Rust Version (MSRV) via `rust-version`. The floor is **1.88**: edition 2024 itself only requires 1.85, but the crate's sole dependency `memmap2` requires 1.88. CI gates the declared floor with `cargo +1.88 check --all-targets`.
 
 **L3-RS-002** · Parent: L2-CONF-005 · Verification: I
 The Rust crate SHALL declare `memmap2` as its only external runtime dependency. Additional dependencies SHALL require explicit justification; argument parsing, CSV writing, TOML parsing, logging, and error types are hand-rolled by design.
@@ -127,7 +127,7 @@ Rust fallible APIs SHALL return `Result<T, MieError>`. `MieError` SHALL be a sin
 Rust message counting SHALL be available through the `count` subcommand. Stdout SHALL contain only the integer record count followed by a single newline — no prose, no path, no leading or trailing whitespace beyond that newline — so the output is directly consumable in shell pipelines (`n=$(mie-decoder count rec.mie)`). A human-readable status line including the input path SHALL be written to stderr so an interactive operator still sees context; this stderr line is not gated by `--log-level` and is always emitted on a successful count.
 
 **L3-RS-009** · Parent: L2-ERR-011 · Verification: T
-Rust inline error output SHALL be available through the `--inline-errors` flag on the `decode` subcommand. Stdout output SHALL force inline mode automatically (you cannot split stdout into two streams).
+Rust inline error output SHALL be the default. Separate-file output SHALL be available through the `--separate-errors` flag on the `decode` subcommand (matching the Python CLI, `L3-PY-011`). Stdout output SHALL force inline mode automatically (you cannot split stdout into two streams). The former `--inline-errors` flag SHALL NOT be accepted — passing it SHALL be a usage error (exit 4).
 
 **L3-RS-010** · Parent: L2-FLT-001 · Verification: T
 The Rust crate SHALL provide include filters (the complement of exclude filters) alongside exclude filters: `--include-types`, `--include-rts`, `--include-buses`, `--include-subaddresses`. A message passes only if it matches no active exclude set and is contained in every active include set. Include filters are CLI-only overrides (no config-file key). The Python package SHALL expose equivalent CLI syntax (`L3-PY-013`).

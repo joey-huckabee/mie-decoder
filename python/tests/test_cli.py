@@ -10,10 +10,13 @@ covered and individually verifiable.
 from __future__ import annotations
 
 import argparse
+import errno
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from tests.conftest import normal_record_rt15_sa11_us
 
 from mie_decoder import cli
 from mie_decoder.cli import (
@@ -111,7 +114,7 @@ def _decode_ns(**overrides: object) -> argparse.Namespace:
     """A decode-args Namespace with every override field defaulted (None/False)."""
     base: dict[str, object] = {
         "time_format": None,
-        "inline_errors": False,
+        "separate_errors": False,
         "no_clobber": False,
         "allow_partial": False,
         "strict": None,
@@ -185,13 +188,13 @@ class TestBuildDecodeOverrides:
         ov = cli._build_decode_overrides(
             _decode_ns(
                 time_format="standard",
-                inline_errors=True,
+                separate_errors=True,
                 strict=True,
                 format="csv",
             )
         )
         assert ov["time_format"] == TimestampFormat.STANDARD
-        assert ov["error_mode"] == ErrorMode.INLINE
+        assert ov["error_mode"] == ErrorMode.SEPARATE
         assert ov["strict"] is True
         assert ov["output_format"] == "csv"
 
@@ -328,7 +331,7 @@ class TestClassifyDecodeSuccess:
         # the summary line names the empty-recording class.
         outcome = SimpleNamespace(partial=None, normal_count=0, error_count=0)
         readers = [SimpleNamespace(sync_losses=0, empty_recording=True)]
-        with caplog.at_level("INFO"):
+        with caplog.at_level("INFO", logger="mie_decoder"):
             assert cli._classify_decode_success(outcome, readers) == EXIT_OK  # type: ignore[arg-type]
         assert "empty-recording" in caplog.text
 
@@ -373,4 +376,62 @@ class TestCheckMergeOutputCollision:
         args = SimpleNamespace(output=f)
         rc = cli._check_merge_output_collision(args, [tmp_path / "b.mie", f], merge_requested=True)
         assert rc == EXIT_RUNTIME
+        assert "Error:" in capsys.readouterr().err
+
+
+# ── dump broken-pipe handling (L2-WRT-018) ──────────────────────────────────
+
+
+class TestRunDumpBrokenPipe:
+    """``dump`` must treat a closed stdout consumer as a clean exit.
+
+    ``mie-decoder dump big.mie | head`` is the documented diagnostic workflow;
+    `dump` previously had no broken-pipe guard at all, so it exited 1 with a
+    traceback while `finish_dump` in ``rust/src/cli.rs`` exited 0.
+    """
+
+    @staticmethod
+    def _dump_args(tmp_path: Path) -> SimpleNamespace:
+        mie = tmp_path / "rec.mie"
+        mie.write_bytes(normal_record_rt15_sa11_us(100))
+        return SimpleNamespace(
+            input=mie, raw=False, offset=0, length=None, records=None, config=None, log_level=None
+        )
+
+    def test_broken_pipe_exits_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(
+            "mie_decoder.dump.hex_dump_records",
+            lambda *_a, **_k: (_ for _ in ()).throw(BrokenPipeError("consumer closed")),
+        )
+        assert cli._run_dump(self._dump_args(tmp_path)) == EXIT_OK
+        assert "Error:" not in capsys.readouterr().err
+
+    def test_windows_broken_pipe_exits_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("mie_decoder.writer.sys.platform", "win32")
+        monkeypatch.setattr(
+            "mie_decoder.dump.hex_dump_records",
+            lambda *_a, **_k: (_ for _ in ()).throw(OSError(errno.EINVAL, "Invalid argument")),
+        )
+        assert cli._run_dump(self._dump_args(tmp_path)) == EXIT_OK
+
+    def test_real_write_failure_still_exits_runtime(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A non-pipe output error stays a runtime failure (exit 1)."""
+        import mie_decoder.dump as dump_mod
+
+        original = dump_mod.hex_dump_records
+
+        def _boom(*_a: object, **_k: object) -> None:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        dump_mod.hex_dump_records = _boom  # type: ignore[assignment]
+        try:
+            assert cli._run_dump(self._dump_args(tmp_path)) == EXIT_RUNTIME
+        finally:
+            dump_mod.hex_dump_records = original  # type: ignore[assignment]
         assert "Error:" in capsys.readouterr().err

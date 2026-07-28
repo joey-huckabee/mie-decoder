@@ -77,18 +77,25 @@ strict = false
 # Controls how errored messages (Type Word bit 14 set) and spurious data
 # records (type 0x20) appear in output.
 #
-#   separate — Errored and spurious messages are written to a separate
-#              file named ``<output_stem>_errors<output_suffix>``.
-#              The main CSV contains only clean messages. This is the
-#              default and recommended setting for most workflows.
 #   inline   — Errored and spurious messages are included in the main
 #              CSV alongside normal messages. The ERROR column contains
 #              "ERROR" or "SPURIOUS", and the ERROR_CODE column contains
 #              the DDC hardware code (0x01xx) or decoder code (0x20xx).
+#              This is the default: one file, no record omitted from it,
+#              and the same layout the DDC vendor tool emits (so a decode
+#              diffs against vendor output without extra flags).
+#   separate — Errored and spurious messages are written to a separate
+#              file named ``<output_stem>_errors<output_suffix>``, leaving
+#              only clean messages in the main CSV. Opt in when a
+#              downstream consumer must not see error rows at all.
 #
-# Default: "separate"
+# Overridden by --separate-errors (which selects "separate"). Stdout output
+# is always inline — a stream cannot be split — so the setting is ignored
+# there with a WARN.
+#
+# Default: "inline"
 # ──────────────────────────────────────────────────────────────────────────
-error_mode = "separate"
+error_mode = "inline"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Partial-output mode on unrecoverable sync loss.
@@ -111,12 +118,16 @@ error_mode = "separate"
 allow_partial = false
 
 # ──────────────────────────────────────────────────────────────────────────
-# Header-detection confirmation depth.
+# Timestamp-format auto-detection probe size.
 #
-# When locating the first record, the decoder confirms a candidate header
-# by checking that this many consecutive records also validate. Higher
-# values make header detection more robust on noisy captures at a small
-# startup cost; the walk is bounded by the file's actual record count.
+# Only used when time_format = "auto". The decoder probes this many records
+# from the start of the record stream, scoring each one as IRIG and as
+# Standard, then commits to whichever wins (IRIG on a tie). Higher values
+# make the IRIG-vs-Standard call more robust on recordings whose leading
+# records score weakly, at a small startup cost; the walk is bounded by the
+# file's actual record count.
+#
+# This is NOT the sync look-ahead — that is lookahead_records, below.
 #
 # Must be an integer in [1, 32]. Overridden by --detect-records.
 #

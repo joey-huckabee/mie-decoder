@@ -85,9 +85,18 @@ impl FilterConfig {
 }
 
 /// Iterator adapter wrapping any `Iterator<Item = MieResult<MieMessage>>`.
+///
+/// Reports the same diagnostics as the Python `apply_filters` generator: the
+/// active filter sets once at construction (INFO), each dropped record (DEBUG),
+/// and a passed/excluded tally when the stream is finished (INFO). The tally is
+/// emitted from `Drop` rather than at end-of-iteration so it still appears when
+/// a consumer stops early — a broken pipe, `| head` — where an end-of-stream
+/// hook would never run.
 pub struct Filtered<I> {
     inner: I,
     filters: FilterConfig,
+    passed: u64,
+    excluded: u64,
 }
 
 impl<I, E> Iterator for Filtered<I>
@@ -101,12 +110,73 @@ where
                 Err(e) => return Some(Err(e)),
                 Ok(msg) => {
                     if !self.filters.should_exclude(&msg) {
+                        self.passed += 1;
                         return Some(Ok(msg));
                     }
+                    self.excluded += 1;
+                    log_filtered_out(&msg);
                 }
             }
         }
     }
+}
+
+impl<I> Drop for Filtered<I> {
+    fn drop(&mut self) {
+        if self.filters.is_active() {
+            crate::log_info!(
+                "Filter results: {} passed, {} excluded",
+                self.passed,
+                self.excluded
+            );
+        }
+    }
+}
+
+/// One-time INFO summary of the configured filter sets. `none` for an inactive
+/// (empty) set, matching the Python wording.
+fn log_active_filters(f: &FilterConfig) {
+    // Sorted so the line is stable regardless of the order values were parsed
+    // in, and rendered identically on both implementations (Python holds these
+    // as sets, whose repr order is not guaranteed).
+    fn show<T: std::fmt::Display + Ord + Copy>(v: &[T]) -> String {
+        if v.is_empty() {
+            return "none".to_string();
+        }
+        let mut sorted: Vec<T> = v.to_vec();
+        sorted.sort_unstable();
+        let items: Vec<String> = sorted.iter().map(|x| x.to_string()).collect();
+        format!("[{}]", items.join(", "))
+    }
+    crate::log_info!(
+        "Filtering active: exclude_types={} exclude_rts={} exclude_buses={} \
+         exclude_subaddresses={} include_types={} include_rts={} include_buses={} \
+         include_subaddresses={}",
+        show(&f.exclude_types),
+        show(&f.exclude_rts),
+        show(&f.exclude_buses),
+        show(&f.exclude_subaddresses),
+        show(&f.include_types),
+        show(&f.include_rts),
+        show(&f.include_buses),
+        show(&f.include_subaddresses),
+    );
+}
+
+/// DEBUG line for a message dropped by the filters.
+fn log_filtered_out(msg: &MieMessage) {
+    let (rt, sa) = match msg.command_word {
+        Some(cw) => (cw.rt.to_string(), cw.subaddress.to_string()),
+        None => ("-".to_string(), "-".to_string()),
+    };
+    crate::log_debug!(
+        "Filtered out: offset=0x{:X} type=0x{:02X} RT{} SA{} Bus {}",
+        msg.file_offset,
+        msg.type_word.message_type,
+        rt,
+        sa,
+        msg.type_word.bus
+    );
 }
 
 /// Extension trait: `iter.filter_messages(cfg)`.
@@ -119,9 +189,16 @@ where
     I: Iterator<Item = Result<MieMessage, E>>,
 {
     fn filter_messages(self, filters: FilterConfig) -> Filtered<Self> {
+        if filters.is_active() {
+            log_active_filters(&filters);
+        } else {
+            crate::log_debug!("No filters active, passing all messages through");
+        }
         Filtered {
             inner: self,
             filters,
+            passed: 0,
+            excluded: 0,
         }
     }
 }

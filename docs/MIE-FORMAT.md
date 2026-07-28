@@ -141,7 +141,7 @@ The first word of every record. Drives record classification, framing, and the e
 |------|-------|-------|-------------|
 | 0–6 | 7 | Message Type | DDC message type code. Known values: `0x01`, `0x02`, `0x04`, `0x08`, `0x10`, `0x18`, `0x20`. Determines the wire-order layout of command word, status word, and data words within the record payload. |
 | 7 | 1 | Bus ID | Identifies which MIL-STD-1553 redundant bus this message was captured on. `0` = Bus A, `1` = Bus B. MIL-STD-1553 defines two electrically independent buses for fault tolerance; both carry the same logical traffic. |
-| 8–13 | 6 | Word Count | Total record size in 16-bit words, including the Type Word itself, the timestamp, the command word, the status word, and all data words. Multiply by 2 to get bytes. Minimum 5 (Type Word + Standard timestamp + Command Word); maximum 63. |
+| 8–13 | 6 | Word Count | Total record size in 16-bit words, including the Type Word itself, the timestamp, the command word, the status word, and all data words. Multiply by 2 to get bytes. The minimum depends on the timestamp format: **4** for Standard (Type Word + 2-word timestamp + Command Word) and **5** for IRIG (Type Word + 3-word timestamp + Command Word). Maximum 63 (the field is 6 bits). |
 | 14 | 1 | Error Flag | Set to 1 if the recording card detected an error in this message. When set, the payload is truncated and the final 16-bit slot of the record contains the **Error Word** (the DDC hardware error code). |
 | 15 | 1 | Reserved | Per spec, should be 0. MIE-Decoder treats a set bit as an L2-SYN anomaly (WARN; continue) rather than an error, because the bit may be used by undocumented vendor extensions. |
 
@@ -219,7 +219,7 @@ When `time_format = "auto"` (the default), the decoder probes the Command Word p
 |--------|------|----------|-------|
 | T/R consistency: the candidate Cmd Word's direction matches the Type Word's expected message-type direction (`BC_TO_RT` → Receive; `RT_TO_BC` → Transmit) | +2 | +2 | Only fires for type codes `0x02` and `0x04`; other types skip this signal. |
 | Word-count plausibility: `tw.word_count − overhead == cmd.data_word_count` | +2 | +2 | IRIG overhead = 6, Standard overhead = 5. |
-| IRIG range validity: hour < 24, minute < 60, second < 60, microsecond-hi < 16 | +1 | — | IRIG-only; Standard's 32-bit counter has no semantic fields to range-check. |
+| IRIG range validity: hour < 24, minute < 60, second < 60 | +1 | — | IRIG-only; Standard's 32-bit counter has no semantic fields to range-check. (The microsecond high nibble is not scored — masked to 4 bits it is always below 16, so testing it could never fail.) |
 
 **Confidence classification (L2-DEC-016).** The aggregate score is classified into one of three buckets:
 
@@ -398,7 +398,7 @@ The resulting error record looks like:
 └──────────────┴─────┴─────┴───────────────┴────────────┘
 ```
 
-The Error Word's value names the failure (the DDC hardware error code). MIE-Decoder reads the final word of every error record and emits it in the CSV `ERROR_CODE` column with `ERROR` in the `ERROR` column. Strict mode rejects unknown DDC error codes (L2-ERR-004); lenient mode passes them through as `UNKNOWN`.
+The Error Word's value names the failure (the DDC hardware error code). MIE-Decoder reads the final word of every error record and emits it in the CSV `ERROR_CODE` column with `ERROR` in the `ERROR` column. Strict mode rejects unknown DDC error codes (L2-ERR-004); lenient mode logs a WARN and still emits the row, with the **raw code** in `ERROR_CODE` — the CSV always carries the value read from the file, never a literal `UNKNOWN` placeholder.
 
 ### 7.2 DDC hardware error codes (`0x01xx`)
 

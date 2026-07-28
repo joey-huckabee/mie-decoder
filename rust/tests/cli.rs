@@ -633,13 +633,13 @@ fn dump_records_outputs_hex_to_stdout() {
 
 /// Requirements: L2-ERR-010, L2-ERR-011, L3-RS-009
 ///
-/// `--inline-errors` keeps errored records in the main CSV with the
-/// ERROR and ERROR_CODE columns populated, instead of routing them
-/// to a separate `_errors.csv` (the default `separate` error mode).
-/// This test pins the inline behavior and confirms no split file is
-/// produced.
+/// Inline is the default: with no flag, errored records stay in the main CSV
+/// with the ERROR and ERROR_CODE columns populated and no `_errors.csv` is
+/// produced. Routing them to a separate file is now the opt-in
+/// (`--separate-errors`).
+/// Requirements: L2-ERR-010, L2-ERR-011, L3-RS-009
 #[test]
-fn inline_errors_populates_error_code_column() {
+fn inline_is_default_and_populates_error_code_column() {
     let tmp = TempDir::new();
     let mut bytes = one_valid_record();
     bytes.extend(errored_record());
@@ -649,7 +649,6 @@ fn inline_errors_populates_error_code_column() {
     let out = run([
         std::ffi::OsStr::new("decode"),
         input.as_os_str(),
-        std::ffi::OsStr::new("--inline-errors"),
         std::ffi::OsStr::new("-o"),
         output.as_os_str(),
     ]);
@@ -663,7 +662,7 @@ fn inline_errors_populates_error_code_column() {
     );
     assert!(
         csv.contains("011E"),
-        "inline-errors must populate ERROR_CODE with the DDC code (0x011E)\n--- csv ---\n{csv}"
+        "the default (inline) must populate ERROR_CODE with the DDC code (0x011E)\n--- csv ---\n{csv}"
     );
 
     // The separate `_errors.csv` file must NOT have been created
@@ -671,8 +670,77 @@ fn inline_errors_populates_error_code_column() {
     let errors_csv = tmp.path().join("out_errors.csv");
     assert!(
         !errors_csv.exists(),
-        "inline-errors must not produce a separate _errors.csv (found: {})",
+        "the default (inline) must not produce a separate _errors.csv (found: {})",
         errors_csv.display()
+    );
+}
+
+/// `--separate-errors` opts back into the split layout: clean records in the
+/// main CSV, errored/spurious in `<stem>_errors.csv`.
+/// Requirements: L2-ERR-008, L3-RS-009
+#[test]
+fn separate_errors_flag_opts_into_split_output() {
+    let tmp = TempDir::new();
+    let mut bytes = one_valid_record();
+    bytes.extend(errored_record());
+    let input = tmp.write("rec.mie", &bytes);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+        std::ffi::OsStr::new("--separate-errors"),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+
+    let main_csv = std::fs::read_to_string(&output).expect("main CSV not created");
+    let errors_path = tmp.path().join("out_errors.csv");
+    let errors_csv = std::fs::read_to_string(&errors_path).expect("errors CSV not created");
+
+    assert_eq!(
+        data_row_count(&main_csv),
+        1,
+        "the clean record belongs in the main CSV\n--- csv ---\n{main_csv}"
+    );
+    assert!(
+        !main_csv.contains("011E"),
+        "the errored record must not remain in the main CSV\n--- csv ---\n{main_csv}"
+    );
+    assert!(
+        errors_csv.contains("011E"),
+        "the errored record belongs in the errors CSV\n--- csv ---\n{errors_csv}"
+    );
+}
+
+/// `--inline-errors` was removed when inline became the default. It must fail
+/// loudly as a usage error (exit 4) rather than be quietly accepted, so a script
+/// still carrying it gets corrected instead of silently relying on behaviour
+/// that is now the default anyway.
+/// Requirements: L2-CLI-011, L3-RS-009
+#[test]
+fn removed_inline_errors_flag_is_a_usage_error() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+        std::ffi::OsStr::new("--inline-errors"),
+    ]);
+    assert_eq!(exit_code(&out), 4, "the removed flag must be a usage error");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--inline-errors"),
+        "the error should name the offending flag\n--- stderr ---\n{stderr}"
+    );
+    assert!(
+        !output.exists(),
+        "no output should be written on a usage error"
     );
 }
 
@@ -691,6 +759,78 @@ fn stdout_output_forces_inline_error_mode() {
     assert!(
         stdout.contains("011E"),
         "stdout output must inline errored records\n--- stdout ---\n{stdout}"
+    );
+}
+
+/// L2-SYN-012 had no Rust verification at all — the trace matrix listed only a
+/// Python test, and that test asserted against `find_first_record` rather than
+/// the reader that actually emits the line. The Rust reader has always logged
+/// it; this pins the behavior on this side too.
+/// Filter diagnostics match the Python implementation: an INFO summary of the
+/// active sets on construction and an INFO passed/excluded tally when the
+/// stream finishes. The sets render sorted so the line is stable regardless of
+/// the order values were parsed in (Python holds them as unordered sets).
+/// Requirements: L2-FLT-001
+#[test]
+fn active_filters_and_tally_are_logged_at_info() {
+    let tmp = TempDir::new();
+    let mut bytes = one_valid_record();
+    bytes.extend(one_valid_record());
+    let input = tmp.write("rec.mie", &bytes);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("--log-level"),
+        std::ffi::OsStr::new("info"),
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+        std::ffi::OsStr::new("--exclude-rts"),
+        std::ffi::OsStr::new("31,15,0"),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Filtering active:") && stderr.contains("exclude_rts=[0, 15, 31]"),
+        "expected a sorted active-filter summary
+--- stderr ---
+{stderr}"
+    );
+    assert!(
+        stderr.contains("Filter results: 0 passed, 2 excluded"),
+        "expected the passed/excluded tally
+--- stderr ---
+{stderr}"
+    );
+}
+
+/// Requirements: L2-SYN-012
+#[test]
+fn header_detection_logs_size_at_info() {
+    let tmp = TempDir::new();
+    let mut bytes = b"DDC-HEADER-1234\n".to_vec(); // 16-byte proprietary header
+    bytes.extend(one_valid_record());
+    bytes.extend(one_valid_record());
+    let input = tmp.write("headered.mie", &bytes);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("--log-level"),
+        std::ffi::OsStr::new("info"),
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("file header detected") && stderr.contains("16 bytes"),
+        "header detection must report the skipped byte count at INFO\
+         \n--- stderr ---\n{stderr}"
     );
 }
 

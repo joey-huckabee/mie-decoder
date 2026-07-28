@@ -7,9 +7,41 @@ vendor-generated CSV output.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Iterator
 
 import pytest
+
+from mie_decoder.logger import LOGGER_NAME
+
+
+@pytest.fixture(autouse=True)
+def _restore_package_logger_state() -> Iterator[None]:
+    """Undo any ``configure_logging()`` a test performs.
+
+    ``configure_logging`` sets the level and replaces the handlers on the
+    ``mie_decoder`` logger, and several tests call it directly. Because that
+    state is process-global it leaked into every later test: ``caplog`` only
+    adjusts the *root* logger, so once a test had pinned ``mie_decoder`` to
+    WARNING (or OFF), a later ``caplog.at_level("INFO")`` captured nothing and
+    the assertion failed — but only in some run orders, which is why the full
+    suite stayed green while running two files together did not.
+
+    Restoring the level and handler list after every test makes log-capturing
+    tests independent of run order.
+    """
+    pkg_logger = logging.getLogger(LOGGER_NAME)
+    saved_level = pkg_logger.level
+    saved_handlers = pkg_logger.handlers[:]
+    saved_propagate = pkg_logger.propagate
+    try:
+        yield
+    finally:
+        pkg_logger.handlers[:] = saved_handlers
+        pkg_logger.setLevel(saved_level)
+        pkg_logger.propagate = saved_propagate
+
 
 # Known-good record: RT15 SA11 Receive, Bus A, 30 data words
 # From validated CSV row:

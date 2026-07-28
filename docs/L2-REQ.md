@@ -551,7 +551,7 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-ERR-008
 
 **Parent**: L1-ERR-001
-**Statement**: Separate mode SHALL write normal messages to the main CSV and errored or spurious messages to `<stem>_errors<suffix>`, where `<stem>` is the destination filename up to and excluding the final `.`, and `<suffix>` is the final `.` and extension (or empty if the destination has no extension). Examples: `out.csv` → `out_errors.csv`; `out` → `out_errors`; `data.bar.csv` → `data.bar_errors.csv`.
+**Statement**: Separate mode — opt-in via `--separate-errors` / `[decode] error_mode = "separate"` — SHALL write normal messages to the main CSV and errored or spurious messages to `<stem>_errors<suffix>`, where `<stem>` is the destination filename up to and excluding the final `.`, and `<suffix>` is the final `.` and extension (or empty if the destination has no extension). Examples: `out.csv` → `out_errors.csv`; `out` → `out_errors`; `data.bar.csv` → `data.bar_errors.csv`.
 **Rationale**: The stem/suffix split preserves the operator's chosen extension on the errors file. The split also handles extension-less destinations cleanly.
 **Verification Method**: Test (T)
 
@@ -565,8 +565,8 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-ERR-011
 
 **Parent**: L1-ERR-001
-**Statement**: Inline mode SHALL write normal, errored, and spurious messages to one CSV.
-**Rationale**: Inline mode produces a single output for byte-exact diff against the DDC vendor CSV. Separate-mode output by definition does not have a vendor-CSV counterpart.
+**Statement**: Inline mode SHALL write normal, errored, and spurious messages to one CSV, and SHALL be the **default** error mode. Separate-file output is opt-in via `--separate-errors` / `[decode] error_mode = "separate"`.
+**Rationale**: Inline mode produces a single output for byte-exact diff against the DDC vendor CSV, which is the layout the vendor tool itself emits; separate-mode output by definition has no vendor-CSV counterpart. Defaulting to inline means a decode is directly comparable to vendor output with no flags, and no errored record is silently absent from the file the operator opened. Stdout cannot be split, so it is inline regardless.
 **Verification Method**: Test (T)
 
 ---
@@ -766,7 +766,7 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 | `decode.detect_records` | int | `[1, 32]` (see L2-DEC-015); default `8` | reject out-of-range at load time |
 | `decode.lookahead_records` | int | `[1, 32]` (see L2-SYN-026); default `2` | reject out-of-range at load time |
 | `decode.standard_tick_rate_hz` | float (int coerced) | finite and `> 0` (see L2-DEC-017); unset = no calibration | reject non-finite/non-positive at load time |
-| `output.format` | string | `csv` is the only valid value in v1 | reject at load time |
+| `output.format` | string | `csv` is the only currently valid value | reject at load time |
 | `output.no_clobber` | bool | TOML boolean only (see L2-WRT-017) | reject non-bool |
 | `filter.exclude_types` | array of string\|int | per-element validated against `L2-CFG-007` | reject at load time |
 | `filter.exclude_rts` | array of int | each in `[0, 31]` (1553 RT range) | reject out-of-range at load time |

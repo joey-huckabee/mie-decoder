@@ -4,7 +4,7 @@
 scale max 4000*4000
 skinparam componentStyle rectangle
 skinparam packageStyle rectangle
-title MIE-Decoder v2.0 - Component Architecture (Rust + Python)
+title MIE-Decoder - Component Architecture (Rust + Python)
 
 ' ============================================================================
 '  Two implementations, one architecture
@@ -140,7 +140,7 @@ end note
 note right of config
   <b>Precedence (highest first):</b>
   1. CLI flags  (~--no-clobber, ~--allow-partial,
-                 ~--inline-errors, ~--include-rt, ...)
+                 ~--separate-errors, ~--include-rt, ...)
   2. TOML config file
   3. Built-in defaults
 end note

@@ -19,20 +19,26 @@ For the underlying requirement IDs (`L2-CFG-*`), see [`docs/L2-REQ.md`](L2-REQ.m
 level = "WARNING"                # DEBUG | INFO | WARNING | WARN | ERROR | CRITICAL | OFF
 
 [decode]
-time_format    = "auto"          # auto | irig | standard
-strict         = false           # true | false
-error_mode     = "separate"      # separate | inline
-allow_partial  = false           # true | false
+time_format       = "auto"       # auto | irig | standard
+strict            = false        # true | false
+error_mode        = "inline"     # inline | separate
+allow_partial     = false        # true | false
+detect_records    = 8            # timestamp-format probe size, [1, 32]
+lookahead_records = 2            # sync look-ahead depth, [1, 32]
 # standard_tick_rate_hz = 1000000.0   # Standard counter Hz (unset = empty DELTA)
 
 [output]
-format     = "csv"               # csv (only value in v1)
+format     = "csv"               # csv (the only value currently supported)
 no_clobber = false               # true | false
 
 [mux]
 enabled   = true                 # populate MUX from the file name (--no-mux disables)
 delimiter = "."                  # field separator (non-empty)
 field     = 4                    # 0-based field index (negative = from end)
+
+[merge]
+collapse_duplicates = false      # collapse cross-recorder duplicate rows
+collapse_window_us  = 0          # timestamp tolerance for collapsing (µs)
 
 [filter]
 exclude_types        = []        # array of names or hex codes
@@ -45,8 +51,8 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 |-----|------|---------|--------------|-----------|
 | `logging.level` | string | `"WARNING"` | `--log-level` | L2-CFG-001, L1-LOG-001 |
 | `decode.time_format` | string | `"auto"` | `--time-format` | L2-CFG-001, L2-DEC-013 |
-| `decode.strict` | bool | `false` | (no CLI flag in current versions) | L2-CFG-001, L1-MODE-001 |
-| `decode.error_mode` | string | `"separate"` | `--inline-errors` (sets `inline`) | L2-CFG-001, L1-ERR-001 |
+| `decode.strict` | bool | `false` | `--strict` | L2-CFG-001, L1-MODE-001 |
+| `decode.error_mode` | string | `"inline"` | `--separate-errors` (sets `separate`) | L2-CFG-001, L1-ERR-001 |
 | `decode.allow_partial` | bool | `false` | `--allow-partial` | L2-CFG-001, L1-EXIT-004 |
 | `decode.detect_records` | int | `8` | `--detect-records` | L2-CFG-001, L2-DEC-015 |
 | `decode.lookahead_records` | int | `2` | `--lookahead-records` | L2-CFG-001, L2-SYN-026 |
@@ -127,7 +133,7 @@ Selects the timestamp format used by the binary file. DDC recording cards suppor
 
 ### `strict`
 
-**Type:** bool · **Default:** `false` · **CLI:** (no flag — set via config file only)
+**Type:** bool · **Default:** `false` · **CLI:** `--strict`
 
 Enables strict decoding mode (L1-MODE-001). In strict mode:
 
@@ -142,7 +148,7 @@ Lenient mode (the default) preserves the maximum number of valid records by logg
 
 ### `error_mode`
 
-**Type:** string · **Default:** `"separate"` · **CLI:** `--inline-errors` (sets `inline`)
+**Type:** string · **Default:** `"inline"` · **CLI:** `--separate-errors` (sets `separate`)
 
 Controls how errored records (Type Word bit 14 set) and SPURIOUS_DATA records appear in CSV output (L1-ERR-001, L2-ERR-008, L2-ERR-011).
 
@@ -151,7 +157,9 @@ Controls how errored records (Type Word bit 14 set) and SPURIOUS_DATA records ap
 | `"separate"` | Errored and spurious messages are written to a separate file named `<output_stem>_errors<output_suffix>`. The main CSV contains only clean messages. Stem/suffix rules per L2-ERR-008: `out.csv` → `out_errors.csv`; `out` → `out_errors`; `data.bar.csv` → `data.bar_errors.csv`. The errors file is not created if there are no error rows. |
 | `"inline"` | Errored, spurious, and normal messages all go to one CSV. The `ERROR` column contains `ERROR` or `SPURIOUS` (or empty for clean); `ERROR_CODE` contains the 4-character uppercase hex code. |
 
-**Stdout output forces `inline` mode** in both implementations (you can't split stdout into two streams).
+**Stdout output forces `inline` mode** in both implementations (you can't split stdout into two streams), so `--separate-errors` is ignored there with a WARN.
+
+> **Changed in this release:** the default flipped from `"separate"` to `"inline"`, and the CLI override changed from `--inline-errors` to `--separate-errors`. The old flag was removed, so passing it is a usage error (exit 4). A config file that sets `error_mode` explicitly is unaffected.
 
 **Validation:** rejected at load time if not one of the two values.
 
@@ -200,9 +208,11 @@ mie-decoder decode rec.mie -o out.csv --time-format standard --standard-tick-rat
 
 ### `format`
 
-**Type:** string · **Default:** `"csv"` · **CLI:** (no flag)
+**Type:** string · **Default:** `"csv"` · **CLI:** `--format <name>`
 
-Output file format. The only valid value in v1 is `csv`. Reserved for future Parquet support (v3.0 Rust roadmap).
+Output file format. `csv` is currently the only valid value. Reserved for future Parquet support (see [`ROADMAP.md`](ROADMAP.md)).
+
+A config-file value is validated at load time (exit `5`); a `--format` override is applied *after* load, so an unsupported value passed on the CLI surfaces as a runtime error (exit `1`) instead.
 
 **Validation:** rejected at load time if not `csv`.
 

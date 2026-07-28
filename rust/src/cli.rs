@@ -51,8 +51,10 @@ DECODE OPTIONS:
   --glob PATTERN                        Expand a single-directory *|? filename
                                         glob (no recursion). Mutually exclusive
                                         with positionals / --manifest
-  --inline-errors                       Errors inline in main CSV
-                                        (default: separate <stem>_errors.csv)
+  --separate-errors                     Route errored/spurious records to a
+                                        separate <stem>_errors.csv. Default:
+                                        every record inline in the main CSV
+                                        with ERROR/ERROR_CODE populated
   --no-clobber                          Refuse to overwrite an existing
                                         output file (L2-WRT-017)
   --allow-partial                       On unrecoverable mid-file sync
@@ -107,7 +109,7 @@ DUMP OPTIONS:
 
 EXAMPLES:
   mie-decoder decode rec.mie -o out.csv
-  mie-decoder decode rec.mie --inline-errors --include-rts 15
+  mie-decoder decode rec.mie --separate-errors --include-rts 15
   mie-decoder decode a.mie b.mie c.mie -o merged.csv   # time-sorted merge
   mie-decoder decode --glob 'recordings/*.mie' -o merged.csv
   mie-decoder count rec.mie
@@ -134,7 +136,7 @@ struct DecodeArgs {
     /// `--glob <pattern>`: expand a single-directory `*`/`?` filename glob.
     glob: Option<String>,
     output: Option<PathBuf>,
-    inline_errors: bool,
+    separate_errors: bool,
     no_clobber: bool,
     allow_partial: bool,
     time_format: Option<TimestampFormat>,
@@ -260,10 +262,6 @@ pub fn run(argv: Vec<String>) -> ExitCode {
         Ok(token) => token,
         Err(code) => return code,
     };
-    let Some(cmd_token) = cmd_token else {
-        eprint!("{HELP}");
-        return ExitCode::from(exit_code::USAGE);
-    };
 
     // Parse subcommand-specific args. Process control (printing help,
     // selecting an exit code) is decided inside `parse_subcommand`.
@@ -274,8 +272,8 @@ pub fn run(argv: Vec<String>) -> ExitCode {
 
     // Apply log level early so the version banner respects it. CLI
     // value if provided, else WARN default. An invalid CLI value
-    // (e.g. `--log-level NOPE`) fails fast here with exit 2 instead
-    // of being silently ignored. The config file's level is layered
+    // (e.g. `--log-level NOPE`) fails fast here via `die` (exit 4,
+    // the usage class) instead of being silently ignored. The config file's level is layered
     // on top later inside resolve_config.
     if let Some(s) = globals.log_level.as_deref() {
         if let Err(msg) = apply_log_level("--log-level", s) {
@@ -314,9 +312,6 @@ fn die(msg: &str) -> ExitCode {
     ExitCode::from(exit_code::USAGE)
 }
 
-/// Consume leading global flags (`--log-level`, `--config`) and `-h`/`-V`.
-/// Returns `Ok(Some(token))` with the first non-flag token (the subcommand),
-/// `Ok(None)` if none follows, or `Err(code)` when the caller (`run`) should
 /// True for any accepted spelling of the version flag: the short `-V` / `-v`,
 /// or a `--version` long flag in any letter case (`--version`, `--VERSION`,
 /// `--Version`, …). Kept lenient on purpose so the two CLIs agree on every
@@ -329,11 +324,16 @@ fn is_version_flag(arg: &str) -> bool {
             .is_some_and(|word| word.eq_ignore_ascii_case("version"))
 }
 
-/// return that exit code immediately (help/version printed, or a usage error).
+/// Consume leading global flags (`--log-level`, `--config`) and `-h`/`-V`.
+///
+/// Returns `Ok(token)` with the first non-flag token (the subcommand), or
+/// `Err(code)` when the caller (`run`) should return that exit code
+/// immediately — help or version was printed, or the command line was a usage
+/// error (including no subcommand at all).
 fn parse_global_flags(
     iter: &mut ArgIter<'_>,
     globals: &mut GlobalArgs,
-) -> Result<Option<String>, ExitCode> {
+) -> Result<String, ExitCode> {
     loop {
         match iter.peek().map(String::as_str) {
             Some("-h") | Some("--help") => {
@@ -370,7 +370,13 @@ fn parse_global_flags(
                 };
                 globals.config = Some(PathBuf::from(&v["--config=".len()..]));
             }
-            Some(_) => return Ok(iter.next()),
+            Some(_) => {
+                // `peek` just returned `Some`, so `next` cannot be `None`.
+                // `unwrap_or_default` keeps the function total rather than
+                // introducing a panic site (L1-ROB-001); an empty token would
+                // fall through to the unknown-command arm, which is safe.
+                return Ok(iter.next().unwrap_or_default());
+            }
             None => {
                 eprint!("{HELP}");
                 return Err(ExitCode::from(exit_code::USAGE));
@@ -503,7 +509,7 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--output=") => {
                 args.output = Some(PathBuf::from(&s["--output=".len()..]));
             }
-            "--inline-errors" => args.inline_errors = true,
+            "--separate-errors" => args.separate_errors = true,
             "--no-clobber" => args.no_clobber = true,
             "--allow-partial" => args.allow_partial = true,
             "--strict" => args.strict = Some(true),
@@ -921,8 +927,10 @@ fn build_config_overrides(args: &mut DecodeArgs, log_level: Option<String>) -> C
     ConfigOverrides {
         time_format: args.time_format,
         strict: args.strict,
-        error_mode: if args.inline_errors {
-            Some(ErrorMode::Inline)
+        // `--separate-errors` opts into the split-file mode; its absence leaves
+        // the config value intact (the built-in default is now Inline).
+        error_mode: if args.separate_errors {
+            Some(ErrorMode::Separate)
         } else {
             None
         },

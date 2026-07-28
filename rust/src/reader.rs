@@ -25,8 +25,8 @@ use crate::decode::{
 use crate::error::{MieError, MieResult};
 use crate::models::{
     CommandWord, DataWords, ERROR_SPURIOUS_CONTINUATION, ERROR_SPURIOUS_STANDALONE, MessageFormat,
-    MessageType, MieMessage, Timestamp, TimestampFormat, TypeWord, ddc_error_description,
-    is_known_ddc_error_code, timestamp_word_count,
+    MessageType, MieMessage, Timestamp, TimestampFormat, TypeWord,
+    ddc_error_description_or_unknown, is_known_ddc_error_code, timestamp_word_count,
 };
 use crate::sync::{
     DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, ScanHit, ValidationFailure, find_first_record,
@@ -762,6 +762,20 @@ impl<'a> RecordIter<'a> {
             let delta = self.delta_for(key, &timestamp);
             let msg =
                 self.decode_error_record(&tw, timestamp, &cmd, cmd_byte_offset, ts_words, delta);
+            // A failure here (strict-mode `UnknownErrorCode`, or an out-of-bounds
+            // Error Word) is terminal, exactly like every other error this
+            // iterator yields — `handle_sync_loss` and `decode_normal_record`
+            // both set `done` before surfacing an `Err`. Without this the
+            // iterator stayed live after yielding the error and kept decoding,
+            // so a library caller iterating `RecordIter` directly saw a
+            // non-terminal failure where the Python reader's generator is
+            // already dead (its raise ends iteration). The CLI masked the
+            // difference because the writer returns on the first `Err`.
+            if msg.is_err() {
+                self.done = true;
+                self.log_complete();
+                return Step::Yield(msg);
+            }
             self.advance_after_yield(record_bytes);
             self.prev_was_error = true;
             return Step::Yield(msg);
@@ -1170,12 +1184,13 @@ impl<'a> RecordIter<'a> {
             .unwrap_or(MessageFormat::Receive);
 
         log_info!(
-            "error record at 0x{:X}: RT{} SA{} code=0x{:04X} ({}), {} payload words",
+            "error record at 0x{:X}: RT{} SA{} {:?}, code=0x{:04X} ({}), {} payload words",
             self.offset,
             cmd.rt,
             cmd.subaddress,
+            cmd.direction,
             error_code,
-            ddc_error_description(error_code),
+            ddc_error_description_or_unknown(error_code),
             payload_words.max(0),
         );
 
@@ -1624,6 +1639,85 @@ mod tests {
             .collect::<Result<_, _>>()
             .expect("forcing the correct format must decode cleanly");
         assert_eq!(msgs.len(), 2);
+    }
+
+    /// An errored record (Type Word bit 14) carrying an Error Word outside the
+    /// known DDC set, followed by a perfectly decodable record.
+    fn unknown_error_code_then_clean_record() -> Vec<u8> {
+        let mut errored = rt15_sa11_rcv();
+        // Set Type Word bit 14 (0x2402 -> 0x6402) to flag the record as errored.
+        errored[1] = 0x64;
+        // The last word of an errored record is the Error Word. 0x0199 is not in
+        // the known DDC 0x01xx set, so strict mode rejects it (L2-ERR-004).
+        let last = errored.len() - 2;
+        errored[last] = 0x99;
+        errored[last + 1] = 0x01;
+
+        let mut data = errored;
+        data.extend(rt15_sa11_rcv());
+        data
+    }
+
+    /// A strict-mode failure on an errored record SHALL end iteration, exactly
+    /// like every other error this iterator surfaces.
+    ///
+    /// The error-record arm used to yield its `Err` without setting `done`, so
+    /// the iterator stayed live and kept decoding — a library caller iterating
+    /// `RecordIter` directly saw a *non-terminal* failure, where the Python
+    /// reader's generator is already dead once it raises. The CLI hid the
+    /// difference because the writer returns on the first `Err`.
+    /// Requirements: L2-ERR-004, L3-RS-006
+    #[test]
+    fn strict_unknown_error_code_terminates_iteration() {
+        let f = write_temp(&unknown_error_code_then_clean_record());
+        let reader = MieFileReader::with_options(
+            f.path(),
+            ReaderOptions {
+                strict: true,
+                time_format: TimestampFormat::Irig,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut it = reader.iter();
+        match it.next() {
+            Some(Err(e)) => assert_eq!(
+                e.kind(),
+                crate::error::MieErrorKind::UnknownErrorCode,
+                "expected UnknownErrorCode, got {:?}",
+                e.kind()
+            ),
+            other => panic!("expected Some(Err(UnknownErrorCode)), got {other:?}"),
+        }
+        // The clean record that follows must NOT be yielded: the error was
+        // terminal. Without this the iterator handed back a second item.
+        assert!(
+            it.next().is_none(),
+            "a strict-mode error record must end the stream, not resume decoding"
+        );
+    }
+
+    /// The lenient counterpart is unchanged: an unknown code WARNs and the row
+    /// is still emitted, so both records decode.
+    /// Requirements: L2-ERR-004
+    #[test]
+    fn lenient_unknown_error_code_keeps_decoding() {
+        let f = write_temp(&unknown_error_code_then_clean_record());
+        let reader = MieFileReader::with_options(
+            f.path(),
+            ReaderOptions {
+                time_format: TimestampFormat::Irig,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let msgs: Vec<_> = reader
+            .iter()
+            .collect::<Result<_, _>>()
+            .expect("lenient mode must not abort on an unknown error code");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].error_word, Some(0x0199));
     }
 
     /// L2-SYN-018: 0x20-fill parses as a SPURIOUS_DATA Type Word

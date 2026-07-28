@@ -4,7 +4,7 @@ Runnable cookbook for the common operator tasks. Each example is a self-containe
 
 If you're new, read [`USER-GUIDE.md`](USER-GUIDE.md) first — it explains how each piece works. This doc shows the pieces composed for real workflows. For the full reference of every TOML key, see [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md); for every exit code and error class, see [`ERROR-CATALOG.md`](ERROR-CATALOG.md).
 
-All examples work identically with the Rust and Python CLIs — both ship the same argument surface (same subcommands, same `--inline-errors`, same global `--config`, same comma-separated filter syntax).
+All examples work identically with the Rust and Python CLIs — both ship the same argument surface (same subcommands, same `--separate-errors`, same global `--config`, same comma-separated filter syntax).
 
 ---
 
@@ -23,8 +23,8 @@ Add `--log-level INFO` to see what happened:
 ```bash
 $ mie-decoder --log-level INFO decode flight.mie -o flight.csv
 INFO  beginning decode of flight.mie
-INFO  auto-detected timestamp format: Irig
-INFO  decode complete: 14523 messages, 0 sync recoveries, format=Irig
+INFO  auto-detected timestamp format: Irig (Decisive: IRIG=40 STD=0 over 8 record(s))
+INFO  decode complete: 14523 messages, 0 sync recoveries, format=Irig, file=flight.mie
 INFO  decode exit class: complete (sync_losses=0)
 ```
 
@@ -61,15 +61,15 @@ The count walks the entire file but doesn't write CSV — much faster than a ful
 
 ---
 
-## 3. Inline error output for vendor diff
+## 3. Error output (inline by default) and the separate-file option
 
-DDC vendor CSV mixes errored, SPURIOUS, and clean records into one file. The default mode in MIE-Decoder writes errors to a separate `_errors.csv` file. For a direct diff against vendor output, use inline mode:
+DDC vendor CSV mixes errored, SPURIOUS, and clean records into one file, and so does MIE-Decoder by default — no flag needed, which is what makes a default decode directly diffable against vendor output:
 
 ```bash
-mie-decoder decode flight.mie --inline-errors -o flight.csv
+mie-decoder decode flight.mie -o flight.csv
 ```
 
-Errored records now appear in `flight.csv` with the `ERROR` column set to `ERROR` and `ERROR_CODE` carrying the DDC hardware code:
+Errored records appear in `flight.csv` with the `ERROR` column set to `ERROR` and `ERROR_CODE` carrying the DDC hardware code:
 
 ```
 192:15:54:50.456225,15,11R,...,7800,797E,,,A,0.000000,,,,,         ← clean
@@ -78,6 +78,13 @@ Errored records now appear in `flight.csv` with the `ERROR` column set to `ERROR
 ```
 
 See [`ERROR-CATALOG.md`](ERROR-CATALOG.md) §6 for the DDC code reference and §7 for the decoder-assigned `0x2000` / `0x2001` codes.
+
+If you would rather keep the main CSV clean, pull the errored and spurious rows into a sibling file:
+
+```bash
+mie-decoder decode flight.mie --separate-errors -o flight.csv
+# -> flight.csv (clean rows) + flight_errors.csv (errored + SPURIOUS rows)
+```
 
 For a full vendor-CSV diff workflow, see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §6.
 
@@ -165,16 +172,20 @@ On unrecoverable sync loss:
 ```bash
 $ mie-decoder --log-level INFO decode corrupt.mie --allow-partial -o decoded.csv
 INFO  beginning decode of corrupt.mie
-INFO  auto-detected timestamp format: Irig
+INFO  auto-detected timestamp format: Irig (Decisive: IRIG=40 STD=0 over 8 record(s))
 WARN  sync lost at 0x12340 (type=0x7F wc=0); scanning forward
 ERROR unrecoverable sync loss at 0x12340 after 287 messages
 WARN  unrecoverable sync loss at 0x12340 after 1 recovery attempt(s); \
       wrote 287 rows to decoded.csv.partial (--allow-partial)
-INFO  decode exit class: complete (broken-pipe on stdout)   ← no, see actual
+INFO  decode exit class: partial-unrecoverable (sync_losses=1)
 
 $ ls
 corrupt.mie  decoded.csv.partial
 ```
+
+Note the exit class is `partial-unrecoverable` even though the exit **code** is
+`0`: `--allow-partial` converts the failure into a successful run that preserves
+what was decoded, and the class keeps the corruption visible in the log.
 
 Inspect `decoded.csv.partial` to see what was salvageable; investigate the source recording for storage / transmission issues separately.
 
@@ -270,7 +281,8 @@ See [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md) for every accepted key and its 
 
 ## 9. CI / batch script that handles exit codes properly
 
-The CLI exits with one of four codes per L1-EXIT-001 through L1-EXIT-004. A robust batch script:
+The CLI exits with one of seven codes per L1-EXIT-001 through L1-EXIT-010 (see
+[`ERROR-CATALOG.md`](ERROR-CATALOG.md) §1 for the full table). A robust batch script:
 
 ```bash
 #!/usr/bin/env bash
@@ -320,6 +332,13 @@ case $rc in
         echo "BUG: invalid mie-decoder config" >&2
         exit 2
         ;;
+    6)
+        # Merge-incompatible inputs: a multi-file merge whose inputs cannot
+        # share an absolute IRIG timeline. Only reachable when this script
+        # passes more than one input; decode them individually instead.
+        echo "SKIP: $input set is not all calendar-locked IRIG" >&2
+        exit 0
+        ;;
     *)
         echo "UNEXPECTED exit $rc for $input" >&2
         exit "$rc"
@@ -327,14 +346,16 @@ case $rc in
 esac
 ```
 
-This pattern is the canonical batch loop: 0 succeeds, 2 means "not our file type, skip", 3 means "try `--allow-partial`", 4/5 mean the script or its config is wrong (abort the batch), everything else is a real failure.
+This pattern is the canonical batch loop: 0 succeeds, 2 means "not our file type, skip", 3 means "try `--allow-partial`", 4/5 mean the script or its config is wrong (abort the batch), 6 means the merge inputs can't share a timeline, and everything else is a real failure.
 
 The `decode exit class:` log line in stderr (emitted at INFO per L1-EXIT-005) names the class explicitly for log-grep:
 
 ```
 INFO  decode exit class: complete (sync_losses=0)
 INFO  decode exit class: partial-recovered (sync_losses=3)
+INFO  decode exit class: empty-recording (sync_losses=0)
 INFO  decode exit class: no-records
+INFO  decode exit class: merge-incompatible
 INFO  decode exit class: partial-unrecoverable (sync_losses=12); pass --allow-partial to preserve...
 ```
 
@@ -373,9 +394,10 @@ Record dump starting at offset 0x00000000
 
 ------------------------------------------------------------------------
   Record #0  @  0x00000000  (72 bytes, 36 words)
-  Type: 0x2402  ->  BC->RT (Receive)  Bus A  OK
-  Time: 192:15:54:50.456225
-  Cmd:  0x797E  ->  RT15 SA11 R WC=30
+  Type:   0x2402  ->  BC->RT (Receive)  Bus A  error flag (bit 14): clear
+  Format: RECEIVE
+  Time:   192:15:54:50.456225
+  Cmd:    0x797E  ->  RT15 SA11 R WC=30
     00000000  02 24 0F 18 26 DB 21 F6 7E 79 00 04 00 00 00 00  |.$..&.!.~y......|
     00000010  2F 00 22 CA 2F 00 22 CA 00 00 00 00 00 00 00 00  |/.".../.".......|
     ...
@@ -393,7 +415,7 @@ You want to validate that MIE-Decoder reproduces vendor output for a known-good 
 
 ```bash
 # 1. Generate both CSVs from the same input file.
-mie-decoder decode flight.mie --inline-errors -o mie.csv
+mie-decoder decode flight.mie -o mie.csv
 # Vendor tool produces flight-vendor.csv via whatever process you normally use.
 
 # 2. Normalize line endings if your platforms differ.
@@ -479,7 +501,7 @@ Filter the merged stream just like a single decode — filters apply across all
 inputs:
 
 ```bash
-mie-decoder decode run-a.mie run-b.mie -o rt15.csv --include-rts 15 --inline-errors
+mie-decoder decode run-a.mie run-b.mie -o rt15.csv --include-rts 15
 ```
 
 If several recorders overlap (they all heard the same bus), collapse each
