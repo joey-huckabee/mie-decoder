@@ -4,7 +4,7 @@ Runnable cookbook for the common operator tasks. Each example is a self-containe
 
 If you're new, read [`USER-GUIDE.md`](USER-GUIDE.md) first — it explains how each piece works. This doc shows the pieces composed for real workflows. For the full reference of every TOML key, see [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md); for every exit code and error class, see [`ERROR-CATALOG.md`](ERROR-CATALOG.md).
 
-All examples work identically with the Rust and Python CLIs — both ship the same argument surface (same subcommands, same `--inline-errors`, same global `--config`, same comma-separated filter syntax).
+All examples work identically with the Rust and Python CLIs — both ship the same argument surface (same subcommands, same `--separate-errors`, same global `--config`, same comma-separated filter syntax).
 
 ---
 
@@ -61,15 +61,15 @@ The count walks the entire file but doesn't write CSV — much faster than a ful
 
 ---
 
-## 3. Inline error output for vendor diff
+## 3. Error output (inline by default) and the separate-file option
 
-DDC vendor CSV mixes errored, SPURIOUS, and clean records into one file. The default mode in MIE-Decoder writes errors to a separate `_errors.csv` file. For a direct diff against vendor output, use inline mode:
+DDC vendor CSV mixes errored, SPURIOUS, and clean records into one file, and so does MIE-Decoder by default — no flag needed, which is what makes a default decode directly diffable against vendor output:
 
 ```bash
-mie-decoder decode flight.mie --inline-errors -o flight.csv
+mie-decoder decode flight.mie -o flight.csv
 ```
 
-Errored records now appear in `flight.csv` with the `ERROR` column set to `ERROR` and `ERROR_CODE` carrying the DDC hardware code:
+Errored records appear in `flight.csv` with the `ERROR` column set to `ERROR` and `ERROR_CODE` carrying the DDC hardware code:
 
 ```
 192:15:54:50.456225,15,11R,...,7800,797E,,,A,0.000000,,,,,         ← clean
@@ -78,6 +78,13 @@ Errored records now appear in `flight.csv` with the `ERROR` column set to `ERROR
 ```
 
 See [`ERROR-CATALOG.md`](ERROR-CATALOG.md) §6 for the DDC code reference and §7 for the decoder-assigned `0x2000` / `0x2001` codes.
+
+If you would rather keep the main CSV clean, pull the errored and spurious rows into a sibling file:
+
+```bash
+mie-decoder decode flight.mie --separate-errors -o flight.csv
+# -> flight.csv (clean rows) + flight_errors.csv (errored + SPURIOUS rows)
+```
 
 For a full vendor-CSV diff workflow, see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §6.
 
@@ -408,7 +415,7 @@ You want to validate that MIE-Decoder reproduces vendor output for a known-good 
 
 ```bash
 # 1. Generate both CSVs from the same input file.
-mie-decoder decode flight.mie --inline-errors -o mie.csv
+mie-decoder decode flight.mie -o mie.csv
 # Vendor tool produces flight-vendor.csv via whatever process you normally use.
 
 # 2. Normalize line endings if your platforms differ.
@@ -494,7 +501,7 @@ Filter the merged stream just like a single decode — filters apply across all
 inputs:
 
 ```bash
-mie-decoder decode run-a.mie run-b.mie -o rt15.csv --include-rts 15 --inline-errors
+mie-decoder decode run-a.mie run-b.mie -o rt15.csv --include-rts 15
 ```
 
 If several recorders overlap (they all heard the same bus), collapse each

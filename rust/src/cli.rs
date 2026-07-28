@@ -51,8 +51,10 @@ DECODE OPTIONS:
   --glob PATTERN                        Expand a single-directory *|? filename
                                         glob (no recursion). Mutually exclusive
                                         with positionals / --manifest
-  --inline-errors                       Errors inline in main CSV
-                                        (default: separate <stem>_errors.csv)
+  --separate-errors                     Route errored/spurious records to a
+                                        separate <stem>_errors.csv. Default:
+                                        every record inline in the main CSV
+                                        with ERROR/ERROR_CODE populated
   --no-clobber                          Refuse to overwrite an existing
                                         output file (L2-WRT-017)
   --allow-partial                       On unrecoverable mid-file sync
@@ -107,7 +109,7 @@ DUMP OPTIONS:
 
 EXAMPLES:
   mie-decoder decode rec.mie -o out.csv
-  mie-decoder decode rec.mie --inline-errors --include-rts 15
+  mie-decoder decode rec.mie --separate-errors --include-rts 15
   mie-decoder decode a.mie b.mie c.mie -o merged.csv   # time-sorted merge
   mie-decoder decode --glob 'recordings/*.mie' -o merged.csv
   mie-decoder count rec.mie
@@ -134,7 +136,7 @@ struct DecodeArgs {
     /// `--glob <pattern>`: expand a single-directory `*`/`?` filename glob.
     glob: Option<String>,
     output: Option<PathBuf>,
-    inline_errors: bool,
+    separate_errors: bool,
     no_clobber: bool,
     allow_partial: bool,
     time_format: Option<TimestampFormat>,
@@ -507,7 +509,7 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--output=") => {
                 args.output = Some(PathBuf::from(&s["--output=".len()..]));
             }
-            "--inline-errors" => args.inline_errors = true,
+            "--separate-errors" => args.separate_errors = true,
             "--no-clobber" => args.no_clobber = true,
             "--allow-partial" => args.allow_partial = true,
             "--strict" => args.strict = Some(true),
@@ -925,8 +927,10 @@ fn build_config_overrides(args: &mut DecodeArgs, log_level: Option<String>) -> C
     ConfigOverrides {
         time_format: args.time_format,
         strict: args.strict,
-        error_mode: if args.inline_errors {
-            Some(ErrorMode::Inline)
+        // `--separate-errors` opts into the split-file mode; its absence leaves
+        // the config value intact (the built-in default is now Inline).
+        error_mode: if args.separate_errors {
+            Some(ErrorMode::Separate)
         } else {
             None
         },

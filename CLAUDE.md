@@ -82,7 +82,7 @@ The decoder is a unidirectional pipeline. The big picture is best understood by 
 5. **`filter.rs` — `FilterIterExt::filter_messages`**: Iterator adapter. Both `exclude_*` and `include_*` filters are supported (the include set is the v2 redesign).
 6. **`writer.rs`**: `write_csv` (single file) and `write_csv_split` (separate `_errors.csv`). Streams rows through a `BufWriter` — no DataFrame buffering. Column names and ordering match DDC vendor CSV byte-for-byte.
 7. **`config.rs`**: Hand-rolled TOML loader for our schema (sections + key=value with strings/ints/bools/primitive arrays). Produces `DecoderConfig`. Precedence: **CLI overrides > config file > defaults**, applied via `DecoderConfig::with_overrides(ConfigOverrides)`.
-8. **`cli.rs` — `run(argv)`**: Hand-rolled argparse with three subcommands (`decode`, `count`, `dump`). `count` is its own subcommand in v2 (was `--count` flag in v1). Default error mode is `separate` (was an explicit `--error-mode` flag); `--inline-errors` toggles inline mode.
+8. **`cli.rs` — `run(argv)`**: Hand-rolled argparse with three subcommands (`decode`, `count`, `dump`). `count` is its own subcommand in v2 (was `--count` flag in v1). Default error mode is `inline` (every record in one CSV with `ERROR`/`ERROR_CODE` populated); `--separate-errors` toggles the split-file mode. The polarity was reversed and the former `--inline-errors` flag removed — passing it is a usage error.
 9. **`log.rs`**: Tiny stderr logger. Single `AtomicU8` for the global level + `log_debug!`/`log_info!`/`log_warn!`/`log_error!` macros that format only when the level passes.
 10. **`merge.rs` — `MergedRecordIter`** (mirrored by `python/src/mie_decoder/merge.py`): multi-file time-sorted k-way merge (L1-MRG / L2-MRG). When `decode` resolves more than one input (positionals / `--manifest` / `--glob`, mutually exclusive, capped at `MAX_MERGE_FILES = 256`), this holds one record per open reader in a min-heap (`BinaryHeap`+`Reverse` in Rust, `heapq` in Python), ordered by absolute IRIG microseconds with a `(us, file_index, seq)` tiebreak — O(files) memory, O(1) in records. It validates every input is calendar-locked IRIG up front (Standard / freerun / mixed → `IncompatibleMergeInputs`, exit 6) and recomputes DELTA on the merged global timeline. A single input bypasses this module entirely. No new dependency (hand-rolled `*`/`?` glob matcher in Rust).
 
@@ -97,7 +97,7 @@ Error records and SPURIOUS_DATA continuations are **valid records** that pass sy
 ### Output modes
 
 - Default (`error_mode = separate`): clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — file isn't created if no error rows). Calls `write_csv_split`.
-- `--inline-errors`: everything → one CSV with `ERROR` and `ERROR_CODE` columns populated. Calls `write_csv`. Stdout output forces inline mode (you can't split stdout).
+- `--separate-errors`: clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — the file isn't created if there are no error rows). Calls `write_csv_split`. Ignored on stdout (you can't split stdout), with a WARN.
 
 ### Error type
 

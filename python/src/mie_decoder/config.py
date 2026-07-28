@@ -446,7 +446,7 @@ class DecoderConfig:
     log_level: str = "WARNING"
     time_format: TimestampFormat = TimestampFormat.AUTO
     strict: bool = False
-    error_mode: ErrorMode = ErrorMode.SEPARATE
+    error_mode: ErrorMode = ErrorMode.INLINE
     filters: FilterConfig = field(default_factory=FilterConfig)
     output_format: str = "csv"
     no_clobber: bool = False
@@ -751,7 +751,7 @@ def _load_time_format(decode_section: dict[str, Any]) -> TimestampFormat:
 
 def _load_error_mode(decode_section: dict[str, Any]) -> ErrorMode:
     """`[decode] error_mode`."""
-    raw = decode_section.get("error_mode", "separate")
+    raw = decode_section.get("error_mode", "inline")
     if not isinstance(raw, str):
         raise ValueError(f"Invalid decode.error_mode: expected string, got {type(raw).__name__}")
     em_str = raw.lower()

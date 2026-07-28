@@ -208,8 +208,8 @@ Spurious records are themselves *valid* records and never raise an error; they
 pass sync normally and don't change the exit code.
 
 **Where these rows go** depends on the output mode ([§9](#9-output-mode-scenarios)):
-by default error and spurious rows are written to a separate `<stem>_errors.csv`;
-with `--inline-errors` they stay in the main CSV. The complete code tables and
+by default error and spurious rows stay in the main CSV, flagged by the `ERROR` /
+`ERROR_CODE` columns; `--separate-errors` routes them to a `<stem>_errors.csv`. The complete code tables and
 the operator decision tree are in [`ERROR-CATALOG.md`](ERROR-CATALOG.md).
 
 ---
@@ -289,8 +289,8 @@ over-collapses. See [`USER-GUIDE.md`](USER-GUIDE.md) for worked examples.
 
 | Mode | How to get it | What you get |
 |---|---|---|
-| **Separate** (default) | (nothing) | Clean rows → main CSV; error + spurious rows → `<stem>_errors.csv` (created only if such rows exist). Matches vendor layout. |
-| **Inline** | `--inline-errors` | One CSV with the `ERROR` / `ERROR_CODE` columns populated. |
+| **Inline** (default) | (nothing) | One CSV with every record; the `ERROR` / `ERROR_CODE` columns flag errored and spurious rows. Matches the vendor layout. |
+| **Separate** | `--separate-errors` | Clean rows → main CSV; error + spurious rows → `<stem>_errors.csv` (created only if such rows exist). |
 | **Stdout** | omit `-o` | Streams to stdout; forces inline mode (a stream can't be split). A consumer that closes early (`… \| head`) is fine — exit 0. There is no `-` filename convention: `-o -` writes a file literally named `-`. |
 | **Count** | `count` subcommand | Just the integer message count on stdout; no CSV. |
 | **Dump** | `dump` subcommand | A hex view of the bytes for debugging; no CSV. |

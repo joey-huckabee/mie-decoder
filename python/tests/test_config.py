@@ -620,28 +620,38 @@ class TestErrorModeConfig:
     """Tests for error mode configuration."""
 
     @pytest.mark.requirement("L2-CFG-001")
-    def test_default_is_separate(self) -> None:
+    def test_default_is_inline(self) -> None:
+        """Inline is the built-in default; separate is opt-in (L2-ERR-011)."""
         from mie_decoder.models import ErrorMode
 
         config = DecoderConfig()
-        assert config.error_mode == ErrorMode.SEPARATE
+        assert config.error_mode == ErrorMode.INLINE
 
     @pytest.mark.requirement("L2-CFG-001")
-    def test_override_to_inline(self) -> None:
+    def test_override_to_separate(self) -> None:
         from mie_decoder.models import ErrorMode
 
         config = DecoderConfig()
-        updated = config.with_overrides(error_mode=ErrorMode.INLINE)
-        assert updated.error_mode == ErrorMode.INLINE
+        updated = config.with_overrides(error_mode=ErrorMode.SEPARATE)
+        assert updated.error_mode == ErrorMode.SEPARATE
 
     @pytest.mark.requirement("L2-ERR-011")
     def test_load_from_toml(self, tmp_path: Path) -> None:
         from mie_decoder.models import ErrorMode
 
         cfg = tmp_path / "em.toml"
-        cfg.write_text('[decode]\nerror_mode = "inline"\n')
+        cfg.write_text('[decode]\nerror_mode = "separate"\n')
         config = load_config(cfg)
-        assert config.error_mode == ErrorMode.INLINE
+        assert config.error_mode == ErrorMode.SEPARATE
+
+    @pytest.mark.requirement("L2-ERR-011")
+    def test_omitted_error_mode_key_defaults_to_inline(self, tmp_path: Path) -> None:
+        """A config saying nothing about error_mode gets the new default."""
+        from mie_decoder.models import ErrorMode
+
+        cfg = tmp_path / "quiet.toml"
+        cfg.write_text("[decode]\nstrict = false\n")
+        assert load_config(cfg).error_mode == ErrorMode.INLINE
 
     @pytest.mark.requirement("L2-CFG-010")
     def test_invalid_error_mode_raises(self, tmp_path: Path) -> None:
@@ -651,10 +661,11 @@ class TestErrorModeConfig:
             load_config(cfg)
 
     @pytest.mark.requirement("L3-PY-011")
-    def test_cli_inline_errors_flag(self, tmp_path: Path) -> None:
-        """--inline-errors puts errored/spurious records in the SAME CSV
-        with ERROR/ERROR_CODE populated, and creates no separate errors
-        file (L3-PY-011 / L2-ERR-010)."""
+    def test_cli_inline_is_the_default(self, tmp_path: Path) -> None:
+        """With no flag, errored/spurious records stay in the SAME CSV with
+        ERROR/ERROR_CODE populated and no separate errors file is created
+        (L3-PY-011 / L2-ERR-010). Inline is the default; --separate-errors
+        opts out."""
         import csv
 
         from mie_decoder.cli import main
@@ -666,7 +677,7 @@ class TestErrorModeConfig:
         mie = tmp_path / "with_error.mie"
         mie.write_bytes(normal_record_rt15_sa11_us(100) + errored_record_rt15_sa11_us(16100))
         out = tmp_path / "inline.csv"
-        rc = main(["decode", str(mie), "-o", str(out), "--inline-errors"])
+        rc = main(["decode", str(mie), "-o", str(out)])
         assert rc == 0
 
         # Inline mode: a single file, no <stem>_errors.csv sibling.
@@ -680,17 +691,87 @@ class TestErrorModeConfig:
         assert error_rows[0]["ERROR_CODE"] == "011E"  # the errored record's code
 
     @pytest.mark.requirement("L2-ERR-008")
-    def test_cli_separate_is_default(self, tmp_mie_file: Path, tmp_path: Path) -> None:
+    def test_cli_separate_errors_opts_into_split(self, tmp_path: Path) -> None:
+        """--separate-errors restores the split layout: clean records in the main
+        CSV, errored/spurious in <stem>_errors.csv (L2-ERR-008). Inline is the
+        default, so this flag is the opt-out."""
+        import csv
+
+        from mie_decoder.cli import main
+        from tests.conftest import (
+            errored_record_rt15_sa11_us,
+            normal_record_rt15_sa11_us,
+        )
+
+        mie = tmp_path / "with_error.mie"
+        mie.write_bytes(normal_record_rt15_sa11_us(100) + errored_record_rt15_sa11_us(16100))
+        out = tmp_path / "split.csv"
+        rc = main(["decode", str(mie), "-o", str(out), "--separate-errors"])
+        assert rc == 0
+
+        errors = tmp_path / "split_errors.csv"
+        assert out.exists() and errors.exists()
+        main_rows = list(csv.DictReader(out.read_text().splitlines()))
+        err_rows = list(csv.DictReader(errors.read_text().splitlines()))
+        assert [r["ERROR"] for r in main_rows] == [""]
+        assert [r["ERROR"] for r in err_rows] == ["ERROR"]
+
+    @pytest.mark.requirement("L2-ERR-008")
+    def test_cli_separate_errors_file_lazy_when_no_errors(
+        self, tmp_mie_file: Path, tmp_path: Path
+    ) -> None:
+        """Even with --separate-errors, a clean decode creates no errors file."""
         from mie_decoder.cli import main
 
         out = tmp_path / "main.csv"
-        # Separate is the default — no flag needed (there is no --error-mode).
-        rc = main(["decode", str(tmp_mie_file), "-o", str(out)])
+        rc = main(["decode", str(tmp_mie_file), "-o", str(out), "--separate-errors"])
         assert rc == 0
         assert out.exists()
-        # No errors in test data, so error file should not be created
-        error_file = tmp_path / "main_errors.csv"
-        assert not error_file.exists()
+        assert not (tmp_path / "main_errors.csv").exists()
+
+    @pytest.mark.requirement("L3-PY-011")
+    def test_separate_errors_on_stdout_warns_and_falls_back_to_inline(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A stream cannot be split, so --separate-errors degrades to inline.
+
+        The request was explicit, so it must be reported rather than silently
+        ignored — matching the same WARN in the Rust CLI.
+        """
+        import logging
+
+        from mie_decoder.cli import main
+        from tests.conftest import (
+            errored_record_rt15_sa11_us,
+            normal_record_rt15_sa11_us,
+        )
+
+        mie = tmp_path / "with_error.mie"
+        mie.write_bytes(normal_record_rt15_sa11_us(100) + errored_record_rt15_sa11_us(16100))
+        with caplog.at_level(logging.WARNING, logger="mie_decoder"):
+            rc = main(["decode", str(mie), "--separate-errors"])
+        assert rc == 0
+        assert any("forces inline" in r.getMessage() for r in caplog.records), (
+            f"expected a WARN that stdout forces inline; got "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+
+    @pytest.mark.requirement("L3-PY-011")
+    def test_cli_removed_inline_errors_flag_is_a_usage_error(self, tmp_path: Path) -> None:
+        """--inline-errors was removed when inline became the default.
+
+        It must fail loudly (exit 4) rather than be quietly accepted, so a script
+        still carrying the old flag gets corrected instead of silently relying on
+        behaviour that is now the default anyway.
+        """
+        from mie_decoder.cli import EXIT_USAGE, main
+        from tests.conftest import normal_record_rt15_sa11_us
+
+        mie = tmp_path / "rec.mie"
+        mie.write_bytes(normal_record_rt15_sa11_us(100))
+        with pytest.raises(SystemExit) as excinfo:
+            main(["decode", str(mie), "-o", str(tmp_path / "o.csv"), "--inline-errors"])
+        assert excinfo.value.code == EXIT_USAGE
 
 
 class TestSchemaValidation:

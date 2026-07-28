@@ -104,7 +104,7 @@ Reads an MIE file and writes CSV. The command you'll use most.
 ```bash
 mie-decoder decode flight.mie -o flight.csv
 mie-decoder decode flight.mie > flight.csv    # stdout
-mie-decoder decode flight.mie --inline-errors -o everything.csv
+mie-decoder decode flight.mie --separate-errors -o clean.csv
 mie-decoder --config site.toml decode flight.mie -o flight.csv
 ```
 
@@ -154,21 +154,23 @@ mie-decoder decode flight.mie | awk -F, '$2=="15"'   # only RT 15
 
 ### Separate vs inline error handling
 
-By default, **errored records** (DDC card detected a bus error) and **SPURIOUS_DATA** records (orphan data fragments) are written to a *separate* file so the main CSV stays clean. The errors file is named `<output_stem>_errors<output_suffix>`:
+By default, **errored records** (DDC card detected a bus error) and **SPURIOUS_DATA** records (orphan data fragments) stay in the main CSV alongside clean records, flagged by the `ERROR` / `ERROR_CODE` columns. One file, nothing hidden, and the same layout the vendor tool produces:
 
 ```bash
 $ mie-decoder decode flight.mie -o flight.csv
 $ ls
+flight.csv                        # every record, errors flagged in-row
+```
+
+If you would rather keep the main CSV to clean records only, `--separate-errors` routes the errored and spurious rows to a sibling file named `<output_stem>_errors<output_suffix>`:
+
+```bash
+$ mie-decoder decode flight.mie --separate-errors -o flight.csv
+$ ls
 flight.csv flight_errors.csv      # errors file only created if error rows exist
 ```
 
-For diffing against vendor-generated CSV (which is always inline), or for any analysis pipeline that wants every row in one file, use inline mode:
-
-```bash
-mie-decoder decode flight.mie --inline-errors -o flight.csv
-```
-
-In inline mode the `ERROR` column contains `ERROR` / `SPURIOUS` / empty and `ERROR_CODE` contains the hardware code (`011E`, `0120`, etc.) or the decoder-assigned code (`2000` continuation, `2001` standalone). See `ERROR-CATALOG.md` sections 6 and 7 for the full code reference.
+In inline mode (the default) the `ERROR` column contains `ERROR` / `SPURIOUS` / empty and `ERROR_CODE` contains the hardware code (`011E`, `0120`, etc.) or the decoder-assigned code (`2000` continuation, `2001` standalone). See `ERROR-CATALOG.md` sections 6 and 7 for the full code reference.
 
 ### Recovering data from a corrupt recording
 

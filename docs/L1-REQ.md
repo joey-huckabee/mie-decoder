@@ -211,7 +211,7 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 
 ### L1-ERR-001
 
-**Statement**: Each implementation SHALL decode DDC error records (Type Word bit 14 set) and SPURIOUS_DATA records (message type `0x20`), and SHALL support both separate-file and inline-column error output modes.
+**Statement**: Each implementation SHALL decode DDC error records (Type Word bit 14 set) and SPURIOUS_DATA records (message type `0x20`), and SHALL support both inline-column (the default) and separate-file error output modes.
 
 **Rationale**: Error records and their SPURIOUS_DATA continuations are first-class artifacts of the DDC card's behavior — they encode bus errors that the analyst needs to see. Separate output keeps the clean message stream uncluttered; inline output keeps everything in one CSV for diff against vendor output. Both modes must be available because both are used in practice.
 

@@ -81,7 +81,7 @@ mie-decoder decode rec.mie -o clean.csv \
 mie-decoder decode rec.mie -o rt15.csv --include-buses A --include-rts 15
 
 # Errors inline with normal messages
-mie-decoder decode rec.mie -o all.csv --inline-errors
+mie-decoder decode rec.mie -o clean-plus-errors.csv --separate-errors
 
 # Multi-file, time-sorted merge; de-dup overlapping recorders
 mie-decoder decode a.mie b.mie -o merged.csv --collapse-duplicates
@@ -101,15 +101,20 @@ When the DDC card detects an error mid-transaction (Manchester error, parity err
 
 ### Error modes
 
-> **By default, errored and SPURIOUS records are not in the main CSV** — they are
-> written to a separate `<output>_errors.csv` so the main file stays clean. If you
-> expected an errored record (a Type Word with bit 14 set) in the main output,
-> that is why. Pass **`--inline-errors`** to put every record in one CSV with the
-> `ERROR`/`ERROR_CODE` columns populated — which is also the layout that matches
-> the DDC vendor tool (see [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md)).
+> **By default every record — clean, errored, and SPURIOUS — goes to one CSV**,
+> with the `ERROR`/`ERROR_CODE` columns populated. That is also the layout the DDC
+> vendor tool emits, so a default decode diffs against vendor output directly (see
+> [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md)). Pass
+> **`--separate-errors`** if you want the errored and SPURIOUS records pulled out
+> into a sibling `<output>_errors.csv` so the main file holds only clean rows.
 
-- **Default (separate)**: Normal messages go to the main CSV. Errored and spurious records go to `<output>_errors.csv` (created only if there are error rows).
-- **`--inline-errors`**: All messages in one CSV. `ERROR` column is `"ERROR"` or `"SPURIOUS"`; `ERROR_CODE` holds the code.
+- **Default (inline)**: All messages in one CSV. `ERROR` column is `"ERROR"` or `"SPURIOUS"` (empty for clean rows); `ERROR_CODE` holds the code.
+- **`--separate-errors`**: Normal messages go to the main CSV; errored and spurious records go to `<output>_errors.csv` (created only if there are error rows).
+
+> **Changed in this release:** inline used to be opt-in via `--inline-errors`, and
+> separate was the default. The polarity is now reversed and `--inline-errors` has
+> been **removed** — passing it is a usage error (exit 4). Drop the flag to keep
+> the same output, or add `--separate-errors` for the old default layout.
 
 ### Error codes
 

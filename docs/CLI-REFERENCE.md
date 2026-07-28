@@ -89,7 +89,7 @@ multi-file merge — see [Merge](#merge-multi-file) below.
 | `-o`, `--output PATH` | path | *(stdout)* | Output CSV file. If omitted, writes to stdout (which forces inline error mode — you cannot split stdout). |
 | `--format FORMAT` | `csv` | `csv` | Output format. Only `csv` is supported at present. Overrides `[output] format`. |
 | `--no-clobber` | flag | off | Refuse to overwrite an existing output file (`L2-WRT-017`). Mirrors `[output] no_clobber`. |
-| `--inline-errors` | flag | off | Write errored/spurious messages inline in the main CSV with the `ERROR`/`ERROR_CODE` columns populated. Default (omitted): errors go to a separate `<output>_errors.csv`. Stdout output is always inline. |
+| `--separate-errors` | flag | off | Route errored/spurious messages to a separate `<output>_errors.csv`, leaving only clean records in the main CSV. Default (omitted): every record goes to one CSV with the `ERROR`/`ERROR_CODE` columns populated. Stdout is always inline, so the flag is ignored there with a WARN. Mirrors `[decode] error_mode`. |
 
 ### Timestamp format & detection
 
@@ -219,8 +219,8 @@ mie-decoder decode rec.mie -o clean.csv \
 # Only Bus A, only RT 15 (positive filters)
 mie-decoder decode rec.mie -o rt15.csv --include-buses A --include-rts 15
 
-# Errors inline with normal messages
-mie-decoder decode rec.mie -o all.csv --inline-errors
+# Split errored/spurious records into a sibling _errors.csv
+mie-decoder decode rec.mie -o clean.csv --separate-errors
 
 # Force Standard timestamp format with a known counter rate (enables DELTA)
 mie-decoder decode rec.mie -o decoded.csv \

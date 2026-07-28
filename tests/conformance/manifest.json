@@ -13,10 +13,7 @@
     {
       "name": "errors-inline",
       "input": "inputs/errors-inline.hex",
-      "expected": "expected/errors-inline.csv",
-      "args": [
-        "--inline-errors"
-      ]
+      "expected": "expected/errors-inline.csv"
     },
     {
       "name": "exclude-subaddress",
@@ -36,10 +33,7 @@
     {
       "name": "delta-tracking-irig",
       "input": "inputs/delta-tracking-irig.hex",
-      "expected": "expected/delta-tracking-irig.csv",
-      "args": [
-        "--inline-errors"
-      ]
+      "expected": "expected/delta-tracking-irig.csv"
     },
     {
       "name": "no-valid-records",
@@ -49,10 +43,7 @@
     {
       "name": "partial-unrecoverable-default",
       "input": "inputs/partial-unrecoverable.hex",
-      "expected_exit": 3,
-      "args": [
-        "--inline-errors"
-      ]
+      "expected_exit": 3
     },
     {
       "name": "standard-timestamps",
@@ -167,15 +158,15 @@
       "name": "errors-separate",
       "input": "inputs/errors-inline.hex",
       "expected": "expected/errors-separate.csv",
-      "expected_errors": "expected/errors-separate_errors.csv"
+      "expected_errors": "expected/errors-separate_errors.csv",
+      "args": [
+        "--separate-errors"
+      ]
     },
     {
       "name": "spurious-standalone",
       "input": "inputs/spurious-standalone.hex",
-      "expected": "expected/spurious-standalone.csv",
-      "args": [
-        "--inline-errors"
-      ]
+      "expected": "expected/spurious-standalone.csv"
     },
     {
       "name": "single-file-non-monotonic",
@@ -280,21 +271,30 @@
       "name": "timestamp-format-borderline-n1",
       "input": "inputs/timestamp-format-borderline.hex",
       "expected": "expected/timestamp-format-borderline-n1.csv",
-      "args": ["--detect-records", "1"],
+      "args": [
+        "--detect-records",
+        "1"
+      ],
       "expected_stderr_contains": "TW.word_count = 8 is too small for declared payload"
     },
     {
       "name": "lookahead-corruption-chain-n2",
       "input": "inputs/lookahead-corruption-chain.hex",
       "expected": "expected/lookahead-corruption-chain-n2.csv",
-      "args": ["--lookahead-records", "2"],
+      "args": [
+        "--lookahead-records",
+        "2"
+      ],
       "expected_stderr_contains": "scanning forward"
     },
     {
       "name": "lookahead-corruption-chain-n4",
       "input": "inputs/lookahead-corruption-chain.hex",
       "expected": "expected/lookahead-corruption-chain-n4.csv",
-      "args": ["--lookahead-records", "4"]
+      "args": [
+        "--lookahead-records",
+        "4"
+      ]
     },
     {
       "name": "log-level-from-toml-config",
@@ -391,10 +391,7 @@
         "inputs/merge-a.hex",
         "inputs/merge-b.hex"
       ],
-      "expected": "expected/merge-ordered.csv",
-      "args": [
-        "--inline-errors"
-      ]
+      "expected": "expected/merge-ordered.csv"
     },
     {
       "name": "merge-collapse-cross-recorder",
@@ -404,8 +401,7 @@
       ],
       "expected": "expected/merge-collapse-cross-recorder.csv",
       "args": [
-        "--collapse-duplicates",
-        "--inline-errors"
+        "--collapse-duplicates"
       ]
     },
     {
@@ -415,10 +411,7 @@
         "inputs/merge-a.hex"
       ],
       "expected": "expected/merge-collapse-cross-recorder.csv",
-      "config": "configs/collapse-duplicates.toml",
-      "args": [
-        "--inline-errors"
-      ]
+      "config": "configs/collapse-duplicates.toml"
     },
     {
       "name": "merge-collapse-no-op",
@@ -428,8 +421,7 @@
       ],
       "expected": "expected/merge-ordered.csv",
       "args": [
-        "--collapse-duplicates",
-        "--inline-errors"
+        "--collapse-duplicates"
       ]
     },
     {
@@ -442,8 +434,7 @@
       "args": [
         "--collapse-duplicates",
         "--collapse-window-us",
-        "100",
-        "--inline-errors"
+        "100"
       ]
     },
     {
@@ -462,10 +453,7 @@
         "inputs/merge-a.hex"
       ],
       "expected": "expected/merge-non-monotonic-within-file.csv",
-      "expected_stderr_contains": "not internally time-sorted",
-      "args": [
-        "--inline-errors"
-      ]
+      "expected_stderr_contains": "not internally time-sorted"
     },
     {
       "name": "merge-collapse-non-monotonic",
@@ -476,8 +464,7 @@
       "expected": "expected/merge-non-monotonic-within-file.csv",
       "expected_stderr_contains": "not internally time-sorted",
       "args": [
-        "--collapse-duplicates",
-        "--inline-errors"
+        "--collapse-duplicates"
       ]
     },
     {
@@ -499,8 +486,7 @@
         "inputs/merge-garbage.hex"
       ],
       "args": [
-        "--allow-partial",
-        "--inline-errors"
+        "--allow-partial"
       ],
       "expected_partial": "expected/merge-allow-partial-priming.csv.partial",
       "expected_stderr_contains": "could not be read; truncating it from the merge"
@@ -558,10 +544,7 @@
         "full_loadout.draw.data.1553.aa.unused.mie_irig",
         "full_loadout.draw.data.1553.bb.unused.mie_irig"
       ],
-      "expected": "expected/mux-merge-per-file.csv",
-      "args": [
-        "--inline-errors"
-      ]
+      "expected": "expected/mux-merge-per-file.csv"
     }
   ]
 }

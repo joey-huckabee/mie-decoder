@@ -52,7 +52,7 @@ The following columns produce byte-identical content between MIE-Decoder and the
 | `CMD` | 4-character uppercase hex | Empty for SPURIOUS_DATA. |
 | `BUS` | Single character `A` or `B` | |
 | `DELTA` | `0.000000` (6 decimals) or empty | Empty for SPURIOUS_DATA, uncalibrated Standard-timestamp records (no tick rate configured — supply `standard_tick_rate_hz` to populate it, L2-DEC-017), and non-monotonic timestamps. See `docs/L2-REQ.md` L2-RDR-016 through L2-RDR-019 for the per-case rule. |
-| `ERROR` | `ERROR`, `SPURIOUS`, or empty | Empty in clean rows. Only populated in inline error mode (`--inline-errors`). |
+| `ERROR` | `ERROR`, `SPURIOUS`, or empty | Empty in clean rows. Populated in the default inline mode; with `--separate-errors` the errored rows live in the sibling `_errors.csv` instead. |
 | `ERROR_CODE` | 4-character uppercase hex code | Empty in clean rows. See `docs/ERROR-CATALOG.md` §6–7 for the full code reference (`0x01xx` DDC, `0x20xx` decoder-assigned). |
 
 ---
@@ -134,7 +134,7 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
 1. **Decode the same recording with both tools.** Use the vendor tool's default settings; for MIE-Decoder use:
 
    ```bash
-   mie-decoder decode flight.mie --inline-errors -o mie.csv
+   mie-decoder decode flight.mie -o mie.csv
    ```
 
    Inline error mode matches the vendor tool's behavior of mixing errored and SPURIOUS records into the main CSV. (Separate-mode comparisons would need you to merge MIE-Decoder's two files first.)

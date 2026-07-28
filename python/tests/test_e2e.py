@@ -1855,7 +1855,7 @@ class TestBrokenPipeSubprocess:
     @pytest.mark.requirement("L2-WRT-018")
     def test_decode_to_closed_pipe_exits_zero(self, tmp_path: Path) -> None:
         mie = self._big_recording(tmp_path)
-        rc, stderr = self._run_and_close_pipe(["decode", str(mie), "--inline-errors"])
+        rc, stderr = self._run_and_close_pipe(["decode", str(mie)])
         assert rc == 0, f"expected clean exit on broken pipe, got {rc}; stderr:\n{stderr}"
         assert "Traceback" not in stderr
         assert "Exception ignored" not in stderr

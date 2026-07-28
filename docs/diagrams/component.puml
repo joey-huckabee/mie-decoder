@@ -140,7 +140,7 @@ end note
 note right of config
   <b>Precedence (highest first):</b>
   1. CLI flags  (~--no-clobber, ~--allow-partial,
-                 ~--inline-errors, ~--include-rt, ...)
+                 ~--separate-errors, ~--include-rt, ...)
   2. TOML config file
   3. Built-in defaults
 end note

@@ -107,7 +107,7 @@ impl Default for DecoderConfig {
             log_level: "WARNING".to_string(),
             time_format: TimestampFormat::Auto,
             strict: false,
-            error_mode: ErrorMode::Separate,
+            error_mode: ErrorMode::Inline,
             filters: FilterConfig::default(),
             output_format: "csv".to_string(),
             no_clobber: false,
@@ -1360,7 +1360,8 @@ exclude_types = ["UNICORN"]
         let cfg = load_config(None).unwrap();
         assert_eq!(cfg.log_level, "WARNING");
         assert_eq!(cfg.time_format, TimestampFormat::Auto);
-        assert_eq!(cfg.error_mode, ErrorMode::Separate);
+        // Inline is the default error mode; separate is opt-in (L2-ERR-011).
+        assert_eq!(cfg.error_mode, ErrorMode::Inline);
         assert!(!cfg.strict);
     }
 

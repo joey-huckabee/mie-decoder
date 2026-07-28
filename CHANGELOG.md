@@ -15,6 +15,45 @@ full release workflow.
 
 ## [Unreleased]
 
+### Changed — BREAKING
+
+- **Errored and SPURIOUS records now go inline in the main CSV by default, and
+  `--inline-errors` has been removed.** The polarity of the error-mode flag is
+  reversed: what used to require `--inline-errors` is now what you get with no
+  flag at all, and the old split-file layout is opt-in via the new
+  **`--separate-errors`** (`[decode] error_mode = "separate"`). The built-in
+  default of `decode.error_mode` changes from `"separate"` to `"inline"`.
+
+  Rationale: inline is the layout the DDC vendor tool itself emits, so a default
+  decode is directly diffable against vendor output with no flags — and no
+  errored record is silently absent from the file the operator actually opened.
+
+  **Migration.**
+
+  | Before | After |
+  |---|---|
+  | `decode rec.mie -o out.csv --inline-errors` | `decode rec.mie -o out.csv` |
+  | `decode rec.mie -o out.csv` (split output) | `decode rec.mie -o out.csv --separate-errors` |
+  | `[decode] error_mode = "inline"` | unchanged (now also the default) |
+  | `[decode] error_mode = "separate"` | unchanged (still honoured) |
+
+  `--inline-errors` is **not** accepted as a deprecated alias: passing it is a
+  usage error (exit `4`) naming the flag. A script that silently kept working
+  would have been relying on behaviour that is now the default anyway, so the
+  failure is deliberate and loud. A config file that sets `error_mode`
+  explicitly is unaffected — only the *default* moved.
+
+  Note this breaks the **CLI** contract, not the library API: `cargo-semver-checks`
+  reports no required semver bump because `write_csv` / `write_csv_split` and the
+  public types are untouched. The automated gate cannot see this class of change,
+  so the version decision is a human one.
+
+- With `--separate-errors` and stdout output, Python now emits the same
+  "stdout output forces inline error mode" WARN as Rust. Previously only Rust
+  warned; that was near-harmless while separate was the default (Rust warned on
+  every stdout decode) but now the flag is an explicit request the writer cannot
+  honour, so silence would hide it.
+
 Findings from a no-change audit of both implementations and the full document
 set. Four behavioral defects — one of them silent data loss — plus a sweep of
 documentation that had drifted from the code.

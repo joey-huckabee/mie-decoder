@@ -381,14 +381,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include only these subaddresses. Comma-separated, repeatable. CLI-only.",
     )
     decode_parser.add_argument(
-        "--inline-errors",
+        "--separate-errors",
         action="store_true",
         default=False,
         help=(
-            "Include errored/spurious messages inline in the main CSV with "
-            "the ERROR/ERROR_CODE columns populated. Default (omitted): "
-            "errors go to a separate <output>_errors.csv. Stdout output "
-            "always uses inline mode (you cannot split stdout)."
+            "Route errored and SPURIOUS_DATA records to a separate "
+            "<output>_errors.csv, leaving only clean records in the main CSV. "
+            "Default (omitted): every record goes to one CSV with the "
+            "ERROR/ERROR_CODE columns populated. Stdout output is always "
+            "inline (you cannot split stdout), so this flag is ignored there "
+            'with a WARN. Mirrors [decode] error_mode = "separate".'
         ),
     )
     decode_parser.add_argument(
@@ -676,16 +678,16 @@ def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
     """Build the passthrough CLI overrides that need no validation.
 
     A boolean flag flips a value on; its absence leaves the config value intact
-    (there is no "off" form on the CLI). ``--inline-errors`` flips error_mode to
-    INLINE; the default IS separate.
+    (there is no "off" form on the CLI). ``--separate-errors`` flips error_mode to
+    SEPARATE; the default IS inline.
     """
     from mie_decoder.models import ErrorMode, parse_timestamp_format
 
     overrides: dict[str, object] = {}
     if args.time_format is not None:
         overrides["time_format"] = parse_timestamp_format(args.time_format)
-    if args.inline_errors:
-        overrides["error_mode"] = ErrorMode.INLINE
+    if args.separate_errors:
+        overrides["error_mode"] = ErrorMode.SEPARATE
     if args.no_clobber:
         overrides["no_clobber"] = True
     if args.allow_partial:
@@ -887,6 +889,14 @@ def _write_messages(
     CSVs; INLINE mode (or stdout, which cannot be split) writes one CSV."""
     from mie_decoder.models import ErrorMode
     from mie_decoder.writer import write_csv, write_csv_split
+
+    if error_mode == ErrorMode.SEPARATE and output is None:
+        # A stream cannot be split in two, so separate mode degrades to inline.
+        # Now that separate is opt-in this WARN reports an explicit request the
+        # writer could not honour, rather than (as before) firing on every
+        # stdout decode because separate happened to be the default. Mirrors the
+        # same warning in `write_messages` (rust/src/cli.rs).
+        logger.warning("stdout output forces inline error mode")
 
     t0 = time.perf_counter()
     if error_mode == ErrorMode.SEPARATE and output is not None:

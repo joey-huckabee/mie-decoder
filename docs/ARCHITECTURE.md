@@ -350,7 +350,7 @@ For per-variant cause / lenient-vs-strict behavior / exit-code mapping, see [`ER
 ## 8. Error-mode output
 
 ```
-  separate (default):                     --inline-errors:
+  --separate-errors:                      inline (default):
   ┌──────────────────────┐                ┌──────────────────────┐
   │  main.csv            │                │  output.csv          │
   │  Normal messages     │                │  All messages        │

@@ -114,7 +114,7 @@ def _decode_ns(**overrides: object) -> argparse.Namespace:
     """A decode-args Namespace with every override field defaulted (None/False)."""
     base: dict[str, object] = {
         "time_format": None,
-        "inline_errors": False,
+        "separate_errors": False,
         "no_clobber": False,
         "allow_partial": False,
         "strict": None,
@@ -188,13 +188,13 @@ class TestBuildDecodeOverrides:
         ov = cli._build_decode_overrides(
             _decode_ns(
                 time_format="standard",
-                inline_errors=True,
+                separate_errors=True,
                 strict=True,
                 format="csv",
             )
         )
         assert ov["time_format"] == TimestampFormat.STANDARD
-        assert ov["error_mode"] == ErrorMode.INLINE
+        assert ov["error_mode"] == ErrorMode.SEPARATE
         assert ov["strict"] is True
         assert ov["output_format"] == "csv"
 
