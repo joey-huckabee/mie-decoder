@@ -15,7 +15,9 @@ use crate::decode::{
 };
 use crate::error::{MieError, MieResult};
 use crate::log_warn;
-use crate::models::{Direction, MessageFormat, MessageType, TypeWord, ddc_error_description};
+use crate::models::{
+    Direction, MessageFormat, MessageType, TypeWord, ddc_error_description_or_unknown,
+};
 
 fn type_name(code: u8) -> String {
     match MessageType::from_code(code) {
@@ -345,12 +347,7 @@ fn write_record_annotation<W: Write>(
     // its value and the DDC description so the reason is legible at a glance.
     if tw.error {
         let code = read_u16(data, offset + (tw.word_count as usize - 1) * 2).unwrap_or(0);
-        let desc = ddc_error_description(code);
-        let desc = if desc.is_empty() {
-            "unknown DDC error code"
-        } else {
-            desc
-        };
+        let desc = ddc_error_description_or_unknown(code);
         writeln!(out, "  Error:  0x{code:04X}  ->  {desc}")?;
     }
     Ok(())

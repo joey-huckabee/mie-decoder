@@ -75,7 +75,7 @@ rust/
 ├── .cargo/          cargo-llvm-cov coverage aliases (cov / cov-lcov / cov-ci)
 ├── src/
 │   ├── lib.rs           Library entry point and re-exports
-│   ├── bin/mie-decoder  Binary entry point
+│   ├── bin/mie-decoder.rs  Binary entry point
 │   ├── cli.rs           Hand-rolled argparse + dispatch
 │   ├── config.rs        Hand-rolled TOML loader, DecoderConfig
 │   ├── decode.rs        Pure decoders + format classifier

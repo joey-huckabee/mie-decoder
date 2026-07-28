@@ -94,6 +94,34 @@ documentation that had drifted from the code.
   under strict `mypy`); the requirement now describes `with_delta`.
   `L3-RS-001` understated the MSRV floor as 1.85 where the crate pins and CI
   gates 1.88.
+- **`sync.py` is now pure, matching `sync.rs`.** The Python sync helpers logged;
+  the Rust ones deliberately do not (the reader owns all user-facing messaging).
+  Because a helper has none of the caller's context, `find_first_record` logged
+  `WARNING: No valid record found in first N bytes of file` whenever it returned
+  `None` — including for a **valid empty recording**, where returning `None` is
+  the expected result. An operator saw a warning claiming a healthy recording had
+  no records, immediately contradicted by the reader's own correct "empty
+  capture" line. Rust never emitted it. The six log statements move to
+  `reader.py`, carrying the same detail as their Rust counterparts (sync loss now
+  names the offending type and word count), so the two implementations' log
+  streams correspond line for line.
+- `L2-SYN-012` (header size logged at INFO) had **no Rust verification at all** —
+  the trace matrix listed a single Python test, and that test asserted against
+  `find_first_record` rather than the reader that emits the line. Adds a Rust CLI
+  test, retargets the Python one at the reader, and pins the purity contract so
+  logging cannot creep back into the validation helpers.
+- The Rust error-record log rendered an unknown DDC code as `code=0x0199 ()` —
+  an empty description where Python printed a word. `dump.rs` already had a
+  fallback for this; it is now a shared `ddc_error_description_or_unknown`
+  helper used by both call sites.
+- `MIE-FORMAT.md` gave the Type Word's minimum word count as "5 (Type Word +
+  **Standard** timestamp + Command Word)" — 5 is the IRIG minimum; the Standard
+  minimum is 4, as both implementations enforce. Also corrects the claim that
+  lenient mode emits `UNKNOWN` for an unrecognized error code (the CSV always
+  carries the raw code) and drops the retired `microsecond-hi < 16` scoring term
+  from the auto-detection table.
+- `sync.py`'s module docstring documented a 4096-byte header scan (it is 64 KB)
+  and listed only three of the five IRIG range checks.
 - Repairs a scrambled rustdoc comment block in `cli.rs` (two functions' docs had
   been interleaved), a stale "exit 2" comment on a path that exits 4, and drops
   a dead `Ok(None)` branch. Removes a vacuous `us_hi < 16` term from the

@@ -410,19 +410,26 @@ class TestSyncBoundsAndLogging:
     @pytest.mark.requirement("L2-SYN-012")
     def test_header_detection_logs_size_at_info(
         self,
+        tmp_path: Path,
         single_receive_record: bytes,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """L2-SYN-012: header detection SHALL log detected header size at INFO."""
+        """L2-SYN-012: header detection SHALL log detected header size at INFO.
+
+        Asserted at the *reader*, not at ``find_first_record``: the sync helpers
+        are pure (no logging) so both implementations narrate this from the
+        reader, exactly as ``rust/src/reader.rs`` does.
+        """
         import logging
 
-        from mie_decoder.sync import find_first_record
+        from mie_decoder.reader import MieFileReader
 
         header = b"\x00" * 24
-        data = header + single_receive_record * 2
-        with caplog.at_level(logging.INFO, logger="mie_decoder.sync"):
-            offset = find_first_record(data, len(data), TimestampFormat.IRIG)
-        assert offset == 24
+        fpath = tmp_path / "headered.mie"
+        fpath.write_bytes(header + single_receive_record * 2)
+        with caplog.at_level(logging.INFO, logger="mie_decoder"):
+            messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        assert len(messages) == 2
         info_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
         assert any("header" in m.lower() for m in info_msgs), (
             f"expected INFO log naming the header; got {info_msgs}"
@@ -430,6 +437,64 @@ class TestSyncBoundsAndLogging:
         # The header size (24 bytes) should appear in the message.
         assert any("24" in m for m in info_msgs), (
             f"expected header-size byte count in INFO log; got {info_msgs}"
+        )
+
+    @pytest.mark.requirement("L2-SYN-012")
+    def test_sync_helpers_emit_no_log_output(
+        self,
+        single_receive_record: bytes,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The sync helpers are pure — they never log (matches ``sync.rs``).
+
+        Pinning this stops log statements from creeping back into the validation
+        helpers, where they narrate an outcome without the caller's context.
+        """
+        import logging
+
+        from mie_decoder.sync import find_first_record, recover_sync
+
+        data = b"\x00" * 24 + single_receive_record * 2
+        with caplog.at_level(logging.DEBUG, logger="mie_decoder"):
+            assert find_first_record(data, len(data), TimestampFormat.IRIG) == 24
+            # A scan that finds nothing must be just as quiet.
+            assert find_first_record(b"\xff" * 64, 64, TimestampFormat.IRIG) is None
+            recover_sync(data, 0, len(data), TimestampFormat.IRIG)
+        sync_records = [r for r in caplog.records if r.name.startswith("mie_decoder.sync")]
+        assert sync_records == [], (
+            f"sync helpers must not log; got {[r.getMessage() for r in sync_records]}"
+        )
+
+    @pytest.mark.requirement("L2-RDR-021")
+    def test_empty_recording_does_not_warn_about_missing_records(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A valid but empty recording must not be reported as having no records.
+
+        ``find_first_record`` legitimately returns ``None`` here — the stream is
+        just the ``0x0000`` terminator — and it used to log "No valid record
+        found in first N bytes of file" on its way out. That warning flatly
+        contradicted the reader's own "empty capture" message logged immediately
+        after, and would make an operator grepping their logs flag a healthy
+        recording. Rust never emitted it.
+        """
+        import logging
+
+        from mie_decoder.reader import MieFileReader
+
+        fpath = tmp_path / "empty_recording.mie"
+        fpath.write_bytes(b"\x00\x00")
+        with caplog.at_level(logging.DEBUG, logger="mie_decoder"):
+            assert list(MieFileReader(fpath)) == []
+        messages = [r.getMessage().lower() for r in caplog.records]
+        assert not any("no valid record" in m for m in messages), (
+            f"an empty recording must not be reported as having no valid records; got {messages}"
+        )
+        # The correct message is still emitted.
+        assert any("empty capture" in m for m in messages), (
+            f"expected the empty-capture WARN; got {messages}"
         )
 
     @pytest.mark.requirement("L2-SYN-018")

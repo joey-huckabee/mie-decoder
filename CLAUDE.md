@@ -132,7 +132,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - **N-record look-ahead in `sync.rs`** (default 2, configurable per L2-SYN-026). Don't remove it. Removing the look-ahead reintroduces false-positive resyncs.
 - **`DataWords` is fixed-capacity by design.** MIL-STD-1553B caps a single transaction at 32 data words. Don't switch to `Vec<u16>` "for flexibility."
 - **CSV column names and order are dictated by DDC vendor output.** Don't "clean up" `MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` — they're columns by spec (`L2-WRT-013`). `TERM_NAME`/`IM_GAP`/`RCV_GAP`/`XMT_GAP` stay empty; `MUX` is populated from the input file name by default (`L2-WRT-020`) and is restored to empty (vendor-exact) by `--no-mux` / `[mux] enabled = false`.
-- **`sync.rs` is pure** (no logging, no I/O). The reader handles any user-facing messaging based on returned values. Don't move logging into validation helpers.
+- **The sync modules are pure** (no logging, no I/O) in **both** implementations — `rust/src/sync.rs` and `python/src/mie_decoder/sync.py`. The reader handles all user-facing messaging based on the values they return. Don't move logging into validation helpers: they lack the caller's context, so they narrate outcomes wrongly (`find_first_record` returning `None` is the *expected* result for a valid empty recording, and logging "no valid record found" there contradicted the reader's own correct message).
 - **Shared conformance fixtures are byte-exact.** Treat
   `tests/conformance/` as the cross-implementation oracle; update expected CSV
   only after both implementations agree.

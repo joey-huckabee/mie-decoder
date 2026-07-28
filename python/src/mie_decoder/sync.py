@@ -5,6 +5,16 @@ recovering from sync loss, and detecting file headers. It is the first
 line of defense against corrupted data, unexpected file layouts, and
 mid-file sync loss caused by error records or truncated writes.
 
+These are **pure** functions: no logging, no I/O, no side effects. The reader
+inspects what they return and emits every user-facing message itself, which is
+what keeps the two implementations' log output aligned (``rust/src/sync.rs``
+carries the same contract). It also avoids narrating outcomes the caller has
+more context about: ``find_first_record`` returning ``None`` is not by itself a
+problem — for a valid but empty recording it is the *expected* result, and this
+module logging "no valid record found" there produced a warning that
+contradicted the reader's own (correct) "empty capture" message on the very
+next line.
+
 Synchronization Strategy:
 
     1. **Initial Alignment (Header Detection):**
@@ -43,7 +53,9 @@ Validation Heuristics (applied in order, fast checks first):
     2. Word count (bits 8–13) must be >= minimum for the timestamp
        format (4 for Standard, 5 for IRIG) and <= 63 (6-bit field max).
     3. The record must not extend past the end of file.
-    4. If IRIG timestamp: hour < 24, minute < 60, second < 60.
+    4. If IRIG timestamp: hour < 24, minute < 60, second < 60,
+       microsecond <= 999_999, and (unless the freerun bit is set, per
+       L2-SYN-019) day-of-year in [1, 366].
     5. Look-ahead: the next record's Type Word must also have a valid
        message type and plausible word count.
 
@@ -57,7 +69,8 @@ Performance Considerations:
       (word-aligned) and caps at a configurable maximum distance to
       prevent scanning entire multi-gigabyte files.
     - :func:`find_first_record` uses the same capped scan, defaulting
-      to 4096 bytes — sufficient for any known DDC file header.
+      to :data:`MAX_SCAN_BYTES` (64 KB) — sufficient for any known DDC
+      file header.
 
 Error Records and Sync:
 
@@ -76,7 +89,6 @@ Error Records and Sync:
 
 from __future__ import annotations
 
-import logging
 from enum import Enum
 from typing import Final
 
@@ -88,8 +100,6 @@ from mie_decoder.decode import (
     read_u16,
 )
 from mie_decoder.models import ByteSource, TimestampFormat, TIMESTAMP_WORD_COUNTS
-
-logger = logging.getLogger(__name__)
 
 #: Maximum number of bytes to scan when searching for sync.
 #: 64 KB covers any reasonable header or corruption gap.
@@ -306,25 +316,20 @@ def find_first_record(
         ts_format: Known timestamp format, or None for auto-detection
             (skips timestamp range checks during header scan).
         max_scan: Maximum bytes to scan before giving up.
+        lookahead_records: Total records checked per candidate
+            (candidate + N-1 followers), per L2-SYN-026.
 
     Returns:
         Byte offset of the first valid record, or None if not found.
+        ``None`` is not inherently an error — the caller decides (an empty
+        recording legitimately has no first record).
     """
     scan_end = min(file_len, max_scan)
 
     for offset in range(0, scan_end, 2):
         if validate_record(data, offset, file_len, ts_format, lookahead_records):
-            if offset > 0:
-                logger.info(
-                    "File header detected: %d bytes before first record at offset 0x%X",
-                    offset,
-                    offset,
-                )
-            else:
-                logger.debug("First record at offset 0 (no header)")
             return offset
 
-    logger.warning("No valid record found in first %d bytes of file", scan_end)
     return None
 
 
@@ -441,6 +446,8 @@ def recover_sync(
         file_len: Total file length.
         ts_format: Known timestamp format, or None.
         max_scan: Maximum bytes to scan from the current offset.
+        lookahead_records: Total records checked per candidate
+            (candidate + N-1 followers), per L2-SYN-026.
 
     Returns:
         Byte offset of the next valid record, or None if sync cannot
@@ -448,11 +455,6 @@ def recover_sync(
     """
     scan_start = offset + 2
     scan_end = min(file_len, offset + max_scan)
-
-    logger.warning(
-        "Sync lost at offset 0x%X — scanning forward for next valid record",
-        offset,
-    )
 
     for candidate in range(scan_start, scan_end, 2):
         # Strict look-ahead during recovery (honor_terminator=False): a
@@ -470,18 +472,6 @@ def recover_sync(
             )
             is None
         ):
-            skipped = candidate - offset
-            logger.info(
-                "Sync recovered at offset 0x%X (skipped %d bytes from 0x%X)",
-                candidate,
-                skipped,
-                offset,
-            )
             return candidate
 
-    logger.error(
-        "Sync recovery failed — no valid record found within %d bytes of offset 0x%X",
-        max_scan,
-        offset,
-    )
     return None

@@ -369,6 +369,19 @@ class MieFileReader:
             self._handle_missing_first_record(mm, file_len, resolved_format)
             return None
 
+        # L2-SYN-012: report the header size at INFO. Emitted here rather than
+        # inside `find_first_record` so the sync helpers stay pure and both
+        # implementations narrate this from the reader (mirrors `iter()` in
+        # `rust/src/reader.rs`).
+        if start_offset > 0:
+            logger.info(
+                "File header detected: %d bytes before first record at 0x%X",
+                start_offset,
+                start_offset,
+            )
+        else:
+            logger.debug("First record at offset 0 (no header)")
+
         self._reject_homogeneous_payload(mm, start_offset)
         resolved_format = self._confirm_timestamp_format(mm, start_offset, resolved_format)
         return start_offset, resolved_format
@@ -729,6 +742,15 @@ class MieFileReader:
                 f"{validation_failure} (raw_type=0x{type_raw:04X})",
             )
 
+        # L2-SYN-013: sync loss at WARNING, successful recovery at INFO. Both
+        # are emitted here (not inside `recover_sync`) so the sync helpers stay
+        # pure, and carry the same detail as the Rust reader's equivalents.
+        logger.warning(
+            "Sync lost at 0x%X (type=0x%02X wc=%d); scanning forward",
+            offset,
+            tw.message_type,
+            tw.word_count,
+        )
         recovered = recover_sync(
             mm,
             offset,
@@ -736,6 +758,13 @@ class MieFileReader:
             ts_format=fmt,
             lookahead_records=self._lookahead_records,
         )
+        if recovered is not None:
+            logger.info(
+                "Sync recovered at 0x%X (skipped %d bytes from 0x%X)",
+                recovered,
+                recovered - offset,
+                offset,
+            )
         if recovered is None:
             # Distinguish truncation (file ended before the 64 KB scan window
             # exhausted) from genuine mid-file corruption.

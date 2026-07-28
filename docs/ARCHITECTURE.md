@@ -28,6 +28,8 @@ MIE-Decoder ships as a Rust crate (`rust/src/`) and a Python package (`python/sr
 | Logging | `rust/src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) |
 | Hex dump | `rust/src/dump.rs` | `python/src/mie_decoder/dump.py` |
 
+The sync helpers (`sync.rs` / `sync.py`) are **pure** in both implementations — no logging, no I/O. Everything an operator sees about header detection, sync loss, and recovery is emitted by the reader, which is what keeps the two implementations' log output aligned and stops a helper from narrating an outcome the caller has more context about.
+
 Per L1-CONF-001 the two implementations must remain aligned on shared format and CSV semantics. Per-implementation requirements (`L3-PY-*` / `L3-RS-*`) cover the technology-specific obligations (stdlib `csv` / tomllib for Python; memmap2 / streaming `BufWriter` for Rust). See [`L3-REQ.md`](L3-REQ.md) for the per-impl details.
 
 The `MUX` column value (L2-WRT-020) is resolved **once per input file** from its name when the reader is constructed (config → `ReaderOptions` / reader kwargs), and attached to every `MieMessage` the reader yields — Rust as a shared `Arc<str>` (a refcount-bump clone per record), Python as a shared `str` reference. The value therefore rides along through the filter and merge iterators unchanged (so a merged stream keeps each record's source-file MUX), and the writer emits it without any extra per-record allocation — preserving the O(1)-in-record-count streaming guarantee.
@@ -482,7 +484,7 @@ The level is set from the CLI `--log-level` flag or the config file's `logging.l
 | Level | What gets logged |
 |-------|-----------------|
 | DEBUG | Per-record decode trace, CLI parsed arguments, header-skip-zero (`first record at offset 0 (no header)`), record-class details |
-| INFO | File open, header detected with size (L2-SYN-012), timestamp format auto-detect, sync recoveries (L2-SYN-013), decode complete with counts, **exit-class summary** (L1-EXIT-005), CSV row counts, progress every 100k msgs |
+| INFO | File open, header detected with size (L2-SYN-012), timestamp format auto-detect, sync recoveries (L2-SYN-013), decode complete with counts, **exit-class summary** (L1-EXIT-005), CSV row counts, progress every 100k msgs, merge duplicate-collapse count (L2-MRG-007). Python additionally logs an active-filter summary and a passed/excluded tally; no requirement pins those, so the Rust filter adapter stays silent. |
 | WARN | Sync loss (L2-SYN-013), unknown error codes (lenient), freerun timestamps, structural invariant violations (lenient skip), L2-SYN anomalies (L2-SYN-024 status RT mismatch / L2-SYN-025 reserved bit set), non-monotonic timestamps (L2-RDR-017, once per RT/MSG), unclassifiable records (lenient), stdout-forces-inline-mode |
 | ERROR | No valid records found, homogeneous-payload rejection, unrecoverable sync loss, file/write failures, first-record truncated (strict) |
 

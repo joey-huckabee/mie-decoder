@@ -694,6 +694,38 @@ fn stdout_output_forces_inline_error_mode() {
     );
 }
 
+/// L2-SYN-012 had no Rust verification at all — the trace matrix listed only a
+/// Python test, and that test asserted against `find_first_record` rather than
+/// the reader that actually emits the line. The Rust reader has always logged
+/// it; this pins the behavior on this side too.
+/// Requirements: L2-SYN-012
+#[test]
+fn header_detection_logs_size_at_info() {
+    let tmp = TempDir::new();
+    let mut bytes = b"DDC-HEADER-1234\n".to_vec(); // 16-byte proprietary header
+    bytes.extend(one_valid_record());
+    bytes.extend(one_valid_record());
+    let input = tmp.write("headered.mie", &bytes);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("--log-level"),
+        std::ffi::OsStr::new("info"),
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("file header detected") && stderr.contains("16 bytes"),
+        "header detection must report the skipped byte count at INFO\
+         \n--- stderr ---\n{stderr}"
+    );
+}
+
 /// Requirements: L2-SYN-013
 #[test]
 fn debug_sync_failure_includes_bounded_validation_context() {

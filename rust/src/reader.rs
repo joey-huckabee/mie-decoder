@@ -25,8 +25,8 @@ use crate::decode::{
 use crate::error::{MieError, MieResult};
 use crate::models::{
     CommandWord, DataWords, ERROR_SPURIOUS_CONTINUATION, ERROR_SPURIOUS_STANDALONE, MessageFormat,
-    MessageType, MieMessage, Timestamp, TimestampFormat, TypeWord, ddc_error_description,
-    is_known_ddc_error_code, timestamp_word_count,
+    MessageType, MieMessage, Timestamp, TimestampFormat, TypeWord,
+    ddc_error_description_or_unknown, is_known_ddc_error_code, timestamp_word_count,
 };
 use crate::sync::{
     DEFAULT_LOOKAHEAD_RECORDS, MAX_SCAN_BYTES, ScanHit, ValidationFailure, find_first_record,
@@ -1189,7 +1189,7 @@ impl<'a> RecordIter<'a> {
             cmd.rt,
             cmd.subaddress,
             error_code,
-            ddc_error_description(error_code),
+            ddc_error_description_or_unknown(error_code),
             payload_words.max(0),
         );
 
