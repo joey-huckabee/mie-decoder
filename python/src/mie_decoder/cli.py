@@ -31,7 +31,6 @@ import argparse
 import logging
 import math
 import sys
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
@@ -898,28 +897,20 @@ def _write_messages(
         # same warning in `write_messages` (rust/src/cli.rs).
         logger.warning("stdout output forces inline error mode")
 
-    t0 = time.perf_counter()
     if error_mode == ErrorMode.SEPARATE and output is not None:
         outcome = write_csv_split(messages, output=output, opts=write_opts)
-        elapsed = time.perf_counter() - t0
         logger.info(
-            "Wrote %d messages + %d errors to %s in %.3fs",
+            "wrote %d messages + %d errors to %s",
             outcome.normal_count,
             outcome.error_count,
             output,
-            elapsed,
         )
     else:
-        # INLINE mode, or stdout (can't split stdout).
+        # INLINE mode, or stdout (can't split stdout). The writer already logs
+        # the row count and destination, so there is no second summary here —
+        # Rust logs exactly one line for this path and a duplicate on only one
+        # implementation is the kind of drift this file exists to avoid.
         outcome = write_csv(messages, output=output, opts=write_opts)
-        elapsed = time.perf_counter() - t0
-        dest = str(output) if output else "stdout"
-        logger.info(
-            "Wrote %d messages to %s in %.3fs",
-            outcome.normal_count,
-            dest,
-            elapsed,
-        )
     return outcome
 
 
@@ -973,7 +964,7 @@ def _classify_decode_error(exc: Exception) -> int:
         return EXIT_RUNTIME
 
     # Any remaining MieDecoderError (record errors, generic file errors).
-    logger.error("Decode failed: %s", exc)
+    logger.error("%s", exc)
     print(f"Error: {exc}", file=sys.stderr)
     return EXIT_RUNTIME
 
@@ -1192,9 +1183,7 @@ def _run_count(args: argparse.Namespace) -> int:
 
     messages = apply_filters(reader, config.filters)
     try:
-        t0 = time.perf_counter()
         count = sum(1 for _ in messages)
-        elapsed = time.perf_counter() - t0
     except (
         MieNoValidRecordsError,
         MieHomogeneousPayloadError,
@@ -1210,7 +1199,6 @@ def _run_count(args: argparse.Namespace) -> int:
         # (exit 1), matching the Rust count subcommand.
         return _report_error("Count failed", exc, EXIT_RUNTIME)
 
-    logger.info("Counted %d messages in %.3fs", count, elapsed)
     # L3-PY-010: integer count to stdout (the machine-readable datum),
     # human-friendly status with path context to stderr (always emitted,
     # not gated by --log-level so an interactive operator sees context).

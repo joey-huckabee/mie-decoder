@@ -163,47 +163,6 @@ ergonomics change with no effect on `config/default.toml` (which uses plain
 numbers); not scheduled, recorded here so the option isn't lost. Any change must
 keep the two parsers byte-for-byte aligned via the parity corpus.
 
-## Filter log-output parity (deferred)
-
-The two filter implementations produce identical **output** but different
-**stderr**. Python's `apply_filters` emits an INFO summary of the active
-`exclude_*` / `include_*` sets when filtering starts, a DEBUG line per dropped
-message, and an INFO `Filter results: N passed, M excluded` tally once the
-stream is exhausted. Rust's `Filtered` iterator adapter logs nothing at all.
-
-This is **not** a defect and was left alone deliberately:
-
-- No requirement pins it. `L2-FLT-001` / `L2-FLT-002` specify which messages are
-  omitted, not what is logged about them, and the logging levels in
-  `docs/ARCHITECTURE.md` §11 are derived from `L1-LOG-001`'s categories rather
-  than from a per-module obligation.
-- Neither implementation's messages are wrong or misleading — the Python lines
-  are informative and the Rust silence is not a missing diagnostic.
-- CSV output, exit codes, and the conformance oracle are unaffected.
-
-It is recorded here because cross-implementation alignment is a project
-principle, and an operator moving between the two CLIs sees a different stderr
-for the same invocation. The difference is documented in the §11 logging table
-so it reads as a known choice rather than an oversight.
-
-If it is ever scheduled, the two directions are not symmetric:
-
-- **Add the lines to Rust.** The active-filter summary is trivial (one INFO at
-  construction). The passed/excluded tally is not: the adapter is a lazy
-  iterator with no natural end-of-stream hook, so it would need counters plus
-  somewhere to report them — most likely the CLI reading them after the writer
-  drains the stream, the way `--collapse-duplicates` already surfaces its
-  suppressed-row count through an `Arc<AtomicU64>`.
-- **Drop them from Python.** Simpler, and it would make the filter module pure
-  the way the sync modules now are — but it removes a diagnostic operators may
-  rely on.
-
-Worth knowing either way: Python's tally only prints when the stream is fully
-consumed. A downstream consumer that closes early (`… | head`, L2-WRT-018)
-abandons the generator before the final `logger.info`, so the line silently does
-not appear — which argues for the CLI-side counter approach over an
-end-of-generator log if the two are ever aligned.
-
 ## Shared Commitments
 
 - **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.

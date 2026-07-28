@@ -11,7 +11,10 @@ use core::fmt;
 // ── Enums ─────────────────────────────────────────────────────────────
 
 /// MIL-STD-1553 redundant bus identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// `Ord` is derived (A < B, by discriminant) so filter-set diagnostics can
+/// render a stable, sorted list — see `filter::log_active_filters`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Bus {
     A = 0,

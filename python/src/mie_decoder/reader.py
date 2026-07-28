@@ -458,7 +458,11 @@ class MieFileReader:
         # to exit 2 (and so library callers can react)
         # rather than silently yielding zero messages.
         scan_bytes = min(file_len, MAX_SCAN_BYTES)
-        logger.error("No valid records found in %s", self._path.name)
+        logger.error(
+            "No valid records found in first %d bytes of %s",
+            scan_bytes,
+            self._path.name,
+        )
         raise MieNoValidRecordsError(str(self._path), scan_bytes)
 
     def _reject_homogeneous_payload(self, mm: mmap.mmap, start_offset: int) -> None:

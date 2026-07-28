@@ -580,7 +580,7 @@ def _write_csv_to_file(
         count = writer.rows_written
         if partial_info is None:
             atomic.commit()
-            logger.info("Wrote %d rows to %s", count, dest)
+            logger.info("wrote %d rows to %s", count, dest)
             return WriteOutcome(normal_count=count, error_count=0, partial=None)
 
         partial_path = atomic.commit_partial()
@@ -630,7 +630,7 @@ def _write_csv_to_stream(
         # Rows decoded so far are already in the stream; nothing to roll back.
         logger.debug("Unrecoverable sync loss on stream output (--allow-partial)")
 
-    logger.info("Wrote %d rows to %s", writer.rows_written, dest_name)
+    logger.info("wrote %d rows to %s", writer.rows_written, dest_name)
     return WriteOutcome(normal_count=writer.rows_written, error_count=0, partial=None)
 
 
@@ -737,12 +737,12 @@ def _commit_split_outputs(
     ``--allow-partial`` path (rename each temp to its ``.partial``)."""
     if partial_info is None:
         main_atomic.commit()
-        logger.info("Wrote %d normal messages to %s", normal_count, output_path)
+        logger.info("wrote %d normal rows to %s", normal_count, output_path)
         if errors_atomic is not None:
             errors_atomic.commit()
-            logger.info("Wrote %d error/spurious messages to %s", error_count, error_path)
+            logger.info("wrote %d error/spurious rows to %s", error_count, error_path)
         else:
-            logger.info("No error/spurious messages — error file not created")
+            logger.info("no error/spurious records — error file not created")
         return WriteOutcome(normal_count=normal_count, error_count=error_count, partial=None)
 
     # Partial path: commit each file as .partial (errors first, then main,

@@ -1184,10 +1184,11 @@ impl<'a> RecordIter<'a> {
             .unwrap_or(MessageFormat::Receive);
 
         log_info!(
-            "error record at 0x{:X}: RT{} SA{} code=0x{:04X} ({}), {} payload words",
+            "error record at 0x{:X}: RT{} SA{} {:?}, code=0x{:04X} ({}), {} payload words",
             self.offset,
             cmd.rt,
             cmd.subaddress,
+            cmd.direction,
             error_code,
             ddc_error_description_or_unknown(error_code),
             payload_words.max(0),

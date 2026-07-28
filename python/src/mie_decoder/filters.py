@@ -88,6 +88,21 @@ def _rt_and_subaddress(msg: MieMessage) -> tuple[int | None, int | None]:
     return cw.rt, cw.subaddress
 
 
+def _show_filter_set(values: object) -> str:
+    """Render a filter set as a sorted ``[a, b]`` list, or ``none`` when empty.
+
+    Sorted because these are Python ``set``s, whose iteration order is not
+    guaranteed — an unsorted render makes the log line unstable between runs.
+    Buses print as their names (``A`` / ``B``) rather than ``<Bus.A: 0>``, so
+    the line matches the Rust `log_active_filters` output exactly.
+    """
+    items = list(values) if values else []  # type: ignore[call-overload]
+    if not items:
+        return "none"
+    rendered = sorted(getattr(v, "name", None) or str(v) for v in items)
+    return "[" + ", ".join(rendered) + "]"
+
+
 def _log_active_filters(filters: FilterConfig) -> None:
     """Emit the one-time INFO summary of the active exclude/include sets."""
     logger.info(
@@ -95,14 +110,14 @@ def _log_active_filters(filters: FilterConfig) -> None:
         "exclude_buses=%s exclude_subaddresses=%s "
         "include_types=%s include_rts=%s "
         "include_buses=%s include_subaddresses=%s",
-        filters.exclude_types or "none",
-        filters.exclude_rts or "none",
-        filters.exclude_buses or "none",
-        filters.exclude_subaddresses or "none",
-        filters.include_types or "none",
-        filters.include_rts or "none",
-        filters.include_buses or "none",
-        filters.include_subaddresses or "none",
+        _show_filter_set(filters.exclude_types),
+        _show_filter_set(filters.exclude_rts),
+        _show_filter_set(filters.exclude_buses),
+        _show_filter_set(filters.exclude_subaddresses),
+        _show_filter_set(filters.include_types),
+        _show_filter_set(filters.include_rts),
+        _show_filter_set(filters.include_buses),
+        _show_filter_set(filters.include_subaddresses),
     )
 
 

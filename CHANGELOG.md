@@ -15,6 +15,8 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.8.0] — 2026-07-28
+
 ### Changed — BREAKING
 
 - **Errored and SPURIOUS records now go inline in the main CSV by default, and
@@ -53,6 +55,28 @@ full release workflow.
   warned; that was near-harmless while separate was the default (Rust warned on
   every stdout decode) but now the flag is an explicit request the writer cannot
   honour, so silence would hide it.
+
+### Changed
+
+- **The two implementations' operator-facing log output is now aligned.** A
+  scenario-by-scenario diff of both CLIs' stderr (clean decode, header skip,
+  inline and separate errors, sync recovery, empty recording, wrong file,
+  exclude and include filters, `count`, strict failure) showed a difference in
+  every one; all are now resolved:
+  - Rust gained the filter diagnostics Python already had — an INFO summary of
+    the active sets, a DEBUG line per dropped record, and an INFO
+    passed/excluded tally. The tally is emitted from `Drop`, so unlike a
+    generator's end-of-stream hook it still appears when a consumer stops early
+    (`| head`); Python's now runs from a `finally` for the same reason.
+  - Both render filter sets **sorted** (`exclude_rts=[0, 15, 31]`). Python holds
+    these as `set`s, whose iteration order is not guaranteed, so the line was
+    previously unstable between runs as well as different from Rust.
+  - Rust's error-record line now names the transfer direction, and Python's
+    "no valid records" error now names the scan window in bytes — each side was
+    missing a detail the other reported.
+  - Python no longer logs a second write summary duplicating the writer's own,
+    and the split-mode wording matches on both.
+- `Bus` derives `Ord` so filter diagnostics can sort it (additive; no API break).
 
 Findings from a no-change audit of both implementations and the full document
 set. Four behavioral defects — one of them silent data loss — plus a sweep of
@@ -1779,7 +1803,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.7.1...v2.8.0
 [2.7.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.2...v2.7.0
 [2.6.2]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.1...v2.6.2

@@ -766,6 +766,46 @@ fn stdout_output_forces_inline_error_mode() {
 /// Python test, and that test asserted against `find_first_record` rather than
 /// the reader that actually emits the line. The Rust reader has always logged
 /// it; this pins the behavior on this side too.
+/// Filter diagnostics match the Python implementation: an INFO summary of the
+/// active sets on construction and an INFO passed/excluded tally when the
+/// stream finishes. The sets render sorted so the line is stable regardless of
+/// the order values were parsed in (Python holds them as unordered sets).
+/// Requirements: L2-FLT-001
+#[test]
+fn active_filters_and_tally_are_logged_at_info() {
+    let tmp = TempDir::new();
+    let mut bytes = one_valid_record();
+    bytes.extend(one_valid_record());
+    let input = tmp.write("rec.mie", &bytes);
+    let output = tmp.path().join("out.csv");
+
+    let out = run([
+        std::ffi::OsStr::new("--log-level"),
+        std::ffi::OsStr::new("info"),
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        output.as_os_str(),
+        std::ffi::OsStr::new("--exclude-rts"),
+        std::ffi::OsStr::new("31,15,0"),
+    ]);
+    assert_eq!(exit_code(&out), 0);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Filtering active:") && stderr.contains("exclude_rts=[0, 15, 31]"),
+        "expected a sorted active-filter summary
+--- stderr ---
+{stderr}"
+    );
+    assert!(
+        stderr.contains("Filter results: 0 passed, 2 excluded"),
+        "expected the passed/excluded tally
+--- stderr ---
+{stderr}"
+    );
+}
+
 /// Requirements: L2-SYN-012
 #[test]
 fn header_detection_logs_size_at_info() {
