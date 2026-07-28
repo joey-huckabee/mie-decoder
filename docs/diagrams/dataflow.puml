@@ -1,7 +1,7 @@
 @startuml MIE-Decoder Data Flow
 !theme plain
 scale max 4000*4000
-title MIE-Decoder v2.0 - Data Flow (Rust + Python)
+title MIE-Decoder - Data Flow (Rust + Python)
 
 ' ============================================================================
 '  This diagram describes the behavior shared by both implementations.

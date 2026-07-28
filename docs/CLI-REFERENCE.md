@@ -7,9 +7,12 @@ Complete reference for every command-line flag the decoder accepts. Use this whe
 - You're mapping a CLI flag to its `mie-decoder.toml` equivalent (or vice-versa).
 
 The **Rust and Python builds expose an identical flag surface** — every flag below
-works the same in both. The CLI's own `--help` (`mie-decoder <subcommand> --help`)
-is generated from the same definitions and is always current; this document is the
-prose companion that explains what each flag *does*.
+works the same in both. That parity is enforced, not merely intended: the
+`cli-surface-parity` check in `tests/conformance/run.py` diffs the long-option set
+across both CLIs' top-level and per-subcommand `--help` output and fails CI on any
+divergence. The two helps are *not* generated from a shared definition, though —
+Python's comes from `argparse`, Rust's is a hand-maintained help string — so treat
+this document as the reference and `--help` as the quick reminder.
 
 For the TOML config keys these flags override, see
 [`docs/CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md). For exit codes and error

@@ -122,6 +122,17 @@ documentation that had drifted from the code.
   from the auto-detection table.
 - `sync.py`'s module docstring documented a 4096-byte header scan (it is 64 KB)
   and listed only three of the five IRIG range checks.
+- The PlantUML diagram titles were stamped `MIE-Decoder v2.0` while the project
+  is at 2.7.1. The stamp is dropped rather than bumped — a title version is
+  exactly the drift-prone number this repo omits elsewhere. The `(v2.0)` labels
+  *inside* the diagrams are provenance ("new in v2.0", confirmed by the 2.0.0
+  release notes) and are left as history.
+- README and `CLI-REFERENCE.md` claimed each CLI's `--help` "is generated from
+  the same definitions". It is not: Python's help comes from `argparse`, Rust's
+  is a hand-maintained string. The parity is real but comes from the
+  `cli-surface-parity` conformance check, which diffs the long-option set across
+  both CLIs and fails CI on divergence — including a flag the Rust parser still
+  accepts after its help stopped listing it. Both docs now say that.
 - Repairs a scrambled rustdoc comment block in `cli.rs` (two functions' docs had
   been interleaved), a stale "exit 2" comment on a path that exits 4, and drops
   a dead `Ok(None)` branch. Removes a vacuous `us_hi < 16` term from the

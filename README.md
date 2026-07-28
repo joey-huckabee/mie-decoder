@@ -54,9 +54,13 @@ mie-decoder --config config/default.toml decode recording.mie -o decoded.csv
 `dump` — with an identical flag surface in the Rust and Python builds. The
 **complete per-flag reference** (every option, with its default, value range, and
 config-key equivalent) lives in
-**[`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md)**. The CLI's own
-`mie-decoder <subcommand> --help` is generated from the same definitions and is
-always current.
+**[`docs/CLI-REFERENCE.md`](docs/CLI-REFERENCE.md)**. Each CLI's own
+`mie-decoder <subcommand> --help` lists the same flags, but they are not one
+generated source: Python's help is produced by `argparse` from its argument
+definitions, while Rust's is a hand-maintained help string. The
+`cli-surface-parity` check in `tests/conformance/run.py` fails CI if the two ever
+advertise a different set of long options — including a flag the Rust parser
+still accepts but its help stopped listing.
 
 Config-file keys are documented in
 [`docs/CONFIG-REFERENCE.md`](docs/CONFIG-REFERENCE.md); task-oriented
