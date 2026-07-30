@@ -129,6 +129,14 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 
 **Verification Method**: Test (T)
 
+### L1-OUT-003
+
+**Statement**: Each implementation SHALL emit CSV data rows in a canonical order: ascending `TIME_STAMP`, then ascending `RT`, then `MSG` ordered by ascending subaddress and, within one subaddress, receive (`R`) before transmit (`T`). The order SHALL be stable — records whose full sort key is equal SHALL retain their relative input order. Records that carry no Command Word (`SPURIOUS_DATA`, for which `RT` and `MSG` are empty) SHALL retain their position immediately following the record they followed on input. Reordering SHALL be confined to runs of **consecutive** records bearing an identical `TIME_STAMP`; records with differing timestamps SHALL NOT be reordered relative to one another. Resident memory SHALL remain bounded by a documented, configurable cap on the length of one such run.
+
+**Rationale**: Before this requirement, equal-timestamp rows were emitted in an order with no data meaning: a single-file decode used raw DDC capture order, and a multi-file merge broke ties on the input's position in the resolved file list, so listing the same recordings in a different order produced a differently-ordered CSV. Analysts read a decoded recording by remote terminal and message, so ordering ties by the `RT` and `MSG` columns makes equal-timestamp traffic comparable between runs, between input orderings, and between the two implementations. Sorting by exactly the columns the reader sees (rather than by an internal key) keeps the rule verifiable from the CSV alone. Confining the permutation to runs of consecutive equal timestamps is what preserves the streaming constant-memory guarantee and leaves a non-monotonic input untouched (see L2-MRG-006, which forbids re-sorting a whole input); the cap bounds the one unbounded case, a corrupt file whose timestamps all decode to the same value. Pinning Command-Word-less records preserves the adjacency that the `0x2000` "continuation of a preceding error" code (L1-ERR-001, L2-ERR-005) is defined in terms of — a sort that separated a spurious record from its parent error would leave that code describing nothing.
+
+**Verification Method**: Test (T)
+
 ---
 
 ## L1-DLT: DELTA inter-arrival tracking

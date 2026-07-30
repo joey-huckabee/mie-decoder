@@ -21,6 +21,7 @@ mie-decoder/
 │   │   ├── error.rs         single MieError enum + MieErrorKind discriminant
 │   │   ├── writer.rs        streaming CSV writer with atomic temp + rename
 │   │   ├── filter.rs        message exclusion / inclusion filtering
+│   │   ├── order.rs         canonical row order (equal-TIME_STAMP ties)
 │   │   ├── config.rs        hand-rolled TOML loader for the L2-CFG schema
 │   │   ├── cli.rs           hand-rolled argparse + run() entry
 │   │   ├── dump.rs          raw + record-aware hex dump
@@ -125,7 +126,7 @@ poetry -C python run ruff check                  # ruff lint (CI-gated)
 poetry -C python run ruff format                 # auto-format (CI runs `ruff format --check`)
 poetry -C python run vulture                     # dead-code scan (CI-gated)
 poetry -C python run bandit -r src/mie_decoder   # security scan / SAST (CI-gated)
-poetry -C python run pytest --cov               # coverage gate (fail_under=88 in pyproject.toml)
+poetry -C python run pytest --cov               # coverage gate (fail_under=92 in pyproject.toml)
 poetry -C python run python ../tests/conformance/run.py
 
 # Filter pytest by requirement marker
@@ -446,7 +447,7 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 
 | Job | What it gates | Platforms | Failure cost |
 |-----|---------------|-----------|--------------|
-| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `rust/tests/integration.rs` + `rust/tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (84% line / 83% region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
+| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `rust/tests/integration.rs` + `rust/tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (87% line / 86% region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
 | `rust-doc` | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` — fails on broken intra-doc links and other rustdoc lints in the doc-heavy crate | `ubuntu-latest` | Block merge |
 | `rust-msrv` | `cargo check --all-targets` on the pinned **1.88** toolchain — enforces the declared `rust-version` (the main `rust` job builds on stable) | `ubuntu-latest` | Block merge |
 | `cargo-deny` | `cargo deny check` — RustSec advisories, license allow-list, bans (duplicates/wildcards), and crates.io-only sources (config in `rust/deny.toml`) | `ubuntu-latest` | Block merge |
@@ -457,7 +458,7 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 | `ruff` | `poetry run ruff check` + `poetry run ruff format --check` — fast lint + formatter check over the package **and tests** (config in `python/pyproject.toml` `[tool.ruff]`); run `ruff format` to fix | `ubuntu-latest` (3.12) | Block merge |
 | `vulture` | `poetry run vulture` — dead-code scan over the package **and tests**; scan paths + intentional-name ignores (interface args, documented constants) in `python/pyproject.toml` `[tool.vulture]` | `ubuntu-latest` (3.12) | Block merge |
 | `bandit` | `poetry run bandit -r src/mie_decoder` — Python security static analysis (SAST) over the package source; fails on any finding at the default severity/confidence | `ubuntu-latest` (3.12) | Block merge |
-| `python-coverage` | `poetry run pytest --cov` — 88% combined line+branch floor (`fail_under` in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
+| `python-coverage` | `poetry run pytest --cov` — 92% combined line+branch floor (`fail_under` in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
 | `diagrams` | Re-render every `docs/diagrams/*.puml` with the pinned PlantUML version and `git diff --exit-code` against the committed `*.svg` — fails if a `.puml` source was changed without regenerating the matching `.svg` | `ubuntu-latest` | Block merge |
@@ -478,7 +479,7 @@ Both implementations are gated. Rust uses `cargo-llvm-cov`; Python uses `pytest-
 
 ### Rust
 
-The CI gate is `cargo cov-ci` (alias defined in `rust/.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 84 line / 83 region). After the gate passes, CI runs `cargo cov-lcov` and uploads `lcov.info` as the `rust-lcov` artifact.
+The CI gate is `cargo cov-ci` (alias defined in `rust/.cargo/config.toml`) which fails if line OR region coverage falls below the floors (currently 87 line / 86 region). After the gate passes, CI runs `cargo cov-lcov` and uploads `lcov.info` as the `rust-lcov` artifact.
 
 ```bash
 cd rust
@@ -489,7 +490,7 @@ cargo cov-lcov       # lcov.info for IDE coverage overlays
 
 ### Python
 
-The CI gate runs `poetry -C python run pytest --cov --cov-report=term-missing`. Configuration lives in `python/pyproject.toml` under `[tool.coverage.run]` (source set, branch tracking, exclusions) and `[tool.coverage.report]`. The floor is `fail_under = 88` (combined line+branch) in `[tool.coverage.report]` — the single source of truth, so a bare `pytest --cov` enforces it without a CLI flag. `__main__.py` is excluded because it's the `python -m mie_decoder` entry shim (parallel to Rust's `bin/mie-decoder.rs` exclusion).
+The CI gate runs `poetry -C python run pytest --cov --cov-report=term-missing`. Configuration lives in `python/pyproject.toml` under `[tool.coverage.run]` (source set, branch tracking, exclusions) and `[tool.coverage.report]`. The floor is `fail_under = 92` (combined line+branch) in `[tool.coverage.report]` — the single source of truth, so a bare `pytest --cov` enforces it without a CLI flag. `__main__.py` is excluded because it's the `python -m mie_decoder` entry shim (parallel to Rust's `bin/mie-decoder.rs` exclusion).
 
 ```bash
 # What CI runs (use this before pushing)

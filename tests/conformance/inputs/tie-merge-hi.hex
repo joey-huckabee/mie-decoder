@@ -1,0 +1,11 @@
+# L1-OUT-003 merge tie, input #0: the HIGHER RT, listed FIRST. Pairs with
+# tie-merge-lo.hex. Both records share one TIME_STAMP, so the heap's
+# (microseconds, file_index, sequence) key would order this file's row first;
+# canonical RT order must put tie-merge-lo's RT 4 ahead of it instead.
+
+# RT20 SA5 Receive - listed first, sorts second
+0224 0F18 20DB BC02 BEA0 0004 0000 0000
+2F00 22CA 2F00 22CA 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 71C7 00A0

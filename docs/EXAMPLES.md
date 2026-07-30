@@ -415,7 +415,10 @@ You want to validate that MIE-Decoder reproduces vendor output for a known-good 
 
 ```bash
 # 1. Generate both CSVs from the same input file.
-mie-decoder decode flight.mie -o mie.csv
+#    --no-mux leaves the MUX column empty like the vendor's other placeholders;
+#    --max-sort-group 1 disables canonical row ordering so rows stay in the
+#    vendor's capture order. Both are needed for a byte-for-byte diff.
+mie-decoder decode flight.mie -o mie.csv --no-mux --max-sort-group 1
 # Vendor tool produces flight-vendor.csv via whatever process you normally use.
 
 # 2. Normalize line endings if your platforms differ.
@@ -435,6 +438,9 @@ If you see differences:
 - **Day-of-year on IRIG `TIME_STAMP`** — known firmware-dependent discrepancy on some DDC card models. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §5.
 - **`MUX` column differs** — by default we populate `MUX` from the input file name (L2-WRT-020); pass `--no-mux` for vendor-exact (empty) output. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3.
 - **Empty `TERM_NAME` / `IM_GAP` / `RCV_GAP` / `XMT_GAP` on our side, populated on vendor** — expected; we leave these empty by spec. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3.
+- **Same rows, different order within one `TIME_STAMP`** — canonical row order (L1-OUT-003); we sort ties by
+  `RT` then `MSG`, the vendor writes capture order. `--max-sort-group 1` (step 1) suppresses it. See
+  [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3a.
 - **Anything else** — bug. Report per [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §7.
 
 ---

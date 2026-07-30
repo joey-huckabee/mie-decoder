@@ -49,6 +49,7 @@ _KEYS = [
     "detect_records",
     "standard_tick_rate_hz",
     "no_clobber",
+    "max_sort_group",
     "enabled",
     "delimiter",
     "field",

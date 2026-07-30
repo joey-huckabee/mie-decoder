@@ -43,6 +43,10 @@ below calls out where the two differ.
 | Merge inputs that can't share a clock | [§8](#8-multi-file-merge-scenarios) | Rejected, exit 6 |
 | A bad / empty / unreadable file inside a merge | [§8](#8-multi-file-merge-scenarios) | Aborts — unless `--allow-partial`, then `.partial`, exit 0 |
 | The same event recorded by two recorders | [§8](#8-multi-file-merge-scenarios) | Optional `--collapse-duplicates` |
+| Two or more messages sharing one `TIME_STAMP` | [§9 Output modes](#row-order-l1-out-003) | Ordered by `RT`, then `MSG` (`R` before `T`) |
+| A spurious continuation sharing its parent's timestamp | [§9](#row-order-l1-out-003) | Stays pinned right after its error row |
+| A corrupt file whose timestamps all decode alike | [§9](#row-order-l1-out-003) | Run cap hit: arrival order + one WARN, no rows lost, exit 0 |
+| A need for byte-exact vendor row order | [§9](#row-order-l1-out-003) | `--max-sort-group 1 --no-mux` |
 | A choice of output layout | [§9 Output modes](#9-output-mode-scenarios) | Separate errors file (default), inline, or stdout |
 | Records you want to keep or drop | [§10 Filters & MUX](#10-filter--mux-scenarios) | `--include-*` / `--exclude-*` |
 | Any exit code, explained | [§11 Exit codes](#11-exit-code-quick-reference) | 0–6 reference |
@@ -298,6 +302,25 @@ over-collapses. See [`USER-GUIDE.md`](USER-GUIDE.md) for worked examples.
 Output is written atomically (via a temp file renamed into place), so a failed
 run never leaves a half-written CSV. `--no-clobber` refuses to overwrite an
 existing output (exit 1).
+
+### Row order (`L1-OUT-003`)
+
+Whatever mode you pick, rows come out in one canonical order: **`TIME_STAMP`
+ascending, then `RT` ascending, then `MSG`** — subaddress ascending, and `R`
+before `T` at the same subaddress. Subaddress ordering is numeric, so `2R`
+precedes `11R`.
+
+| Situation | What the tool does |
+|---|---|
+| Two messages at the same `TIME_STAMP` | Ordered by `RT`, then subaddress, then `R` before `T`. Same result in both implementations and regardless of how the input was named or listed. |
+| Two messages at *different* timestamps | Never reordered. Only records sharing a timestamp are permuted, so a recorder whose own clock stepped backward keeps that anomaly visible where it happened (see §8). |
+| A `SPURIOUS_DATA` row (no `RT`/`MSG`) | Excluded from the sort and kept immediately after the record it followed — which is what makes `ERROR_CODE = 0x2000` ("continues the preceding error") meaningful. See §6. |
+| Two messages identical on timestamp, `RT`, *and* `MSG` | Input order is preserved (the sort is stable). Across a merge, that means the first-listed file's row wins — or use `--collapse-duplicates` to emit one row (§8). |
+| A corrupt recording whose timestamps all decode to one value | The `max_sort_group` cap (default 4096) is reached; that run is written in **arrival order** with one WARN, decoding continues, **no rows are dropped**, exit 0. |
+| You need byte-exact vendor row order | `--max-sort-group 1` disables reordering entirely (raw capture order). Pair with `--no-mux`; see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3a. |
+
+The `dump` subcommand is deliberately exempt — it reports raw file layout, so it
+always shows records in the order they physically appear on disk.
 
 ---
 

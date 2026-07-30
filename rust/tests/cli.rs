@@ -1009,3 +1009,308 @@ fn detect_records_flag_rejects_out_of_range() {
         "stderr should name the offending flag and value (got: {stderr:?})"
     );
 }
+
+// ── L1-OUT-003 / L2-WRT-021 / L2-WRT-022: canonical row order via the CLI ───
+
+/// A valid receive record (Type 0x02, RT/SA patched) placed at `micro` within a
+/// fixed day 192 15:54:50, so several records can share one TIME_STAMP. Keeps
+/// the fixture's 30-data-word count so the record layout is untouched.
+fn record_at(rt: u8, sa: u8, micro: u32) -> Vec<u8> {
+    let mut rec = one_valid_record();
+    let upper: u16 = ((192u16 & 0x1FF) << 5) | 15;
+    let middle: u16 = (54u16 << 10) | (50u16 << 4) | ((micro >> 16) as u16 & 0xF);
+    let lower: u16 = (micro & 0xFFFF) as u16;
+    rec[2..4].copy_from_slice(&upper.to_le_bytes());
+    rec[4..6].copy_from_slice(&middle.to_le_bytes());
+    rec[6..8].copy_from_slice(&lower.to_le_bytes());
+    let cmd: u16 = (u16::from(rt & 0x1F) << 11) | (u16::from(sa & 0x1F) << 5) | 30;
+    rec[8..10].copy_from_slice(&cmd.to_le_bytes());
+    rec
+}
+
+/// `(RT, MSG)` columns of each data row of a decoded CSV.
+fn csv_rt_msg(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let c: Vec<&str> = l.split(',').collect();
+            (c[1].to_string(), c[2].to_string())
+        })
+        .collect()
+}
+
+/// Requirements: L1-OUT-003, L2-WRT-021
+#[test]
+fn decode_writes_rows_in_canonical_order() {
+    let d = TempDir::new();
+    // Three records at one instant, RTs deliberately descending on input.
+    let bytes = [
+        record_at(21, 3, 500),
+        record_at(15, 7, 500),
+        record_at(3, 11, 500),
+    ]
+    .concat();
+    let input = d.write("in.mie", &bytes);
+    let out = d.path().join("out.csv");
+    let o = run([
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        csv_rt_msg(&text),
+        vec![
+            ("3".to_string(), "11R".to_string()),
+            ("15".to_string(), "7R".to_string()),
+            ("21".to_string(), "3R".to_string()),
+        ],
+        "decode must write equal-timestamp rows in ascending RT order"
+    );
+}
+
+/// `--max-sort-group 1` is the documented escape hatch back to raw DDC capture
+/// order for a vendor-CSV diff.
+///
+/// Requirements: L2-WRT-022, L3-WRT-003
+#[test]
+fn max_sort_group_one_restores_capture_order() {
+    let d = TempDir::new();
+    let bytes = [record_at(21, 3, 500), record_at(3, 11, 500)].concat();
+    let input = d.write("in.mie", &bytes);
+    let out = d.path().join("out.csv");
+    let o = run([
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--max-sort-group",
+        "1",
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        csv_rt_msg(&text),
+        vec![
+            ("21".to_string(), "3R".to_string()),
+            ("3".to_string(), "11R".to_string()),
+        ],
+        "--max-sort-group 1 must leave capture order untouched"
+    );
+}
+
+/// The `--flag=value` spelling is accepted, like every other valued flag.
+///
+/// Requirements: L3-WRT-003
+#[test]
+fn max_sort_group_accepts_equals_spelling() {
+    let d = TempDir::new();
+    let bytes = [record_at(21, 3, 500), record_at(3, 11, 500)].concat();
+    let input = d.write("in.mie", &bytes);
+    let out = d.path().join("out.csv");
+    let o = run([
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--max-sort-group=1",
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(csv_rt_msg(&text).len(), 2);
+}
+
+/// Out-of-range and non-integer values are usage errors (exit 4), matching
+/// `--detect-records`.
+///
+/// Requirements: L2-WRT-022, L3-WRT-003
+#[test]
+fn max_sort_group_rejects_invalid_values() {
+    let d = TempDir::new();
+    let input = d.write("in.mie", &one_valid_record());
+    for bad in ["0", "1048577", "abc", "-1"] {
+        let out = d.path().join(format!("out-{bad}.csv"));
+        let o = run([
+            "decode",
+            input.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--max-sort-group",
+            bad,
+        ]);
+        assert_eq!(
+            exit_code(&o),
+            4,
+            "--max-sort-group {bad} must be a usage error"
+        );
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(
+            stderr.contains("max-sort-group"),
+            "error text must name the flag, got: {stderr}"
+        );
+    }
+}
+
+/// The `[output] max_sort_group` TOML key drives the same behavior, and a CLI
+/// flag overrides it (CLI > config > default).
+///
+/// Requirements: L2-WRT-022, L3-WRT-003, L1-CFG-001
+#[test]
+fn max_sort_group_config_key_and_cli_precedence() {
+    let d = TempDir::new();
+    let bytes = [record_at(21, 3, 500), record_at(3, 11, 500)].concat();
+    let input = d.write("in.mie", &bytes);
+    let cfg = d.write("cfg.toml", b"[output]\nmax_sort_group = 1\n");
+
+    // Config alone: reordering disabled, so capture order survives.
+    let out1 = d.path().join("out1.csv");
+    let o1 = run([
+        "--config",
+        cfg.to_str().unwrap(),
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out1.to_str().unwrap(),
+    ]);
+    assert_eq!(exit_code(&o1), 0);
+    assert_eq!(
+        csv_rt_msg(&std::fs::read_to_string(&out1).unwrap())[0].0,
+        "21",
+        "config max_sort_group = 1 must disable reordering"
+    );
+
+    // CLI overrides the config back to a real cap, restoring canonical order.
+    let out2 = d.path().join("out2.csv");
+    let o2 = run([
+        "--config",
+        cfg.to_str().unwrap(),
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out2.to_str().unwrap(),
+        "--max-sort-group",
+        "4096",
+    ]);
+    assert_eq!(exit_code(&o2), 0);
+    assert_eq!(
+        csv_rt_msg(&std::fs::read_to_string(&out2).unwrap())[0].0,
+        "3",
+        "--max-sort-group must override the config value"
+    );
+}
+
+/// An out-of-range value in TOML is a config error, not a silent clamp.
+///
+/// Requirements: L2-WRT-022, L3-WRT-003
+#[test]
+fn max_sort_group_toml_out_of_range_is_a_config_error() {
+    let d = TempDir::new();
+    let input = d.write("in.mie", &one_valid_record());
+    let cfg = d.write("cfg.toml", b"[output]\nmax_sort_group = 0\n");
+    let out = d.path().join("out.csv");
+    let o = run([
+        "--config",
+        cfg.to_str().unwrap(),
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert_ne!(exit_code(&o), 0, "an invalid config value must not succeed");
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("max_sort_group"),
+        "error text must name the key, got: {stderr}"
+    );
+}
+
+/// A capped run degrades to arrival order with one WARN, rather than failing or
+/// dropping rows.
+///
+/// Requirements: L2-WRT-022
+#[test]
+fn capped_run_warns_and_keeps_every_row() {
+    let d = TempDir::new();
+    // Four records at one instant with a cap of 2.
+    let bytes = [
+        record_at(21, 3, 500),
+        record_at(15, 3, 500),
+        record_at(9, 3, 500),
+        record_at(3, 3, 500),
+    ]
+    .concat();
+    let input = d.write("in.mie", &bytes);
+    let out = d.path().join("out.csv");
+    let o = run([
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--max-sort-group",
+        "2",
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        csv_rt_msg(&text).len(),
+        4,
+        "no row may be dropped at the cap"
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("max_sort_group"),
+        "a capped run must WARN naming the cap, got: {stderr}"
+    );
+}
+
+/// In separate error mode each output file is independently in canonical order.
+///
+/// Requirements: L1-OUT-003, L2-WRT-021
+#[test]
+fn canonical_order_holds_in_both_separate_mode_files() {
+    let d = TempDir::new();
+    // Clean rows out of order, plus an errored row, all at one instant.
+    let bytes = [
+        record_at(21, 3, 500),
+        record_at(3, 11, 500),
+        errored_record(),
+    ]
+    .concat();
+    let input = d.write("in.mie", &bytes);
+    let out = d.path().join("out.csv");
+    let o = run([
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--separate-errors",
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    let main = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(
+        csv_rt_msg(&main),
+        vec![
+            ("3".to_string(), "11R".to_string()),
+            ("21".to_string(), "3R".to_string()),
+        ],
+        "the main CSV must be in canonical order"
+    );
+}
+
+/// `--help` advertises the flag, which is what the conformance suite's
+/// `check_cli_surface` gate reads to compare the two CLIs' flag sets.
+///
+/// Requirements: L3-WRT-003
+#[test]
+fn decode_help_advertises_max_sort_group() {
+    let out = run(["decode", "--help"]);
+    assert_eq!(exit_code(&out), 0);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("--max-sort-group"),
+        "decode --help must advertise --max-sort-group\n{stdout}"
+    );
+}

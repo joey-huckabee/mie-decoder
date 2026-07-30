@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from mie_decoder.models import Bus, Direction, MessageFormat, TimestampFormat
+from mie_decoder.order import order_rows
 from mie_decoder.reader import MieFileReader
 from mie_decoder.writer import CSV_HEADER, write_csv
 
@@ -1567,7 +1568,14 @@ class TestFuzzHarness:
 
                 try:
                     yielded = 0
-                    for _ in reader:
+                    # The canonical-order stage (L2-WRT-021) is on the fuzzed
+                    # path deliberately: random bytes readily decode to repeated
+                    # or all-zero timestamps, which is exactly the
+                    # equal-timestamp run its max_sort_group cap (L2-WRT-022)
+                    # exists to bound. A small cap is used so the cap-overflow
+                    # branch is reached often rather than only on a pathological
+                    # input. Mirrors the Rust harness in rust/tests/integration.rs.
+                    for _ in order_rows(reader, 8):
                         yielded += 1
                         if yielded > 100_000:
                             raise AssertionError(

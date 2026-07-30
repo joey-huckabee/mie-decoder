@@ -1,0 +1,18 @@
+# L1-OUT-003 / L2-ERR-005 pinning: an errored RT15 record, its SPURIOUS_DATA
+# continuation (decoder code 0x2000), and a clean RT3 record -- all at one
+# TIME_STAMP. The RT3 row sorts ahead of RT15, but the continuation has no
+# RT/MSG of its own and must stay immediately after the errored record it
+# continues, or the 0x2000 code would describe nothing.
+
+# RT15 SA11 Receive, ERRORED (Type Word bit 14)
+0248 0F18 20DB F401 7E79 0000 0000 1E01
+
+# SPURIOUS_DATA continuation -> 0x2000, must stay adjacent
+2005 0F18 20DB F401 0000
+
+# RT3 SA11 Receive - clean, sorts ahead of RT15
+0224 0F18 20DB F401 7E19 0004 0000 0000
+2F00 22CA 2F00 22CA 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 0000 0000 0000 0000 0000 0000
+0000 0000 71C7 0018

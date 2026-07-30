@@ -18,6 +18,7 @@ MIE-Decoder ships as a Rust crate (`rust/src/`) and a Python package (`python/sr
 | CLI / argument parsing | `rust/src/cli.rs` | `python/src/mie_decoder/cli.py` |
 | TOML configuration loader | `rust/src/config.rs` | `python/src/mie_decoder/config.py` |
 | Message filtering | `rust/src/filter.rs` | `python/src/mie_decoder/filters.py` |
+| Canonical row order (equal-timestamp ties) | `rust/src/order.rs` | `python/src/mie_decoder/order.py` |
 | Reader pipeline (mmap → records) | `rust/src/reader.rs` | `python/src/mie_decoder/reader.py` |
 | Multi-file time-sorted merge | `rust/src/merge.rs` | `python/src/mie_decoder/merge.py` |
 | Pure decode (bit-level field extraction) | `rust/src/decode.rs` | `python/src/mie_decoder/decode.py` |
@@ -60,6 +61,13 @@ The `MUX` column value (L2-WRT-020) is resolved **once per input file** from its
                   │  ┌──────────────┐
                   │  │  filter.rs   │
                   │  │ FilterConfig │
+                  │  │ + Iter adptr │
+                  │  └──────┬───────┘
+                  │         ▼
+                  │  ┌──────────────┐
+                  │  │  order.rs    │
+                  │  │ canonical    │
+                  │  │ RT/MSG order │
                   │  │ + Iter adptr │
                   │  └──────────────┘
                   ▼
@@ -417,6 +425,13 @@ Stdout output forces inline mode (you can't split stdout into two streams).
   └──────────────────────────────────────────────────────┘
         │
         ▼
+  order_rows  ←── order: canonical row order (L2-WRT-021).
+        │         Buffers one run of consecutive equal-TIME_STAMP
+        │         records, stable-sorts it by (RT, subaddress,
+        │         direction), pins Command-Word-less records to
+        │         their predecessor, capped by max_sort_group
+        │         (L2-WRT-022). LAST stage before the writer.
+        ▼
   write_csv / write_csv_split  ←── writer: streaming row → BufWriter
         │                          + atomic temp + rename (L2-WRT-015)
         │                          + .partial on allow_partial (L2-WRT-016)
@@ -504,6 +519,8 @@ constant memory.
 
 For either implementation, decoding a 10 GB recording uses the same memory as decoding a 10 MB recording. The streaming property is load-bearing in **both**: changes to a writer that buffer rows (e.g., a `Vec<Row>` collection step in Rust, or re-materializing a DataFrame in Python) would break `L3-RS-012` / `L3-PY-012` and must be rejected at review.
 
+**The one bounded exception: `order.rs` / `order.py`.** Canonical row ordering (L1-OUT-003) is the only stage whose buffer is a function of the *data* rather than of the file count: it holds one run of consecutive equal-`TIME_STAMP` records so it can sort that run. In practice a run is 1–2 records — a 1553 bus carries one transaction at a time, so genuine ties come from the two concurrent buses or from overlapping recorders in a merge. The pathological case is real though: a corrupt recording whose timestamps all decode to the same value would buffer the whole file. That is why the run length is capped by `max_sort_group` (L2-WRT-022, default `4096`), which turns the exception back into a constant — worst case a few hundred kilobytes, independent of record count. On overflow the stage emits the run in arrival order with one WARN and continues; it never grows past the cap and never drops a row. Removing the cap would silently reintroduce an unbounded allocation and must be rejected at review, as would replacing the run buffer with a whole-file sort.
+
 ### Multi-file time-sorted merge (streaming k-way merge)
 
 > **Status: implemented in v2.1.0** (L1-MRG / L2-MRG), in both implementations
@@ -547,8 +564,12 @@ The heap is the easy part; the constraints come from the MIE timestamp model
 - **Merge key** is `IrigTimestamp::to_total_microseconds()` (Rust) /
   `IrigTimestamp.to_total_microseconds()` (Python) — microseconds from the
   start of the year — with a deterministic `(microseconds, file_index,
-  within-file sequence)` tiebreak so equal timestamps order reproducibly
-  (L2-MRG-002).
+  within-file sequence)` tiebreak so records leave the heap reproducibly
+  (L2-MRG-002). That tiebreak governs the **heap's internal** order only; the
+  equal-timestamp order the CSV actually shows is the canonical `RT`/`MSG` order
+  imposed downstream by `order.rs` / `order.py` (L1-OUT-003, L2-WRT-021). A
+  richer heap key could not do that job: the heap holds one record per input, so
+  it never sees two same-timestamp records from the *same* input at once.
 - **Absolute time only.** Standard-format counters (card-local, no shared
   epoch) and freerun IRIG records are not comparable across files; mixed
   formats likewise. Each input's leading record is validated up front; an

@@ -767,8 +767,16 @@ fn fuzz_arbitrary_bytes_never_panic() {
                 // if the iterator somehow enters an unbounded loop,
                 // this surfaces it as a failed assertion rather than
                 // hanging the test runner.
+                //
+                // The canonical-order stage (L2-WRT-021) is on the fuzzed path
+                // deliberately: random bytes readily decode to repeated or
+                // all-zero timestamps, which is exactly the equal-timestamp run
+                // its `max_sort_group` cap (L2-WRT-022) exists to bound. A small
+                // cap is used so the cap-overflow branch is reached often rather
+                // than only on a pathological input.
+                use mie_decoder::order::OrderIterExt;
                 let mut yielded = 0u64;
-                for item in reader.iter() {
+                for item in reader.iter().order_rows(8) {
                     // We accept any Result; we just must not panic.
                     let _ = item;
                     yielded += 1;
@@ -1481,5 +1489,269 @@ fn merge_collapse_no_over_collapse_after_backward_step() {
         collapsed.load(Ordering::Relaxed),
         1,
         "only the in-window duplicate (B@1002) collapses"
+    );
+}
+
+// ── L1-OUT-003 / L2-WRT-021 / L2-WRT-022: canonical row order ──────────────
+
+/// A receive (Type Word 0x02 = BC_TO_RT) record for `rt`/`sa` at a chosen
+/// microsecond within a fixed day/hour/minute/second, built by patching the
+/// canonical fixture's timestamp triple and Command Word. The data-word count
+/// stays at the fixture's 30 so the record layout is untouched.
+///
+/// Type 0x02 requires `Direction::Receive` (a decode.rs structural invariant),
+/// so this helper is the "R" side; `xmt_record_at` is the "T" side.
+fn rcv_record_at(rt: u8, sa: u8, micro: u32) -> Vec<u8> {
+    let mut rec = record_rt15_sa11_rcv();
+    patch_irig_micro(&mut rec, micro);
+    patch_cmd(&mut rec, rt, sa, false);
+    rec
+}
+
+/// A transmit (Type Word 0x04 = RT_TO_BC) record for `rt`/`sa` at `micro`.
+/// Type 0x04 requires `Direction::Transmit`.
+fn xmt_record_at(rt: u8, sa: u8, micro: u32) -> Vec<u8> {
+    let mut rec = record_rt15_sa22_xmt();
+    patch_irig_micro(&mut rec, micro);
+    patch_cmd(&mut rec, rt, sa, true);
+    rec
+}
+
+/// Overwrite the IRIG timestamp triple (bytes 2..8) with day 192, 15:54:50 and
+/// the given microsecond, so records built by different helpers can be placed
+/// at the same instant.
+fn patch_irig_micro(rec: &mut [u8], micro: u32) {
+    let upper: u16 = ((192u16 & 0x1FF) << 5) | 15;
+    let middle: u16 = (54u16 << 10) | (50u16 << 4) | ((micro >> 16) as u16 & 0xF);
+    let lower: u16 = (micro & 0xFFFF) as u16;
+    rec[2..4].copy_from_slice(&upper.to_le_bytes());
+    rec[4..6].copy_from_slice(&middle.to_le_bytes());
+    rec[6..8].copy_from_slice(&lower.to_le_bytes());
+}
+
+/// Overwrite the Command Word (bytes 8..10), keeping the fixture's 30-data-word
+/// count: `RT<<11 | dir<<10 | SA<<5 | 30`.
+fn patch_cmd(rec: &mut [u8], rt: u8, sa: u8, transmit: bool) {
+    let cmd: u16 = (u16::from(rt & 0x1F) << 11)
+        | (u16::from(transmit) << 10)
+        | (u16::from(sa & 0x1F) << 5)
+        | 30;
+    rec[8..10].copy_from_slice(&cmd.to_le_bytes());
+}
+
+/// `(RT, MSG)` pairs as the writer renders them, for order assertions.
+fn rt_msg_pairs(msgs: &[mie_decoder::models::MieMessage]) -> Vec<(Option<u8>, String)> {
+    msgs.iter().map(|m| (m.rt(), m.msg_label())).collect()
+}
+
+/// All three key levels plus R-before-T, from a deliberately wrong input order,
+/// through the library pipeline.
+///
+/// Requirements: L1-OUT-003, L2-WRT-021
+#[test]
+fn canonical_order_sorts_tied_rows_by_rt_then_msg() {
+    use mie_decoder::order::OrderIterExt;
+
+    // One instant, four records, input order chosen to violate every key level.
+    let bytes = [
+        rcv_record_at(21, 3, 500), // highest RT first
+        xmt_record_at(3, 11, 500), // T before R at the same SA
+        rcv_record_at(3, 11, 500),
+        xmt_record_at(3, 2, 500), // SA 2 last, though it sorts before SA 11
+    ]
+    .concat();
+    let f = TempFile::new(&bytes);
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let msgs: Vec<_> = reader
+        .iter()
+        .order_rows(mie_decoder::order::DEFAULT_MAX_SORT_GROUP)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(
+        rt_msg_pairs(&msgs),
+        vec![
+            (Some(3), "2T".to_string()),
+            (Some(3), "11R".to_string()),
+            (Some(3), "11T".to_string()),
+            (Some(21), "3R".to_string()),
+        ],
+        "rows must order by TIME_STAMP, then RT, then SA, then R before T"
+    );
+}
+
+/// Ascending timestamps with descending RTs must pass through untouched — the
+/// stage only permutes within one equal-timestamp run.
+///
+/// Requirements: L1-OUT-003, L2-WRT-021
+#[test]
+fn canonical_order_never_reorders_across_timestamps() {
+    use mie_decoder::order::OrderIterExt;
+
+    let bytes = [
+        rcv_record_at(21, 3, 100),
+        rcv_record_at(15, 3, 200),
+        rcv_record_at(3, 3, 300),
+    ]
+    .concat();
+    let f = TempFile::new(&bytes);
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let msgs: Vec<_> = reader
+        .iter()
+        .order_rows(mie_decoder::order::DEFAULT_MAX_SORT_GROUP)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(
+        msgs.iter().map(|m| m.rt().unwrap()).collect::<Vec<_>>(),
+        vec![21, 15, 3],
+        "differing timestamps must never be reordered"
+    );
+}
+
+/// The stage composes with the merge: a tie spanning two inputs orders by
+/// RT/MSG, not by which file was listed first.
+///
+/// Requirements: L1-OUT-003, L2-WRT-021, L2-MRG-002, L3-RS-016
+#[test]
+fn canonical_order_applies_to_merged_stream() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::order::OrderIterExt;
+
+    // File A holds the HIGHER RT, so the heap's (file_index, seq) tiebreak alone
+    // would emit RT 20 before RT 4. Canonical order must invert that.
+    let a = rcv_record_at(20, 5, 700);
+    let b = rcv_record_at(4, 5, 700);
+    let fa = TempFile::new(&a);
+    let fb = TempFile::new(&b);
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let msgs: Vec<_> = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .order_rows(mie_decoder::order::DEFAULT_MAX_SORT_GROUP)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(
+        msgs.iter().map(|m| m.rt().unwrap()).collect::<Vec<_>>(),
+        vec![4, 20],
+        "a merged tie must order by RT, not by input position"
+    );
+}
+
+/// DELTA is per-RT/MSG key, and two records in one run that share a key also
+/// share a timestamp, so the reorder cannot change any DELTA value.
+///
+/// Requirements: L1-OUT-003, L2-WRT-021, L1-DLT-001
+#[test]
+fn canonical_order_leaves_delta_unchanged() {
+    use mie_decoder::order::OrderIterExt;
+
+    let bytes = [
+        rcv_record_at(21, 3, 500),
+        rcv_record_at(3, 3, 500),
+        rcv_record_at(21, 3, 900),
+        rcv_record_at(3, 3, 900),
+    ]
+    .concat();
+    let f = TempFile::new(&bytes);
+
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let unordered: Vec<_> = reader.iter().collect::<Result<Vec<_>, _>>().unwrap();
+    let reader2 = MieFileReader::new(f.path()).unwrap();
+    let ordered: Vec<_> = reader2
+        .iter()
+        .order_rows(mie_decoder::order::DEFAULT_MAX_SORT_GROUP)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    // Same multiset of (RT, DELTA) pairs before and after reordering.
+    let key = |ms: &[mie_decoder::models::MieMessage]| {
+        let mut v: Vec<(u8, String)> = ms
+            .iter()
+            .map(|m| (m.rt().unwrap(), format!("{:?}", m.delta)))
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        key(&unordered),
+        key(&ordered),
+        "reordering an equal-timestamp run must not change any DELTA"
+    );
+}
+
+/// `max_sort_group = 1` restores raw capture order — L2-WRT-022's documented
+/// "off" value.
+///
+/// Requirements: L2-WRT-022
+#[test]
+fn canonical_order_cap_of_one_restores_capture_order() {
+    use mie_decoder::order::OrderIterExt;
+
+    let bytes = [rcv_record_at(21, 3, 500), rcv_record_at(3, 3, 500)].concat();
+    let f = TempFile::new(&bytes);
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let msgs: Vec<_> = reader
+        .iter()
+        .order_rows(mie_decoder::order::MAX_SORT_GROUP_MIN)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(
+        msgs.iter().map(|m| m.rt().unwrap()).collect::<Vec<_>>(),
+        vec![21, 3],
+        "a cap of 1 must leave capture order untouched"
+    );
+}
+
+/// The written CSV is itself in canonical order — the guarantee is observable in
+/// the artifact, not only in the iterator.
+///
+/// Requirements: L1-OUT-003, L2-WRT-021
+#[test]
+fn canonical_order_is_visible_in_written_csv() {
+    use mie_decoder::order::OrderIterExt;
+    use mie_decoder::writer::write_csv;
+
+    let bytes = [
+        rcv_record_at(21, 3, 500),
+        xmt_record_at(3, 11, 500),
+        rcv_record_at(3, 11, 500),
+    ]
+    .concat();
+    let f = TempFile::new(&bytes);
+    let reader = MieFileReader::new(f.path()).unwrap();
+    let out = std::env::temp_dir().join(format!("mie-order-csv-{}.csv", std::process::id()));
+    write_csv(
+        reader
+            .iter()
+            .order_rows(mie_decoder::order::DEFAULT_MAX_SORT_GROUP),
+        Some(out.as_path()),
+        Default::default(),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&out).unwrap();
+    let _ = std::fs::remove_file(&out);
+
+    // Columns 2 and 3 of each data row are RT and MSG.
+    let rows: Vec<(String, String)> = text
+        .lines()
+        .skip(1)
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let cols: Vec<&str> = l.split(',').collect();
+            (cols[1].to_string(), cols[2].to_string())
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("3".to_string(), "11R".to_string()),
+            ("3".to_string(), "11T".to_string()),
+            ("21".to_string(), "3R".to_string()),
+        ]
     );
 }

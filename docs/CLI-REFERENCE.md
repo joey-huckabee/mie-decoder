@@ -90,6 +90,7 @@ multi-file merge — see [Merge](#merge-multi-file) below.
 | `--format FORMAT` | `csv` | `csv` | Output format. Only `csv` is supported at present. Overrides `[output] format`. |
 | `--no-clobber` | flag | off | Refuse to overwrite an existing output file (`L2-WRT-017`). Mirrors `[output] no_clobber`. |
 | `--separate-errors` | flag | off | Route errored/spurious messages to a separate `<output>_errors.csv`, leaving only clean records in the main CSV. Default (omitted): every record goes to one CSV with the `ERROR`/`ERROR_CODE` columns populated. Stdout is always inline, so the flag is ignored there with a WARN. Mirrors `[decode] error_mode`. |
+| `--max-sort-group N` | int `1..=1048576` | `4096` | Maximum consecutive same-`TIME_STAMP` records buffered while ordering rows by `RT` then `MSG` (`L1-OUT-003`, `L2-WRT-022`). **`1` disables reordering** and emits raw DDC capture order — use it with `--no-mux` for a byte-for-byte vendor-CSV diff. On overflow the run is written in arrival order with one WARN; no row is dropped. Mirrors `[output] max_sort_group`. |
 
 ### Timestamp format & detection
 

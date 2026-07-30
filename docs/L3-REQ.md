@@ -50,6 +50,9 @@ The temporary file used by the atomic-write strategy SHALL be created **beside**
 **L3-WRT-002** · Parent: L2-WRT-016 · Verification: T
 When `--allow-partial` is in effect on the L1-EXIT-004 unrecoverable path, the preserved partial output SHALL use the destination path with a literal `.partial` suffix appended (e.g., destination `out.csv` becomes `out.csv.partial`). The original destination SHALL NOT be modified.
 
+**L3-WRT-003** · Parent: L2-WRT-022 · Verification: T
+The equal-timestamp run cap SHALL be exposed identically on both implementations as the `[output] max_sort_group` TOML key and the `--max-sort-group <N>` flag on the `decode` subcommand, with the shared bounds named as constants (`MAX_SORT_GROUP_MIN` = 1, `MAX_SORT_GROUP_MAX` = 1048576) and the shared default `4096` (`DEFAULT_MAX_SORT_GROUP`). An out-of-range or non-integer value SHALL be a config error when it comes from TOML and a usage error (exit `4`) when it comes from the CLI, matching how `decode.detect_records` / `--detect-records` already behave. Both implementations SHALL emit the same validation message text so a shared config file fails identically on either.
+
 ---
 
 ## L3-PY: Python implementation technology
@@ -99,6 +102,9 @@ The Python multi-file merge SHALL be implemented in `mie_decoder/merge.py` using
 **L3-PY-015** · Parent: L2-MRG-007 · Verification: T
 The Python cross-recorder collapsing SHALL be implemented in `mie_decoder/merge.py` as a `_DedupWindow` helper (a `collections.deque` of `(microseconds, file_index, content-key)` survivors) driven inside `_merge_drain` before the global-DELTA stage. The content key SHALL be a tuple of the decoded Type Word, Command/Status Words, Error Word, and `data_words`. The suppressed-duplicate count SHALL be logged at INFO once the merged stream is drained. The `merge.collapse_duplicates` / `merge.collapse_window_us` config keys and the `--collapse-duplicates` / `--collapse-window-us` CLI flags SHALL match the Rust surface (`L3-RS-015`).
 
+**L3-PY-016** · Parent: L2-WRT-021 · Verification: T
+The Python canonical row ordering SHALL be implemented in a dedicated module `mie_decoder/order.py` as an `order_rows(stream, max_group)` generator, wired into `cli._build_message_stream` as the outermost wrapper around `apply_filters` on both the single-input and merge paths. The sort SHALL use `list.sort` with the key `(rt, subaddress, direction)`, relying on `list.sort` being stable and on `Direction` being an `IntEnum` whose `RECEIVE = 0` precedes `TRANSMIT = 1` — no string comparison of the rendered `MSG` label. Because the Python stream signals a mid-stream decoder failure by **raising** rather than by yielding an error value, the generator SHALL flush its buffered run from inside an `except MieDecoderError` handler and then re-raise, so an `--allow-partial` run still commits the buffered records to its `.partial`. The flush SHALL NOT be placed in a `finally` block: on an early consumer close the generator receives `GeneratorExit`, and yielding while that is propagating raises `RuntimeError` — an early-closing consumer wants no further rows, so `GeneratorExit` SHALL discard the buffer rather than flush it. The `output.max_sort_group` config key and the `--max-sort-group` flag SHALL match the Rust surface (`L3-RS-016`, `L3-WRT-003`).
+
 ---
 
 ## L3-RS: Rust implementation technology
@@ -146,3 +152,6 @@ The Rust multi-file merge SHALL be implemented in `rust/src/merge.rs` using `std
 
 **L3-RS-015** · Parent: L2-MRG-007 · Verification: T
 The Rust cross-recorder collapsing SHALL be implemented in `rust/src/merge.rs` as a `DedupWindow` (a `VecDeque` of `(microseconds, file_index, DedupKey)` survivors) driven inside `MergedRecordIter::next` before the global-DELTA stage — no new dependency. `DedupKey` SHALL derive `PartialEq`/`Eq` over the Type Word, Command/Status Words, Error Word, and the data-word slice. The suppressed-duplicate count SHALL be exposed via an `Arc<AtomicU64>` handle the CLI reads after the run. The `merge.collapse_duplicates` / `merge.collapse_window_us` config keys and the `--collapse-duplicates` / `--collapse-window-us` CLI flags SHALL match the Python surface (`L3-PY-015`).
+
+**L3-RS-016** · Parent: L2-WRT-021 · Verification: T
+The Rust canonical row ordering SHALL be implemented in a dedicated module `rust/src/order.rs` as an `Ordered<I>` iterator adapter reached through an `OrderIterExt::order_rows(max_group)` extension trait, mirroring the `FilterIterExt` shape already used by `filter.rs`, and wired in `cli.rs` on both the single-input and merge paths as the last adapter before the writer. Sorting SHALL use the standard library's stable `slice::sort_by_key` over a `Vec` buffer holding one equal-timestamp run — no new external dependency, preserving `L3-RS-002`. The adapter SHALL be generic over the error type (`Iterator<Item = Result<MieMessage, E>>`) so it composes with both the reader's and the merge's item types, and SHALL emit its buffered run before forwarding an `Err` item. The `output.max_sort_group` config key and the `--max-sort-group` flag SHALL match the Python surface (`L3-PY-016`, `L3-WRT-003`).

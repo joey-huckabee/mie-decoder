@@ -1,6 +1,6 @@
 [project]
 name = "mie-decoder"
-version = "2.8.0"
+version = "2.9.0"
 description = "Decoder for DDC MIL-STD-1553 MIE binary recording files"
 authors = [
     { name = "Joey" },
@@ -53,10 +53,12 @@ module = ["tomli"]
 ignore_missing_imports = true
 
 # Coverage gate parallels the Rust crate's cargo-llvm-cov gate
-# (rust/.cargo/config.toml's `cov-ci` alias, 84 line / 83 region). The
-# combined line+branch coverage has held ~90% for several releases, so
-# the floor is ratcheted to baseline-2pp (88%), matching the Rust ratchet
-# rationale. `fail_under` below is the single source of truth — CI runs
+# (rust/.cargo/config.toml's `cov-ci` alias, 87 line / 86 region). The
+# combined line+branch coverage held ~90% for several releases, which put the
+# floor at baseline-2pp (88%). The v2.9.0 canonical-row-order work
+# (L1-OUT-003) added `order.py` at 100% and lifted the package to 94.65%, so
+# the floor is re-ratcheted to baseline-2pp again (92%), matching the Rust
+# ratchet rationale. `fail_under` below is the single source of truth — CI runs
 # `pytest --cov` and the gate fails the build automatically.
 #
 # __main__.py is the entry shim (python -m mie_decoder) — three-line
@@ -70,7 +72,7 @@ omit = ["*/__main__.py"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-fail_under = 88
+fail_under = 92
 
 # Pylint lints the package source (src/mie_decoder). Genuine correctness/hygiene
 # checks stay on; checks that conflict with deliberate design choices or

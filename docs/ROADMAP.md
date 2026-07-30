@@ -45,10 +45,16 @@ reuse that same parsed identity:
   than one recorder contributes the same RT/SA key. A future release could key
   DELTA on the parsed recorder identity, falling back to the global timeline for
   inputs whose name cannot be parsed.
-- **Identity-based merge tiebreak.** The equal-timestamp tiebreak keys on
-  `(microseconds, file_index, within-file sequence)`, where `file_index` is the
-  input's position in the resolved list — not the parsed identity. A future
-  release could break ties by the parsed recorder identity instead.
+- **Identity-based residual tiebreak.** Equal-timestamp rows now order by
+  `RT` then `MSG` (L1-OUT-003), so the input's position in the resolved list is
+  no longer the *primary* tiebreak. It survives as the **residual** one: two
+  records that share a timestamp *and* an RT *and* a MSG still fall back to
+  `(file_index, within-file sequence)` — which for a genuine cross-recorder
+  duplicate means "whichever file you listed first wins". A future release could
+  make that residual order key on the parsed recorder identity instead, so the
+  survivor is chosen by which recorder it came from rather than by argument
+  order. (`--collapse-duplicates` already addresses the common case by emitting
+  one row instead of choosing between two.)
 - **Optional `TERM_NAME` from the filename** — the same delimiter+index
   mechanism (a second configurable field) could populate the still-empty
   `TERM_NAME` column, if a terminal-name field is encoded in the name.

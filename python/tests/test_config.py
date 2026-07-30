@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -1054,3 +1055,47 @@ class TestSharedDefaultConfig:
         assert cfg.detect_records == 8
         assert cfg.lookahead_records == 2
         assert cfg.output_format == "csv"
+        assert cfg.max_sort_group == 4096
+
+
+class TestMaxSortGroupKey:
+    """`[output] max_sort_group` — the L2-WRT-022 canonical-order run cap.
+    Held to the same value and validation as the Rust loader (L3-WRT-003) so a
+    shared config file behaves identically on both."""
+
+    @pytest.mark.requirement("L2-WRT-022", "L3-WRT-003", "L2-CFG-001")
+    def test_parses_value(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "c.toml"
+        cfg_file.write_text("[output]\nmax_sort_group = 64\n")
+        assert load_config(cfg_file).max_sort_group == 64
+
+    @pytest.mark.requirement("L2-WRT-022")
+    def test_defaults_when_absent(self, tmp_path: Path) -> None:
+        cfg_file = tmp_path / "c.toml"
+        cfg_file.write_text("[output]\nno_clobber = true\n")
+        assert load_config(cfg_file).max_sort_group == 4096
+
+    @pytest.mark.requirement("L2-WRT-022")
+    def test_accepts_documented_off_value_and_upper_bound(self, tmp_path: Path) -> None:
+        for value, expected in ((1, 1), (1_048_576, 1_048_576)):
+            cfg_file = tmp_path / f"c{value}.toml"
+            cfg_file.write_text(f"[output]\nmax_sort_group = {value}\n")
+            assert load_config(cfg_file).max_sort_group == expected
+
+    @pytest.mark.requirement("L2-WRT-022", "L2-CFG-010", "L3-WRT-003")
+    @pytest.mark.parametrize("bad", ["0", "1048577", "-5", "true", '"64"'])
+    def test_rejects_out_of_range_and_wrong_type(self, tmp_path: Path, bad: str) -> None:
+        cfg_file = tmp_path / "c.toml"
+        cfg_file.write_text(f"[output]\nmax_sort_group = {bad}\n")
+        with pytest.raises(ValueError, match="max_sort_group"):
+            load_config(cfg_file)
+
+    @pytest.mark.requirement("L2-CFG-009")
+    def test_key_is_recognized_no_unknown_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cfg_file = tmp_path / "c.toml"
+        cfg_file.write_text("[output]\nmax_sort_group = 8\n")
+        with caplog.at_level(logging.WARNING):
+            load_config(cfg_file)
+        assert not any("max_sort_group" in rec.getMessage() for rec in caplog.records)

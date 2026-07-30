@@ -36,6 +36,11 @@ from mie_decoder.models import (
     TimestampFormat,
     parse_timestamp_format,
 )
+from mie_decoder.order import (
+    DEFAULT_MAX_SORT_GROUP,
+    MAX_SORT_GROUP_MAX,
+    MAX_SORT_GROUP_MIN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +88,7 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
         ("decode", "standard_tick_rate_hz"),
         ("output", "format"),
         ("output", "no_clobber"),
+        ("output", "max_sort_group"),
         ("mux", "enabled"),
         ("mux", "delimiter"),
         ("mux", "field"),
@@ -479,6 +485,12 @@ class DecoderConfig:
     collapse_duplicates: bool = False
     collapse_window_us: int = 0
 
+    #: L2-WRT-022: cap on the number of consecutive equal-TIME_STAMP records the
+    #: canonical-order stage (L2-WRT-021) buffers at once. Range
+    #: [MAX_SORT_GROUP_MIN, MAX_SORT_GROUP_MAX]. Default 4096; 1 disables
+    #: reordering, restoring raw DDC capture order.
+    max_sort_group: int = DEFAULT_MAX_SORT_GROUP
+
     def with_overrides(self, **kwargs: Any) -> DecoderConfig:
         """Return a new config with specified fields overridden.
 
@@ -507,6 +519,7 @@ class DecoderConfig:
             mux_field=self._override_present(kwargs, "mux_field"),
             collapse_duplicates=self._override_present(kwargs, "collapse_duplicates"),
             collapse_window_us=self._override_present(kwargs, "collapse_window_us"),
+            max_sort_group=self._override_present(kwargs, "max_sort_group"),
         )
 
     def _override_present(self, kwargs: dict[str, Any], name: str) -> Any:
@@ -681,6 +694,12 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     filters = _load_filter_section(_require_table(data, "filter"))
     output_format = _load_output_format(output_section)
     no_clobber = _require_bool("output", "no_clobber", output_section.get("no_clobber", False))
+    max_sort_group = _require_int_range(
+        "output.max_sort_group",
+        output_section.get("max_sort_group", DEFAULT_MAX_SORT_GROUP),
+        MAX_SORT_GROUP_MIN,
+        MAX_SORT_GROUP_MAX,
+    )
     allow_partial = _require_bool(
         "decode", "allow_partial", decode_section.get("allow_partial", False)
     )
@@ -719,6 +738,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         mux_field=mux_field,
         collapse_duplicates=collapse_duplicates,
         collapse_window_us=collapse_window_us,
+        max_sort_group=max_sort_group,
     )
 
     logger.debug("Loaded config: %s", config)
