@@ -514,6 +514,18 @@ def build_parser() -> argparse.ArgumentParser:
             "exact match). Mirrors the merge.collapse_window_us config key."
         ),
     )
+    decode_parser.add_argument(
+        "--max-sort-group",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Maximum consecutive same-TIME_STAMP records buffered to order rows "
+            "by RT then MSG (range 1..=1048576, default 4096). Use 1 to disable "
+            "reordering and emit raw capture order. L2-WRT-022. Mirrors the "
+            "output.max_sort_group config key."
+        ),
+    )
 
     # ── count subcommand ───────────────────────────────────────────
     # Its own subcommand, matching the Rust CLI (`count <INPUT>`).
@@ -749,6 +761,7 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
         LOOKAHEAD_RECORDS_MAX,
         LOOKAHEAD_RECORDS_MIN,
     )
+    from mie_decoder.order import MAX_SORT_GROUP_MAX, MAX_SORT_GROUP_MIN
 
     overrides: dict[str, object] = {}
     if args.detect_records is not None:
@@ -775,6 +788,13 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
         if args.collapse_window_us < 0:
             raise ValueError("--collapse-window-us must be a non-negative integer")
         overrides["collapse_window_us"] = args.collapse_window_us
+    if args.max_sort_group is not None:
+        overrides["max_sort_group"] = _validate_int_range(
+            args.max_sort_group,
+            "--max-sort-group",
+            MAX_SORT_GROUP_MIN,
+            MAX_SORT_GROUP_MAX,
+        )
     return overrides
 
 
@@ -853,9 +873,13 @@ def _build_message_stream(
     """
     from mie_decoder.filters import apply_filters
     from mie_decoder.merge import merge_readers
+    from mie_decoder.order import order_rows
 
+    # L2-WRT-021: canonical row order is the LAST stage before the writer — after
+    # the merge and after filtering — so the ordering guarantee holds over exactly
+    # the rows that reach the CSV.
     if not merge_requested:
-        return apply_filters(readers[0], config.filters)
+        return order_rows(apply_filters(readers[0], config.filters), config.max_sort_group)
     merged = merge_readers(
         readers,
         standard_tick_rate_hz=config.standard_tick_rate_hz,
@@ -864,8 +888,9 @@ def _build_message_stream(
         collapse_duplicates=config.collapse_duplicates,
         collapse_window_us=config.collapse_window_us,
     )
-    stream = apply_filters(merged, config.filters)
+    stream = order_rows(apply_filters(merged, config.filters), config.max_sort_group)
     if open_dropped:
+        # The terminal must stay last, so it wraps OUTSIDE the reorder stage.
         return _append_open_terminal(stream)
     return stream
 

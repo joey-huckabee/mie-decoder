@@ -28,8 +28,9 @@ lookahead_records = 2            # sync look-ahead depth, [1, 32]
 # standard_tick_rate_hz = 1000000.0   # Standard counter Hz (unset = empty DELTA)
 
 [output]
-format     = "csv"               # csv (the only value currently supported)
-no_clobber = false               # true | false
+format         = "csv"           # csv (the only value currently supported)
+no_clobber     = false           # true | false
+max_sort_group = 4096            # 1..=1048576 (1 disables row reordering)
 
 [mux]
 enabled   = true                 # populate MUX from the file name (--no-mux disables)
@@ -59,6 +60,7 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `decode.standard_tick_rate_hz` | float | unset | `--standard-tick-rate-hz` | L2-CFG-011, L2-DEC-017 |
 | `output.format` | string | `"csv"` | `--format` | L2-CFG-001 |
 | `output.no_clobber` | bool | `false` | `--no-clobber` | L2-CFG-001, L2-WRT-017 |
+| `output.max_sort_group` | int | `4096` | `--max-sort-group` | L2-WRT-022, L1-OUT-003 |
 | `mux.enabled` | bool | `true` | `--no-mux` (sets `false`) | L2-WRT-020 |
 | `mux.delimiter` | string | `"."` | `--mux-delimiter` | L2-WRT-020 |
 | `mux.field` | int | `4` | `--mux-field` | L2-WRT-020 |
@@ -230,6 +232,24 @@ Controls whether the writer is allowed to overwrite an existing destination (L2-
 When `error_mode = "separate"`, the no-clobber check applies to both the main output AND the errors file — either existing triggers refusal.
 
 **Validation:** TOML boolean only.
+
+### `max_sort_group`
+
+**Type:** int · **Default:** `4096` · **Range:** `[1, 1048576]` · **CLI:** `--max-sort-group`
+
+Caps how many **consecutive records sharing one `TIME_STAMP`** the canonical row-order stage buffers at once (L2-WRT-022).
+
+Rows are always written in canonical order (L1-OUT-003): ascending `TIME_STAMP`, then ascending `RT`, then `MSG` (subaddress ascending, `R` before `T`). Producing that order requires holding one run of equal-timestamp records long enough to sort it — the only buffer in the pipeline whose size depends on the data rather than on the input count. This key bounds it.
+
+| Value | Behavior |
+|-------|----------|
+| `1` | **Disables reordering.** Every record is its own run, so output is raw DDC capture order. This is the supported way to get byte-for-byte row parity with vendor CSV — see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3a. |
+| `4096` | Default. Far above any real tie: a 1553 bus carries one transaction at a time, so genuine ties come only from the two concurrent buses or from overlapping recorders in a merge — single digits in practice. |
+| up to `1048576` | Raise it only if you have a legitimate reason to expect enormous equal-timestamp runs. Worst-case buffering scales with this value. |
+
+**On overflow** the stage writes the buffered run in **arrival order**, emits exactly one WARN naming the timestamp and the cap, and continues. No record is dropped and the decode does not fail — the ordering guarantee is simply suspended for that run. The motivating case is a corrupt or misconfigured recording whose timestamps all decode to the same value, which would otherwise buffer the entire file.
+
+**Validation:** TOML integer only (a bool or string is rejected); out-of-range values are rejected at load time (exit `5`). An out-of-range `--max-sort-group` is a usage error (exit `4`), matching `--detect-records`.
 
 ---
 
@@ -463,6 +483,19 @@ allow_partial = true    # don't lose what was decoded
 [logging]
 level = "INFO"          # see recovery summary
 ```
+
+### Vendor-exact output — for a byte-for-byte diff against DDC CSV
+
+```toml
+[mux]
+enabled = false          # leave MUX empty like the other placeholder columns
+
+[output]
+max_sort_group = 1       # raw capture order, no equal-timestamp reordering
+```
+
+Equivalent on the command line: `--no-mux --max-sort-group 1`. See
+[`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3 and §3a.
 
 ### Focused investigation — only Bus A, only Receive transactions, no spurious
 

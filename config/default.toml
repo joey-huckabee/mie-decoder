@@ -266,6 +266,37 @@ format = "csv"
 # ──────────────────────────────────────────────────────────────────────────
 no_clobber = false
 
+# ──────────────────────────────────────────────────────────────────────────
+# Canonical row order: equal-timestamp run cap (L1-OUT-003 / L2-WRT-022).
+#
+# Rows are always written in canonical order — ascending TIME_STAMP, then
+# ascending RT, then MSG (subaddress ascending, R before T at the same
+# subaddress). Records sharing one TIME_STAMP are the only ones reordered,
+# and only against each other; the decoder never reorders across differing
+# timestamps. SPURIOUS_DATA rows have no RT/MSG, so they stay pinned
+# immediately after the record they followed, keeping an errored record and
+# its 0x2000 continuation adjacent.
+#
+# This setting caps how many consecutive same-TIME_STAMP records may be held
+# in memory at once. Real ties are tiny (a 1553 bus runs one transaction at a
+# time, so ties come from the two concurrent buses or from overlapping
+# recorders in a merge). The cap exists for corrupt recordings whose
+# timestamps all decode to one value, which would otherwise buffer the whole
+# file. On overflow the run is written in arrival order with one WARN and
+# decoding continues — no records are lost.
+#
+#   1        — disables reordering entirely: every record is its own run, so
+#              output is raw DDC capture order. Use this for a byte-for-byte
+#              vendor-CSV diff (see docs/VENDOR-CSV-DIFFS.md).
+#   4096     — the default; far above any real tie.
+#   1048576  — the maximum.
+#
+# Overridden by --max-sort-group.
+#
+# Default: 4096
+# ──────────────────────────────────────────────────────────────────────────
+max_sort_group = 4096
+
 
 [mux]
 # ──────────────────────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **col
 | Placeholder columns `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` | **Empty** (see §3) |
 | `MUX` column | **Populated from the file name by default** (L2-WRT-020); empty with `--no-mux` for a vendor-exact diff (see §3) |
 | IRIG `TIME_STAMP` day-of-year field | **Firmware-dependent discrepancy** on some DDC card models (see §5) |
+| **Row order** for records sharing one `TIME_STAMP` | **May differ** — we sort ties by `RT` then `MSG` (L1-OUT-003); the vendor writes capture order. Restore with `--max-sort-group 1` (see §3a) |
 
 If you find a divergence outside the documented exceptions, **it is a bug** in MIE-Decoder. See §7.
 
@@ -90,6 +91,41 @@ diff vendor-cmp.csv mie-cmp.csv
 
 ---
 
+## 3a. Row order (`--max-sort-group 1`)
+
+Since v2.9.0, MIE-Decoder writes rows in a **canonical order** (L1-OUT-003):
+ascending `TIME_STAMP`, then ascending `RT`, then `MSG` (subaddress ascending,
+`R` before `T`). The vendor tool writes rows in **capture order** — the order the
+DDC card wrote them. For records with distinct timestamps the two agree, because
+capture order *is* time order. They can differ only for records that share one
+`TIME_STAMP` to the microsecond.
+
+**When that actually happens.** A 1553 bus carries one transaction at a time, so
+on a single-bus recording it essentially never does. The realistic case is a
+**dual-bus recording**: bus A and bus B transactions are genuinely concurrent and
+can land on the same microsecond with different RTs. There, our row order may
+differ from the vendor's while every cell still matches.
+
+**For a byte-for-byte diff, disable reordering:**
+
+```bash
+mie-decoder decode recording.mie -o mie.csv --no-mux --max-sort-group 1
+```
+
+`--max-sort-group 1` makes every record its own sort group, so nothing is
+reordered and the output is raw capture order — exactly what the vendor writes.
+Combine it with `--no-mux` (§3) for a full vendor-exact decode. The equivalent
+config keys are `[output] max_sort_group = 1` and `[mux] enabled = false`.
+
+**A row-order-only difference is not a bug.** If a diff shows the same set of
+rows in a different order within one timestamp, and re-running with
+`--max-sort-group 1` makes the diff clean, that is this documented exception —
+not a divergence to report under §7. What *would* be a bug: a row-order
+difference that persists with `--max-sort-group 1`, a row-order difference
+between records with *different* timestamps, or any cell-content difference.
+
+---
+
 ## 4. Line endings
 
 Both implementations emit LF (`\n`) line endings on every platform, including Windows. The vendor tool's output may use CRLF on Windows builds. If your `diff` flags every line as different, normalize line endings first:
@@ -131,11 +167,13 @@ Hour, minute, second, microsecond, and freerun fields are not affected — they 
 
 The end-to-end workflow when you want a hard validation that MIE-Decoder reproduces vendor output:
 
-1. **Decode the same recording with both tools.** Use the vendor tool's default settings; for MIE-Decoder use:
+1. **Decode the same recording with both tools.** Use the vendor tool's default settings; for MIE-Decoder use the two vendor-exact flags:
 
    ```bash
-   mie-decoder decode flight.mie -o mie.csv
+   mie-decoder decode flight.mie -o mie.csv --no-mux --max-sort-group 1
    ```
+
+   `--no-mux` leaves the `MUX` column empty like the vendor's other placeholders (§3), and `--max-sort-group 1` disables canonical row ordering so rows stay in capture order (§3a). Without those two flags a clean decode will still show expected differences, and you would be chasing documented behavior.
 
    Inline error mode matches the vendor tool's behavior of mixing errored and SPURIOUS records into the main CSV. (Separate-mode comparisons would need you to merge MIE-Decoder's two files first.)
 
@@ -148,6 +186,7 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
    - Day-of-year column → known firmware discrepancy (§5).
    - `MUX` column → populated from the file name by default; pass `--no-mux` for a vendor-exact diff (§3).
    - Empty `TERM_NAME` / gap columns on our side → expected (§3).
+   - Same rows, different order within one `TIME_STAMP` → canonical row order; pass `--max-sort-group 1` (§3a).
    - Anything else → bug. See §7.
 
 5. **For automated comparison** in a regression pipeline, MIE-Decoder ships a cross-implementation conformance suite under `tests/conformance/` that asserts byte-identical CSV between the Rust and Python implementations against checked-in oracles. The oracle generation method (manual validation against vendor output, then committed) is documented in [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6.
@@ -159,6 +198,7 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
 Any column-content mismatch that isn't:
 
 - A `MUX` / `TERM_NAME` / `IM_GAP` / `RCV_GAP` / `XMT_GAP` cell that the vendor populated and we left empty (§3), or
+- A row-order difference *within a single `TIME_STAMP`* that goes away under `--max-sort-group 1` (§3a), or
 - A line-ending CR/LF difference (§4), or
 - A day-of-year discrepancy on the IRIG `TIME_STAMP` (§5)
 

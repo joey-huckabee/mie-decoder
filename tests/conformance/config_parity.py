@@ -37,6 +37,17 @@ CORPUS: list[tuple[str, str, str]] = [
     ("extra-whitespace", "[decode]\n  strict   =   true  \n", "accept"),
     ("blank-lines", "[decode]\n\n\nstrict = true\n", "accept"),
     ("negative-mux-field", "[mux]\nfield = -1\n", "accept"),
+    # L2-WRT-022: the canonical-order run cap. In range on both, out of range on
+    # both — a range check is exactly the kind of validation that has drifted
+    # between the two loaders before.
+    ("max-sort-group-valid", "[output]\nmax_sort_group = 64\n", "accept"),
+    ("max-sort-group-min", "[output]\nmax_sort_group = 1\n", "accept"),
+    ("max-sort-group-max", "[output]\nmax_sort_group = 1048576\n", "accept"),
+    ("max-sort-group-zero", "[output]\nmax_sort_group = 0\n", "reject"),
+    ("max-sort-group-over", "[output]\nmax_sort_group = 1048577\n", "reject"),
+    ("max-sort-group-negative", "[output]\nmax_sort_group = -1\n", "reject"),
+    ("max-sort-group-bool", "[output]\nmax_sort_group = true\n", "reject"),
+    ("max-sort-group-string", '[output]\nmax_sort_group = "64"\n', "reject"),
     # ── outside the flat schema (reject on both) ───────────────────────────
     ("inline-table", "[decode]\nx = { a = 1 }\n", "reject"),
     ("multiline-array", "[filter]\nexclude_rts = [\n  1,\n]\n", "reject"),

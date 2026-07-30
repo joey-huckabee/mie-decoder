@@ -227,6 +227,7 @@ poetry -C python run python ../tests/conformance/run.py
 
 - The Day field in IRIG timestamps may not decode correctly on all DDC card models.
 - `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but empty (by spec). `MUX` is populated from the input file name by default (L2-WRT-020); pass `--no-mux` for vendor-exact (empty) output.
+- Rows are written in canonical order — `TIME_STAMP`, then `RT`, then `MSG` (L1-OUT-003) — so records sharing a timestamp may appear in a different order than DDC's capture-order output. Pass `--max-sort-group 1` (with `--no-mux`) for a byte-for-byte vendor diff.
 - Standard timestamp tick-to-microsecond conversion requires external calibration.
 - SPURIOUS_DATA payload structure is raw words with no further interpretation.
 

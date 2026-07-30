@@ -17,6 +17,7 @@ use crate::error::MieError;
 use crate::filter::FilterIterExt;
 use crate::log::{self, Level};
 use crate::models::{ErrorMode, TimestampFormat};
+use crate::order::OrderIterExt;
 use crate::reader::{MieFileReader, ReaderOptions};
 use crate::writer::{WriteOptions, write_csv, write_csv_split};
 use crate::{log_error, log_info, log_warn};
@@ -88,6 +89,11 @@ DECODE OPTIONS:
                                         (multi-file merge only). Default: off
   --collapse-window-us N                Timestamp tolerance in microseconds for
                                         collapsing (default 0 = exact match)
+  --max-sort-group N                    Max consecutive same-TIME_STAMP records
+                                        buffered to order rows by RT then MSG
+                                        (range 1..=1048576, default 4096). Use 1
+                                        to disable reordering and emit raw
+                                        capture order. L2-WRT-022.
   --exclude-types VAL                   Comma-separated names or 0xNN
   --exclude-rts VAL                     Comma-separated RT addresses
   --exclude-buses VAL                   Comma-separated A|B
@@ -155,6 +161,9 @@ struct DecodeArgs {
     collapse_duplicates: bool,
     /// `--collapse-window-us <N>`: timestamp tolerance (µs) for collapsing.
     collapse_window_us: Option<i64>,
+    /// `--max-sort-group <N>`: cap on one buffered equal-timestamp run
+    /// (L2-WRT-022); `1` disables canonical reordering.
+    max_sort_group: Option<usize>,
 
     exclude_types: Vec<u8>,
     exclude_rts: Vec<u8>,
@@ -564,6 +573,13 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--mux-field=") => {
                 args.mux_field = Some(parse_mux_field(&s["--mux-field=".len()..])?);
             }
+            "--max-sort-group" => {
+                let v = next_value("--max-sort-group", iter)?;
+                args.max_sort_group = Some(parse_max_sort_group(&v)?);
+            }
+            s if s.starts_with("--max-sort-group=") => {
+                args.max_sort_group = Some(parse_max_sort_group(&s["--max-sort-group=".len()..])?);
+            }
             "--collapse-duplicates" => args.collapse_duplicates = true,
             "--collapse-window-us" => {
                 args.collapse_window_us = Some(parse_collapse_window_us(&next_value(
@@ -847,6 +863,24 @@ fn parse_mux_field(s: &str) -> Result<i64, String> {
         .map_err(|_| format!("invalid --mux-field: {s:?}; must be an integer"))
 }
 
+/// `--max-sort-group` (L2-WRT-022): cap on one buffered equal-timestamp run.
+/// Range-checked here so a bad value is a usage error (exit 4) rather than a
+/// silent clamp, mirroring `--detect-records`.
+fn parse_max_sort_group(s: &str) -> Result<usize, String> {
+    let n: usize = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid --max-sort-group: {s:?}; must be an integer"))?;
+    if !(crate::order::MAX_SORT_GROUP_MIN..=crate::order::MAX_SORT_GROUP_MAX).contains(&n) {
+        return Err(format!(
+            "invalid --max-sort-group: {n}; valid range: [{}, {}]",
+            crate::order::MAX_SORT_GROUP_MIN,
+            crate::order::MAX_SORT_GROUP_MAX
+        ));
+    }
+    Ok(n)
+}
+
 fn parse_collapse_window_us(s: &str) -> Result<i64, String> {
     match s.trim().parse::<i64>() {
         Ok(n) if n >= 0 => Ok(n),
@@ -952,6 +986,7 @@ fn build_config_overrides(args: &mut DecodeArgs, log_level: Option<String>) -> C
             None
         },
         collapse_window_us: args.collapse_window_us,
+        max_sort_group: args.max_sort_group,
         exclude_types: std::mem::take(&mut args.exclude_types),
         exclude_rts: std::mem::take(&mut args.exclude_rts),
         exclude_buses: std::mem::take(&mut args.exclude_buses),
@@ -1006,7 +1041,12 @@ fn execute_decode_or_merge(
     open_dropped: bool,
 ) -> Result<crate::error::MieResult<crate::writer::WriteOutcome>, ExitCode> {
     if !merge_requested {
-        let messages = readers[0].iter().filter_messages(cfg.filters.clone());
+        // L2-WRT-021: canonical row order is the LAST stage before the writer, so
+        // the guarantee holds over exactly the rows that reach the CSV.
+        let messages = readers[0]
+            .iter()
+            .filter_messages(cfg.filters.clone())
+            .order_rows(cfg.max_sort_group);
         return Ok(write_messages(messages, output, cfg.error_mode, write_opts));
     }
 
@@ -1028,8 +1068,14 @@ fn execute_decode_or_merge(
                     offset: 0,
                     sync_losses: 0,
                 }));
+            // L2-WRT-021: order_rows sits after the merge and the filters, and
+            // before `open_tail` — the tail is a terminal error that must stay
+            // last, and the reorder stage would otherwise hold rows behind it.
             let result = write_messages(
-                merged.filter_messages(cfg.filters.clone()).chain(open_tail),
+                merged
+                    .filter_messages(cfg.filters.clone())
+                    .order_rows(cfg.max_sort_group)
+                    .chain(open_tail),
                 output,
                 cfg.error_mode,
                 write_opts,

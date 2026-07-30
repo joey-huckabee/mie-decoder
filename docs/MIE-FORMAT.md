@@ -459,7 +459,17 @@ The Status Word is returned by the RT to acknowledge a transaction.
 
 The CSV layout is column-name and column-order compatible with DDC vendor recording software (L1-OUT-001). Forty-six columns in order: `TIME_STAMP`, `RT`, `MSG`, `WD01`–`WD32`, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, `DELTA`, `ERROR`, `ERROR_CODE`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`.
 
-For documented divergences from vendor output (vendor-empty columns we preserve, line-ending normalization, the IRIG day-of-year discrepancy), see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md).
+For documented divergences from vendor output (vendor-empty columns we preserve, row order within one timestamp, line-ending normalization, the IRIG day-of-year discrepancy), see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md).
+
+### Row order
+
+Data rows are emitted in a canonical order (L1-OUT-003), independent of both implementation and invocation:
+
+1. `TIME_STAMP` ascending.
+2. `RT` ascending, among rows sharing a timestamp.
+3. `MSG` among rows sharing a timestamp and an `RT`: subaddress ascending **numerically** (so `2R` precedes `11R`, unlike a string sort of the `MSG` text), then Receive (`R`) before Transmit (`T`).
+
+Only records sharing a timestamp are reordered, and only relative to each other — records at different timestamps never move. `SPURIOUS_DATA` rows carry no `RT`/`MSG`, so they are pinned immediately after the record they followed, preserving the adjacency the `0x2000` continuation code depends on (§9). `--max-sort-group 1` disables reordering and restores the raw on-disk record order.
 
 ### `TIME_STAMP`
 

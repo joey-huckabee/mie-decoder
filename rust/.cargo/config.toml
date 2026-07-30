@@ -14,12 +14,15 @@
 # Thresholds match the agreed-upon floors. The original 70/70 gate sat
 # ~5pp below the v1.0.0 baseline (74.81% lines / 71.55% regions) to
 # absorb refactor drift. Coverage has since stabilized well above that
-# (85.98% lines / 85.08% regions at the v1.4.1 measurement), so the gate
-# is ratcheted to baseline-2pp (84 lines / 83 regions). The crate has no
+# (85.98% lines / 85.08% regions at the v1.4.1 measurement), which put the
+# gate at baseline-2pp (84 lines / 83 regions). The v2.9.0 canonical-row-order
+# work (L1-OUT-003) added `order.rs` at 100% lines / 99.63% regions and lifted
+# the crate to 89.50% lines / 88.63% regions, so the gate is re-ratcheted to
+# baseline-2pp again (87 lines / 86 regions). The crate has no
 # platform-gated (`cfg(windows/unix)`) code, so the Linux CI number
 # matches local runs — there is no cross-platform slack to budget for.
 
 [alias]
 cov      = 'llvm-cov --html --open --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
 cov-lcov = 'llvm-cov --lcov --output-path lcov.info --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
-cov-ci   = 'llvm-cov --fail-under-lines 84 --fail-under-regions 83 --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
+cov-ci   = 'llvm-cov --fail-under-lines 87 --fail-under-regions 86 --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'

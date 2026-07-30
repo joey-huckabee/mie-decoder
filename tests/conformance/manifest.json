@@ -545,6 +545,47 @@
         "full_loadout.draw.data.1553.bb.unused.mie_irig"
       ],
       "expected": "expected/mux-merge-per-file.csv"
+    },
+    {
+      "name": "tie-canonical-order",
+      "input": "inputs/tie-canonical-order.hex",
+      "expected": "expected/tie-canonical-order.csv"
+    },
+    {
+      "name": "tie-spurious-pinned",
+      "input": "inputs/tie-spurious-pinned.hex",
+      "expected": "expected/tie-spurious-pinned.csv"
+    },
+    {
+      "name": "tie-across-timestamps",
+      "input": "inputs/tie-across-timestamps.hex",
+      "expected": "expected/tie-across-timestamps.csv"
+    },
+    {
+      "name": "tie-cap-disabled",
+      "input": "inputs/tie-cap-disabled.hex",
+      "args": [
+        "--max-sort-group",
+        "1"
+      ],
+      "expected": "expected/tie-cap-disabled.csv"
+    },
+    {
+      "name": "tie-cap-overflow",
+      "input": "inputs/tie-cap-overflow.hex",
+      "args": [
+        "--max-sort-group",
+        "2"
+      ],
+      "expected": "expected/tie-cap-overflow.csv"
+    },
+    {
+      "name": "tie-merge-across-recorders",
+      "inputs": [
+        "inputs/tie-merge-hi.hex",
+        "inputs/tie-merge-lo.hex"
+      ],
+      "expected": "expected/tie-merge-across-recorders.csv"
     }
   ]
 }

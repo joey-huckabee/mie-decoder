@@ -15,6 +15,121 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.9.0] — 2026-07-29
+
+### Changed — BREAKING
+
+- **CSV rows are now written in a canonical order: `TIME_STAMP`, then `RT`, then
+  `MSG`.** Records that share a timestamp used to be emitted in whatever order
+  they happened to arrive — raw DDC capture order for a single file, and
+  "whichever input you listed first" for a multi-file merge. They are now ordered
+  by remote terminal, then by subaddress, then receive (`R`) before transmit
+  (`T`) at the same subaddress (`L1-OUT-003`). Subaddress ordering is **numeric**,
+  so `2R` precedes `11R`.
+
+  This is shipped as a **minor** release because it breaks no API and no
+  configuration: every existing flag, config key, and column keeps its meaning,
+  and every cell keeps its value. What changes is the *order of rows* in the
+  output file, which is a behavioral break for anything that diffs decoded CSV
+  byte-for-byte. `cargo-semver-checks` cannot see a change of this kind, so it is
+  called out here rather than caught by a gate.
+
+  Rationale: the old equal-timestamp order carried no data meaning. RT 21 could
+  precede RT 3 purely because it came from `recorder_a.mie`, so listing the same
+  recordings in a different order produced a differently-ordered CSV, and the two
+  implementations had no shared rule to be held to. Analysts read a decoded
+  recording by remote terminal and message; ordering ties by the `RT` and `MSG`
+  columns makes equal-timestamp traffic comparable between runs, between input
+  orderings, and between the Rust and Python implementations.
+
+  **Who is affected.** A 1553 bus carries one transaction at a time, so on a
+  single-bus recording same-microsecond ties essentially do not occur and output
+  is unchanged. The cases that do change:
+
+  | Situation | Effect |
+  |---|---|
+  | Single-bus recording | No change — no ties to reorder. |
+  | **Dual-bus** recording | Bus A and bus B transactions are genuinely concurrent and can share a microsecond; those rows may reorder. |
+  | Multi-file merge with overlapping recorders | Ties now order by RT/MSG instead of by input position — merged output no longer depends on how you listed the files. |
+  | Byte-for-byte diff against DDC vendor CSV | Row order may differ within one timestamp. See migration below. |
+
+  **Migration.** If you need the previous behavior — most importantly for a
+  byte-for-byte vendor-CSV diff — disable reordering with the new
+  **`--max-sort-group 1`** (or `[output] max_sort_group = 1`). A cap of `1` makes
+  every record its own sort group, so nothing is reordered and output is raw
+  capture order.
+
+  | Goal | Command |
+  |---|---|
+  | Canonical order (new default) | `decode rec.mie -o out.csv` |
+  | Previous capture order | `decode rec.mie -o out.csv --max-sort-group 1` |
+  | Vendor-exact decode | `decode rec.mie -o out.csv --no-mux --max-sort-group 1` |
+
+  `docs/VENDOR-CSV-DIFFS.md` §3a documents the vendor-diff implications, and the
+  documented validation workflow there now passes both flags.
+
+- **`SPURIOUS_DATA` rows are pinned, not sorted.** A spurious record carries no
+  Command Word, so it has no `RT`/`MSG` to sort on. Rather than sorting it to one
+  end of its timestamp group, it is excluded from the sort and kept immediately
+  after the record it followed on input. This preserves the adjacency that
+  `ERROR_CODE = 0x2000` ("continues the preceding errored record", `L2-ERR-005`)
+  is defined in terms of — a sort that separated the pair would leave that code
+  describing nothing.
+
+### Added
+
+- **`--max-sort-group N` / `[output] max_sort_group`** (`L2-WRT-022`,
+  `L3-WRT-003`) — bounds how many consecutive same-`TIME_STAMP` records are
+  buffered while ordering rows. Range `[1, 1048576]`, default `4096`. `1`
+  disables reordering entirely (the migration path above). Present and identical
+  on both CLIs. On overflow the run is written in **arrival order** with one WARN
+  and decoding continues; no record is dropped and the decode does not fail. The
+  cap exists because the reorder stage is the only part of the pipeline whose
+  buffer depends on the data rather than on the input count — without it, a
+  corrupt recording whose timestamps all decode to the same value would buffer
+  the whole file, breaking the constant-memory guarantee and `L1-ROB-001`.
+
+- New shared module implementing the ordering stage in both implementations:
+  `rust/src/order.rs` (an `Ordered<I, E>` iterator adapter reached via
+  `OrderIterExt::order_rows`, `L3-RS-016`) and
+  `python/src/mie_decoder/order.py` (an `order_rows` generator, `L3-PY-016`). It
+  is wired as the **last** stage before the writer on both the single-input and
+  merge paths, so the ordering guarantee holds over exactly the rows that reach
+  the CSV. No new external dependency — Rust uses the standard library's stable
+  `slice::sort_by_key`, Python uses `list.sort`.
+
+- Six conformance cases pinning the new behavior cross-implementation:
+  `tie-canonical-order` (all three key levels plus R-before-T from a deliberately
+  wrong input order), `tie-spurious-pinned` (error → `0x2000` continuation
+  adjacency survives the sort), `tie-across-timestamps` (no reordering across
+  timestamps), `tie-cap-disabled` (`--max-sort-group 1` restores capture order),
+  `tie-cap-overflow` (cap degrades to arrival order without losing rows), and
+  `tie-merge-across-recorders` (a merged tie orders by RT, not by input
+  position). Eight `max_sort_group` snippets were added to the config-parser
+  parity corpus and the key to the config fuzzer's palette.
+
+### Changed
+
+- Coverage floors ratcheted to baseline−2pp per the `docs/MAINTAINER-GUIDE.md`
+  §10 policy, now that the new module raised both numbers: Rust `cargo cov-ci`
+  from 84 line / 83 region to **87 line / 86 region** (measured 89.50 / 88.63),
+  and the Python `fail_under` from 88 to **92** (measured 94.65).
+- Both fuzz harnesses (`L1-ROB-001`) now run the reorder stage on the fuzzed
+  path with a deliberately small cap, so random bytes that decode to repeated or
+  all-zero timestamps exercise the cap-overflow branch rather than only a
+  pathological hand-written input.
+
+### Notes
+
+- `L2-MRG-002`'s statement was amended: its `(microseconds, file index,
+  within-file sequence)` key is now explicitly the merge heap's **internal**
+  order, not the order the CSV shows. A heap key alone cannot produce canonical
+  equal-timestamp order — the heap holds one record per input, so it never sees
+  two same-timestamp records from the *same* input at once, which is why the
+  reorder stage sits downstream instead.
+- The `docs/ROADMAP.md` "identity-based merge tiebreak" item was restated: input
+  position survives only as the **residual** tiebreak, below RT and MSG.
+
 ## [2.8.0] — 2026-07-28
 
 ### Changed — BREAKING

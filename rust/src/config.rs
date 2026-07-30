@@ -24,6 +24,7 @@ use crate::decode::{
 };
 use crate::filter::FilterConfig;
 use crate::models::{Bus, ErrorMode, MessageType, TimestampFormat};
+use crate::order::{DEFAULT_MAX_SORT_GROUP, MAX_SORT_GROUP_MAX, MAX_SORT_GROUP_MIN};
 use crate::sync::DEFAULT_LOOKAHEAD_RECORDS;
 
 /// L2-DEC-015 valid range for `decode.detect_records`. Values outside
@@ -99,6 +100,13 @@ pub struct DecoderConfig {
     /// Timestamp tolerance in microseconds for collapsing (0 = exact-µs match).
     /// Widen it for recorders whose IRIG clocks differ slightly.
     pub collapse_window_us: u64,
+    /// L2-WRT-022: cap on the number of consecutive equal-`TIME_STAMP` records
+    /// the canonical-order stage (L2-WRT-021) buffers at once. Default
+    /// `DEFAULT_MAX_SORT_GROUP` (`4096`). Set via `output.max_sort_group = N` in
+    /// TOML or `--max-sort-group N` on the CLI. Validated against
+    /// `[MAX_SORT_GROUP_MIN, MAX_SORT_GROUP_MAX]` at load time. `1` disables
+    /// reordering, restoring raw DDC capture order.
+    pub max_sort_group: usize,
 }
 
 impl Default for DecoderConfig {
@@ -120,6 +128,7 @@ impl Default for DecoderConfig {
             mux_field: DEFAULT_MUX_FIELD,
             collapse_duplicates: false,
             collapse_window_us: 0,
+            max_sort_group: DEFAULT_MAX_SORT_GROUP,
         }
     }
 }
@@ -146,6 +155,7 @@ pub struct ConfigOverrides {
     pub mux_field: Option<i64>,
     pub collapse_duplicates: Option<bool>,
     pub collapse_window_us: Option<i64>,
+    pub max_sort_group: Option<usize>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -206,6 +216,9 @@ impl DecoderConfig {
             // CLI / config-load validation already rejects negatives; clamp
             // defensively so the cast can never wrap.
             self.collapse_window_us = v.max(0) as u64;
+        }
+        if let Some(v) = ov.max_sort_group {
+            self.max_sort_group = v;
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -357,7 +370,8 @@ fn require_positive_finite(hz: f64, key: &str) -> Result<f64, ConfigError> {
     Ok(hz)
 }
 
-/// `[output]`: output format (only `csv` today, L2-CFG-010) and no-clobber.
+/// `[output]`: output format (only `csv` today, L2-CFG-010), no-clobber, and the
+/// canonical-order run cap (L2-WRT-022).
 fn apply_output_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
     if let Some(fmt) = toml.get_string("output", "format")? {
         if fmt != "csv" {
@@ -369,6 +383,17 @@ fn apply_output_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), C
     }
     if let Some(b) = toml.get_bool("output", "no_clobber")? {
         cfg.no_clobber = b;
+    }
+    // L2-WRT-022: cap on one buffered equal-timestamp run. Range-checked here so
+    // a bad value fails at load time rather than silently clamping later; the
+    // message text matches Python's `_load_max_sort_group` (L3-WRT-003).
+    if let Some(n) = toml.get_int("output", "max_sort_group")? {
+        if n < MAX_SORT_GROUP_MIN as i64 || n > MAX_SORT_GROUP_MAX as i64 {
+            return Err(ConfigError(format!(
+                "Invalid output.max_sort_group: {n}. Valid range: [{MAX_SORT_GROUP_MIN}, {MAX_SORT_GROUP_MAX}]"
+            )));
+        }
+        cfg.max_sort_group = n as usize;
     }
     Ok(())
 }
@@ -493,6 +518,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("decode", "standard_tick_rate_hz")
             | ("output", "format")
             | ("output", "no_clobber")
+            | ("output", "max_sort_group")
             | ("mux", "enabled")
             | ("mux", "delimiter")
             | ("mux", "field")
@@ -1408,6 +1434,62 @@ exclude_types = ["UNICORN"]
         }
     }
 
+    /// `[output] max_sort_group` drives the canonical-order run cap, and is a
+    /// recognized schema key (no unknown-key WARN).
+    /// Requirements: L2-WRT-022, L3-WRT-003, L2-CFG-001
+    #[test]
+    fn parses_max_sort_group() {
+        let cfg = parse_into_config("[output]\nmax_sort_group = 64\n").unwrap();
+        assert_eq!(cfg.max_sort_group, 64);
+        assert!(is_known_shared_key("output", "max_sort_group"));
+    }
+
+    /// Absent key → the documented default.
+    /// Requirements: L2-WRT-022
+    #[test]
+    fn max_sort_group_defaults_when_absent() {
+        let cfg = parse_into_config("[output]\nno_clobber = true\n").unwrap();
+        assert_eq!(cfg.max_sort_group, DEFAULT_MAX_SORT_GROUP);
+    }
+
+    /// The documented "off" value parses and is in range.
+    /// Requirements: L2-WRT-022
+    #[test]
+    fn max_sort_group_accepts_one() {
+        let cfg = parse_into_config("[output]\nmax_sort_group = 1\n").unwrap();
+        assert_eq!(cfg.max_sort_group, MAX_SORT_GROUP_MIN);
+    }
+
+    /// Out-of-range on either side, and a non-integer, are load-time errors
+    /// (L2-CFG-010) rather than a silent clamp — the message names the key so a
+    /// shared config file fails identically on Python.
+    /// Requirements: L2-WRT-022, L2-CFG-010, L3-WRT-003
+    #[test]
+    fn max_sort_group_rejects_out_of_range_and_non_integer() {
+        for bad in ["0", "1048577", "-5"] {
+            let err =
+                parse_into_config(&format!("[output]\nmax_sort_group = {bad}\n")).unwrap_err();
+            assert!(
+                err.0.contains("max_sort_group"),
+                "error must name the key, got {:?}",
+                err.0
+            );
+        }
+        let not_int = parse_into_config("[output]\nmax_sort_group = true\n").unwrap_err();
+        assert!(not_int.0.contains("max_sort_group"), "got {:?}", not_int.0);
+    }
+
+    /// The upper bound itself is accepted (inclusive range).
+    /// Requirements: L2-WRT-022
+    #[test]
+    fn max_sort_group_accepts_upper_bound() {
+        let cfg = parse_into_config(&format!(
+            "[output]\nmax_sort_group = {MAX_SORT_GROUP_MAX}\n"
+        ))
+        .unwrap();
+        assert_eq!(cfg.max_sort_group, MAX_SORT_GROUP_MAX);
+    }
+
     /// A `[merge]` section in a config file must drive the collapse settings,
     /// identically to the Python loader (L2-MRG-007) — previously the Rust
     /// loader ignored the section entirely and warned it was unknown.
@@ -1477,6 +1559,7 @@ exclude_types = ["UNICORN"]
             "standard_tick_rate_hz",
             "format",
             "no_clobber",
+            "max_sort_group",
             "collapse_duplicates",
             "collapse_window_us",
             "exclude_types",

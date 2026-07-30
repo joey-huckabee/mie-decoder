@@ -28,6 +28,7 @@ pub mod filter;
 pub mod log;
 pub mod merge;
 pub mod models;
+pub mod order;
 pub mod reader;
 pub mod sync;
 pub mod writer;

@@ -322,10 +322,12 @@ never re-sort the whole set — which is also why memory stays flat no matter ho
 many total records there are.
 
 When two records carry the **exact same timestamp** (common at coarse time
-resolution), the tie is broken deterministically by the file's **position in
-the input list** (the order you gave the files on the command line / in the
-manifest, or lexicographic filename order for `--glob`) and then by the
-record's position within that file — so the output is reproducible run to run.
+resolution), they are ordered by **RT, then MSG** — the same canonical order a
+single-file decode uses. See [Row order](#row-order) below. That means merged
+output does not depend on the order you happened to list the files in: the same
+set of recordings produces the same CSV whichever way you name them. Only a tie
+that is *also* equal on RT and MSG falls back to input position, then to the
+record's position within its file.
 
 What to expect:
 
@@ -451,6 +453,49 @@ A typical receive row looks like:
 count. A `0000` data word inside the payload is written as `0000`, not left blank.)
 
 Line endings are LF (`\n`) on every platform — including Windows — so the CSV diffs cleanly between machines (L2-WRT-012).
+
+### Row order
+
+Rows come out in a **canonical order** (L1-OUT-003), the same for both
+implementations and for every way of invoking them:
+
+1. `TIME_STAMP`, ascending.
+2. `RT`, ascending, among rows sharing a timestamp.
+3. `MSG`, among rows sharing a timestamp *and* an RT: subaddress ascending, and
+   at the same subaddress **`R` before `T`**.
+
+Subaddress ordering is **numeric**, so `2R` comes before `11R` — not the
+string order you would get from sorting the `MSG` text.
+
+```
+192:15:54:50.000500,3,2T,...     ← RT 3 first
+192:15:54:50.000500,3,11R,...    ← SA 2 before SA 11; R before T
+192:15:54:50.000500,3,11T,...
+192:15:54:50.000500,21,3R,...    ← then RT 21
+192:15:54:50.000900,4,3R,...     ← next timestamp starts a fresh group
+```
+
+Three things worth knowing:
+
+- **Only tied rows move.** Records with different timestamps are never reordered
+  relative to one another. If a recording's own clock steps backward (rare — see
+  the merge notes above), that anomaly stays visible exactly where it happened;
+  the decoder does not silently re-sort a whole file.
+- **`SPURIOUS_DATA` rows stay put.** They carry no `RT` or `MSG`, so there is
+  nothing to sort them on. Each one keeps its place immediately after the record
+  it followed — which is what makes an `ERROR_CODE` of `2000` ("continuation of
+  the preceding error") readable at all.
+- **You can turn it off.** `--max-sort-group 1` (or `[output] max_sort_group = 1`)
+  makes every record its own group, so nothing is reordered and you get raw DDC
+  capture order. That is the supported way to get byte-for-byte row parity with
+  vendor CSV — see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md).
+
+`max_sort_group` otherwise just caps how many same-timestamp records are held in
+memory at once (default `4096`). Real ties are tiny — a 1553 bus runs one
+transaction at a time, so ties come from the two concurrent buses or from
+overlapping recorders in a merge. The cap only matters for a corrupt recording
+whose timestamps all decode to the same value; on hitting it, the decoder writes
+that group in arrival order, warns once, and carries on without dropping rows.
 
 For the binary-level field reference (what's in the Type Word, how IRIG packing works, etc.), see [`MIE-FORMAT.md`](MIE-FORMAT.md).
 

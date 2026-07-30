@@ -174,6 +174,8 @@ When the DDC card emits a `SPURIOUS_DATA` record (message type `0x20`) — i.e.,
 
 The continuation flag resets on any decode-time corruption boundary between the error and the SPURIOUS — see L2-ERR-005's "immediately preceding *successfully decoded* record" clause.
 
+**Adjacency in the CSV is guaranteed.** `0x2000` is defined in terms of the *preceding row*, so it would be meaningless if row ordering could separate a SPURIOUS_DATA record from the errored record it continues. Canonical row ordering (L1-OUT-003) therefore **pins** Command-Word-less records: because a SPURIOUS_DATA row has no `RT` or `MSG` to sort on, it is excluded from the equal-timestamp sort and travels with whichever record preceded it on input. So when you read `ERROR_CODE = 2000`, the row immediately above it in the CSV *is* the error it continues — even when a lower-`RT` record shares the same `TIME_STAMP` and sorts ahead of the pair.
+
 ---
 
 ## 8. Anomaly observations (WARN-only, no error class)

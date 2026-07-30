@@ -216,6 +216,56 @@ def errored_record_rt15_sa11_us(microseconds: int) -> bytes:
     )
 
 
+def _patch_rt_sa(rec: bytes, rt: int, sa: int, *, transmit: bool) -> bytes:
+    """Re-address a 30-data-word record to `rt`/`sa` in the given direction.
+
+    Rewrites **both** words that carry an RT address:
+
+    - the Command Word at bytes 8..10 → ``RT<<11 | dir<<10 | SA<<5 | 30``,
+      keeping the fixture's 30-data-word count so the layout is unchanged;
+    - the Status Word's RT field (bits 11..15), left in place otherwise.
+
+    Patching the Command Word alone leaves the Status Word still reporting the
+    original RT, which trips the reader's "Status RT does not match Cmd RT"
+    bus-interference anomaly WARN (L2-SYN) and puts an inconsistent value in the
+    ``STAT`` column. A record placed by these builders should be *clean*, so both
+    words move together.
+
+    The Status Word sits after the data words on a receive record and immediately
+    after the Command Word on a transmit record, so its offset depends on the
+    direction.
+    """
+    cmd = ((rt & 0x1F) << 11) | (int(transmit) << 10) | ((sa & 0x1F) << 5) | 30
+    out = bytearray(rec[:8] + cmd.to_bytes(2, "little") + rec[10:])
+    status_at = 10 if transmit else len(out) - 2
+    status = int.from_bytes(out[status_at : status_at + 2], "little")
+    status = (status & ~(0x1F << 11)) | ((rt & 0x1F) << 11)
+    out[status_at : status_at + 2] = status.to_bytes(2, "little")
+    return bytes(out)
+
+
+def receive_record_rt_sa_us(rt: int, sa: int, microseconds: int) -> bytes:
+    """A receive record (Type Word 0x02 = BC_TO_RT) for `rt`/`sa` at `microseconds`.
+
+    Type 0x02 requires ``Direction.RECEIVE`` (a decode structural invariant), so
+    this is the "R" builder; :func:`transmit_record_rt_sa_us` is the "T" one.
+    Together they let a test place several records at one TIME_STAMP with
+    different RT / subaddress / direction — the L1-OUT-003 ordering key.
+    """
+    return _patch_rt_sa(normal_record_rt15_sa11_us(microseconds), rt, sa, transmit=False)
+
+
+def transmit_record_rt_sa_us(rt: int, sa: int, microseconds: int) -> bytes:
+    """A transmit record (Type Word 0x04 = RT_TO_BC) for `rt`/`sa` at `microseconds`.
+
+    Type 0x04 requires ``Direction.TRANSMIT``.
+    """
+    patched_ts = (
+        RECORD_RT15_SA22_XMT[:2] + _irig_timestamp_bytes(microseconds) + RECORD_RT15_SA22_XMT[8:]
+    )
+    return _patch_rt_sa(patched_ts, rt, sa, transmit=True)
+
+
 def spurious_record_us(microseconds: int, data_word: int = 0x0000) -> bytes:
     """Build a SPURIOUS_DATA record (message type 0x20, no Command Word).
 
