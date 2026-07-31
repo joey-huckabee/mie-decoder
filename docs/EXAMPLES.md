@@ -424,11 +424,19 @@ mie-decoder decode flight.mie -o mie.csv --no-mux --max-sort-group 1
 # 2. Normalize line endings if your platforms differ.
 tr -d '\r' < flight-vendor.csv > flight-vendor-lf.csv
 
-# 3. Diff with vendor-empty columns masked out (vendor may populate MUX, TERM_NAME, gap columns).
-#    Columns we both populate: TIME_STAMP(1), RT(2), MSG(3), WD01-WD32(4-35), STAT(36), CMD(37), BUS(40), DELTA(41), ERROR(42), ERROR_CODE(43)
+# 3a. Simplest: truncate our output to the 44-column vendor block, diff whole rows.
+#     Columns 1-44 are the DDC vendor layout and share indices with the vendor
+#     CSV; 45-46 (ERROR, ERROR_CODE) are decoder additions with no vendor
+#     equivalent, so they are simply cut away.
+cut -d, -f1-44 mie.csv > mie-vendor-block.csv
+diff flight-vendor-lf.csv mie-vendor-block.csv
+
+# 3b. If the vendor file populates MUX / TERM_NAME / the gap columns and you want
+#     those masked out too, compare only the columns both tools fill:
+#     TIME_STAMP(1) RT(2) MSG(3) WD01-WD32(4-35) STAT(36) CMD(37) BUS(40) DELTA(41)
 diff \
-    <(awk -F, 'NR>0 {for (i=1; i<=37; i++) printf "%s%s", $i, (i==37 ? "" : ","); printf ",,,%s,%s,%s,%s\n", $40, $41, $42, $43}' flight-vendor-lf.csv) \
-    <(awk -F, 'NR>0 {for (i=1; i<=37; i++) printf "%s%s", $i, (i==37 ? "" : ","); printf ",,,%s,%s,%s,%s\n", $40, $41, $42, $43}' mie.csv)
+    <(awk -F, 'NR>0 {for (i=1; i<=37; i++) printf "%s%s", $i, (i==37 ? "" : ","); printf ",,,%s,%s\n", $40, $41}' flight-vendor-lf.csv) \
+    <(awk -F, 'NR>0 {for (i=1; i<=37; i++) printf "%s%s", $i, (i==37 ? "" : ","); printf ",,,%s,%s\n", $40, $41}' mie.csv)
 ```
 
 Expected output: nothing. A successful diff is silent.
@@ -465,7 +473,9 @@ mie-decoder decode flight.mie | \
 mie-decoder decode flight.mie | awk -F, 'NR>1 && $40=="B"' | head -1
 ```
 
-Column indices reference the spec column order (1 = TIME_STAMP, 2 = RT, 3 = MSG, 4–35 = WD01–WD32, 36 = STAT, 37 = CMD, 38 = MUX, 39 = TERM_NAME, 40 = BUS, 41 = DELTA, 42 = ERROR, 43 = ERROR_CODE, 44 = IM_GAP, 45 = RCV_GAP, 46 = XMT_GAP).
+Column indices reference the spec column order (1 = TIME_STAMP, 2 = RT, 3 = MSG, 4–35 = WD01–WD32, 36 = STAT, 37 = CMD, 38 = MUX, 39 = TERM_NAME, 40 = BUS, 41 = DELTA, 42 = IM_GAP, 43 = RCV_GAP, 44 = XMT_GAP, 45 = ERROR, 46 = ERROR_CODE). Indices 1–44 are the DDC vendor layout and match a vendor CSV position-for-position; 45–46 are decoder additions.
+
+> **Changed in v2.10.0:** `ERROR` / `ERROR_CODE` moved from 42/43 to 45/46, and the three gap columns moved from 44/45/46 to their vendor positions 42/43/44. Scripts that referenced those six by number need updating — see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §8 for a mapping table and a name-based alternative that cannot drift again.
 
 ---
 

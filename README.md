@@ -102,16 +102,20 @@ When the DDC card detects an error mid-transaction (Manchester error, parity err
 ### Error modes
 
 > **By default every record — clean, errored, and SPURIOUS — goes to one CSV**,
-> with the `ERROR`/`ERROR_CODE` columns populated. That is also the layout the DDC
-> vendor tool emits, so a default decode diffs against vendor output directly (see
-> [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md)). Pass
-> **`--separate-errors`** if you want the errored and SPURIOUS records pulled out
-> into a sibling `<output>_errors.csv` so the main file holds only clean rows.
+> with the `ERROR`/`ERROR_CODE` columns populated. One file for everything is also
+> how the DDC vendor tool writes its output, so a default decode lines up with
+> vendor output row-for-row (see
+> [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md)). The `ERROR` /
+> `ERROR_CODE` columns themselves are a MIE-Decoder addition — the vendor tool
+> does not report bus errors as CSV fields — which is why they sit at the end,
+> after the 44-column vendor layout. Pass **`--separate-errors`** if you want the
+> errored and SPURIOUS records pulled out into a sibling `<output>_errors.csv` so
+> the main file holds only clean rows.
 
 - **Default (inline)**: All messages in one CSV. `ERROR` column is `"ERROR"` or `"SPURIOUS"` (empty for clean rows); `ERROR_CODE` holds the code.
 - **`--separate-errors`**: Normal messages go to the main CSV; errored and spurious records go to `<output>_errors.csv` (created only if there are error rows).
 
-> **Changed in this release:** inline used to be opt-in via `--inline-errors`, and
+> **Changed in v2.8.0:** inline used to be opt-in via `--inline-errors`, and
 > separate was the default. The polarity is now reversed and `--inline-errors` has
 > been **removed** — passing it is a usage error (exit 4). Drop the flag to keep
 > the same output, or add `--separate-errors` for the old default layout.
@@ -227,6 +231,7 @@ poetry -C python run python ../tests/conformance/run.py
 
 - The Day field in IRIG timestamps may not decode correctly on all DDC card models.
 - `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` columns are present for format compatibility but empty (by spec). `MUX` is populated from the input file name by default (L2-WRT-020); pass `--no-mux` for vendor-exact (empty) output.
+- The CSV is 46 columns: the 44-column DDC vendor layout followed by the decoder-added `ERROR` and `ERROR_CODE`. `cut -d, -f1-44` recovers exactly the vendor layout. (In v2.10.0 those two moved from positions 42/43 to the end — see [`docs/VENDOR-CSV-DIFFS.md`](docs/VENDOR-CSV-DIFFS.md) §8 if you index columns by number.)
 - Rows are written in canonical order — `TIME_STAMP`, then `RT`, then `MSG` (L1-OUT-003) — so records sharing a timestamp may appear in a different order than DDC's capture-order output. Pass `--max-sort-group 1` (with `--no-mux`) for a byte-for-byte vendor diff.
 - Standard timestamp tick-to-microsecond conversion requires external calibration.
 - SPURIOUS_DATA payload structure is raw words with no further interpretation.

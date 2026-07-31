@@ -425,29 +425,45 @@ CSV byte-for-byte (empty MUX), turn it off with **`--no-mux`** (or
 
 ## 7. Reading the CSV
 
-The column layout matches DDC vendor output byte-for-byte. Columns in order:
+46 columns in two blocks: the **first 44 are the DDC vendor layout**, matching
+vendor output name-for-name and position-for-position, followed by two columns
+MIE-Decoder adds. Columns in order:
 
-| Column | Contents |
-|--------|----------|
-| `TIME_STAMP` | IRIG: `DAY:HH:MM:SS.uuuuuu` (e.g. `192:15:54:50.456225`). Standard: `0xNNNNNNNN` raw counter. |
-| `RT` | Remote Terminal address (0–31), or empty for SPURIOUS_DATA. |
-| `MSG` | `<subaddress><T\|R>` (e.g. `11R` for SA 11 Receive, `22T` for SA 22 Transmit). Empty for SPURIOUS_DATA. |
-| `WD01`–`WD32` | Up to 32 data words, 4-character uppercase hex without `0x` prefix. Unused trailing columns are empty (not `0000`). |
-| `STAT` | Status Word, 4-character uppercase hex. Empty when not present (e.g. some Mode Code formats). |
-| `CMD` | Command Word, 4-character uppercase hex. Empty for SPURIOUS_DATA. |
-| `MUX` | Source/recorder label derived from the input **file name** by default (see [Labeling output by recorder](#labeling-output-by-recorder-mux-from-the-file-name)). Empty with `--no-mux`. |
-| `TERM_NAME` | Vendor compatibility column. Always empty; reserved for future per-card metadata. |
-| `BUS` | `A` or `B`. |
-| `DELTA` | Seconds since the previous message on the same RT/MSG key. `0.000000` on first occurrence. Empty when the timestamp basis is unknown (uncalibrated Standard format — see [Calibrating Standard timestamps](#calibrating-standard-timestamps)), the record is SPURIOUS_DATA, or the timestamp is non-monotonic. |
-| `ERROR` | `ERROR`, `SPURIOUS`, or empty. Empty in clean rows of separate-mode CSV. |
-| `ERROR_CODE` | DDC hardware code (`011E`, `0120`, `0136`, `0140`, `0150`) or decoder-assigned code (`2000`, `2001`). Empty in clean rows of separate-mode CSV. |
-| `IM_GAP`, `RCV_GAP`, `XMT_GAP` | Vendor compatibility columns. Always empty; reserved for future inter-message gap timing. |
+| # | Column | Contents |
+|---|--------|----------|
+| 1 | `TIME_STAMP` | IRIG: `DAY:HH:MM:SS.uuuuuu` (e.g. `192:15:54:50.456225`). Standard: `0xNNNNNNNN` raw counter. |
+| 2 | `RT` | Remote Terminal address (0–31), or empty for SPURIOUS_DATA. |
+| 3 | `MSG` | `<subaddress><T\|R>` (e.g. `11R` for SA 11 Receive, `22T` for SA 22 Transmit). Empty for SPURIOUS_DATA. |
+| 4–35 | `WD01`–`WD32` | Up to 32 data words, 4-character uppercase hex without `0x` prefix. Unused trailing columns are empty (not `0000`). |
+| 36 | `STAT` | Status Word, 4-character uppercase hex. Empty when not present (e.g. some Mode Code formats). |
+| 37 | `CMD` | Command Word, 4-character uppercase hex. Empty for SPURIOUS_DATA. |
+| 38 | `MUX` | Source/recorder label derived from the input **file name** by default (see [Labeling output by recorder](#labeling-output-by-recorder-mux-from-the-file-name)). Empty with `--no-mux`. |
+| 39 | `TERM_NAME` | Vendor compatibility column. Always empty; reserved for future per-card metadata. |
+| 40 | `BUS` | `A` or `B`. |
+| 41 | `DELTA` | Seconds since the previous message on the same RT/MSG key. `0.000000` on first occurrence. Empty when the timestamp basis is unknown (uncalibrated Standard format — see [Calibrating Standard timestamps](#calibrating-standard-timestamps)), the record is SPURIOUS_DATA, or the timestamp is non-monotonic. |
+| 42–44 | `IM_GAP`, `RCV_GAP`, `XMT_GAP` | Vendor compatibility columns. Always empty; reserved for future inter-message gap timing. |
+| | *— end of the vendor block —* | |
+| 45 | `ERROR` | `ERROR`, `SPURIOUS`, or empty. Empty in clean rows of separate-mode CSV. |
+| 46 | `ERROR_CODE` | DDC hardware code (`011E`, `0120`, `0136`, `0140`, `0150`) or decoder-assigned code (`2000`, `2001`). Empty in clean rows of separate-mode CSV. |
+
+`ERROR` and `ERROR_CODE` have no vendor counterpart — the DDC tool doesn't report
+bus errors as CSV fields at all — so they sit after the vendor block rather than
+inside it. That keeps `cut -d, -f1-44` a valid way to recover exactly the vendor
+layout, and means any column added in a future release lands at the tail without
+shifting the ones you already depend on.
+
+> **Changed in v2.10.0:** these two moved from positions 42/43 to 45/46, and the
+> three gap columns moved to their vendor positions 42/43/44. If you have scripts
+> that index columns by number, see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §8.
 
 A typical receive row looks like:
 
 ```
 192:15:54:50.456225,15,11R,0400,0000,0000,002F,CA22,...,7800,797E,,,A,0.000000,,,,,
 ```
+
+(The five empty cells after `DELTA` are `IM_GAP`, `RCV_GAP`, `XMT_GAP`, `ERROR`,
+and `ERROR_CODE` — a clean record populates none of them.)
 
 (Only *trailing* `WD` columns are empty — the ones past this message's data-word
 count. A `0000` data word inside the payload is written as `0000`, not left blank.)

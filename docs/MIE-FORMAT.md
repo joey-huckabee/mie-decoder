@@ -457,7 +457,11 @@ The Status Word is returned by the RT to acknowledge a transaction.
 
 ## 10. CSV output reference
 
-The CSV layout is column-name and column-order compatible with DDC vendor recording software (L1-OUT-001). Forty-six columns in order: `TIME_STAMP`, `RT`, `MSG`, `WD01`–`WD32`, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, `DELTA`, `ERROR`, `ERROR_CODE`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`.
+Forty-six columns in two blocks (L1-OUT-001, L2-WRT-001).
+
+**Columns 1–44 — the DDC vendor layout**, name-for-name and index-for-index with vendor output: `TIME_STAMP`, `RT`, `MSG`, `WD01`–`WD32`, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, `DELTA`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`.
+
+**Columns 45–46 — decoder additions**: `ERROR`, `ERROR_CODE`. The vendor tool does not report bus errors as CSV fields, so these have no vendor counterpart and are appended after the vendor block. Any column added in future goes here too, keeping vendor indices stable.
 
 For documented divergences from vendor output (vendor-empty columns we preserve, row order within one timestamp, line-ending normalization, the IRIG day-of-year discrepancy), see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md).
 

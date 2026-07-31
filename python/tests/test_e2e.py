@@ -416,6 +416,35 @@ class TestCsvWriter:
         header = next(reader)
         assert header == CSV_HEADER
 
+    @pytest.mark.requirement("L1-OUT-001")
+    @pytest.mark.requirement("L2-WRT-001")
+    def test_vendor_block_precedes_decoder_added_columns(self) -> None:
+        """The 44-column DDC vendor block comes first, in vendor order, with the
+        decoder's own columns appended after it — so column N of a decoded CSV is
+        column N of a vendor CSV for every N in 1..=44.
+
+        Mirrors ``vendor_block_precedes_decoder_added_columns`` in
+        ``rust/src/writer.rs``.
+        """
+        from mie_decoder.writer import VENDOR_COLUMN_COUNT
+
+        assert len(CSV_HEADER) == 46, "46 columns total"
+        assert len(CSV_HEADER) - VENDOR_COLUMN_COUNT == 2, "two decoder additions"
+
+        # The vendor block ends at XMT_GAP...
+        assert CSV_HEADER[VENDOR_COLUMN_COUNT - 1] == "XMT_GAP"
+        # ...and the gap columns sit at their vendor indices (1-based 42/43/44),
+        # which is exactly what the pre-v2.10.0 interleaved layout got wrong.
+        assert CSV_HEADER[41] == "IM_GAP"
+        assert CSV_HEADER[42] == "RCV_GAP"
+        assert CSV_HEADER[43] == "XMT_GAP"
+        # Decoder additions are strictly at the tail.
+        assert CSV_HEADER[VENDOR_COLUMN_COUNT:] == ["ERROR", "ERROR_CODE"]
+        # No decoder-added column may appear inside the vendor block.
+        vendor_block = CSV_HEADER[:VENDOR_COLUMN_COUNT]
+        assert "ERROR" not in vendor_block
+        assert "ERROR_CODE" not in vendor_block
+
     @pytest.mark.requirement("L2-WRT-001")
     def test_csv_row_count(self, tmp_mie_file: Path) -> None:
         """Should produce one header + 3 data rows."""
@@ -438,16 +467,27 @@ class TestCsvWriter:
         next(reader)  # skip header
         row = next(reader)
 
-        assert row[0] == "192:15:54:50.456225"  # TIME_STAMP
-        assert row[1] == "15"  # RT
-        assert row[2] == "11R"  # MSG
-        assert row[3] == "0400"  # WD01
-        assert row[35] == "7800"  # STAT (index 3+32)
-        assert row[36] == "797E"  # CMD
-        assert row[39] == "A"  # BUS
-        assert row[40] == "0.000000"  # DELTA
-        assert row[41] == ""  # ERROR (normal message)
-        assert row[42] == ""  # ERROR_CODE (normal message)
+        # Resolve by column NAME rather than by hardcoded index. Hardcoded
+        # positions are what let the pre-v2.10.0 column-order bug hide: the
+        # names all still matched, so only a positional check would have caught
+        # ERROR/ERROR_CODE sitting inside the vendor block — and this test was
+        # itself written against those wrong positions.
+        col = {name: i for i, name in enumerate(CSV_HEADER)}
+        assert row[col["TIME_STAMP"]] == "192:15:54:50.456225"
+        assert row[col["RT"]] == "15"
+        assert row[col["MSG"]] == "11R"
+        assert row[col["WD01"]] == "0400"
+        assert row[col["STAT"]] == "7800"
+        assert row[col["CMD"]] == "797E"
+        assert row[col["BUS"]] == "A"
+        assert row[col["DELTA"]] == "0.000000"
+        assert row[col["ERROR"]] == ""  # normal message
+        assert row[col["ERROR_CODE"]] == ""  # normal message
+        # The gap columns are empty and sit at their vendor indices (1-based
+        # 42/43/44 → 0-based 41/42/43), immediately before the decoder's own
+        # two appended columns.
+        assert row[41:44] == ["", "", ""], "IM_GAP/RCV_GAP/XMT_GAP"
+        assert col["ERROR"] == 44 and col["ERROR_CODE"] == 45
 
     @pytest.mark.requirement("L2-WRT-002")
     def test_csv_data_word_padding(self, tmp_mie_file: Path) -> None:
@@ -847,7 +887,7 @@ class TestAtomicWriteSafety:
         lines = out.read_text().splitlines()
         assert len(lines) == 1  # header only, no data rows
         assert lines[0].startswith("TIME_STAMP,RT,MSG,")
-        assert lines[0].endswith("XMT_GAP")
+        assert lines[0].endswith("XMT_GAP,ERROR,ERROR_CODE")
 
     @pytest.mark.requirement("L1-EXIT-010")
     def test_cli_count_empty_recording_prints_zero_exit_0(

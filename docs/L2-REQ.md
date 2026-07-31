@@ -576,8 +576,8 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-WRT-001
 
 **Parent**: L1-OUT-001
-**Statement**: CSV columns SHALL appear in this order: `TIME_STAMP`, `RT`, `MSG`, `WD01`-`WD32`, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, `DELTA`, `ERROR`, `ERROR_CODE`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`.
-**Rationale**: Column order is dictated by the DDC vendor CSV. Reordering or "cleaning up" the empty vendor columns would break byte-exact diff and the column compatibility contract.
+**Statement**: CSV columns SHALL appear in this order: `TIME_STAMP`, `RT`, `MSG`, `WD01`-`WD32`, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, `DELTA`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`, `ERROR`, `ERROR_CODE`. The first **44** columns (`TIME_STAMP` through `XMT_GAP`) are the DDC vendor layout and SHALL appear in exactly that order and no other. `ERROR` and `ERROR_CODE` are decoder-added columns with no vendor counterpart and SHALL be **appended after** the vendor block, never interleaved within it.
+**Rationale**: Column order for the vendor block is dictated by the DDC vendor CSV; reordering or "cleaning up" the empty vendor columns would break the column compatibility contract. `ERROR` / `ERROR_CODE` are not vendor columns — the vendor tool emits 44 columns and does not report bus errors as CSV fields at all (they are a decoder feature, L2-ERR-002). Through v2.9.0 they were placed *inside* the vendor block, between `DELTA` and `IM_GAP`, which silently shifted `IM_GAP` / `RCV_GAP` / `XMT_GAP` two positions right of their vendor indices and made a positional (column-index) comparison against vendor output wrong for every column after `DELTA`. Appending them restores index alignment for the whole vendor block, so column *N* of a decoded CSV is column *N* of the vendor CSV for all 44, and anything the decoder adds is strictly additive at the tail — the position new columns should take in future too.
 **Verification Method**: Test (T)
 
 #### L2-WRT-002
