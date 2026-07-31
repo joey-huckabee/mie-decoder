@@ -6,7 +6,7 @@ Documented column-by-column alignment between MIE-Decoder's CSV output and DDC's
 - You ran `diff` against vendor output and found a mismatch.
 - You're integrating MIE-Decoder into a system that previously consumed vendor CSV.
 
-The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **column-name and column-order compatible** with the DDC vendor recorder's output. The cross-implementation conformance suite asserts byte-identical CSV between the Rust and Python implementations; that suite's oracles are derived from validated vendor output. In practice, except for the documented exceptions below, a single `diff` should produce zero lines of difference between MIE-Decoder output and a vendor CSV of the same recording.
+The short version: by spec (`L1-OUT-001`) MIE-Decoder's first **44 columns are the DDC vendor layout**, name-for-name and index-for-index, with two decoder-added columns (`ERROR`, `ERROR_CODE`) appended after them. The cross-implementation conformance suite asserts byte-identical CSV between the Rust and Python implementations; that suite's oracles are derived from validated vendor output. In practice, except for the documented exceptions below, a single `diff` should produce zero lines of difference between MIE-Decoder output and a vendor CSV of the same recording.
 
 ---
 
@@ -14,8 +14,8 @@ The short version: by spec (`L1-OUT-001`) MIE-Decoder produces CSV that is **col
 
 | Category | Status |
 |----------|--------|
-| Column names | **Match** (46 columns in the spec order) |
-| Column order | **Match** |
+| Column names | **Match** for all 44 vendor columns; we add 2 more (see §2) |
+| Column order | **Match** — vendor columns occupy indices 1–44 exactly; `ERROR` / `ERROR_CODE` are appended at 45–46 |
 | Cell formatting (hex width, casing, decimal precision) | **Match** |
 | Line endings | **Match** (both produce LF; see §4) |
 | Per-row data content for clean records | **Match** |
@@ -31,17 +31,42 @@ If you find a divergence outside the documented exceptions, **it is a bug** in M
 
 ## 2. The CSV columns
 
-In order, exactly as both tools emit them:
+A decoded CSV is **two blocks**: the DDC vendor layout, then the columns
+MIE-Decoder adds on top of it.
+
+**Block 1 — the vendor layout, columns 1–44.** These are the columns the DDC tool
+itself emits, in its order:
 
 ```
-TIME_STAMP, RT, MSG, WD01, WD02, ..., WD32, STAT, CMD, MUX, TERM_NAME, BUS, DELTA, ERROR, ERROR_CODE, IM_GAP, RCV_GAP, XMT_GAP
+TIME_STAMP, RT, MSG, WD01, WD02, ..., WD32, STAT, CMD, MUX, TERM_NAME, BUS, DELTA, IM_GAP, RCV_GAP, XMT_GAP
 ```
 
-That's **46 columns** total, in 15 named groups: 1 + 1 + 1 + 32 (data words) + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = 46. Reordering or renaming any column would break the L1-OUT-001 byte-compat contract.
+That's 1 + 1 + 1 + 32 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = **44 columns**.
+Reordering or renaming any of them breaks the L1-OUT-001 compatibility contract.
+
+**Block 2 — decoder additions, columns 45–46.** Appended after the vendor block:
+
+```
+ERROR, ERROR_CODE
+```
+
+`ERROR` and `ERROR_CODE` have **no vendor counterpart** — the DDC tool does not
+report bus errors as CSV fields at all. Surfacing them is a MIE-Decoder feature
+(L2-ERR-002), so they live at the tail where they cannot disturb vendor column
+indices. Any column added in a future release goes here too, never inside block 1.
+
+> **Changed in v2.10.0.** Through v2.9.0 these two columns sat *inside* the vendor
+> block, between `DELTA` and `IM_GAP`. That silently pushed `IM_GAP` / `RCV_GAP` /
+> `XMT_GAP` two positions to the right of their vendor indices, so any positional
+> comparison (`awk '{print $42}'`, a column slice, a fixed-width import) past
+> `DELTA` was comparing the wrong fields against vendor output — while every
+> column *name* still matched, which is why it went unnoticed. If you have
+> scripts written against the pre-v2.10.0 column numbers, see §8.
 
 ### Cells that match exactly
 
-The following columns produce byte-identical content between MIE-Decoder and the vendor tool for any clean (non-errored, non-spurious) record:
+The following vendor-block columns produce byte-identical content between
+MIE-Decoder and the vendor tool for any clean (non-errored, non-spurious) record:
 
 | Column | Format | Notes |
 |--------|--------|-------|
@@ -53,6 +78,14 @@ The following columns produce byte-identical content between MIE-Decoder and the
 | `CMD` | 4-character uppercase hex | Empty for SPURIOUS_DATA. |
 | `BUS` | Single character `A` or `B` | |
 | `DELTA` | `0.000000` (6 decimals) or empty | Empty for SPURIOUS_DATA, uncalibrated Standard-timestamp records (no tick rate configured — supply `standard_tick_rate_hz` to populate it, L2-DEC-017), and non-monotonic timestamps. See `docs/L2-REQ.md` L2-RDR-016 through L2-RDR-019 for the per-case rule. |
+
+### Decoder-added columns (no vendor equivalent)
+
+These have nothing to compare against — a vendor CSV has no such columns, so they
+are **expected extra fields**, not divergences:
+
+| Column | Format | Notes |
+|--------|--------|-------|
 | `ERROR` | `ERROR`, `SPURIOUS`, or empty | Empty in clean rows. Populated in the default inline mode; with `--separate-errors` the errored rows live in the sibling `_errors.csv` instead. |
 | `ERROR_CODE` | 4-character uppercase hex code | Empty in clean rows. See `docs/ERROR-CATALOG.md` §6–7 for the full code reference (`0x01xx` DDC, `0x20xx` decoder-assigned). |
 
@@ -78,16 +111,34 @@ Removing them would break the L1-OUT-001 byte-compat contract: any downstream to
 
 For a byte-for-byte diff against a vendor CSV, disable MUX population: pass **`--no-mux`** (or set `[mux] enabled = false` in your config). MIE-Decoder then leaves `MUX` empty like the other four placeholders, and the only remaining differences are the genuinely vendor-populated cells (gap timing, `TERM_NAME`, and any `MUX` values the vendor itself wrote). Those remaining differences are expected and documented — not a bug; the contract is "column layout matches."
 
-To make the diff easier to read, filter the comparison to the meaningful columns:
+To make the diff easier to read, filter the comparison to the meaningful columns.
+Since v2.10.0 the vendor columns share indices with the vendor CSV, so the **same**
+field list works on both files:
 
 ```bash
-# Compare only the columns we're known to populate
-awk -F, '{print $1, $2, $3, $36, $37, $40, $41, $42, $43}' OFS=, vendor.csv > vendor-cmp.csv
-awk -F, '{print $1, $2, $3, $36, $37, $40, $41, $42, $43}' OFS=, mie.csv    > mie-cmp.csv
+# Compare only the vendor columns we populate. Same indices on both sides.
+FIELDS='$1, $2, $3, $36, $37, $40, $41'
+awk -F, "{print $FIELDS}" OFS=, vendor.csv > vendor-cmp.csv
+awk -F, "{print $FIELDS}" OFS=, mie.csv    > mie-cmp.csv
 diff vendor-cmp.csv mie-cmp.csv
 ```
 
-(Columns 1–3 are `TIME_STAMP`, `RT`, `MSG`; 36–37 are `STAT`, `CMD`; 40–43 are `BUS`, `DELTA`, `ERROR`, `ERROR_CODE`. Data word columns 4–35 are also typically worth including — adjust as fits your validation needs. The full 1-based index map is in [`EXAMPLES.md`](EXAMPLES.md) §12; note that 38 is `MUX` and 39 is `TERM_NAME`, which is why the populated tail starts at 40.)
+(Columns 1–3 are `TIME_STAMP`, `RT`, `MSG`; 36–37 are `STAT`, `CMD`; 40–41 are
+`BUS`, `DELTA`. Data word columns 4–35 are also typically worth including — adjust
+as fits your validation needs. 38 is `MUX` and 39 is `TERM_NAME`; 42–44 are the
+`IM_GAP` / `RCV_GAP` / `XMT_GAP` placeholders. The full 1-based index map is in
+[`EXAMPLES.md`](EXAMPLES.md) §12.)
+
+Because `ERROR` / `ERROR_CODE` are now at 45–46, a simpler approach also works —
+truncate our output to the vendor block and compare whole rows:
+
+```bash
+cut -d, -f1-44 mie.csv > mie-vendor-block.csv
+diff vendor.csv mie-vendor-block.csv
+```
+
+That was not possible before v2.10.0, when the two decoder columns were embedded
+mid-row.
 
 ---
 
@@ -187,6 +238,7 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
    - `MUX` column → populated from the file name by default; pass `--no-mux` for a vendor-exact diff (§3).
    - Empty `TERM_NAME` / gap columns on our side → expected (§3).
    - Same rows, different order within one `TIME_STAMP` → canonical row order; pass `--max-sort-group 1` (§3a).
+   - Two extra columns at the end of our rows (`ERROR`, `ERROR_CODE`) → expected; they have no vendor counterpart (§2). Compare `cut -d, -f1-44` of our output against the vendor file.
    - Anything else → bug. See §7.
 
 5. **For automated comparison** in a regression pipeline, MIE-Decoder ships a cross-implementation conformance suite under `tests/conformance/` that asserts byte-identical CSV between the Rust and Python implementations against checked-in oracles. The oracle generation method (manual validation against vendor output, then committed) is documented in [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6.
@@ -198,6 +250,7 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
 Any column-content mismatch that isn't:
 
 - A `MUX` / `TERM_NAME` / `IM_GAP` / `RCV_GAP` / `XMT_GAP` cell that the vendor populated and we left empty (§3), or
+- The presence of the `ERROR` / `ERROR_CODE` columns at indices 45–46, which the vendor CSV does not have at all (§2), or
 - A row-order difference *within a single `TIME_STAMP`* that goes away under `--max-sort-group 1` (§3a), or
 - A line-ending CR/LF difference (§4), or
 - A day-of-year discrepancy on the IRIG `TIME_STAMP` (§5)
@@ -223,11 +276,49 @@ The L1-OUT-001 byte-compat commitment is load-bearing for adoption:
 
 The contract is enforced at three levels:
 
-1. **L2-WRT-001** pins the column order.
+1. **L2-WRT-001** pins the column order, including the rule that decoder-added columns are appended *after* the 44-column vendor block and never interleaved within it.
 2. **L2-WRT-002 / L2-WRT-003 / L2-WRT-004** pin the per-cell formatting (empty cells for unused fields, 4-char uppercase hex for words, 6-decimal DELTA).
 3. **L2-WRT-013** explicitly preserves the vendor-empty columns even though MIE-Decoder doesn't populate them.
 
 Plus the cross-implementation conformance suite, which asserts the Rust and Python implementations agree on every byte for every fixture. If both implementations drift, the suite fails CI; if only one drifts, the suite fails CI louder.
+
+### Migrating scripts written against pre-v2.10.0 column numbers
+
+Through v2.9.0, `ERROR` and `ERROR_CODE` sat at indices 42–43, pushing the three
+gap columns to 44–46. From v2.10.0 the gaps are at 42–44 (their vendor positions)
+and the two decoder columns are at 45–46.
+
+| Column | Index ≤ v2.9.0 | Index ≥ v2.10.0 |
+|---|---|---|
+| `DELTA` | 41 | 41 *(unchanged)* |
+| `ERROR` | 42 | **45** |
+| `ERROR_CODE` | 43 | **46** |
+| `IM_GAP` | 44 | **42** |
+| `RCV_GAP` | 45 | **43** |
+| `XMT_GAP` | 46 | **44** |
+
+Everything at index ≤ 41 is unaffected, which covers `TIME_STAMP`, `RT`, `MSG`,
+all 32 data words, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, and `DELTA` — so most
+scripts need no change at all. Only code that referenced the six columns above by
+number is affected.
+
+The durable fix is to resolve columns **by header name** rather than by index:
+
+```bash
+# Resolve ERROR_CODE by name, whatever position it occupies
+awk -F, 'NR==1 {for (i=1; i<=NF; i++) if ($i=="ERROR_CODE") c=i; next} $c!="" {print}' mie.csv
+```
+
+```python
+import csv
+with open("mie.csv", newline="") as fh:
+    for row in csv.DictReader(fh):      # DictReader is index-independent
+        if row["ERROR_CODE"]:
+            ...
+```
+
+Name-based access is what the decoder's own tests now use, precisely because the
+positional variants are what let this bug hide for so long.
 
 ---
 

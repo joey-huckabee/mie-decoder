@@ -15,6 +15,80 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.10.0] — 2026-07-30
+
+### Changed — BREAKING
+
+- **`ERROR` and `ERROR_CODE` moved to the end of the CSV, after `XMT_GAP`.** They
+  were at columns 42–43, between `DELTA` and `IM_GAP`; they are now columns 45–46.
+  The three gap columns move with it, from 44/45/46 to their vendor positions
+  42/43/44. Column *names* and cell *contents* are unchanged — this is purely a
+  reordering.
+
+  | Column | ≤ v2.9.0 | ≥ v2.10.0 |
+  |---|---|---|
+  | `DELTA` | 41 | 41 *(unchanged)* |
+  | `ERROR` | 42 | **45** |
+  | `ERROR_CODE` | 43 | **46** |
+  | `IM_GAP` | 44 | **42** |
+  | `RCV_GAP` | 45 | **43** |
+  | `XMT_GAP` | 46 | **44** |
+
+  Everything at index ≤ 41 is unaffected — `TIME_STAMP`, `RT`, `MSG`, all 32 data
+  words, `STAT`, `CMD`, `MUX`, `TERM_NAME`, `BUS`, `DELTA` — so most consumers need
+  no change. Only code that referenced the six columns above **by number** is
+  affected; anything reading by header name already works.
+
+  **Rationale — this fixes a latent vendor-compatibility bug.** `ERROR` and
+  `ERROR_CODE` have no DDC vendor counterpart: the vendor tool emits **44**
+  columns and does not report bus errors as CSV fields at all. Surfacing them is a
+  decoder feature (L2-ERR-002). Placing them *inside* the vendor block pushed
+  `IM_GAP` / `RCV_GAP` / `XMT_GAP` two positions right of their vendor indices, so
+  every positional comparison against vendor output past `DELTA` was silently
+  comparing the wrong fields — while all the column *names* still matched, which
+  is why it went unnoticed. With the decoder's columns appended instead, column
+  *N* of a decoded CSV is column *N* of a vendor CSV for all 44, and
+  `cut -d, -f1-44` now recovers the vendor layout exactly.
+
+  **Migration.** Prefer resolving columns by header name — `csv.DictReader` in
+  Python, or an awk header scan — which cannot drift again:
+
+  ```bash
+  awk -F, 'NR==1 {for (i=1;i<=NF;i++) if ($i=="ERROR_CODE") c=i; next} $c!="" {print}' mie.csv
+  ```
+
+  `docs/VENDOR-CSV-DIFFS.md` §8 has the full mapping table and both name-based
+  recipes.
+
+### Fixed
+
+- **Documentation that described `ERROR` / `ERROR_CODE` as vendor columns.**
+  `docs/VENDOR-CSV-DIFFS.md` listed both under "cells that match exactly" — i.e.
+  claimed byte-identical content against the vendor tool — and counted the vendor
+  layout as 46 columns. Neither is true: the vendor CSV has 44 columns and neither
+  of these among them. The document now separates the 44-column vendor block from
+  the 2 decoder additions, and its `awk` comparison recipes (which used the
+  pre-move indices) are corrected.
+
+### Changed
+
+- `L1-OUT-001` and `L2-WRT-001` amended to state the rule that made this fixable
+  and keeps it fixed: the vendor block occupies columns 1–44, and **decoder-added
+  columns are appended after it, never interleaved within it**. Any column added
+  in a future release goes at the tail, so vendor indices stay stable.
+- Both writers now expose a `VENDOR_COLUMN_COUNT` constant (44) marking the
+  boundary, and both test suites gained a test pinning it —
+  `vendor_block_precedes_decoder_added_columns` in `rust/src/writer.rs` and its
+  mirror in `python/tests/test_e2e.py`. They assert the gap columns sit at their
+  vendor indices and that no decoder column appears inside the vendor block.
+- `python/tests/test_e2e.py::test_csv_first_row_fields` now resolves columns by
+  **name** rather than hardcoded index. It had been written against the wrong
+  positions, so it asserted the bug was correct — a positional test that encodes
+  the layout it is meant to verify cannot catch a layout error.
+- All 43 conformance oracles and the 3 Python golden files regenerated. Each
+  change was verified to be a **pure column permutation** — same cells, different
+  order — before being accepted; no cell content changed anywhere.
+
 ## [2.9.0] — 2026-07-29
 
 ### Changed — BREAKING

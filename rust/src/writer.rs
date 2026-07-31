@@ -276,15 +276,26 @@ fn make_temp_path(final_path: &Path) -> PathBuf {
     }
 }
 
+/// Number of leading columns that make up the DDC vendor layout (L1-OUT-001).
+/// Everything past this index is a decoder addition appended at the tail.
+/// Shared in value with the Python implementation's `VENDOR_COLUMN_COUNT`.
+pub const VENDOR_COLUMN_COUNT: usize = 44;
+
 /// Header row written before the first data row. Public so callers can
 /// embed it elsewhere if needed.
+///
+/// Two blocks, in this order (L2-WRT-001): the 44-column DDC vendor block
+/// (`TIME_STAMP` through `XMT_GAP`), whose order is dictated by the vendor CSV,
+/// then the decoder-added `ERROR` / `ERROR_CODE`, which have no vendor
+/// counterpart. Keeping additions at the tail is what makes column *N* of a
+/// decoded CSV the same field as column *N* of a vendor CSV for all 44.
 pub const CSV_HEADER: &str = concat!(
     "TIME_STAMP,RT,MSG,",
     "WD01,WD02,WD03,WD04,WD05,WD06,WD07,WD08,WD09,WD10,",
     "WD11,WD12,WD13,WD14,WD15,WD16,WD17,WD18,WD19,WD20,",
     "WD21,WD22,WD23,WD24,WD25,WD26,WD27,WD28,WD29,WD30,",
     "WD31,WD32,",
-    "STAT,CMD,MUX,TERM_NAME,BUS,DELTA,ERROR,ERROR_CODE,IM_GAP,RCV_GAP,XMT_GAP\n",
+    "STAT,CMD,MUX,TERM_NAME,BUS,DELTA,IM_GAP,RCV_GAP,XMT_GAP,ERROR,ERROR_CODE\n",
 );
 
 /// Streaming CSV row writer.
@@ -413,18 +424,20 @@ fn write_row<W: Write>(out: &mut W, msg: &MieMessage) -> std::io::Result<()> {
     }
     out.write_all(b",")?;
 
-    // ERROR
+    // IM_GAP, RCV_GAP, XMT_GAP (always empty) — the tail of the 44-column
+    // vendor block (L2-WRT-001).
+    out.write_all(b",,,")?;
+
+    // ERROR, then ERROR_CODE — decoder-added columns with no vendor
+    // counterpart, appended AFTER the vendor block so column N of a decoded
+    // CSV is column N of the vendor CSV for all 44 (L1-OUT-001).
     out.write_all(msg.error_label().as_bytes())?;
     out.write_all(b",")?;
 
-    // ERROR_CODE
     if let Some(c) = msg.error_word {
         write!(out, "{c:04X}")?;
     }
-    out.write_all(b",")?;
-
-    // IM_GAP, RCV_GAP, XMT_GAP (always empty)
-    out.write_all(b",,\n")?;
+    out.write_all(b"\n")?;
 
     Ok(())
 }
@@ -875,7 +888,38 @@ mod tests {
         writer.finish().unwrap();
         let s = String::from_utf8(buf).unwrap();
         assert!(s.starts_with("TIME_STAMP,RT,MSG,WD01"));
-        assert!(s.trim_end().ends_with("XMT_GAP"));
+        assert!(s.trim_end().ends_with("XMT_GAP,ERROR,ERROR_CODE"));
+    }
+
+    /// The 44-column DDC vendor block comes first, in vendor order, and the
+    /// decoder's own columns are appended after it — so column N of a decoded
+    /// CSV is column N of a vendor CSV for every N in 1..=44 (L1-OUT-001).
+    ///
+    /// Requirements: L1-OUT-001, L2-WRT-001
+    #[test]
+    fn vendor_block_precedes_decoder_added_columns() {
+        let cols: Vec<&str> = CSV_HEADER.trim_end().split(',').collect();
+        assert_eq!(cols.len(), 46, "46 columns total");
+        assert_eq!(cols.len() - VENDOR_COLUMN_COUNT, 2, "two decoder additions");
+
+        // The vendor block ends at XMT_GAP...
+        assert_eq!(cols[VENDOR_COLUMN_COUNT - 1], "XMT_GAP");
+        // ...and the gap columns sit at their vendor indices (1-based 42/43/44),
+        // which is exactly what the pre-v2.10.0 interleaved layout got wrong.
+        assert_eq!(cols[41], "IM_GAP");
+        assert_eq!(cols[42], "RCV_GAP");
+        assert_eq!(cols[43], "XMT_GAP");
+        // Decoder additions are strictly at the tail.
+        assert_eq!(&cols[VENDOR_COLUMN_COUNT..], &["ERROR", "ERROR_CODE"]);
+        // No decoder-added column may appear inside the vendor block.
+        assert!(
+            !cols[..VENDOR_COLUMN_COUNT].contains(&"ERROR"),
+            "ERROR must not be inside the vendor block"
+        );
+        assert!(
+            !cols[..VENDOR_COLUMN_COUNT].contains(&"ERROR_CODE"),
+            "ERROR_CODE must not be inside the vendor block"
+        );
     }
 
     /// Requirements: L2-WRT-001, L2-WRT-003
@@ -899,8 +943,13 @@ mod tests {
         assert!(row.contains(",7800,797E,"));
         // Bus, Delta
         assert!(row.contains(",A,0.123456,"));
-        // Trailing empty MUX, TERM_NAME, ERROR, ERROR_CODE, gap columns
-        assert!(row.ends_with(",,,,"));
+        // After DELTA the row is all-empty for a clean message: the three gap
+        // columns, then the two appended decoder columns — five empty cells,
+        // so five trailing commas.
+        assert!(
+            row.ends_with(",0.123456,,,,,"),
+            "expected DELTA followed by 5 empty cells, got: {row}"
+        );
     }
 
     /// Requirements: L2-WRT-002

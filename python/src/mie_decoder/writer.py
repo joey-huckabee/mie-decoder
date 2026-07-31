@@ -298,7 +298,19 @@ def _unique_temp_path(final_path: Path) -> Path:
 
 #: CSV column definitions in output order. Each entry is (column_name, description).
 #: The canonical column order is defined here and used by all output functions.
+#:
+#: Two blocks, in this order (L2-WRT-001):
+#:
+#: 1. The **44-column DDC vendor block**, ``TIME_STAMP`` through ``XMT_GAP``. Its
+#:    order is dictated by the vendor CSV and must not change — column N here is
+#:    column N of a vendor-produced CSV, which is what makes a positional
+#:    (``awk $N``) comparison against vendor output correct.
+#: 2. **Decoder-added columns**, appended after it. ``ERROR`` / ``ERROR_CODE``
+#:    have no vendor counterpart: the vendor tool does not report bus errors as
+#:    CSV fields at all. Any column added in future goes here too, never inside
+#:    the vendor block.
 CSV_COLUMNS: list[tuple[str, str]] = [
+    # ── DDC vendor block (columns 1-44) ────────────────────────────────────
     ("TIME_STAMP", "IRIG timestamp DAY:HH:MM:SS.uuuuuu"),
     ("RT", "Remote Terminal address 0-30"),
     ("MSG", "Message identifier: <Subaddress><T|R>"),
@@ -309,12 +321,17 @@ CSV_COLUMNS: list[tuple[str, str]] = [
     ("TERM_NAME", "Terminal name (external config, empty by spec L2-WRT-013)"),
     ("BUS", "Bus identifier: A or B"),
     ("DELTA", "Seconds since prior message with same RT+MSG"),
-    ("ERROR", "Error label: empty=normal, ERROR=bit14, SPURIOUS=type 0x20"),
-    ("ERROR_CODE", "DDC error code (0x01xx) or decoder code (0x20xx)"),
     ("IM_GAP", "Inter-message gap (empty by spec L2-WRT-013)"),
     ("RCV_GAP", "Receive gap (empty by spec L2-WRT-013)"),
     ("XMT_GAP", "Transmit gap (empty by spec L2-WRT-013)"),
+    # ── Decoder-added columns (45-46), no vendor counterpart ───────────────
+    ("ERROR", "Error label: empty=normal, ERROR=bit14, SPURIOUS=type 0x20"),
+    ("ERROR_CODE", "DDC error code (0x01xx) or decoder code (0x20xx)"),
 ]
+
+#: Number of leading columns that make up the DDC vendor layout (L1-OUT-001).
+#: Everything past this index is a decoder addition.
+VENDOR_COLUMN_COUNT: int = 44
 
 #: Ordered list of column names for CSV header row.
 CSV_HEADER: list[str] = [name for name, _ in CSV_COLUMNS]
