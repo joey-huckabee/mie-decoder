@@ -91,8 +91,12 @@ def test_merge_rejects_freerun_leading_input(tmp_path: Path) -> None:
     fb = tmp_path / "b.mie"
     fa.write_bytes(good)
     fb.write_bytes(freerun)
+    # Open the readers outside the `raises` block so only `merge_readers` can
+    # satisfy it -- a constructor failure would otherwise pass this test for the
+    # wrong reason (S5778).
+    readers = [MieFileReader(fa), MieFileReader(fb)]
     with pytest.raises(MieIncompatibleMergeInputsError):
-        merge_readers([MieFileReader(fa), MieFileReader(fb)])
+        merge_readers(readers)
 
 
 @pytest.mark.requirement("L1-MRG-002")
@@ -145,8 +149,9 @@ def test_merge_strict_fails_on_within_file_backward_step(tmp_path: Path) -> None
     fa = tmp_path / "a.mie"
     fa.write_bytes(a)
     # The raise is lazy (during the drain), so the generator must be consumed.
+    readers = [MieFileReader(fa)]
     with pytest.raises(MieNonMonotonicInputError):
-        list(merge_readers([MieFileReader(fa)], strict=True))
+        list(merge_readers(readers, strict=True))
 
 
 @pytest.mark.requirement("L2-MRG-001")

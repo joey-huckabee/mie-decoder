@@ -487,7 +487,8 @@ class TestCsvWriter:
         # 42/43/44 → 0-based 41/42/43), immediately before the decoder's own
         # two appended columns.
         assert row[41:44] == ["", "", ""], "IM_GAP/RCV_GAP/XMT_GAP"
-        assert col["ERROR"] == 44 and col["ERROR_CODE"] == 45
+        assert col["ERROR"] == 44
+        assert col["ERROR_CODE"] == 45
 
     @pytest.mark.requirement("L2-WRT-002")
     def test_csv_data_word_padding(self, tmp_mie_file: Path) -> None:
@@ -554,12 +555,9 @@ class TestAtomicWriteSafety:
 
         opts = WriteOptions(input_path=tmp_mie_file, no_clobber=False)
         original_bytes = tmp_mie_file.read_bytes()
+        reader = MieFileReader(tmp_mie_file)
         with pytest.raises(MieInputOutputCollisionError) as exc_info:
-            write_csv(
-                MieFileReader(tmp_mie_file),
-                output=tmp_mie_file,
-                opts=opts,
-            )
+            write_csv(reader, output=tmp_mie_file, opts=opts)
         assert str(tmp_mie_file) in str(exc_info.value)
         # Input file MUST be unchanged.
         assert tmp_mie_file.read_bytes() == original_bytes
@@ -575,8 +573,9 @@ class TestAtomicWriteSafety:
         out = tmp_path / "out.csv"
         out.write_text("EXISTING\n", encoding="utf-8")
         opts = WriteOptions(no_clobber=True)
+        reader = MieFileReader(tmp_mie_file)
         with pytest.raises(MieClobberRefusedError):
-            write_csv(MieFileReader(tmp_mie_file), output=out, opts=opts)
+            write_csv(reader, output=out, opts=opts)
         # Existing file untouched.
         assert out.read_text(encoding="utf-8") == "EXISTING\n"
 
@@ -605,8 +604,9 @@ class TestAtomicWriteSafety:
         from mie_decoder.writer import WriteOptions, write_csv_split
 
         opts = WriteOptions(input_path=tmp_mie_file, no_clobber=False)
+        reader = MieFileReader(tmp_mie_file)
         with pytest.raises(MieInputOutputCollisionError):
-            write_csv_split(MieFileReader(tmp_mie_file), output=tmp_mie_file, opts=opts)
+            write_csv_split(reader, output=tmp_mie_file, opts=opts)
 
     @pytest.mark.requirement("L2-SYN-011")
     @pytest.mark.requirement("L1-EXIT-002")
@@ -761,7 +761,8 @@ class TestAtomicWriteSafety:
         )
         assert rc != 0
         captured = capsys.readouterr()
-        assert "--detect-records" in captured.err and "999" in captured.err
+        assert "--detect-records" in captured.err
+        assert "999" in captured.err
 
     @pytest.mark.requirement("L2-CLI-012")
     @pytest.mark.requirement("L2-DEC-017")
@@ -975,8 +976,9 @@ class TestAtomicWriteSafety:
         err = tmp_path / "out_errors.csv"
         err.write_text("OLD ERRORS\n", encoding="utf-8")
         opts = WriteOptions(no_clobber=True)
+        reader = MieFileReader(tmp_mie_file)
         with pytest.raises(MieClobberRefusedError) as exc_info:
-            write_csv_split(MieFileReader(tmp_mie_file), output=out, opts=opts)
+            write_csv_split(reader, output=out, opts=opts)
         assert str(err) in str(exc_info.value)
         # Main destination must not have been created.
         assert not out.exists()

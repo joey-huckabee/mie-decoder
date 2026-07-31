@@ -65,8 +65,10 @@ def test_public_surface_is_documented() -> None:
     import mie_decoder
     from mie_decoder import MieFileReader
 
-    assert mie_decoder.__doc__ and mie_decoder.__doc__.strip()
-    assert MieFileReader.__doc__ and MieFileReader.__doc__.strip()
+    assert mie_decoder.__doc__ is not None
+    assert mie_decoder.__doc__.strip()
+    assert MieFileReader.__doc__ is not None
+    assert MieFileReader.__doc__.strip()
 
 
 @pytest.mark.requirement("L3-PY-003")

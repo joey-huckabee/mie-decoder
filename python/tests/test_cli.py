@@ -215,8 +215,12 @@ class TestBuildDecodeOverrides:
         assert ov["time_format"] == TimestampFormat[expected]
 
     def test_time_format_invalid_raises_value_error(self) -> None:
+        # Build the namespace outside the `raises` block so only the call under
+        # test can satisfy it -- otherwise a ValueError from the fixture helper
+        # would pass this test for the wrong reason (S5778).
+        ns = _decode_ns(time_format="bogus")
         with pytest.raises(ValueError, match="Invalid time_format"):
-            cli._build_decode_overrides(_decode_ns(time_format="bogus"))
+            cli._build_decode_overrides(ns)
 
     def test_detect_and_lookahead_valid_bounds(self) -> None:
         from mie_decoder.config import DETECT_RECORDS_MIN, LOOKAHEAD_RECORDS_MIN
@@ -233,20 +237,24 @@ class TestBuildDecodeOverrides:
         assert ov["standard_tick_rate_hz"] == 1_000_000.0
 
     def test_bad_filter_value_raises(self) -> None:
+        ns = _decode_ns(include_rts=["999"])
         with pytest.raises(ValueError):
-            cli._build_decode_overrides(_decode_ns(include_rts=["999"]))
+            cli._build_decode_overrides(ns)
 
     def test_empty_mux_delimiter_raises(self) -> None:
+        ns = _decode_ns(mux_delimiter="")
         with pytest.raises(ValueError, match="must be a non-empty string"):
-            cli._build_decode_overrides(_decode_ns(mux_delimiter=""))
+            cli._build_decode_overrides(ns)
 
     def test_detect_records_out_of_range_raises(self) -> None:
+        ns = _decode_ns(detect_records=10**9)
         with pytest.raises(ValueError, match="--detect-records"):
-            cli._build_decode_overrides(_decode_ns(detect_records=10**9))
+            cli._build_decode_overrides(ns)
 
     def test_standard_tick_rate_nonpositive_raises(self) -> None:
+        ns = _decode_ns(standard_tick_rate_hz=0.0)
         with pytest.raises(ValueError, match="--standard-tick-rate-hz"):
-            cli._build_decode_overrides(_decode_ns(standard_tick_rate_hz=0.0))
+            cli._build_decode_overrides(ns)
 
 
 # ── error classification ────────────────────────────────────────────────────

@@ -711,7 +711,8 @@ class TestErrorModeConfig:
         assert rc == 0
 
         errors = tmp_path / "split_errors.csv"
-        assert out.exists() and errors.exists()
+        assert out.exists()
+        assert errors.exists()
         main_rows = list(csv.DictReader(out.read_text().splitlines()))
         err_rows = list(csv.DictReader(errors.read_text().splitlines()))
         assert [r["ERROR"] for r in main_rows] == [""]
@@ -1056,6 +1057,28 @@ class TestSharedDefaultConfig:
         assert cfg.lookahead_records == 2
         assert cfg.output_format == "csv"
         assert cfg.max_sort_group == 4096
+
+
+class TestConfigPathValidation:
+    """`--config` is operator-supplied, so the path is validated before it is
+    read (`pythonsecurity:S8707`). `exists()` alone is not enough — it is true
+    for directories and device files. Held to the same behavior and message as
+    the Rust loader's `load_config`."""
+
+    @pytest.mark.requirement("L2-CFG-001")
+    def test_missing_path_raises_file_not_found(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError, match="Config file not found"):
+            load_config(tmp_path / "nope.toml")
+
+    @pytest.mark.requirement("L2-CFG-001")
+    def test_directory_is_rejected_not_read(self, tmp_path: Path) -> None:
+        """A directory passes `exists()`; without the regular-file check this
+        surfaced as an OS-level `IsADirectoryError` traceback instead of a
+        config error."""
+        d = tmp_path / "conf.d"
+        d.mkdir()
+        with pytest.raises(ValueError, match="not a regular file"):
+            load_config(d)
 
 
 class TestMaxSortGroupKey:

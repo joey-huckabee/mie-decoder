@@ -1373,7 +1373,12 @@ def main_cli(argv: list[str] | None = None) -> int:
     code = main(argv)
     try:
         sys.stdout.flush()
-    except (BrokenPipeError, OSError):
+    except OSError:
+        # BrokenPipeError is the case this exists for, but it is a subclass of
+        # OSError — naming both was redundant (S5713). Catching OSError also
+        # covers the disk-full / closed-handle variants, which need the same
+        # treatment: neutralise stdout so CPython's shutdown flush cannot turn
+        # a clean exit code into 120.
         _neutralise_dead_stdout()
     return code
 

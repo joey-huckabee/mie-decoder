@@ -157,6 +157,27 @@ impl<I, E> Ordered<I, E> {
         self.out.extend(run.into_iter().rev());
     }
 
+    /// Add `msg` to the run being accumulated.
+    ///
+    /// Flushes first if `msg` opens a *new* equal-timestamp run, and again
+    /// afterwards if the run has reached the L2-WRT-022 cap. Split out of
+    /// `next` so that method carries only the iteration control flow (drain,
+    /// pending error, exhaustion) and this one carries only the run-boundary
+    /// rule — each is then readable on its own.
+    fn accept(&mut self, msg: MieMessage) {
+        let starts_new_run = self
+            .buf
+            .first()
+            .is_some_and(|head| !same_group(&head.timestamp, &msg.timestamp));
+        if starts_new_run {
+            self.flush();
+        }
+        self.buf.push(msg);
+        if self.buf.len() >= self.max_group {
+            self.flush_capped();
+        }
+    }
+
     /// Flush a run that hit the L2-WRT-022 cap: emitted in arrival order, with
     /// one WARN naming the timestamp and the cap.
     fn flush_capped(&mut self) {
@@ -203,19 +224,7 @@ where
                     self.pending = Some(e);
                     self.flush();
                 }
-                Some(Ok(msg)) => {
-                    let starts_new_run = match self.buf.first() {
-                        Some(head) => !same_group(&head.timestamp, &msg.timestamp),
-                        None => false,
-                    };
-                    if starts_new_run {
-                        self.flush();
-                    }
-                    self.buf.push(msg);
-                    if self.buf.len() >= self.max_group {
-                        self.flush_capped();
-                    }
-                }
+                Some(Ok(msg)) => self.accept(msg),
             }
         }
     }

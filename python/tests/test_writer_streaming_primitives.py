@@ -68,10 +68,17 @@ def test_atomic_close_without_commit_unlinks_temp_and_keeps_destination(
 @pytest.mark.requirement("L2-WRT-016")
 def test_atomic_context_manager_cleans_up_on_exception(tmp_path: Path) -> None:
     dest = tmp_path / "out.csv"
-    with pytest.raises(RuntimeError):
+
+    def _fail_mid_write() -> None:
+        """The single throwing call for the `raises` block: opens the atomic
+        file, writes, then fails — exercising cleanup on an exception raised
+        inside the context manager (S5778 wants one call under test)."""
         with _AtomicCsvFile(dest) as atomic:
             atomic.stream.write("partial work\n")
             raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        _fail_mid_write()
     assert _leftover_temps(dest) == [], "temp leaked after exception in context manager"
     assert not dest.exists(), "destination must not be created on failure"
 
@@ -115,7 +122,8 @@ def test_two_writers_same_destination_use_distinct_temps(tmp_path: Path) -> None
     first = _AtomicCsvFile(dest)
     second = _AtomicCsvFile(dest)
     assert first._temp != second._temp
-    assert first._temp.exists() and second._temp.exists()
+    assert first._temp.exists()
+    assert second._temp.exists()
     first.close()
     second.close()
     assert _leftover_temps(dest) == []
@@ -303,5 +311,7 @@ def test_write_csv_to_stream_still_raises_on_real_write_failure(
     mie = tmp_path / "one.mie"
     mie.write_bytes(data)
 
+    reader = MieFileReader(mie)
+    sink = _DiskFull()
     with pytest.raises(MieWriterError):
-        write_csv(MieFileReader(mie), output=_DiskFull())
+        write_csv(reader, output=sink)

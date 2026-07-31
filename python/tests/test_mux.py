@@ -47,7 +47,8 @@ def test_reader_attaches_mux_from_filename(tmp_path: Path) -> None:
     fpath.write_bytes(RECORD_RT15_SA11_RCV)
     # Default (enabled): every record carries the field-4 value.
     msgs = list(MieFileReader(fpath))
-    assert msgs and all(m.mux == "aa" for m in msgs)
+    assert msgs, "fixture decoded no messages"
+    assert all(m.mux == "aa" for m in msgs)
     # Disabled → no MUX.
     msgs = list(MieFileReader(fpath, mux_enabled=False))
     assert all(m.mux is None for m in msgs)
