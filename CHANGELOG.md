@@ -15,6 +15,96 @@ full release workflow.
 
 ## [Unreleased]
 
+### Changed — BREAKING
+
+- **Merged `DELTA` is now measured per input file by default.** In a multi-file
+  decode, a record's `DELTA` is the gap to the previous same-RT/MSG record **from
+  its own file** — the value that record gets when its file is decoded alone.
+  Through v2.10.0 it was always measured across the merged timeline. Selectable
+  via the new **`--delta-scope per-file|global`** flag and `[merge] delta_scope`
+  config key (`L2-MRG-005`, `L3-WRT-004`); `--delta-scope global` restores the
+  previous behavior exactly.
+
+  **What actually changes.** Only RT/MSG keys that appear in **more than one
+  input file** are affected. A key found in just one file gets the same value
+  under either scope, because only that file's records can advance its tracker —
+  so a merge of recordings covering disjoint equipment produces byte-identical
+  output to v2.10.0. Single-file decodes are entirely unaffected: with one file
+  the two scopes are the same computation, and the flag is accepted as a no-op.
+
+  **Rationale.** The two scopes answer different questions — "how long since
+  *this recorder* last saw this key" versus "how long since *any* recorder last
+  saw it" — and which is wanted depends on what the inputs are, which the decoder
+  cannot infer. `global` as a default had two problems. It made merged `DELTA`
+  depend on the operator's choice of input set rather than on the bus traffic:
+  two recorders each observing a 0.2 s cadence reported an apparent 0.1 s, and
+  fully overlapping recorders degenerated to alternating `0.000000` values, one
+  per duplicate pair. And it diverged from the DDC vendor tool for every shared
+  key, since the vendor has no merge feature and always reports per-file — which
+  is what surfaced this: a user comparing merged output against vendor CSV.
+  `per-file` is the reading that composes: it matches a single-file decode, it
+  matches vendor output, and it stays meaningful however the input set is
+  assembled.
+
+  **Migration.** Add `--delta-scope global` (or `[merge] delta_scope = "global"`)
+  to any pipeline that depends on the previous values.
+
+  Implementation note: `per-file` is realised by **not** recomputing DELTA during
+  the merge — each reader already computed it for its own file — so the guarantee
+  that a merged record's value equals its single-file value holds by construction
+  rather than by a second implementation agreeing with the first (`L3-WRT-004`).
+
+### Added
+
+- **`--delta-scope <SCOPE>` / `[merge] delta_scope`** on both CLIs, accepting
+  `per-file` (default) and `global`, case-insensitively. An unrecognised name is
+  a config error (exit `5`) from TOML and a usage error (exit `4`) from the CLI.
+- Conformance case `merge-delta-scope-global` pins the `global` behavior so the
+  pre-v2.11.0 numbers stay covered, alongside five `delta_scope` snippets in the
+  config-parser parity corpus and the key in the fuzzer palette.
+
+### Fixed
+
+- **SonarCloud: the quality gate's only failing condition** — a `MAJOR`
+  path-traversal finding (`pythonsecurity:S8707`) on the `--config` path. The
+  operator-supplied path was read after only an `exists()` check, which is true
+  for directories, FIFOs and character devices: `--config <dir>` surfaced a raw
+  `IsADirectoryError` and `--config /dev/zero` would read forever. Both loaders
+  now require a **regular file** before reading, with identical message text.
+- **Six `CRITICAL` cognitive-complexity findings** (`S3776`), refactored without
+  behavior change: `order.rs::next` (18 → split into `accept`),
+  `config.rs::parse_toml` (32 → `parse_section_header` + `parse_key_value`),
+  `config.rs::is_toml_number_literal` (29 → rewritten as the grammar's own
+  productions), `config.rs::with_overrides` (16 → a declarative field list),
+  and the two Python config functions that mirror them.
+- **Regex character classes** (`S6353`) now use `\w` / `\d` — compiled with
+  `re.ASCII`. Taking the suggestion literally would have been a **bug**: Python's
+  `\w`/`\d` are Unicode-aware and would have accepted identifiers like `stricté`
+  and digits like `٤٢` that the Rust parser's `is_ascii_alphanumeric` /
+  `is_ascii_digit` reject, silently diverging the two config parsers. The fuzzer
+  palette gains non-ASCII identifiers and digits so the flag cannot be dropped
+  unnoticed.
+- **A redundant exception class** (`S5713`): `except (BrokenPipeError, OSError)`
+  → `except OSError`, since the former is a subclass of the latter.
+- **22 test-file findings**: `S5778` (15) hoists setup calls out of
+  `pytest.raises` blocks so only the call under test can satisfy them — a
+  constructor failure would otherwise pass those tests for the wrong reason;
+  `S9073` (7) splits composite assertions so a failure names which half broke.
+
+### Notes
+
+- The `docs/ROADMAP.md` "per-recorder DELTA" item is partly delivered: the
+  common case (one file per recorder) is covered by `--delta-scope`. What remains
+  is keying DELTA on a recorder *identity* parsed from the file name, which
+  matters only if one recorder's output is split across files or several
+  recorders' output is combined into one.
+- **Known gap, not addressed here:** `docs/diagrams/component.puml` and
+  `dataflow.puml` never gained the `order` module added in v2.9.0, and
+  `dataflow.puml`'s "DDC vendor column order" label is stale after v2.10.0. The
+  CI drift check only verifies the committed SVGs match their PUML sources, so it
+  cannot detect a PUML that is missing a module. Fixing it requires re-rendering
+  with the pinned PlantUML 1.2026.5 + Graphviz.
+
 ## [2.10.0] — 2026-07-30
 
 ### Changed — BREAKING

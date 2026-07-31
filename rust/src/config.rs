@@ -23,7 +23,7 @@ use crate::decode::{
     DEFAULT_DETECT_RECORDS, DEFAULT_MUX_DELIMITER, DEFAULT_MUX_ENABLED, DEFAULT_MUX_FIELD,
 };
 use crate::filter::FilterConfig;
-use crate::models::{Bus, ErrorMode, MessageType, TimestampFormat};
+use crate::models::{Bus, DeltaScope, ErrorMode, MessageType, TimestampFormat};
 use crate::order::{DEFAULT_MAX_SORT_GROUP, MAX_SORT_GROUP_MAX, MAX_SORT_GROUP_MIN};
 use crate::sync::DEFAULT_LOOKAHEAD_RECORDS;
 
@@ -100,6 +100,12 @@ pub struct DecoderConfig {
     /// Timestamp tolerance in microseconds for collapsing (0 = exact-µs match).
     /// Widen it for recorders whose IRIG clocks differ slightly.
     pub collapse_window_us: u64,
+    /// L2-MRG-005: scope over which DELTA is measured in a multi-file merge.
+    /// Default `PerFile` — each gap is to the previous same-key record from the
+    /// record's own file, matching a single-file decode and the vendor tool.
+    /// `Global` measures across the merged timeline instead. Set via
+    /// `[merge] delta_scope` in TOML or `--delta-scope` on the CLI.
+    pub delta_scope: DeltaScope,
     /// L2-WRT-022: cap on the number of consecutive equal-`TIME_STAMP` records
     /// the canonical-order stage (L2-WRT-021) buffers at once. Default
     /// `DEFAULT_MAX_SORT_GROUP` (`4096`). Set via `output.max_sort_group = N` in
@@ -128,6 +134,7 @@ impl Default for DecoderConfig {
             mux_field: DEFAULT_MUX_FIELD,
             collapse_duplicates: false,
             collapse_window_us: 0,
+            delta_scope: DeltaScope::PerFile,
             max_sort_group: DEFAULT_MAX_SORT_GROUP,
         }
     }
@@ -155,6 +162,7 @@ pub struct ConfigOverrides {
     pub mux_field: Option<i64>,
     pub collapse_duplicates: Option<bool>,
     pub collapse_window_us: Option<i64>,
+    pub delta_scope: Option<DeltaScope>,
     pub max_sort_group: Option<usize>,
 
     pub exclude_types: Vec<u8>,
@@ -207,6 +215,7 @@ impl DecoderConfig {
             mux_field,
             collapse_duplicates,
             max_sort_group,
+            delta_scope,
         );
 
         // Stored as `Option<f64>`, so the value is re-wrapped rather than copied.
@@ -436,6 +445,13 @@ fn apply_merge_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), Co
     if let Some(b) = toml.get_bool("merge", "collapse_duplicates")? {
         cfg.collapse_duplicates = b;
     }
+    if let Some(name) = toml.get_string("merge", "delta_scope")? {
+        cfg.delta_scope = DeltaScope::from_name_ci(name).ok_or_else(|| {
+            ConfigError(format!(
+                "Invalid merge.delta_scope: {name:?}. Valid: per-file, global"
+            ))
+        })?;
+    }
     if let Some(n) = toml.get_int("merge", "collapse_window_us")? {
         if n < 0 {
             return Err(ConfigError(format!(
@@ -535,6 +551,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("mux", "field")
             | ("merge", "collapse_duplicates")
             | ("merge", "collapse_window_us")
+            | ("merge", "delta_scope")
             | ("filter", "exclude_types")
             | ("filter", "exclude_rts")
             | ("filter", "exclude_buses")

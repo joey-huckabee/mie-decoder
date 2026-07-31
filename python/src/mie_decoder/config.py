@@ -31,9 +31,11 @@ from typing import Any
 
 from mie_decoder.models import (
     Bus,
+    DeltaScope,
     ErrorMode,
     MessageType,
     TimestampFormat,
+    parse_delta_scope,
     parse_timestamp_format,
 )
 from mie_decoder.order import (
@@ -94,6 +96,7 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
         ("mux", "field"),
         ("merge", "collapse_duplicates"),
         ("merge", "collapse_window_us"),
+        ("merge", "delta_scope"),
         ("filter", "exclude_types"),
         ("filter", "exclude_rts"),
         ("filter", "exclude_buses"),
@@ -526,6 +529,12 @@ class DecoderConfig:
     collapse_duplicates: bool = False
     collapse_window_us: int = 0
 
+    #: L2-MRG-005: scope over which DELTA is measured in a multi-file merge.
+    #: PER_FILE (default) leaves each reader's own DELTA in place, matching a
+    #: single-file decode and the vendor tool; GLOBAL measures across the merged
+    #: timeline. No effect on a single-input decode.
+    delta_scope: DeltaScope = DeltaScope.PER_FILE
+
     #: L2-WRT-022: cap on the number of consecutive equal-TIME_STAMP records the
     #: canonical-order stage (L2-WRT-021) buffers at once. Range
     #: [MAX_SORT_GROUP_MIN, MAX_SORT_GROUP_MAX]. Default 4096; 1 disables
@@ -561,6 +570,7 @@ class DecoderConfig:
             collapse_duplicates=self._override_present(kwargs, "collapse_duplicates"),
             collapse_window_us=self._override_present(kwargs, "collapse_window_us"),
             max_sort_group=self._override_present(kwargs, "max_sort_group"),
+            delta_scope=self._override_present(kwargs, "delta_scope"),
         )
 
     def _override_present(self, kwargs: dict[str, Any], name: str) -> Any:
@@ -768,7 +778,9 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     )
     standard_tick_rate_hz = _load_standard_tick_rate(decode_section)
     mux_enabled, mux_delimiter, mux_field = _load_mux_section(_require_table(data, "mux"))
-    collapse_duplicates, collapse_window_us = _load_merge_section(_require_table(data, "merge"))
+    merge_section = _require_table(data, "merge")
+    collapse_duplicates, collapse_window_us = _load_merge_section(merge_section)
+    delta_scope = _load_delta_scope(merge_section)
 
     _warn_unknown_keys(data)
 
@@ -790,6 +802,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         collapse_duplicates=collapse_duplicates,
         collapse_window_us=collapse_window_us,
         max_sort_group=max_sort_group,
+        delta_scope=delta_scope,
     )
 
     logger.debug("Loaded config: %s", config)
@@ -884,6 +897,14 @@ def _load_mux_section(mux_section: dict[str, Any]) -> tuple[bool, str, int]:
     if isinstance(mux_field_raw, bool) or not isinstance(mux_field_raw, int):
         raise ValueError(f"Invalid mux.field: {mux_field_raw!r}; must be an integer")
     return mux_enabled, mux_delimiter_raw, mux_field_raw
+
+
+def _load_delta_scope(merge_section: dict[str, Any]) -> DeltaScope:
+    """`[merge] delta_scope` (L2-MRG-005). Defaults to ``per-file``."""
+    raw = merge_section.get("delta_scope", "per-file")
+    if not isinstance(raw, str):
+        raise ValueError(f"Invalid merge.delta_scope: expected string, got {type(raw).__name__}")
+    return parse_delta_scope(raw)
 
 
 def _load_merge_section(merge_section: dict[str, Any]) -> tuple[bool, int]:

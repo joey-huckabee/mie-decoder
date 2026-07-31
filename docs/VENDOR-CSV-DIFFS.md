@@ -23,6 +23,7 @@ The short version: by spec (`L1-OUT-001`) MIE-Decoder's first **44 columns are t
 | Placeholder columns `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` | **Empty** (see §3) |
 | `MUX` column | **Populated from the file name by default** (L2-WRT-020); empty with `--no-mux` for a vendor-exact diff (see §3) |
 | IRIG `TIME_STAMP` day-of-year field | **Firmware-dependent discrepancy** on some DDC card models (see §5) |
+| `DELTA` on a **multi-file** decode | **Match** by default (`--delta-scope per-file`, since v2.11.0); `--delta-scope global` diverges deliberately (see §3b) |
 | **Row order** for records sharing one `TIME_STAMP` | **May differ** — we sort ties by `RT` then `MSG` (L1-OUT-003); the vendor writes capture order. Restore with `--max-sort-group 1` (see §3a) |
 
 If you find a divergence outside the documented exceptions, **it is a bug** in MIE-Decoder. See §7.
@@ -77,7 +78,7 @@ MIE-Decoder and the vendor tool for any clean (non-errored, non-spurious) record
 | `STAT` | 4-character uppercase hex | Empty when not present (some Mode Code formats). |
 | `CMD` | 4-character uppercase hex | Empty for SPURIOUS_DATA. |
 | `BUS` | Single character `A` or `B` | |
-| `DELTA` | `0.000000` (6 decimals) or empty | Empty for SPURIOUS_DATA, uncalibrated Standard-timestamp records (no tick rate configured — supply `standard_tick_rate_hz` to populate it, L2-DEC-017), and non-monotonic timestamps. See `docs/L2-REQ.md` L2-RDR-016 through L2-RDR-019 for the per-case rule. |
+| `DELTA` | `0.000000` (6 decimals) or empty | Empty for SPURIOUS_DATA, uncalibrated Standard-timestamp records (no tick rate configured — supply `standard_tick_rate_hz` to populate it, L2-DEC-017), and non-monotonic timestamps. See `docs/L2-REQ.md` L2-RDR-016 through L2-RDR-019 for the per-case rule. On a **multi-file** decode see §3b — the default scope matches vendor, but `--delta-scope global` deliberately does not. |
 
 ### Decoder-added columns (no vendor equivalent)
 
@@ -177,6 +178,30 @@ between records with *different* timestamps, or any cell-content difference.
 
 ---
 
+## 3b. `DELTA` on a multi-file decode (`--delta-scope`)
+
+The DDC vendor tool has **no merge feature** — it decodes one recording at a
+time, so its `DELTA` is always measured within a single file.
+
+Since v2.11.0 that is also MIE-Decoder's default (`--delta-scope per-file`), so a
+merged decode's `DELTA` matches vendor output for every record: each gap is to
+the previous same-RT/MSG record from that record's *own* file, which is by
+construction the value that file produces decoded alone.
+
+`--delta-scope global` measures across the merged timeline instead. That is a
+deliberate divergence, not a bug — it answers "how long since *any* recorder last
+saw this key" rather than "how long since *this* recorder did". If you are diffing
+against vendor CSV, leave the scope at its default.
+
+> **Before v2.11.0** merged `DELTA` was always global, so any multi-file decode
+> diffed against a per-file vendor CSV showed differences on every RT/MSG key
+> present in more than one input. Keys unique to one file were unaffected.
+
+A single-input decode is identical under either scope, so this section does not
+apply to the ordinary one-file vendor comparison.
+
+---
+
 ## 4. Line endings
 
 Both implementations emit LF (`\n`) line endings on every platform, including Windows. The vendor tool's output may use CRLF on Windows builds. If your `diff` flags every line as different, normalize line endings first:
@@ -239,6 +264,7 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
    - Empty `TERM_NAME` / gap columns on our side → expected (§3).
    - Same rows, different order within one `TIME_STAMP` → canonical row order; pass `--max-sort-group 1` (§3a).
    - Two extra columns at the end of our rows (`ERROR`, `ERROR_CODE`) → expected; they have no vendor counterpart (§2). Compare `cut -d, -f1-44` of our output against the vendor file.
+   - `DELTA` differs on a **multi-file** decode → check `--delta-scope`; the default (`per-file`) matches vendor, `global` does not (§3b).
    - Anything else → bug. See §7.
 
 5. **For automated comparison** in a regression pipeline, MIE-Decoder ships a cross-implementation conformance suite under `tests/conformance/` that asserts byte-identical CSV between the Rust and Python implementations against checked-in oracles. The oracle generation method (manual validation against vendor output, then committed) is documented in [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6.

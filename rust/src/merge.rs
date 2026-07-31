@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::error::{MieError, MieResult};
 use crate::log_warn;
-use crate::models::{CommandWord, MieMessage, Timestamp, TypeWord};
+use crate::models::{CommandWord, DeltaScope, MieMessage, Timestamp, TypeWord};
 use crate::reader::{MieFileReader, RecordIter};
 
 /// Maximum number of input files a single merge invocation may process.
@@ -287,6 +287,10 @@ pub struct MergedRecordIter<'a> {
     /// Cross-recorder duplicate collapsing (L2-MRG-007). `Some` when enabled via
     /// `--collapse-duplicates`; `None` keeps every row (the default).
     dedup: Option<DedupWindow>,
+    /// L2-MRG-005: scope DELTA is measured over. `PerFile` (the default) leaves
+    /// each reader's own DELTA untouched; `Global` recomputes across the merged
+    /// stream via `delta_tracker`.
+    delta_scope: DeltaScope,
     /// Count of records suppressed as cross-recorder duplicates, for the CLI's
     /// end-of-run summary. Shared so the CLI can read it after the iterator is
     /// consumed by the writer (mirrors the `sync_losses` `AtomicU64` pattern).
@@ -367,6 +371,7 @@ impl<'a> MergedRecordIter<'a> {
             pending_error: None,
             pending_terminal,
             dedup: None,
+            delta_scope: DeltaScope::PerFile,
             collapsed: Arc::new(AtomicU64::new(0)),
         })
     }
@@ -379,6 +384,16 @@ impl<'a> MergedRecordIter<'a> {
         self
     }
 
+    /// Select the DELTA scope (L2-MRG-005), builder-style so `new` keeps a
+    /// stable signature. `PerFile` (the default) is a no-op by design: it leaves
+    /// the DELTA each reader already computed for its own file in place, which
+    /// is what makes a merged record's value identical to the one it would get
+    /// from a single-file decode — the same code path produced both.
+    pub fn delta_scope(mut self, scope: DeltaScope) -> Self {
+        self.delta_scope = scope;
+        self
+    }
+
     /// A shared handle to the suppressed-duplicate counter (L2-MRG-007). The CLI
     /// clones this before the iterator is consumed by the writer, then reads it
     /// afterward for the end-of-run summary.
@@ -388,7 +403,13 @@ impl<'a> MergedRecordIter<'a> {
 
     /// Recompute DELTA on the merged global timeline (L2-MRG-005). The stream
     /// is timestamp-sorted, so per-key gaps are non-negative.
+    ///
+    /// Under `DeltaScope::PerFile` this returns the message untouched, keeping
+    /// the value its own reader computed.
     fn apply_global_delta(&mut self, mut msg: MieMessage) -> MieMessage {
+        if self.delta_scope == DeltaScope::PerFile {
+            return msg;
+        }
         let key = msg.delta_key();
         if key.is_empty() {
             msg.delta = None; // SPURIOUS_DATA — no RT/MSG key

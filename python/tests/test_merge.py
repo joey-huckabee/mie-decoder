@@ -15,6 +15,7 @@ from mie_decoder.exceptions import (
     MieIncompatibleMergeInputsError,
     MieNonMonotonicInputError,
 )
+from mie_decoder.models import DeltaScope, MieMessage
 from mie_decoder.merge import (
     MAX_MERGE_FILES,
     expand_glob,
@@ -581,3 +582,124 @@ def test_merge_collapse_no_over_collapse_after_backward_step(tmp_path: Path) -> 
     # outside the window — so it must be kept, not over-collapsed.
     msgs = list(merge_readers(readers, collapse_duplicates=True, collapse_window_us=5))
     assert len(msgs) == 2, "the far backward record is kept, not over-collapsed"
+
+
+# ── L2-MRG-005: DELTA scope ─────────────────────────────────────────────────
+
+
+def _delta_by_row(msgs: list[MieMessage]) -> list[tuple[str, float | None]]:
+    """`(RT:MSG, DELTA)` per record, for scope comparisons."""
+    return [(m.delta_key, m.delta) for m in msgs]
+
+
+def _two_files_sharing_a_key(tmp_path: Path) -> tuple[Path, Path]:
+    """File A carries a key unique to it plus one shared with B; B carries only
+    the shared key, offset in time. The shared key is where the two scopes
+    differ; the unique key must be identical under both."""
+    from tests.conftest import receive_record_rt_sa_us
+
+    fa = tmp_path / "a.mie"
+    fb = tmp_path / "b.mie"
+    fa.write_bytes(
+        receive_record_rt_sa_us(15, 11, 100_000)
+        + receive_record_rt_sa_us(20, 5, 100_000)
+        + receive_record_rt_sa_us(15, 11, 300_000)
+        + receive_record_rt_sa_us(20, 5, 300_000)
+    )
+    fb.write_bytes(
+        receive_record_rt_sa_us(20, 5, 200_000) + receive_record_rt_sa_us(20, 5, 400_000)
+    )
+    return fa, fb
+
+
+@pytest.mark.requirement("L2-MRG-005")
+@pytest.mark.requirement("L3-WRT-004")
+def test_per_file_delta_matches_single_file_decode(tmp_path: Path) -> None:
+    """The guarantee that makes `per-file` the default: every merged record's
+    DELTA equals the value that record gets when its own file is decoded alone.
+    """
+    fa, fb = _two_files_sharing_a_key(tmp_path)
+
+    alone = {}
+    for f in (fa, fb):
+        for m in MieFileReader(f):
+            alone[(f.name, m.file_offset)] = m.delta
+
+    merged = list(
+        merge_readers(
+            [MieFileReader(fa), MieFileReader(fb)],
+            delta_scope=DeltaScope.PER_FILE,
+        )
+    )
+    assert len(merged) == 6
+    # Every merged record must carry its own file's DELTA. Records are matched
+    # by (file, offset) rather than by position, since the merge interleaves.
+    by_offset: dict[int, list[float | None]] = {}
+    for m in merged:
+        by_offset.setdefault(m.file_offset, []).append(m.delta)
+    for (_name, offset), delta in alone.items():
+        assert delta in by_offset[offset], f"offset {offset}: {delta} not in {by_offset[offset]}"
+
+
+@pytest.mark.requirement("L2-MRG-005")
+def test_global_scope_measures_across_the_merged_timeline(tmp_path: Path) -> None:
+    """`global` compresses the shared key's gaps (0.2s per file becomes 0.1s
+    across the merge) while leaving the file-unique key untouched."""
+    fa, fb = _two_files_sharing_a_key(tmp_path)
+    merged = list(
+        merge_readers(
+            [MieFileReader(fa), MieFileReader(fb)],
+            delta_scope=DeltaScope.GLOBAL,
+        )
+    )
+    shared = [d for k, d in _delta_by_row(merged) if k == "20:5R"]
+    unique = [d for k, d in _delta_by_row(merged) if k == "15:11R"]
+    assert shared == [0.0, 0.1, 0.1, 0.1], "shared key compresses under global scope"
+    assert unique == [0.0, 0.2], "a key unique to one file is unaffected by scope"
+
+
+@pytest.mark.requirement("L2-MRG-005")
+def test_per_file_is_the_default_scope(tmp_path: Path) -> None:
+    fa, fb = _two_files_sharing_a_key(tmp_path)
+    default = list(merge_readers([MieFileReader(fa), MieFileReader(fb)]))
+    explicit = list(
+        merge_readers(
+            [MieFileReader(fa), MieFileReader(fb)],
+            delta_scope=DeltaScope.PER_FILE,
+        )
+    )
+    assert _delta_by_row(default) == _delta_by_row(explicit)
+
+
+@pytest.mark.requirement("L2-MRG-005")
+def test_scope_does_not_affect_a_single_input(tmp_path: Path) -> None:
+    """With one file the two scopes are the same computation by definition."""
+    fa, _fb = _two_files_sharing_a_key(tmp_path)
+    per_file = list(merge_readers([MieFileReader(fa)], delta_scope=DeltaScope.PER_FILE))
+    global_ = list(merge_readers([MieFileReader(fa)], delta_scope=DeltaScope.GLOBAL))
+    assert _delta_by_row(per_file) == _delta_by_row(global_)
+
+
+@pytest.mark.requirement("L2-MRG-005")
+@pytest.mark.requirement("L2-MRG-007")
+def test_collapse_does_not_alter_per_file_delta(tmp_path: Path) -> None:
+    """Under per-file scope a surviving record's DELTA is a property of its own
+    file, so suppressing a cross-recorder duplicate cannot change it."""
+    from tests.conftest import receive_record_rt_sa_us
+
+    same = receive_record_rt_sa_us(20, 5, 100_000) + receive_record_rt_sa_us(20, 5, 300_000)
+    fa = tmp_path / "rec_a.mie"
+    fb = tmp_path / "rec_b.mie"
+    fa.write_bytes(same)
+    fb.write_bytes(same)
+
+    collapsed = list(
+        merge_readers(
+            [MieFileReader(fa), MieFileReader(fb)],
+            collapse_duplicates=True,
+            collapse_window_us=0,
+        )
+    )
+    assert [d for _k, d in _delta_by_row(collapsed)] == [0.0, 0.2], (
+        "collapsing leaves each survivor's own-file DELTA intact"
+    )

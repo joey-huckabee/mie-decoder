@@ -125,6 +125,7 @@ def _decode_ns(**overrides: object) -> argparse.Namespace:
         "collapse_duplicates": None,
         "collapse_window_us": None,
         "max_sort_group": None,
+        "delta_scope": None,
         "detect_records": None,
         "lookahead_records": None,
         "standard_tick_rate_hz": None,

@@ -32,7 +32,7 @@ from mie_decoder.exceptions import (
     MieNonMonotonicInputError,
     MieUnrecoverableSyncLossError,
 )
-from mie_decoder.models import IrigTimestamp, MieMessage, StandardTimestamp
+from mie_decoder.models import DeltaScope, IrigTimestamp, MieMessage, StandardTimestamp
 from mie_decoder.reader import MieFileReader
 
 logger = logging.getLogger(__name__)
@@ -236,6 +236,7 @@ def merge_readers(
     strict: bool = False,
     collapse_duplicates: bool = False,
     collapse_window_us: int = 0,
+    delta_scope: DeltaScope = DeltaScope.PER_FILE,
 ) -> Iterator[MieMessage]:
     """Stream a time-sorted k-way merge over ``readers``.
 
@@ -305,6 +306,7 @@ def merge_readers(
         warned,
         dedup,
         priming_terminal,
+        delta_scope,
     )
 
 
@@ -321,6 +323,7 @@ def _merge_drain(
     warned: list[bool],
     dedup: _DedupWindow | None,
     pending_terminal: MieUnrecoverableSyncLossError | None = None,
+    delta_scope: DeltaScope = DeltaScope.PER_FILE,
 ) -> Iterator[MieMessage]:
     """Drain the primed heap: pop the min, optionally collapse cross-recorder
     duplicates, recompute global DELTA, advance the file that record came from.
@@ -338,7 +341,13 @@ def _merge_drain(
         if dedup is not None and dedup.is_duplicate(us, idx, msg):
             collapsed += 1
         else:
-            yield _apply_global_delta(msg, tick, tracker)
+            # L2-MRG-005: under PER_FILE (the default) the DELTA each reader
+            # already computed for its own file is left exactly as-is, which is
+            # what makes it identical to a single-file decode.
+            if delta_scope == DeltaScope.GLOBAL:
+                yield _apply_global_delta(msg, tick, tracker)
+            else:
+                yield msg
         try:
             nxt = next(iters[idx])
         except StopIteration:

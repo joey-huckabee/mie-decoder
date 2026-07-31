@@ -51,6 +51,7 @@ _KEYS = [
     "standard_tick_rate_hz",
     "no_clobber",
     "max_sort_group",
+    "delta_scope",
     "enabled",
     "delimiter",
     "field",
@@ -70,6 +71,7 @@ _KEYS = [
 # diverged (leading zeros, bare trailing dot, hex/oct/bin, underscores, string
 # escapes, inline tables, datetimes, multi-line-array openers).
 _VALUES = [
+    '"per-file"',  # a valid delta_scope name; nonsense for every other key
     # Non-ASCII digits: Rust's `is_ascii_digit` rejects them, and Python's
     # `_NUMBER_RE` only agrees because it is compiled with `re.ASCII`. Bare
     # `\d` would match these and accept a literal Rust refuses.

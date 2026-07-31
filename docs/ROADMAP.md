@@ -40,11 +40,13 @@ is distant-future. None has a committed version.
 configurable filename field (delimiter + 0-based index). Two related ideas could
 reuse that same parsed identity:
 
-- **Per-recorder DELTA.** DELTA is computed on the merged *global* timeline, so
-  it does not reflect any single recorder's true inter-arrival cadence when more
-  than one recorder contributes the same RT/SA key. A future release could key
-  DELTA on the parsed recorder identity, falling back to the global timeline for
-  inputs whose name cannot be parsed.
+- **Per-recorder DELTA — partly delivered in v2.11.0.** Merged DELTA is now
+  selectable between `per-file` (the default) and `global` via `--delta-scope` /
+  `[merge] delta_scope` (L2-MRG-005), which covers the common case: one file per
+  recorder. What remains is the *identity* half of the original idea — keying
+  DELTA on a recorder parsed from the file name (the MUX mechanism) rather than
+  on the input file itself, which would matter only if one recorder's output were
+  split across several files, or several recorders' output combined into one.
 - **Identity-based residual tiebreak.** Equal-timestamp rows now order by
   `RT` then `MSG` (L1-OUT-003), so the input's position in the resolved list is
   no longer the *primary* tiebreak. It survives as the **residual** one: two

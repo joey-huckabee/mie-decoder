@@ -43,6 +43,7 @@ below calls out where the two differ.
 | Merge inputs that can't share a clock | [§8](#8-multi-file-merge-scenarios) | Rejected, exit 6 |
 | A bad / empty / unreadable file inside a merge | [§8](#8-multi-file-merge-scenarios) | Aborts — unless `--allow-partial`, then `.partial`, exit 0 |
 | The same event recorded by two recorders | [§8](#8-multi-file-merge-scenarios) | Optional `--collapse-duplicates` |
+| DELTA differs from vendor on a merged decode | [§8](#8-multi-file-merge-scenarios) | Default is per-file (matches vendor); `--delta-scope global` for the merged timeline |
 | Two or more messages sharing one `TIME_STAMP` | [§9 Output modes](#row-order-l1-out-003) | Ordered by `RT`, then `MSG` (`R` before `T`) |
 | A spurious continuation sharing its parent's timestamp | [§9](#row-order-l1-out-003) | Stays pinned right after its error row |
 | A corrupt file whose timestamps all decode alike | [§9](#row-order-l1-out-003) | Run cap hit: arrival order + one WARN, no rows lost, exit 0 |

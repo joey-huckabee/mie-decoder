@@ -17,6 +17,7 @@ from mie_decoder.config import (
 from mie_decoder.filters import apply_filters
 from mie_decoder.models import (
     Bus,
+    DeltaScope,
     CommandWord,
     Direction,
     ErrorMode,
@@ -1122,3 +1123,39 @@ class TestMaxSortGroupKey:
         with caplog.at_level(logging.WARNING):
             load_config(cfg_file)
         assert not any("max_sort_group" in rec.getMessage() for rec in caplog.records)
+
+
+class TestDeltaScopeKey:
+    """`[merge] delta_scope` (L2-MRG-005). Same names, default, and rejection
+    behavior as the Rust loader (L3-WRT-004)."""
+
+    @pytest.mark.requirement("L2-MRG-005", "L3-WRT-004")
+    def test_defaults_to_per_file(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "c.toml"
+        cfg.write_text("[merge]\ncollapse_duplicates = true\n")
+        assert load_config(cfg).delta_scope == DeltaScope.PER_FILE
+
+    @pytest.mark.requirement("L2-MRG-005", "L3-WRT-004")
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("per-file", DeltaScope.PER_FILE),
+            ("global", DeltaScope.GLOBAL),
+            ("Per-File", DeltaScope.PER_FILE),
+            ("GLOBAL", DeltaScope.GLOBAL),
+        ],
+    )
+    def test_parses_both_names_case_insensitively(
+        self, tmp_path: Path, value: str, expected: DeltaScope
+    ) -> None:
+        cfg = tmp_path / "c.toml"
+        cfg.write_text(f'[merge]\ndelta_scope = "{value}"\n')
+        assert load_config(cfg).delta_scope == expected
+
+    @pytest.mark.requirement("L2-MRG-005", "L2-CFG-010")
+    @pytest.mark.parametrize("bad", ['"whole"', '"per_file"', "1", "true"])
+    def test_rejects_unknown_or_non_string(self, tmp_path: Path, bad: str) -> None:
+        cfg = tmp_path / "c.toml"
+        cfg.write_text(f"[merge]\ndelta_scope = {bad}\n")
+        with pytest.raises(ValueError, match="delta_scope"):
+            load_config(cfg)

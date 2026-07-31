@@ -340,8 +340,11 @@ What to expect:
   per open file), so merging many multi-GB recordings is fine. Up to **256**
   files per invocation; combining input methods or exceeding that is a usage
   error (exit 4).
-- **DELTA** is computed across the merged timeline (one unified
-  inter-arrival gap per RT/SA), not reset at file boundaries.
+- **DELTA** is measured **per input file** by default — each record's gap is to
+  the previous same-RT/MSG record from its *own* file, so the value matches
+  decoding that file alone (and matches DDC vendor output, which has no merge).
+  Pass `--delta-scope global` to measure across the merged timeline instead. See
+  [Which DELTA do you want?](#which-delta-do-you-want) below.
 - **A bad file among many:** by default the batch fails. Add `--allow-partial`
   to skip/truncate the failing file with a warning, finish the merge from the
   rest, and write the combined result as `<output>.partial` (exit 0). Use
@@ -360,6 +363,51 @@ What to expect:
   about before trusting the merge.
 
 Both implementations produce byte-identical merged output.
+
+### Which DELTA do you want?
+
+When you merge several files, "seconds since the previous message on this
+RT/MSG" has two reasonable readings, and the decoder can't guess which you mean:
+
+| `--delta-scope` | The gap is measured to… | Use when |
+|---|---|---|
+| `per-file` *(default)* | the previous same-key record **from that record's own file** | you want each recorder's true cadence, or you're diffing against vendor CSV |
+| `global` | the previous same-key record from **any** input | you want the bus-wide inter-arrival across the whole session |
+
+The two differ **only for RT/MSG keys that appear in more than one file.** A key
+found in just one file gets the same DELTA either way, so if your recordings
+cover disjoint equipment you'll see no difference at all.
+
+Where a key *is* shared, `global` compresses the gap. Two recorders each seeing
+a 0.2 s cadence interleave into an apparent 0.1 s:
+
+```bash
+# Per-file (default): each file keeps its own 0.2 s cadence
+mie-decoder decode rec_a.mie rec_b.mie -o merged.csv
+#   192:15:54:50.100000 … DELTA=0.000000     ← A's first
+#   192:15:54:50.200000 … DELTA=0.000000     ← B's first
+#   192:15:54:50.300000 … DELTA=0.200000     ← A, 0.2 s after A's previous
+#   192:15:54:50.400000 … DELTA=0.200000     ← B, 0.2 s after B's previous
+
+# Global: gaps measured across the merged timeline
+mie-decoder decode rec_a.mie rec_b.mie -o merged.csv --delta-scope global
+#   192:15:54:50.100000 … DELTA=0.000000
+#   192:15:54:50.200000 … DELTA=0.100000     ← 0.1 s after A's record
+#   192:15:54:50.300000 … DELTA=0.100000
+#   192:15:54:50.400000 … DELTA=0.100000
+```
+
+For **fully overlapping** recorders — both capturing the same transactions —
+`global` degenerates to alternating `0.000000`, one per duplicate pair, because
+each copy is zero microseconds after its twin. Either use the default, or add
+`--collapse-duplicates` (next section) so only one copy survives.
+
+> **Changed in v2.11.0:** `per-file` is the new default; through v2.10.0 merged
+> DELTA was always global. If you depend on the old numbers, pass
+> `--delta-scope global` or set `[merge] delta_scope = "global"`.
+
+With a single input file the flag does nothing — the two scopes are the same
+computation when there's only one file to measure within.
 
 ### Collapsing duplicate messages across recorders
 

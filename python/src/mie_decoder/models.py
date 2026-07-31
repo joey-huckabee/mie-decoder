@@ -165,6 +165,51 @@ def parse_timestamp_format(name: str) -> TimestampFormat:
 
 
 @unique
+class DeltaScope(IntEnum):
+    """Scope over which DELTA is measured in a multi-file merge (L2-MRG-005).
+
+    Only meaningful when more than one input is decoded; with a single input the
+    two are the same computation.
+
+    Values:
+        PER_FILE: Default. Each record's gap is to the previous same-key record
+            **from its own file**, so the value matches what that file would
+            produce decoded on its own -- and what the DDC vendor tool reports,
+            since it has no merge feature.
+        GLOBAL: Each record's gap is to the previous same-key record from **any**
+            input, measured across the merged timeline. Compresses gaps whenever
+            one key appears in several inputs.
+    """
+
+    PER_FILE = 0
+    GLOBAL = 1
+
+
+#: Accepted ``delta_scope`` spellings (lowercase) -> DeltaScope.
+_DELTA_SCOPE_BY_NAME: dict[str, DeltaScope] = {
+    "per-file": DeltaScope.PER_FILE,
+    "global": DeltaScope.GLOBAL,
+}
+
+
+def parse_delta_scope(name: str) -> DeltaScope:
+    """Parse a ``delta_scope`` name (``per-file`` / ``global``).
+
+    Matching is case-insensitive. Single source of truth shared by the CLI
+    (``--delta-scope``) and the config loader (``merge.delta_scope``), mirroring
+    the Rust ``DeltaScope::from_name_ci``.
+
+    Raises:
+        ValueError: if ``name`` is not a recognized scope; the message lists the
+            valid set and matches the Rust wording.
+    """
+    scope = _DELTA_SCOPE_BY_NAME.get(name.strip().lower())
+    if scope is None:
+        raise ValueError(f"Invalid delta_scope: {name!r}. Valid: per-file, global")
+    return scope
+
+
+@unique
 class ErrorMode(IntEnum):
     """Controls how errored messages are handled in output.
 

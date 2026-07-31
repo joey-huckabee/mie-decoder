@@ -89,6 +89,13 @@ DECODE OPTIONS:
                                         (multi-file merge only). Default: off
   --collapse-window-us N                Timestamp tolerance in microseconds for
                                         collapsing (default 0 = exact match)
+  --delta-scope per-file|global         Scope DELTA is measured over in a
+                                        multi-file merge (default per-file:
+                                        each gap is to the previous same-key
+                                        record from its OWN file, matching a
+                                        single-file decode). global measures
+                                        across the merged timeline. No effect
+                                        on a single input. L2-MRG-005.
   --max-sort-group N                    Max consecutive same-TIME_STAMP records
                                         buffered to order rows by RT then MSG
                                         (range 1..=1048576, default 4096). Use 1
@@ -161,6 +168,8 @@ struct DecodeArgs {
     collapse_duplicates: bool,
     /// `--collapse-window-us <N>`: timestamp tolerance (µs) for collapsing.
     collapse_window_us: Option<i64>,
+    /// `--delta-scope <SCOPE>`: DELTA measurement scope in a merge (L2-MRG-005).
+    delta_scope: Option<crate::models::DeltaScope>,
     /// `--max-sort-group <N>`: cap on one buffered equal-timestamp run
     /// (L2-WRT-022); `1` disables canonical reordering.
     max_sort_group: Option<usize>,
@@ -580,6 +589,13 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--max-sort-group=") => {
                 args.max_sort_group = Some(parse_max_sort_group(&s["--max-sort-group=".len()..])?);
             }
+            "--delta-scope" => {
+                let v = next_value("--delta-scope", iter)?;
+                args.delta_scope = Some(parse_delta_scope(&v)?);
+            }
+            s if s.starts_with("--delta-scope=") => {
+                args.delta_scope = Some(parse_delta_scope(&s["--delta-scope=".len()..])?);
+            }
             "--collapse-duplicates" => args.collapse_duplicates = true,
             "--collapse-window-us" => {
                 args.collapse_window_us = Some(parse_collapse_window_us(&next_value(
@@ -881,6 +897,13 @@ fn parse_max_sort_group(s: &str) -> Result<usize, String> {
     Ok(n)
 }
 
+/// `--delta-scope` (L2-MRG-005). Shares `DeltaScope::from_name_ci` with the
+/// config loader so the CLI and TOML accept exactly the same spellings.
+fn parse_delta_scope(s: &str) -> Result<crate::models::DeltaScope, String> {
+    crate::models::DeltaScope::from_name_ci(s.trim())
+        .ok_or_else(|| format!("invalid --delta-scope: {s:?}. Valid: per-file, global"))
+}
+
 fn parse_collapse_window_us(s: &str) -> Result<i64, String> {
     match s.trim().parse::<i64>() {
         Ok(n) if n >= 0 => Ok(n),
@@ -987,6 +1010,7 @@ fn build_config_overrides(args: &mut DecodeArgs, log_level: Option<String>) -> C
         },
         collapse_window_us: args.collapse_window_us,
         max_sort_group: args.max_sort_group,
+        delta_scope: args.delta_scope,
         exclude_types: std::mem::take(&mut args.exclude_types),
         exclude_rts: std::mem::take(&mut args.exclude_rts),
         exclude_buses: std::mem::take(&mut args.exclude_buses),
@@ -1057,7 +1081,9 @@ fn execute_decode_or_merge(
         cfg.strict,
     ) {
         Ok(merged) => {
-            let merged = merged.collapse(cfg.collapse_duplicates, cfg.collapse_window_us);
+            let merged = merged
+                .collapse(cfg.collapse_duplicates, cfg.collapse_window_us)
+                .delta_scope(cfg.delta_scope);
             // Clone the suppressed-duplicate counter before the writer consumes
             // the iterator, then report it after (L2-MRG-007).
             let collapsed = merged.collapsed_handle();
