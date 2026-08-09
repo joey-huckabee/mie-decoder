@@ -15,6 +15,24 @@ start
 :Load TOML config\n(config::load_config);
 :Merge CLI overrides\n(config::with_overrides);
 :Configure logging\n(log::set_global_level);
+:Resolve the input set\n(positionals / --manifest / --glob,\nmutually exclusive, <=256 — L2-MRG-001);
+
+if (two or more inputs?) then (yes)
+  |Merge|
+  :Probe each input's leading record\n(merge::MergedRecordIter::new);
+  note right
+    Absolute-time ordering needs a shared
+    calendar clock, so every input must be
+    calendar-locked IRIG. Validated BEFORE
+    any output file is created.
+  end note
+  if (Standard-format, freerun-leading,\nor mixed set?) then (yes)
+    :Raise <b>MieIncompatibleMergeInputsError</b>\n(L2-MRG-003);
+    :Exit 6;
+    stop
+  endif
+  |CLI|
+endif
 
 |Output Safety|
 :Resolve output path;
@@ -125,12 +143,47 @@ repeat
 
   :Compute per-RT/MSG DELTA\n(non-monotonic timestamp causes WARN);
 
+  |Merge|
+  if (two or more inputs?) then (yes)
+    :Push record, pop the earliest\nacross all open inputs\nkey = (IRIG us, input index, sequence);
+    if (--collapse-duplicates and content\nmatches another input in-window?) then (yes)
+      :Suppress the duplicate\n(first in heap order survives, L2-MRG-007);
+    endif
+    if (--delta-scope global?) then (yes)
+      :Recompute DELTA across the\nmerged timeline (L2-MRG-005);
+    else (per-file, default)
+      :Keep the reader's own DELTA\n(equals a single-file decode);
+    endif
+    if (record steps backward within\nits own input?) then (yes)
+      :Strict: <b>MieNonMonotonicInputError</b>\nLenient: one WARN per input,\nnever re-sorted (L2-MRG-006);
+    endif
+  endif
+
   |Filter|
   :filter::should_emit(msg)\ninclude AND NOT exclude\n(type/RT/bus/SA);
   if (Emit?) then (yes)
 
+    |Order|
+    :order::order_rows()\nbuffer the run of CONSECUTIVE\nequal-TIME_STAMP records;
+    :Stable-sort the run by\n(RT, subaddress, direction),\nreceive before transmit\n(L1-OUT-003 / L2-WRT-021);
+    :Pin Command-Word-less records\n(SPURIOUS_DATA) to the record\nthey followed — preserves 0x2000\nerror-continuation adjacency;
+    note right
+      Last stage before the writer, on BOTH the
+      single-file and merge paths — never applied
+      to the dump subcommand.
+
+      Never reorders across a timestamp boundary,
+      so a backward step stays visible where it
+      happened (L2-MRG-006).
+
+      Run length capped by output.max_sort_group
+      (default 4096): at the cap the run is emitted
+      in arrival order with one WARN (L2-WRT-022).
+      A cap of 1 disables reordering entirely.
+    end note
+
     |Writer|
-    :message_to_row()\nreturns Row (DDC vendor column order);
+    :message_to_row()\nreturns Row (44 vendor columns,\nthen ERROR + ERROR_CODE — L2-WRT-001);
     if (msg.is_error or msg.is_spurious) then (yes)
       if (error_mode == SEPARATE\nand stdout is file?) then (yes)
         :Append to errors writer\n(<stem>.<pid>.errors.tmp);
@@ -160,10 +213,14 @@ note right
      [exit_class=<class>]"
   Exit class drives process exit code:
     0: complete / partial-recovered /
-        broken-pipe
-    1: record or usage error
+        broken-pipe / empty-recording
+    1: record or file I/O error
     2: no records / homogeneous payload
     3: partial-unrecoverable
+    4: usage error
+    5: configuration error
+    6: merge-incompatible inputs
+  Full table: docs/ERROR-CATALOG.md section 1.
 end note
 
 :Exit with class code;
