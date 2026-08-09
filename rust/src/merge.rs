@@ -9,7 +9,10 @@
 //! Merge requires every input to be calendar-locked IRIG; Standard-format,
 //! freerun-leading, or mixed-format inputs are rejected up front
 //! (`MieError::IncompatibleMergeInputs`, CLI exit 6 — L2-MRG-003). DELTA is
-//! recomputed on the merged global timeline (L2-MRG-005).
+//! measured **per input file** by default — each reader already computed it for
+//! its own file, so this module leaves it alone and a merged record's value
+//! equals its single-file value by construction. `--delta-scope global`
+//! recomputes it across the merged timeline instead (L2-MRG-005).
 //!
 //! No new external dependency: the heap is `std::collections::BinaryHeap`
 //! and the `--glob` matcher is hand-rolled (L3-RS-014, preserving L3-RS-002).

@@ -265,6 +265,7 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
    - Same rows, different order within one `TIME_STAMP` → canonical row order; pass `--max-sort-group 1` (§3a).
    - Two extra columns at the end of our rows (`ERROR`, `ERROR_CODE`) → expected; they have no vendor counterpart (§2). Compare `cut -d, -f1-44` of our output against the vendor file.
    - `DELTA` differs on a **multi-file** decode → check `--delta-scope`; the default (`per-file`) matches vendor, `global` does not (§3b).
+   - `DELTA` differs on a **single-file** decode → the vendor may be following a different rule entirely. `python scripts/diagnose-vendor-delta.py vendor.csv` recomputes the column under a range of candidate rules and reports which one reproduces the vendor's own values; a rule at 100% is the vendor's definition. It reads the vendor CSV only — no MIE file and no decoder run needed. Include its output when reporting (§7).
    - Anything else → bug. See §7.
 
 5. **For automated comparison** in a regression pipeline, MIE-Decoder ships a cross-implementation conformance suite under `tests/conformance/` that asserts byte-identical CSV between the Rust and Python implementations against checked-in oracles. The oracle generation method (manual validation against vendor output, then committed) is documented in [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) §6.
@@ -286,7 +287,8 @@ Any column-content mismatch that isn't:
 1. **Capture the divergent row from both CSVs** (one line each, with the column header for context).
 2. **Capture the source binary record.** Run `mie-decoder dump <file>.mie --records 1 --offset <byte>` to get the record-aware hex annotation. (For an arbitrary offset rather than the first record, `--raw --offset N --length 256` works.)
 3. **Note the card model and firmware version** if known.
-4. **Open an issue** with all three. The MIE-Decoder maintainers will reproduce against the conformance suite, add a fixture if missing, and land a fix.
+4. **If the divergent column is `DELTA`**, also run `python scripts/diagnose-vendor-delta.py vendor.csv` and include the ranked table. It answers the question that actually moves a `DELTA` bug forward — not *whether* the values differ but *what rule the vendor is following instead* — without needing the source recording.
+5. **Open an issue** with all of the above. The MIE-Decoder maintainers will reproduce against the conformance suite, add a fixture if missing, and land a fix.
 
 The conformance suite (`tests/conformance/`) is the regression net — every reported divergence that turns out to be a real bug becomes a permanent fixture so it can't silently regress.
 

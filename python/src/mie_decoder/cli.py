@@ -880,7 +880,8 @@ def _build_message_stream(
     open_dropped: bool = False,
 ) -> Iterator[MieMessage]:
     """Build the decoded-message stream: a single filtered reader, or the
-    time-sorted k-way merge of several (global DELTA, L2-MRG-002/005).
+    time-sorted k-way merge of several (L2-MRG-002). DELTA is per-file on both
+    paths unless ``--delta-scope global`` is given (L2-MRG-005).
 
     ``merge_requested`` routes by the *requested* input count (not the surviving
     reader count) so an --allow-partial merge that dropped an input at open time
@@ -1169,11 +1170,12 @@ def _run_decode(args: argparse.Namespace) -> int:
     )
 
     # ── Build the message stream and write it ──────────────────────
-    # One input → the single-file path (per-file DELTA); two or more → the
-    # time-sorted k-way merge (global DELTA, L2-MRG-002/005), which validates
-    # eagerly. Build- and write-time decode failures (and a broken pipe on
-    # stdout) map to exit codes via _classify_decode_error; a clean run is
-    # classified by the cumulative sync-loss count (L1-EXIT-005).
+    # One input → the single-file path; two or more → the time-sorted k-way
+    # merge (L2-MRG-002), which validates eagerly. DELTA is per-file on both
+    # paths unless --delta-scope global is given (L2-MRG-005). Build- and
+    # write-time decode failures (and a broken pipe on stdout) map to exit codes
+    # via _classify_decode_error; a clean run is classified by the cumulative
+    # sync-loss count (L1-EXIT-005).
     try:
         messages = _build_message_stream(
             readers, config, merge_requested=merge_requested, open_dropped=open_dropped

@@ -1165,9 +1165,10 @@ fn run_decode(globals: GlobalArgs, mut args: DecodeArgs) -> Result<ExitCode, Cli
         allow_partial: cfg.allow_partial,
     };
 
-    // One input → the single-file path (per-file DELTA); two or more → the
-    // time-sorted k-way merge with global DELTA. Both feed the same writer. An
-    // incompatible-merge / prime-time failure returns its exit code directly.
+    // One input → the single-file path; two or more → the time-sorted k-way
+    // merge. DELTA is per-file on both paths unless `--delta-scope global` is
+    // given (L2-MRG-005). Both feed the same writer. An incompatible-merge /
+    // prime-time failure returns its exit code directly.
     let write_result = match execute_decode_or_merge(
         &readers,
         &cfg,

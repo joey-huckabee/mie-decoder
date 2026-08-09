@@ -43,7 +43,10 @@ mie-decoder/
 │   └── tests/              pytest suite
 ├── scripts/
 │   ├── build-trace-matrix.py    generates docs/TRACE-MATRIX.md
-│   └── pytest-by-requirement.py runs pytest filtered by requirement marker
+│   ├── pytest-by-requirement.py runs pytest filtered by requirement marker
+│   ├── diagnose-vendor-delta.py identifies which DELTA rule a vendor CSV follows
+│   ├── coverage.sh              local coverage run (Rust + Python)
+│   └── install-hooks.sh         points core.hooksPath at .githooks/
 ├── docs/
 │   ├── L1-REQ.md / L2-REQ.md / L3-REQ.md   spec docs (source of truth)
 │   ├── TRACE-MATRIX.md     auto-generated from L1/L2/L3 + test markers
@@ -136,6 +139,10 @@ python scripts/pytest-by-requirement.py L3-PY-          # whole L3-PY-* family
 # Trace matrix
 python scripts/build-trace-matrix.py             # regenerate docs/TRACE-MATRIX.md
 python scripts/build-trace-matrix.py --check     # what CI does — exits 1 on drift
+
+# Diagnose a vendor CSV whose DELTA column disagrees with ours
+# (reads the vendor CSV only — no MIE file, no decoder run)
+python scripts/diagnose-vendor-delta.py vendor.csv
 
 # PlantUML diagrams
 plantuml -tsvg docs/diagrams/*.puml              # regenerate committed SVGs

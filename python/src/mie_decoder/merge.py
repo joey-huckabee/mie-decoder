@@ -9,7 +9,10 @@ L2-MRG-002). The merged stream feeds the existing ``write_csv`` /
 Merge requires every input to be calendar-locked IRIG; Standard-format,
 freerun-leading, or mixed-format inputs are rejected up front
 (:class:`MieIncompatibleMergeInputsError`, CLI exit 6 — L2-MRG-003). DELTA is
-recomputed on the merged global timeline (L2-MRG-005).
+measured **per input file** by default — each reader already computed it for its
+own file, so this module leaves it alone and a merged record's value equals its
+single-file value by construction. ``--delta-scope global`` recomputes it across
+the merged timeline instead (L2-MRG-005).
 
 Mirrors ``rust/src/merge.rs``; the heap is the standard-library :mod:`heapq` and the
 ``--glob`` matcher is hand-rolled to the same single-directory ``*``/``?``
@@ -326,7 +329,8 @@ def _merge_drain(
     delta_scope: DeltaScope = DeltaScope.PER_FILE,
 ) -> Iterator[MieMessage]:
     """Drain the primed heap: pop the min, optionally collapse cross-recorder
-    duplicates, recompute global DELTA, advance the file that record came from.
+    duplicates, recompute DELTA when ``delta_scope`` is ``global`` (per-file
+    keeps each reader's own value), advance the file that record came from.
 
     ``pending_terminal`` carries a priming-time --allow-partial failure (set in
     ``merge_readers``); a mid-file failure may overwrite it. Either is raised
