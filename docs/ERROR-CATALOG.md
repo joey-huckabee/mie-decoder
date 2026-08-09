@@ -72,7 +72,7 @@ A single `enum MieError { … }` with the same set of variants. `MieError::kind(
 ```
 MieError ├── FileNotFound             ── MieErrorKind::FileNotFound             (is_file_error)
          ├── FileEmpty                ── MieErrorKind::FileEmpty                (is_file_error)
-         ├── FileIo                   ── MieErrorKind::FileIo                   (is_file_error)
+         ├── FileIo                   ── MieErrorKind::FileIo                   (is_file_error)   ↔ MieFileIoError
          ├── NoValidRecords           ── MieErrorKind::NoValidRecords
          ├── HomogeneousPayload       ── MieErrorKind::HomogeneousPayload
          ├── TimestampFormatMismatch  ── MieErrorKind::TimestampFormatMismatch
@@ -104,7 +104,7 @@ These fire before any record is decoded, or before the writer touches the destin
 |---------|---------------|------|------------|
 | `MieFileNotFoundError` / `FileNotFound` | Input path does not exist (L2-RDR-005). | 1 | Check the path; verify mount / permissions. |
 | `MieFileEmptyError` / `FileEmpty` | Input file exists but is zero bytes (L2-RDR-006). | 1 | Upstream recording or transfer failure; check the source. |
-| (Python `OSError` / Rust `MieError::FileIo`) | Read or mmap fails (permission denied, disk error, etc.). | 1 | Inspect the underlying OS error; usually a filesystem permission or hardware issue. |
+| `MieFileIoError` / `FileIo` | Open, stat, read or mmap fails — permission denied, the path is not a regular file, a device error. Both implementations attempt the **open before the size check**, so an unopenable path reports I/O rather than "empty" (a directory stats as zero bytes on Windows). Python wraps the originating `OSError` and keeps it as `.source`; before v2.11.2 it escaped unconverted. | 1 | Inspect the underlying OS error; usually a filesystem permission or hardware issue. |
 | `MieNoValidRecordsError` / `NoValidRecords` | The first 64 KB contain no valid MIE record at all (L1-EXIT-002). Typical cause: input isn't an MIE recording. | **2** | Verify the input is actually MIE; if it is, records may begin past the 64 KB scan window. |
 | `MieHomogeneousPayloadError` / `HomogeneousPayload` | The first 4 candidate records are byte-identical in non-timestamp positions (L2-SYN-018). Typical cause: 0x20-padded or otherwise pathological single-byte file. | **2** | Verify the input file; almost always a wrong-file-type or corruption indicator. |
 | `MieTimestampFormatMismatchError` / `TimestampFormatMismatch` | L2-DEC-015 multi-record probe completed with an L2-DEC-016 Ambiguous classification (max aggregate score < 4 OR margin < 3). **Strict mode only**: lenient mode logs a single WARN with the score breakdown and proceeds with the chosen format. Typical cause: the file genuinely isn't an MIE recording, OR the first N records score weakly enough that the probe can't pick a side. | **2** | First confirm the file is actually an MIE recording. If it is, pass `--time-format irig` or `--time-format standard` to force the choice. If a one-time decode is acceptable with the auto-picked format (IRIG on ties per L2-DEC-012), drop `--strict` to take the lenient path. |

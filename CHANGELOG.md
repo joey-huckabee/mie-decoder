@@ -62,7 +62,39 @@ full release workflow.
   reach the same accept/reject class — holding two parsers that share no code to
   treating the forms as inert data.
 
+### Added
+
+- **`MieFileIoError`, closing the last Rust/Python error-mapping gap.** Opening,
+  stat-ing, reading or memory-mapping the input now converts to a decoder
+  exception instead of escaping as a bare `OSError`. The originating error is
+  preserved as `.source` and chained with `raise ... from`, so nothing is lost.
+
+  Every `MieError` variant now has exactly one Python class and vice versa;
+  `FileIo` was the sole unmatched one. `docs/diagrams/class.puml` had **already
+  declared `MieFileIoError`** — the diagram described the intended design and
+  the implementation simply never had the class, which is also why
+  `MieFileError`'s docstring claimed it covered failures to open.
+
+  **Ordering is now mirrored too.** Both implementations attempt the open
+  *before* checking the size, matching `MieFileReader::new` in Rust. Python
+  previously stat-ed first, so an unopenable path was mis-reported as empty — a
+  directory stats as zero bytes on Windows, and `decode <dir>` said "MIE file is
+  empty" where Rust said "I/O error". Both now report the same class with the
+  same `I/O error on <path>: ` prefix and the same exit code (`1` for `decode`,
+  `4` for `dump`); only the OS-supplied detail differs, which no amount of
+  alignment can fix across two runtimes.
+
+  Taking the size from the open handle also closes the stat/open race.
+
 ### Changed — behavior
+
+- **Python callers catching `OSError` around the reader must widen to
+  `MieFileIoError`.** It extends `MieFileError` → `MieDecoderError`, so anything
+  already catching a decoder exception now covers this case (that is the point).
+  Code catching *only* `OSError` around `MieFileReader` construction or
+  iteration will no longer match. The CLI is unaffected — it catches
+  `(MieDecoderError, OSError)` — and no exit code, log line or CSV output
+  changes.
 
 - **`MieError::is_record_error()` now returns `true` for `UnrecoverableSyncLoss`.**
   It was the one variant misfiled against the repo's own definitions: Python's

@@ -248,12 +248,12 @@ package "Sync (sync)" {
 package "Errors" {
 
     note as RustErrorNote
-      <b>Rust:</b> a single flat enum <i>MieError</i>. Every Python
-      leaf class below has exactly one matching variant. The reverse
-      does not hold: <i>FileIo</i> has no Python counterpart, because
-      Python lets an unwrapped <i>OSError</i> propagate from
-      open/mmap rather than converting it. The <i>Mie*Error</i> base
-      classes are never raised directly — they exist to be caught.
+      <b>Rust:</b> a single flat enum <i>MieError</i>. Its variants and
+      the Python leaf classes below correspond one to one, in both
+      directions — <i>FileIo</i> pairs with <i>MieFileIoError</i>,
+      which since v2.11.2 converts the <i>OSError</i> from open/mmap
+      instead of letting it escape. The <i>Mie*Error</i> base classes
+      are never raised directly — they exist to be caught.
       Discriminant via <i>MieErrorKind</i> and predicates
       <i>is_file_error()</i> / <i>is_record_error()</i>.
     end note

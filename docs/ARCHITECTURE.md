@@ -330,6 +330,7 @@ MieError {
 MieDecoderError                          (base, catches everything)
 ├── MieFileError
 │   ├── MieFileNotFoundError
+│   ├── MieFileIoError                   (open/mmap failure; wraps OSError)
 │   ├── MieFileEmptyError
 │   ├── MieNoValidRecordsError
 │   ├── MieHomogeneousPayloadError
