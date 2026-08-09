@@ -85,18 +85,20 @@ MieError ├── FileNotFound             ── MieErrorKind::FileNotFound   
          ├── FirstRecordTruncated     ── MieErrorKind::FirstRecordTruncated     (is_record_error)
          ├── PayloadError             ── MieErrorKind::PayloadError             (is_record_error)
          ├── UnknownErrorCode         ── MieErrorKind::UnknownErrorCode         (is_record_error)
-         ├── UnrecoverableSyncLoss    ── MieErrorKind::UnrecoverableSyncLoss
-         ├── WriterError              ── MieErrorKind::WriterError
+         ├── UnrecoverableSyncLoss    ── MieErrorKind::UnrecoverableSyncLoss    (is_record_error)
+         ├── WriterError              ── MieErrorKind::WriterError              (neither predicate)
          └── NonMonotonicInput        ── MieErrorKind::NonMonotonicInput        (neither predicate — no byte offset)
 ```
 
-Python `mie_decoder.MieFileError` is the analogue of Rust's `MieError::is_file_error()` predicate; `MieRecordError` is the analogue of `is_record_error()`. The non-classified variants (`NoValidRecords`, `HomogeneousPayload`, `InputOutputCollision`, `ClobberRefused`, `UnrecoverableSyncLoss`, `WriterError`) inherit from `MieFileError` or `MieRecordError` in Python by the same rule the Rust predicate applies.
+`MieRecordError` and `MieError::is_record_error()` cover the same seven failures exactly, `UnrecoverableSyncLoss` included. (Rust omitted it until v2.11.2 — see the CHANGELOG.)
+
+Python's `MieFileError` is **wider** than `MieError::is_file_error()`, which answers only "did input I/O fail" (`FileNotFound`, `FileEmpty`, `FileIo`). The whole-file rejections (`NoValidRecords`, `HomogeneousPayload`, `TimestampFormatMismatch`, `IncompatibleMergeInputs`) and the destination guards (`InputOutputCollision`, `ClobberRefused`) extend `MieFileError` in Python but answer `false` to **both** Rust predicates; match on `kind()` for those. `WriterError` and `NonMonotonicInput` sit directly under `MieDecoderError` and likewise answer `false` to both.
 
 ---
 
 ## 3. File-level errors
 
-These fire before any record is decoded, or before the writer touches the destination. Catchable in Python as `MieFileError`; in Rust via `MieError::is_file_error()` for the I/O subset.
+These fire before any record is decoded, or before the writer touches the destination. Catchable in Python as `MieFileError`. In Rust only the I/O subset (`FileNotFound`, `FileEmpty`, `FileIo`) answers `true` to `is_file_error()`; for the rest of this section, match on `MieError::kind()` (see §2).
 
 | Variant | When it fires | Exit | What to do |
 |---------|---------------|------|------------|

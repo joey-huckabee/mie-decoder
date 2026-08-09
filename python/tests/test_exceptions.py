@@ -91,6 +91,60 @@ class TestExceptionHierarchy:
             with pytest.raises(MieDecoderError):
                 raise exc
 
+    @pytest.mark.requirement("L3-PY-006")
+    def test_every_exception_class_is_classified(self) -> None:
+        """Every concrete exception must deliberately be file-class,
+        record-class, or an explicitly-listed direct child of the base.
+
+        The mechanical form of the "extend `MieFileError` or `MieRecordError` as
+        appropriate" step in MAINTAINER-GUIDE.md §"Adding an error variant".
+        Adding a class without deciding fails here rather than passing review.
+
+        The record-class set is also asserted to match Rust's
+        `is_record_error()` exactly — that pairing is what drifted:
+        `MieUnrecoverableSyncLossError` extended `MieRecordError` here while the
+        Rust predicate omitted it until v2.11.2. Mirrors
+        `every_error_kind_is_deliberately_classified` in `rust/src/error.rs`.
+        """
+        import inspect
+
+        from mie_decoder import exceptions as exc_mod
+
+        # Direct children of the base by design: neither a file-level nor a
+        # record-level failure. Mirrors Rust's NEITHER list.
+        direct = {"MieNonMonotonicInputError", "MieWriterError"}
+        # Must equal Rust's is_record_error() set, name for name.
+        expected_record = {
+            "MieInvalidTypeWordError",
+            "MieUnknownTypeWordError",
+            "MieRecordTruncatedError",
+            "MieFirstRecordTruncatedError",
+            "MiePayloadError",
+            "MieUnknownErrorCodeError",
+            "MieUnrecoverableSyncLossError",
+        }
+
+        bases = {"MieDecoderError", "MieFileError", "MieRecordError"}
+        record_class: set[str] = set()
+        for name, obj in inspect.getmembers(exc_mod, inspect.isclass):
+            if not issubclass(obj, MieDecoderError) or name in bases:
+                continue
+            if issubclass(obj, MieRecordError):
+                record_class.add(name)
+            elif issubclass(obj, MieFileError):
+                pass  # file-class
+            else:
+                assert name in direct, (
+                    f"{name} extends MieDecoderError directly but is not a known "
+                    "direct child — classify it under MieFileError or "
+                    "MieRecordError, or add it to `direct` here and to Rust's "
+                    "NEITHER list"
+                )
+        assert record_class == expected_record, (
+            "the record-class set must match Rust's is_record_error() exactly; "
+            "update both sides together"
+        )
+
 
 class TestExceptionAttributes:
     """Verify exception attributes are accessible."""

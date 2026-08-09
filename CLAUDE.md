@@ -104,7 +104,7 @@ The polarity was reversed in v2.8.0 — `separate` was the old default and the f
 
 ### Error type
 
-All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not a hierarchy). `kind()` returns a `MieErrorKind` discriminant. The `is_file_error()` / `is_record_error()` predicates approximate the two intermediate classes from the Python implementation.
+All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not a hierarchy). `kind()` returns a `MieErrorKind` discriminant. `is_record_error()` matches Python's `MieRecordError` exactly; `is_file_error()` is deliberately narrower than `MieFileError` (input I/O only — the whole-file rejections and destination guards answer `false` to both predicates). Both implementations pin the full classification by test, so a new variant can't be added without classifying it on both sides.
 
 ## Reference docs
 

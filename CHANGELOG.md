@@ -62,7 +62,57 @@ full release workflow.
   reach the same accept/reject class — holding two parsers that share no code to
   treating the forms as inert data.
 
+### Changed — behavior
+
+- **`MieError::is_record_error()` now returns `true` for `UnrecoverableSyncLoss`.**
+  It was the one variant misfiled against the repo's own definitions: Python's
+  `MieUnrecoverableSyncLossError` extends `MieRecordError`, the variant carries
+  the `offset` field the predicate's doc comment describes, `ERROR-CATALOG.md`
+  lists it under "Record-level errors" as catchable via that very predicate, and
+  `MAINTAINER-GUIDE.md` requires every variant to be classified. The predicate
+  disagreed with all four.
+
+  **Scope of the change:** nothing in either implementation calls these
+  predicates — exit-code classification matches on `kind()` — so no CSV output,
+  log line or exit code changes. The effect is confined to downstream Rust
+  callers branching on `is_record_error()`, which now see `true` where they saw
+  `false`. `cargo-semver-checks` cannot detect a behavioral change of this kind,
+  so it is called out here rather than caught by a gate.
+
+  `is_file_error()` is **unchanged** and stays deliberately narrower than
+  Python's `MieFileError`: it answers "did input I/O fail" (`FileNotFound`,
+  `FileEmpty`, `FileIo`). The whole-file rejections (`NoValidRecords`,
+  `HomogeneousPayload`, `TimestampFormatMismatch`, `IncompatibleMergeInputs`)
+  and the destination guards (`InputOutputCollision`, `ClobberRefused`) extend
+  `MieFileError` in Python but answer `false` to both Rust predicates; folding
+  them in would make the predicate mean less, since none of them is an I/O
+  failure on the input.
+
 ### Fixed
+
+- **Nothing pinned the error-classification boundary, which is why it drifted.**
+  Coverage was two spot-check assertions in Rust and six in Python; adding a
+  variant to neither predicate failed no test. Both implementations now assert
+  the *whole* boundary — `every_error_kind_is_deliberately_classified`
+  (`rust/src/error.rs`) walks every `MieErrorKind` and requires it to be
+  record-class, file-class, or on an explicit "neither" list, with a
+  wildcard-free match so a new variant cannot compile without a decision;
+  `test_every_exception_class_is_classified` (`python/tests/test_exceptions.py`)
+  does the same over the exception classes and asserts the record-class set
+  matches Rust's name for name. This makes the MAINTAINER-GUIDE "classify the
+  new variant" step mechanical rather than a matter of reviewer memory.
+
+- **Four documents disagreed about what the predicates cover.**
+  `ARCHITECTURE.md` claimed both predicates "mirror" the Python intermediate
+  classes (true for records only after the fix above, never true for files) and
+  its reconciliation note omitted `TimestampFormatMismatch` and
+  `IncompatibleMergeInputs` from the file-side extras. `ERROR-CATALOG.md`
+  contradicted itself — §2 called `UnrecoverableSyncLoss` "non-classified" while
+  §4 promised it was catchable via `is_record_error()` — and its §3 preamble
+  implied `is_file_error()` covers the whole file-level section. `CLAUDE.md` said
+  the predicates "approximate" the Python classes without saying how they differ.
+  All four now state the same rule, and the tree annotation in `ERROR-CATALOG.md`
+  §2 marks `UnrecoverableSyncLoss` and `WriterError` explicitly.
 
 - **The README's error-mode example did the opposite of what it said.** It was
   captioned "Errors inline with normal messages" but passed `--separate-errors`,

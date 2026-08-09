@@ -395,7 +395,7 @@ When a new error class is needed (per `docs/ERROR-CATALOG.md` taxonomy), land it
 2. Add a matching value to `enum MieErrorKind`.
 3. Extend `MieError::kind()` to map the new variant.
 4. Add a match arm to the `impl fmt::Display for MieError` block with the user-facing message.
-5. If the variant is record-class, add it to the `is_record_error()` matches list. If file-class, add to `is_file_error()`.
+5. Classify it: add it to `is_record_error()` (tied to one record's byte offset), to `is_file_error()` (an I/O failure on the input itself), or to **neither** — whole-file rejections and destination guards deliberately answer `false` to both. Then list it in the matching arm of `every_error_kind_is_deliberately_classified` in `rust/src/error.rs`, which fails if a variant appears in no list, and mirror the decision in the Python test. Carrying an `offset` does not by itself make a variant record-class: `HomogeneousPayload` and `TimestampFormatMismatch` cite an offset but reject the whole file.
 
 ### Python (`python/src/mie_decoder/exceptions.py`)
 

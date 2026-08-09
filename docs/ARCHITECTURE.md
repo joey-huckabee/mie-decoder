@@ -322,7 +322,7 @@ MieError {
 }
 ```
 
-`MieError::kind()` returns a `MieErrorKind` discriminant for callers that need to branch on the failure mode without matching on the full enum. `is_file_error()` and `is_record_error()` predicates mirror the two intermediate classes from the Python tree.
+`MieError::kind()` returns a `MieErrorKind` discriminant for callers that need to branch on the failure mode without matching on the full enum. The `is_record_error()` predicate matches Python's `MieRecordError` exactly; `is_file_error()` is deliberately **narrower** than Python's `MieFileError` — see the mapping note below the Python tree.
 
 ### Python — class hierarchy rooted at `MieDecoderError`
 
@@ -349,7 +349,11 @@ MieDecoderError                          (base, catches everything)
 └── MieWriterError
 ```
 
-`MieRecordError` is the Python analogue of `MieError::is_record_error()`; `MieFileError` corresponds to `MieError::is_file_error()` plus the non-classified file-shape rejections (NoValidRecords, HomogeneousPayload, InputOutputCollision, ClobberRefused).
+`MieRecordError` and `MieError::is_record_error()` cover exactly the same seven failures — the classes listed above, including `MieUnrecoverableSyncLossError`. (Rust omitted the sync-loss terminal from that predicate until v2.11.2.)
+
+`MieFileError` is **wider** than `MieError::is_file_error()`. The Rust predicate answers "did input I/O fail" and covers only `FileNotFound`, `FileEmpty` and `FileIo`. Python's class additionally covers the whole-file rejections (`NoValidRecords`, `HomogeneousPayload`, `TimestampFormatMismatch`, `IncompatibleMergeInputs`) and the destination guards (`InputOutputCollision`, `ClobberRefused`), for which the Rust side answers `false` to both predicates and callers match on `kind()` instead.
+
+Note that carrying an `offset` is not what makes a failure record-class: `HomogeneousPayload` and `TimestampFormatMismatch` both cite an offset but reject the file as a whole. Both implementations pin the full boundary by test — `every_error_kind_is_deliberately_classified` in `rust/src/error.rs` and `test_every_exception_class_is_classified` in `python/tests/test_exceptions.py` — so a new variant cannot be added without classifying it on both sides.
 
 For per-variant cause / lenient-vs-strict behavior / exit-code mapping, see [`ERROR-CATALOG.md`](ERROR-CATALOG.md).
 
