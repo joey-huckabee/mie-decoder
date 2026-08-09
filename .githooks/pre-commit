@@ -49,10 +49,37 @@ if (( ${#STAGED[@]} == 0 )); then
     exit 0
 fi
 
-# ── 1. Whitespace + missing-final-newline ─────────────────────────────
-step "git diff --cached --check (trailing whitespace, missing final newline)"
+# ── 1. Whitespace ─────────────────────────────────────────────────────
+# `--check` implements core.whitespace: trailing whitespace,
+# space-before-tab, and blank-at-eof (a *new blank line* at EOF). It does
+# NOT report a *missing* final newline — that is check 1b below. The two
+# are opposite problems and were conflated in this label until v2.11.2.
+step "git diff --cached --check (trailing whitespace, blank line at EOF)"
 if ! git diff --cached --check; then
     fail "whitespace issues — fix and re-stage"
+fi
+
+# ── 1b. Missing final newline ─────────────────────────────────────────
+# POSIX text files end in a newline. Without one, `cat` runs the last line
+# into the next prompt, some tools drop the line entirely, and the next
+# edit produces a two-line diff for a one-line change.
+step "checking staged text files end with a newline"
+no_eol=()
+for file in "${STAGED[@]}"; do
+    case "$file" in
+        *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf|*.bin|*.mie) continue ;;
+    esac
+    # Empty blobs are fine; only a non-empty file can lack a trailing byte.
+    size=$(git cat-file -s ":$file" 2>/dev/null || echo 0)
+    (( size == 0 )) && continue
+    last=$(git show ":$file" 2>/dev/null | tail -c 1 | od -An -tx1 | tr -d ' \n')
+    if [[ "$last" != "0a" ]]; then
+        no_eol+=("$file")
+    fi
+done
+if (( ${#no_eol[@]} > 0 )); then
+    printf '  %s\n' "${no_eol[@]}" >&2
+    fail "missing final newline. Append one and re-stage."
 fi
 
 # ── 2. CRLF line endings ──────────────────────────────────────────────

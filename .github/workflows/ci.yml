@@ -509,6 +509,25 @@ jobs:
         # works on both runners.
         run: python tests/conformance/run.py
 
+  repo-hygiene:
+    name: Repo hygiene (pre-commit backstop)
+    runs-on: ubuntu-latest
+    # Re-runs the file-level checks from .githooks/pre-commit over the whole
+    # tracked tree. The hook is skippable (`git commit --no-verify`) and until
+    # v2.11.2 nothing in CI re-ran it, so CONTRIBUTING's "CI runs the same
+    # checks" was untrue for most of the list: a CRLF blob, a stray dbg!(), a
+    # merge marker, an oversized file or a committed *.mie could all land
+    # unnoticed. This is that backstop.
+
+    steps:
+      - name: Check out repository
+        # eol conversion is left off so the index/worktree comparison the
+        # script makes is meaningful.
+        uses: actions/checkout@v6
+
+      - name: Run repo hygiene checks
+        run: bash scripts/repo-hygiene.sh
+
   trace-matrix:
     name: Requirements trace matrix
     runs-on: ubuntu-latest

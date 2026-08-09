@@ -62,8 +62,6 @@ full release workflow.
   reach the same accept/reject class — holding two parsers that share no code to
   treating the forms as inert data.
 
-### Added
-
 - **`MieFileIoError`, closing the last Rust/Python error-mapping gap.** Opening,
   stat-ing, reading or memory-mapping the input now converts to a decoder
   exception instead of escaping as a bare `OSError`. The originating error is
@@ -85,6 +83,23 @@ full release workflow.
   alignment can fix across two runtimes.
 
   Taking the size from the open handle also closes the stat/open race.
+
+- **`scripts/repo-hygiene.sh` and the `repo-hygiene` CI job**, the backstop the
+  bypass advice always assumed existed. It re-runs the hook's file-level checks
+  over the whole *tracked tree* rather than a staged diff, so it catches
+  anything already committed however it got there.
+
+  Two details worth recording, because both were bugs in the first draft. The
+  CRLF check reads the **index** (`git ls-files --eol`), not the worktree: a
+  Windows checkout legitimately holds CRLF while the committed blob is LF, so a
+  worktree-based check fails locally and passes on the Linux runner — worse than
+  no check. And the `unsafe`/`SAFETY:` detection mirrors the hook's regex
+  exactly rather than being stricter; a backstop that rejects what the hook
+  accepts just moves the surprise from commit time to merge time.
+
+  Each of the eight checks was verified to **fail** on a planted violation, not
+  merely to pass on the clean tree — the `diagrams` job in this release is a
+  standing reminder of what an unverified gate is worth.
 
 ### Changed — behavior
 
@@ -121,6 +136,31 @@ full release workflow.
   failure on the input.
 
 ### Fixed
+
+- **Contributor docs promised guarantees neither the hook nor CI provided.**
+  Three separate overstatements in `CONTRIBUTING.md`:
+
+  *The whitespace check never did what it said.* Check 1 was labelled
+  "Whitespace + missing-final-newline", but `git diff --cached --check`
+  implements `core.whitespace`, whose `blank-at-eof` means a **new blank line
+  at** EOF — the opposite problem. Staging a file with no trailing newline
+  exits `0` with no output. Rather than just correcting the wording, the hook
+  now has a real final-newline check (all tracked text files already comply, so
+  it starts clean), and the mislabelled step in `.githooks/pre-commit` is
+  renamed. The list is also renumbered — it had grown a `1b.`, which is not
+  valid Markdown list syntax.
+
+  *"CI runs the same checks and will fail the merge anyway" was untrue for most
+  of the list.* Nine of the hook's fourteen checks had no CI equivalent —
+  verified by grepping each one, and by confirming that the apparent `CRLF` and
+  `Cargo.lock` matches in the workflows are `core.autocrlf` configuration and
+  cache keys, not checks. A `--no-verify` commit could land a CRLF blob, a stray
+  `dbg!()`, a merge marker, an oversized file or a committed `*.mie` with
+  nothing downstream to catch it. That advice is now a table of what backs up
+  what, and the gap is closed by the new job below.
+
+  *Two hook steps were undocumented* — the trace-matrix check, and the
+  `cargo test --doc` half of the test step (`--all-targets` excludes doctests).
 
 - **Nothing pinned the error-classification boundary, which is why it drifted.**
   Coverage was two spot-check assertions in Rust and six in Python; adding a

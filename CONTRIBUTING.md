@@ -50,44 +50,56 @@ staged.
 
 ### File-level (always)
 
-1. **Whitespace + missing-final-newline** — `git diff --cached --check`.
-   Reports `file:line` for trailing whitespace, missing trailing
-   newline, and (as a side-effect) leftover merge conflict markers.
-2. **CRLF line endings** — staged text files must be LF-only.
+1. **Whitespace** — `git diff --cached --check`. Reports `file:line` for
+   trailing whitespace, space-before-tab, a *new blank line* at EOF, and
+   (as a side-effect) leftover merge conflict markers. It does **not**
+   report a *missing* final newline — `--check` implements
+   `core.whitespace`, whose `blank-at-eof` is the opposite problem. That
+   is check 1b.
+2. **Missing final newline** — every staged text file must end in `\n`.
+   Added in v2.11.2, when check 1 was found to have never enforced the
+   guarantee its description claimed.
+3. **CRLF line endings** — staged text files must be LF-only.
    Belt-and-suspenders alongside `.gitattributes` if you add one.
-3. **Merge conflict markers** — explicit scan for `<<<<<<<`, `=======`,
+4. **Merge conflict markers** — explicit scan for `<<<<<<<`, `=======`,
    `>>>>>>>` in staged blobs. (`git diff --cached --check` also
    catches these; the dedicated check is in case `--check` is ever
    bypassed for one path.)
-4. **Large file guard** — staged files over 1 MB are rejected.
+5. **Large file guard** — staged files over 1 MB are rejected.
    Catches accidental binary commits (`git add -f` on a `*.mie`
    recording, etc.). Use git-lfs or extend `.gitignore` if you
    genuinely need a large file.
-5. **`*.mie` recordings** — defense-in-depth on top of `.gitignore`.
+6. **`*.mie` recordings** — defense-in-depth on top of `.gitignore`.
    Sample binaries shouldn't be committed.
-6. **`rust/Cargo.lock` parity** — if `rust/Cargo.toml` is staged, `rust/Cargo.lock`
+7. **`rust/Cargo.lock` parity** — if `rust/Cargo.toml` is staged, `rust/Cargo.lock`
    must also be staged (or already match). Catches the common
    "bumped a dep version, forgot to commit the lock update" mistake.
    Uses `cargo metadata --locked --offline` to confirm.
-7. **`shellcheck` on hooks/scripts** — runs only if `shellcheck` is
+8. **`shellcheck` on hooks/scripts** — runs only if `shellcheck` is
    installed. Lints the hook itself and `scripts/*.sh`. Skipped
    silently if the tool isn't on `$PATH`.
+9. **Requirements trace matrix** — `python scripts/build-trace-matrix.py
+   --check`. Fails if `docs/TRACE-MATRIX.md` is stale relative to the
+   L1/L2/L3 docs and the test markers. Regenerate with the same command
+   minus `--check`.
 
 ### Rust-only (skipped if no `.rs`/`.toml` staged)
 
-8. **`cargo fmt --check`** — formatting is consistent. Fix locally
+10. **`cargo fmt --check`** — formatting is consistent. Fix locally
    with `cargo fmt`, then re-stage.
-9. **`cargo clippy --all-targets -- -D warnings`** — all clippy lints
+11. **`cargo clippy --all-targets -- -D warnings`** — all clippy lints
    pass with warnings treated as errors. Either fix the lint or
    justify the suppression with a scoped `#[allow(...)]` and a
    comment explaining why.
-10. **`cargo test --all-targets`** — all unit + integration tests
-    pass.
-11. **`dbg!()` scan** — staged `.rs` files do not contain forgotten
+12. **`cargo test --all-targets` + `cargo test --doc`** — all unit,
+    integration **and documentation** tests pass. `--all-targets`
+    excludes doctests, so the hook runs them as a second invocation;
+    CI mirrors this at `ci.yml`'s `cargo test --locked --doc` step.
+13. **`dbg!()` scan** — staged `.rs` files do not contain forgotten
     `dbg!` macros. (`todo!` and `unimplemented!` are sometimes
     intentional placeholders, so they're not blocked — but you'll
     see them in code review.)
-12. **`unsafe` blocks require `// SAFETY:`** — every `unsafe { ... }`
+14. **`unsafe` blocks require `// SAFETY:`** — every `unsafe { ... }`
     or `unsafe fn` in a staged `.rs` file must have a comment
     containing `SAFETY:` within the three preceding lines. Catches
     new unsafe code added without justifying its invariants.
@@ -115,7 +127,33 @@ return a defensive error or carry a narrow documented lint allowance.
 ### Bypassing the hook
 
 `git commit --no-verify` skips the hook. Reserve this for genuine
-emergencies; CI runs the same checks and will fail the merge anyway.
+emergencies.
+
+CI does back the hook up, but the two are not identical and it is worth
+knowing which is which:
+
+| Hook check | Backed by |
+|---|---|
+| Whitespace (`--check`) | `repo-hygiene` (final newline), plus `cargo fmt` for Rust |
+| Missing final newline, CRLF, merge markers, large file, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:` | **`repo-hygiene`** job |
+| Trace matrix | `trace-matrix` job |
+| `cargo fmt` / `clippy` / tests / doctests | `rust` job |
+| `shellcheck` | *nothing* — hook-only, and skipped there too unless installed |
+
+The `repo-hygiene` job runs `scripts/repo-hygiene.sh`, which re-applies
+the file-level checks to the whole tracked tree rather than to a diff, so
+it catches anything already committed however it got there. Run it
+locally the same way:
+
+```bash
+bash scripts/repo-hygiene.sh
+```
+
+That job was added in v2.11.2. Before it, this section claimed "CI runs
+the same checks and will fail the merge anyway", which was untrue for
+nine of the hook's fourteen checks — a `--no-verify` commit could land a
+CRLF file, a stray `dbg!()`, a merge marker, an oversized blob or a
+committed `*.mie` recording with nothing downstream to catch it.
 
 ### Why these checks (and not others)
 
