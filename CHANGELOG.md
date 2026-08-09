@@ -64,6 +64,19 @@ full release workflow.
 
 ### Fixed
 
+- **The README's error-mode example did the opposite of what it said.** It was
+  captioned "Errors inline with normal messages" but passed `--separate-errors`,
+  which routes errored and spurious rows *out* of the main CSV — and the output
+  name `clean-plus-errors.csv` reinforced the wrong reading. An operator
+  following it would inspect only the main file and reasonably conclude records
+  had been dropped, when they were in the sibling `_errors.csv` all along. The
+  README contradicted itself: its "Error output modes" section thirty lines later
+  describes the flag correctly. Same v2.8.0 polarity-reversal residue as the
+  `CLAUDE.md` entry below — the example predates the reversal, when the flag was
+  `--inline-errors`, and only the flag name was updated. This was the last
+  surviving instance; `EXAMPLES.md`, `USER-GUIDE.md`, `DATA-SCENARIOS.md` and
+  `VENDOR-CSV-DIFFS.md` all describe it correctly.
+
 - **`CLAUDE.md` stated the wrong default error mode.** Its "Output modes" section
   opened with ``Default (`error_mode = separate`)``, contradicting the code
   (`ErrorMode::Inline` / `ErrorMode.INLINE`), `config/default.toml`,
