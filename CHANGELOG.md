@@ -33,6 +33,35 @@ full release workflow.
   caller's responsibility. `docs/CLI-REFERENCE.md` links to it from the
   `--config` row.
 
+- **`tests/conformance/config_path_parity.py`** — a third cross-implementation
+  config guard, covering the `--config` **path** rather than its contents.
+  `config_parity.py` and `config_fuzz.py` both always hand the CLIs a perfectly
+  ordinary file, so the path's own behavior had no cross-implementation check:
+  the regular-file rule, its exit code and its message were pinned only by
+  per-implementation unit tests that could drift apart silently. (The v2.11.0
+  claim that both loaders reject a non-regular file "with identical message
+  text" was, until now, never actually compared across the two.)
+
+  It runs inside `run.py` alongside the other two and is stricter than the
+  content corpus: it compares the **exact exit code** rather than an
+  accept/reject class, and requires the promised message substring from both
+  CLIs. Cases: a regular file, a missing path, a directory, names with spaces,
+  non-ASCII names, `..` traversal segments, a character device, and a symlink to
+  a regular file. The last two skip themselves where the platform lacks support
+  and the skip is printed, so a corpus that quietly shrinks on one OS is visible.
+
+- **Unit tests in both implementations pinning the "TOML data, never
+  interpolated" promise** — a value of `$(whoami)${HOME}`` `id` ``%PATH%` is
+  stored verbatim rather than expanded, executed or resolved — and pinning that a
+  `..` path loads normally, so reversing the unrestricted-location decision fails
+  a test rather than silently contradicting the documentation.
+
+- **Expansion and traversal syntax in the config fuzzer's value palette**
+  (`$(…)`, `${…}`, backticks, `%VAR%`, `../../../etc/passwd`, an extended-length
+  Windows path). Wherever the generator lands one of these, both parsers must
+  reach the same accept/reject class — holding two parsers that share no code to
+  treating the forms as inert data.
+
 ## [2.11.1] — 2026-08-08
 
 ### Fixed

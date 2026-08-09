@@ -1081,6 +1081,29 @@ class TestConfigPathValidation:
         with pytest.raises(ValueError, match="not a regular file"):
             load_config(d)
 
+    @pytest.mark.requirement("L2-CFG-001")
+    def test_string_values_are_data_never_interpolated(self, tmp_path: Path) -> None:
+        """Config values are TOML *data*. Shell, make and cmd expansion syntax is
+        stored verbatim — loading never spawns a subprocess, expands an
+        environment variable, or resolves an include. Pins the
+        `docs/CONFIG-REFERENCE.md` "Trust boundary" claim on the one key that
+        takes a free-form string."""
+        literal = "$(whoami)${HOME}`id`%PATH%"
+        cfg = tmp_path / "literal.toml"
+        cfg.write_text(f'[mux]\ndelimiter = "{literal}"\n', encoding="utf-8")
+        assert load_config(cfg).mux_delimiter == literal
+
+    @pytest.mark.requirement("L2-CFG-001")
+    def test_traversal_segments_resolve_and_load(self, tmp_path: Path) -> None:
+        """A path containing `..` is ordinary input, not an attack to block: the
+        config location is unrestricted by design (see "Trust boundary"). If that
+        is ever reversed, this test fails and forces the doc to change with it."""
+        nested = tmp_path / "sub"
+        nested.mkdir()
+        cfg = nested / "site.toml"
+        cfg.write_text("[decode]\nstrict = true\n", encoding="utf-8")
+        assert load_config(nested / ".." / "sub" / "site.toml").strict is True
+
 
 class TestMaxSortGroupKey:
     """`[output] max_sort_group` — the L2-WRT-022 canonical-order run cap.

@@ -16,6 +16,7 @@ from typing import Any
 
 from config_fuzz import check_config_parser_fuzz
 from config_parity import check_config_parser_parity
+from config_path_parity import check_config_path_parity
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -507,8 +508,12 @@ def main() -> int:
             check_config_parser_fuzz(
                 args.rust_bin, args.python_bin, ROOT, parity_input, temp
             )
+            # Same idea one level up: the config *path*, not its contents.
+            check_config_path_parity(
+                args.rust_bin, args.python_bin, ROOT, parity_input, temp
+            )
         else:
-            print("SKIP config-parser-parity / -fuzz (single-implementation run)")
+            print("SKIP config-parser-parity / -fuzz / -path (single-implementation run)")
 
         for case in manifest["cases"]:
             name = case["name"]

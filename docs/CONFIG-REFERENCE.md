@@ -107,7 +107,7 @@ This matches the operator expectation that CLI filters add to a base set defined
 | **Interpretation** | The contents are parsed as TOML **data** and nothing else. There is no `include` directive, no shell interpolation, no code execution, and no network access. An unparseable file is a configuration error (exit `5`), not a partial load. |
 | **Location** | **Deliberately unrestricted.** Any readable path is accepted — `/etc/mie-decoder/site.toml`, a mounted share, a path relative to the working directory. See [Site-wide config + per-invocation tweak](#site-wide-config--per-invocation-tweak). |
 
-Both implementations enforce this identically, with the same message text (`Config path is not a regular file: …`).
+Both implementations enforce this identically, with the same message text (`Config path is not a regular file: …`), pinned across the two CLIs by `tests/conformance/config_path_parity.py`.
 
 **Why location is not restricted.** Static analysis flags the `--config` path as a possible path-injection vector (SonarCloud `pythonsecurity:S8707`, "Agentic workflows should not be vulnerable to path injection"). That rule assumes a program confined to some root that an attacker-supplied path could escape. MIE-Decoder is an operator-run CLI with no such confinement: the config path *is* the interface, and a caller who can pass `--config` can already read the same file directly. Constraining configs to an allowlist of roots would therefore add no protection while breaking the site-config deployments the tool is built for.
 

@@ -63,6 +63,17 @@ minimal Rust parser), so `run.py` cross-checks them when both are present:
   iteration count); on a divergence it prints the exact config so it can be
   pinned in `config_parity.py`. Set `MIE_CONFIG_FUZZ_SEED` / `MIE_CONFIG_FUZZ_ITERS` to explore
   further locally.
+- **`config_path_parity.py`** — the layer above: the `--config` **path**, not its
+  contents. The two above always hand the CLIs a perfectly ordinary file, so the
+  path's own behavior — what counts as usable, which exit code a bad one yields,
+  what the operator is told — had no cross-implementation check at all. This one
+  compares the **exact exit code** (not just accept/reject) and requires the
+  promised message text from both, across the surface documented in
+  `docs/CONFIG-REFERENCE.md` §"Trust boundary": regular files only; missing or
+  unusable is exit `5`; any readable location is fine, including names with
+  spaces, non-ASCII names and `..` segments. Cases needing platform support
+  (character devices, symlinks) skip themselves and say so, so a corpus that
+  shrinks on one OS is visible rather than silent.
 
 This is what stops config divergences from being found one at a time: the fuzzer
 searches the space so CI catches a mismatch before a reviewer does.
