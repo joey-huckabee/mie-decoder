@@ -698,12 +698,26 @@ class MieFileReader:
         record_bytes = tw.word_count * 2
 
         # ── Validate current record ────────────────
+        # Depth 1 — no look-ahead — is deliberate here, and is the one place it
+        # differs from `find_first_record` / `recover_sync`, which keep the
+        # configured `lookahead_records` (L2-SYN-026). Those two answer "is this
+        # the start of a record stream?", where a wrong answer costs nothing but
+        # a resumption point. This call site walks a chain that is *already*
+        # locked on, and rejecting here discards the record.
+        #
+        # With look-ahead, a well-formed record sitting immediately before a
+        # corrupt region was dropped because its *successor* failed — one valid
+        # record lost per corruption site at the default depth of 2, and N-1 at
+        # depth N. A record that passes checks 1-5 is complete and in-bounds;
+        # whether the *next* boundary is corrupt is the next iteration's problem,
+        # and sync recovery already handles it (L2-SYN-005). Mirrors the same
+        # call site in `rust/src/reader.rs`.
         validation_failure = validate_record_detailed(
             mm,
             offset,
             file_len,
             ts_format=fmt,
-            lookahead_records=self._lookahead_records,
+            lookahead_records=1,
         )
         if validation_failure is not None:
             return self._handle_validation_failure(

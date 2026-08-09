@@ -141,7 +141,7 @@ emits one context line capped at 32 bytes.
 
 The format has no per-record sync marker, so the Type Word's `word_count` is the only framing; the look-ahead turns the redundancy of consecutive self-consistent lengths into a *synthetic* sync check. `MIE-FORMAT.md` §2.3 ("Why the look-ahead exists") is the deep rationale — the false-positive math, the chaining argument, and why the end-of-records terminator is accepted as an end-of-chain on the forward paths but not during recovery.
 
-The look-ahead depth `N` is configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, range `[1, 32]`, default `2` (preserves the historical two-record look-ahead from earlier versions). Higher values catch wider classes of consecutive-same-shape corruption — for example, two adjacent fake-record headers that align on plausible Type Words can defeat `N = 2` but be caught at `N = 4`. The cost is small (one Type Word read per extra look-ahead record).
+The look-ahead depth `N` is configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, range `[1, 32]`, default `8` (raised from `2` in v2.11.2). Higher values catch wider classes of consecutive-same-shape corruption — and, more importantly, wrong-input false positives: ordinary prose contains chains that satisfy `N = 2` (every Markdown file in this repo decoded "successfully" at that depth), while `N = 8` rejects all but one of them. The cost is small (one Type Word read per extra look-ahead record).
 
 ### Phase 4 — Sync recovery (walk forward)
 

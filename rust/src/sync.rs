@@ -17,10 +17,17 @@ pub const MAX_SCAN_BYTES: usize = 65_536;
 /// Word count field is 6 bits → max record = 63 × 2 = 126 bytes.
 pub const MAX_RECORD_BYTES: usize = 126;
 
-/// L2-SYN-026 default look-ahead depth. Two-record look-ahead preserves
-/// the historical default established by L2-SYN-005. Configurable via
+/// L2-SYN-026 default look-ahead depth. Configurable via
 /// `decode.lookahead_records` (TOML) or `--lookahead-records` (CLI),
 /// range `[1, 32]`.
+///
+/// Deliberately left at 2. Raising it does reject non-MIE input (ordinary prose
+/// yields a 2-record chain by chance; depth 8 rejects all but one file in this
+/// repo) — but the depth applies to *entry* decisions only. Continuous
+/// validation of an already-locked chain does no look-ahead at all, because a
+/// well-formed record must never be discarded on account of its successor
+/// (L2-SYN-005). Operators who want the stricter wrong-input screening can set
+/// `--lookahead-records` higher per invocation.
 pub const DEFAULT_LOOKAHEAD_RECORDS: usize = 2;
 
 /// Precise reason a candidate record failed sync validation.

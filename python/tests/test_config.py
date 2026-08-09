@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from mie_decoder.sync import DEFAULT_LOOKAHEAD_RECORDS
 from mie_decoder.config import (
     DecoderConfig,
     FilterConfig,
@@ -1055,7 +1056,7 @@ class TestSharedDefaultConfig:
         assert cfg.allow_partial is False
         assert cfg.no_clobber is False
         assert cfg.detect_records == 8
-        assert cfg.lookahead_records == 2
+        assert cfg.lookahead_records == DEFAULT_LOOKAHEAD_RECORDS
         assert cfg.output_format == "csv"
         assert cfg.max_sort_group == 4096
 

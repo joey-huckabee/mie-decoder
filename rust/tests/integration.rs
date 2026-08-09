@@ -218,7 +218,16 @@ fn lenient_mode_unrecoverable_sync_loss_yields_terminal_error() {
         other => panic!("expected first record OK, got {other:?}"),
     }
 
-    // Second call: validation fails on the 0xFF tail, recover_sync
+    // Second record is kept too. Through v2.11.1 it was discarded here because
+    // its *successor* boundary is the 0xFF tail; continuous validation no longer
+    // looks ahead (L2-SYN-005), so a well-formed record is not lost to its
+    // neighbour's damage and the terminal moves one call later.
+    match it.next() {
+        Some(Ok(msg)) => assert_eq!(msg.command_word.unwrap().rt, 15),
+        other => panic!("expected second record OK, got {other:?}"),
+    }
+
+    // Third call: validation fails on the 0xFF tail, recover_sync
     // walks 64 KB without finding sync, terminal Err surfaces.
     match it.next() {
         Some(Err(e)) => {
@@ -1116,8 +1125,12 @@ fn merge_allow_partial_writes_partial_on_file_failure() {
         outcome.partial.is_some(),
         "--allow-partial should commit a .partial on the file failure"
     );
-    // A's 100 + B's 200 + A's 300 reached the writer before B's terminal loss.
-    assert_eq!(outcome.normal_count, 3);
+    // A's 100 + B's 200 + A's 300 + the record immediately before B's loss.
+    // That last one used to be discarded because its *successor* boundary was
+    // corrupt; continuous validation no longer looks ahead (L2-SYN-005), so a
+    // well-formed record is no longer lost to its neighbour's damage. Mirrors
+    // `test_merge_allow_partial_writes_partial_on_file_failure` in Python.
+    assert_eq!(outcome.normal_count, 4);
     let partial = std::path::PathBuf::from(format!("{}.partial", out.path().display()));
     assert!(partial.exists(), "the .partial output file should exist");
     let _ = std::fs::remove_file(&partial);

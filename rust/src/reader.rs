@@ -722,13 +722,23 @@ impl<'a> RecordIter<'a> {
 
         // Validate via the shared sync path (same heuristics as header-skip and
         // recovery), so corrupt-but-plausible records don't slip through.
-        if let Err(failure) = validate_record_detailed(
-            self.data,
-            self.offset,
-            self.file_len,
-            Some(resolved),
-            self.lookahead_records,
-        ) {
+        //
+        // Depth 1 — no look-ahead — is deliberate here, and is the one place it
+        // differs from `find_first_record` / `recover_sync`, which keep the
+        // configured `lookahead_records` (L2-SYN-026). Those two answer "is this
+        // the start of a record stream?", where a wrong answer costs nothing but
+        // a resumption point. This call site walks a chain that is *already*
+        // locked on, and rejecting here discards the record.
+        //
+        // With look-ahead, a well-formed record sitting immediately before a
+        // corrupt region was dropped because its *successor* failed — one valid
+        // record lost per corruption site at the default depth of 2, and N-1 at
+        // depth N. A record that passes checks 1-5 is complete and in-bounds;
+        // whether the *next* boundary is corrupt is the next iteration's
+        // problem, and sync recovery already handles it (L2-SYN-005).
+        if let Err(failure) =
+            validate_record_detailed(self.data, self.offset, self.file_len, Some(resolved), 1)
+        {
             return self.handle_sync_loss(failure, type_raw, &tw, record_bytes);
         }
 
@@ -1602,14 +1612,25 @@ mod tests {
             },
         )
         .unwrap();
-        // No terminal error: lenient mode decodes with the forced format
-        // (records may be skipped on invariant violations, but the stream
-        // does not abort).
+        // Lenient mode must not abort *on the mismatch itself* — the whole
+        // point of L2-DEC-013 is that TimestampFormatMismatch is a strict-mode
+        // signal. It proceeds with the forced format and skips what will not
+        // decode under it.
+        //
+        // Since v2.11.2 a stream that decodes *nothing* ends with
+        // NoValidRecords (L1-EXIT-002): forcing Standard onto IRIG records
+        // means none of them validate, and silently reporting success with a
+        // header-only CSV is the outcome that change removed. So the terminal
+        // error, if any, must be NoValidRecords and never a format mismatch.
         let result: Result<Vec<_>, _> = reader.iter().collect();
-        assert!(
-            result.is_ok(),
-            "lenient forced-format mismatch must not abort the stream"
-        );
+        if let Err(e) = result {
+            assert_eq!(
+                e.kind(),
+                crate::error::MieErrorKind::NoValidRecords,
+                "lenient forced-format mismatch must not abort on the mismatch; \
+                 only a zero-record stream may terminate, and as NoValidRecords"
+            );
+        }
     }
 
     /// L2-DEC-013: forcing a format the probe agrees with (or is not
