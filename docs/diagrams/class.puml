@@ -335,8 +335,8 @@ package "Writer (writer)" {
         -committed: bool
         --
         +write(bytes): IoResult
-        +commit(): PathBuf       /' rename tmp to final '/
-        +commit_as_partial(): PathBuf  /' rename tmp to <stem>.partial.csv '/
+        +commit()                /' rename tmp to final '/
+        +commit_partial(): Path  /' rename tmp to <output>.partial '/
         +discard(): IoResult     /' unlink tmp on drop '/
     }
 

@@ -137,6 +137,30 @@ full release workflow.
 
 ### Fixed
 
+- **The diagrams named the `--allow-partial` output file backwards.** All three
+  showed `<stem>.partial.csv`, implying `out.partial.csv`. Both implementations
+  append the suffix to the whole name — `writer.rs` does `name.push(".partial")`
+  — so the real files are **`out.csv.partial`** and, in separate-error mode,
+  **`out_errors.csv.partial`**. Verified by running both CLIs against a fixture
+  built to produce error rows *and* an unrecoverable sync loss, rather than
+  inferred from the code.
+
+  Every other reference was already correct — fifteen of them across the
+  writers, CLIs, `run.py`, the tests and `USER-GUIDE.md`, and `L3-REQ.md` even
+  cites `out.csv.partial` explicitly. Only the generated artifacts said
+  otherwise, which is the failure mode this release keeps meeting: the copy
+  nobody executes is the copy that rots.
+
+- **`L2-MRG-004` mis-stated the separate-mode partial name** as
+  `<stem>_errors.partial`, dropping the `.csv`. It now gives both concrete
+  names, and says explicitly that `.partial` is appended to the whole file name.
+
+- **The diagrams called a method that does not exist.** `class.puml` and
+  `dataflow.puml` referred to `commit_as_partial()`; both implementations define
+  **`commit_partial`**. `class.puml` also gave `commit()` a `PathBuf` return —
+  it returns nothing in Python and `MieResult<()>` in Rust; only
+  `commit_partial` returns a path.
+
 - **`CONFIG-REFERENCE.md` omitted a key from its own copyable block, and dated a
   change relatively.** The document presents itself as the reference for *every*
   TOML key and states each one twice — a copyable quick-reference block and a

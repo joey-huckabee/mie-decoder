@@ -53,7 +53,7 @@ package "External" {
     database "MIE Binary\nFile (.mie)"          as mie_file
     file     "CSV Output\n(<stem>.csv)"         as csv_file
     file     "Errors CSV\n(<stem>_errors.csv,\nseparate mode)" as err_file
-    file     "Partial CSV\n(<stem>.partial.csv,\n~--allow-partial)" as partial_file
+    file     "Partial CSV\n(<output>.partial,\n~--allow-partial)" as partial_file
 }
 
 ' ============================================================================
@@ -150,7 +150,9 @@ note right of outsafe
   3. Write to <stem>.<pid>.tmp
   4. On clean exit: rename to <stem>.csv
   5. On error + ~--allow-partial: rename to
-     <stem>.partial.csv               (L2-WRT-015)
+     <output>.partial                 (L2-WRT-015)
+     (out.csv -> out.csv.partial, and
+      out_errors.csv.partial in separate mode)
   6. On error otherwise: unlink tmp  (L2-WRT-017)
 end note
 
