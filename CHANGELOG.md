@@ -147,9 +147,23 @@ full release workflow.
 - **`docs/diagrams/class.puml` claimed `MieError` has 15 variants** — it has 18.
   The count is now dropped rather than corrected: it is re-broken by the next
   error variant, and the useful part of the note is the mapping, not the number.
-  That mapping is also stated more precisely: one variant per *raisable* Python
-  class, meaning the leaf classes plus `MieFileError`, which is raised directly
-  for a file-open failure and corresponds to Rust's `FileIo`.
+  That mapping is also stated correctly: every Python leaf class has exactly one
+  matching variant, and the reverse does not hold — `FileIo` has no Python
+  counterpart, because Python lets an unwrapped `OSError` propagate from
+  open/mmap rather than converting it.
+
+- **The exception base classes documented a guarantee the library does not make.**
+  `MieDecoderError` claimed "all exceptions raised by the MIE-Decoder library
+  inherit from this class" and showed a bare `except MieDecoderError` example —
+  but opening and reading the input is left to the standard library, so a
+  permission error, a non-regular path, or a device I/O error propagates as a
+  plain `OSError` straight past that handler. A library consumer following the
+  docstring would have an unhandled failure mode. `MieFileError` compounded it by
+  claiming it is "raised when the input file cannot be opened", which is both the
+  one case it does *not* cover and something it never does at all — it is a base
+  class, never raised directly. Both docstrings now state what is and is not
+  converted, and point at `(MieDecoderError, OSError)` as the catch-both form the
+  CLI itself uses.
 
 - **`docs/diagrams/component.puml` double-counted a sync check.** It called
   `validate_record` a "six-check shape probe" while listing the look-ahead

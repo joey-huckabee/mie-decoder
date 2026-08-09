@@ -32,26 +32,43 @@ from __future__ import annotations
 
 
 class MieDecoderError(Exception):
-    """Base exception for all MIE-Decoder errors.
+    """Base exception for every error the decoder *converts*.
 
-    All exceptions raised by the MIE-Decoder library inherit from this
-    class, enabling callers to catch any decoder-related error with a
-    single handler::
+    Catch it to handle any decoder-level failure with a single handler::
 
         try:
             for msg in MieFileReader("recording.mie"):
                 process(msg)
         except MieDecoderError as exc:
             logger.error("Decoder failure: %s", exc)
+
+    **This does not catch everything.** Opening and reading the input is left
+    to the standard library, so a failure there — permission denied, a path
+    that is not a regular file, a device I/O error — propagates as a plain
+    ``OSError`` and slips past the handler above. Catch ``(MieDecoderError,
+    OSError)`` if you need both; that is what the CLI does. Rust wraps the same
+    condition as ``MieError::FileIo``, so it is the one variant with no class
+    here (`docs/ERROR-CATALOG.md` §2).
+
+    Note that a *missing* or *empty* input is checked up front and does
+    convert, to :class:`MieFileNotFoundError` / :class:`MieFileEmptyError`;
+    only failures raised by the open/mmap itself stay as ``OSError``.
     """
 
 
 class MieFileError(MieDecoderError):
     """Base exception for file-level errors.
 
-    Raised when the input file cannot be opened, is missing, or is
-    structurally invalid at the file level (as opposed to individual
-    record-level corruption).
+    Never raised directly — it exists to be caught, and every file-level
+    failure the decoder *converts* is one of its subclasses: the file is
+    missing or empty, holds no decodable records, is a single-byte pad, has an
+    undecidable timestamp format, cannot join a merge, or the destination is
+    refused. Corresponds to Rust's `is_file_error()` predicate **plus** the
+    whole-file rejections and destination guards that predicate excludes; see
+    `docs/ERROR-CATALOG.md` §2.
+
+    Note what is *not* here: a failure to open or read the file (permission
+    denied, I/O error) is **not** converted — see :class:`MieDecoderError`.
     """
 
 
