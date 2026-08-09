@@ -15,6 +15,24 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **A "Trust boundary" section in `docs/CONFIG-REFERENCE.md`** stating what
+  `--config` does and does not promise: the file is read with the invoking user's
+  permissions and never with elevated ones, must resolve to a regular file, is
+  parsed as TOML data with no include directive / interpolation / code execution
+  / network access, and may live at **any readable path** — site configs under
+  `/etc`, a mounted share, or a relative path all remain valid.
+
+  It also records *why* the location is unrestricted, and where the corresponding
+  SonarCloud `pythonsecurity:S8707` exclusion lives, so a decision that was
+  previously visible only in a CI workflow file is now discoverable by the people
+  it affects. A closing note names the contexts the guarantee does **not** cover
+  — a setuid wrapper, a shared service account, or a job runner accepting a
+  config path from an untrusted submitter — where restricting the path is the
+  caller's responsibility. `docs/CLI-REFERENCE.md` links to it from the
+  `--config` row.
+
 ## [2.11.1] — 2026-08-08
 
 ### Fixed
