@@ -313,6 +313,66 @@ def merge_readers(
     )
 
 
+def _resolve_emission(
+    msg: MieMessage,
+    us: int,
+    idx: int,
+    dedup: _DedupWindow | None,
+    delta_scope: DeltaScope,
+    tick: float | None,
+    tracker: dict[str, int],
+) -> MieMessage | None:
+    """The record to emit for this heap pop, or ``None`` if it is a collapsed
+    cross-recorder duplicate.
+
+    De-duplication runs *before* the DELTA stage (L2-MRG-007) so a suppressed
+    duplicate never advances the per-key tracker and gaps are measured across the
+    surviving stream. Under ``PER_FILE`` (the default) the DELTA each reader
+    already computed for its own file is left exactly as-is, which is what makes
+    a merged record's value identical to a single-file decode (L2-MRG-005).
+    """
+    if dedup is not None and dedup.is_duplicate(us, idx, msg):
+        return None
+    if delta_scope == DeltaScope.GLOBAL:
+        return _apply_global_delta(msg, tick, tracker)
+    return msg
+
+
+def _pull_next(
+    readers: list[MieFileReader],
+    iters: list[Iterator[MieMessage]],
+    idx: int,
+    tick: float | None,
+    prev_us: list[int | None],
+    warned: list[bool],
+    strict: bool,
+    allow_partial: bool,
+) -> tuple[MieMessage | None, int | None, MieUnrecoverableSyncLossError | None]:
+    """Advance input ``idx`` by one record for the heap.
+
+    Returns ``(record, microsecond key, deferred terminal)``. The record and key
+    are both ``None`` when the input is exhausted or was truncated. A terminal is
+    returned rather than raised only under ``--allow-partial``, so the caller can
+    defer it until the heap drains and the writer still commits a `.partial`
+    (L2-MRG-004); in strict mode it propagates.
+
+    Monotonicity is checked here, against the caller's *previous* key, before the
+    caller records the new one (L2-MRG-006).
+    """
+    try:
+        nxt = next(iters[idx])
+    except StopIteration:
+        return None, None, None  # file exhausted
+    except MieUnrecoverableSyncLossError as exc:
+        if allow_partial:
+            logger.warning("merge: input #%d truncated at its failure point: %s", idx, exc)
+            return None, None, exc
+        raise
+    curr = _merge_micros(nxt, tick)
+    _check_monotonic_input(readers, idx, prev_us[idx], curr, strict, warned)
+    return nxt, curr, None
+
+
 def _merge_drain(
     readers: list[MieFileReader],
     iters: list[Iterator[MieMessage]],
@@ -339,31 +399,21 @@ def _merge_drain(
     collapsed = 0
     while heap:
         us, idx, _, _, msg = heapq.heappop(heap)
-        # Collapse cross-recorder duplicates before the global-DELTA stage
-        # (L2-MRG-007): a suppressed duplicate must not advance the per-key DELTA
-        # tracker, so DELTA is measured across the deduped timeline.
-        if dedup is not None and dedup.is_duplicate(us, idx, msg):
+        emitted = _resolve_emission(msg, us, idx, dedup, delta_scope, tick, tracker)
+        if emitted is None:
             collapsed += 1
         else:
-            # L2-MRG-005: under PER_FILE (the default) the DELTA each reader
-            # already computed for its own file is left exactly as-is, which is
-            # what makes it identical to a single-file decode.
-            if delta_scope == DeltaScope.GLOBAL:
-                yield _apply_global_delta(msg, tick, tracker)
-            else:
-                yield msg
-        try:
-            nxt = next(iters[idx])
-        except StopIteration:
-            continue  # file exhausted
-        except MieUnrecoverableSyncLossError as exc:
-            if allow_partial:
-                logger.warning("merge: input #%d truncated at its failure point: %s", idx, exc)
-                pending_terminal = exc  # defer until the heap drains
-                continue
-            raise
-        curr = _merge_micros(nxt, tick)
-        _check_monotonic_input(readers, idx, prev_us[idx], curr, strict, warned)
+            yield emitted
+
+        nxt, curr, deferred = _pull_next(
+            readers, iters, idx, tick, prev_us, warned, strict, allow_partial
+        )
+        if deferred is not None:
+            pending_terminal = deferred  # defer until the heap drains
+            continue
+        if nxt is None or curr is None:
+            continue  # input exhausted; the two are set or unset together
+
         prev_us[idx] = curr
         seq = seqs[idx]
         seqs[idx] = seq + 1

@@ -15,6 +15,55 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.11.1] — 2026-08-08
+
+### Fixed
+
+- **The SonarCloud quality gate passes on `main` again.** It had been failing on
+  every merge since v2.8.0 — `#70`, `#71`, `#72` and `#73` each turned `main` red
+  after merging — on `new_security_rating = 3`, from a single unresolved
+  `pythonsecurity:S8707` finding at `config.py:740`.
+- **The gate is now enforced on pull requests, which is why this went unnoticed.**
+  `sonar.qualitygate.wait` was set only for pushes to the default branch, so a
+  PR's "SonarCloud Code Analysis" check reported success for merely *uploading*
+  the scan — it never evaluated the gate. Four releases merged green against a
+  gate that was already failing. The wait now covers `pull_request` events too,
+  so a failing gate blocks the PR while it can still be acted on.
+- **`python:S3776`, the last open code smell** — cognitive complexity in
+  `merge.py`'s `_merge_drain`. Split into two helpers with no behavior change:
+  `_resolve_emission` (de-duplicate, then apply the DELTA scope) and `_pull_next`
+  (advance one input, check monotonicity, surface a deferred `--allow-partial`
+  terminal). Verified behavior-preserving by the full Python suite and all 79
+  byte-exact conformance oracles.
+
+### Changed
+
+- **`pythonsecurity:S8707` is now ignored for `python/src/mie_decoder/config.py`**,
+  scoped to that one rule in that one file, with the rationale recorded in
+  `.github/workflows/sonarcloud.yml`. The rule ("Agentic workflows should not be
+  vulnerable to path injection") fires on `--config <path>` reaching
+  `Path.read_text()`. It is a false positive for this program shape: MIE-Decoder
+  is an operator-run CLI, the config path **is** the interface, and the process
+  holds exactly the permissions of the user who typed the command — there is no
+  sandbox to escape and no privilege boundary to cross. The rule presumes a
+  confinement this tool does not have and does not claim.
+
+  The read-safety hardening that *was* warranted shipped in v2.11.0 and is kept:
+  `load_config` requires a **regular file** before reading, so `--config <dir>`
+  and `--config /dev/zero` are rejected rather than raising `IsADirectoryError`
+  or hanging. Because the exclusion is scoped, any other finding in that file —
+  and this rule anywhere else — still fails the build.
+
+### Notes
+
+- No decoder behavior changes in this release: no CSV output, CLI surface,
+  configuration key, exit code or public API differs from v2.11.0. The Rust crate
+  is unchanged apart from its version, and ships at 2.11.1 to keep the joint cut.
+- The `diagrams` CI gap recorded in v2.11.0 is **still open** — the pinned
+  PlantUML 1.2026.5 crashes on a smetana-layout diagram, exits `0`, and the drift
+  check compares a file the render never touched. Unrelated to the SonarCloud
+  work and still deferred.
+
 ## [2.11.0] — 2026-08-08
 
 ### Changed — BREAKING
@@ -2135,7 +2184,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...HEAD
+[2.11.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.9.0...v2.10.0
 [2.9.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.8.0...v2.9.0

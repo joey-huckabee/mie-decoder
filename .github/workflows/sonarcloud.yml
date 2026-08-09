@@ -192,8 +192,13 @@ jobs:
         if: ${{ env.SONAR_TOKEN != '' && env.SONAR_PROJECT_KEY != '' && env.SONAR_ORGANIZATION != '' }}
         env:
           SONAR_HOST_URL: https://sonarcloud.io
-          # Only wait on pushes to the repo default branch
-          SONAR_QG_WAIT: ${{ github.event_name == 'push' && github.ref_name == github.event.repository.default_branch }}
+          # Wait for (and fail on) the Quality Gate on PRs as well as on pushes
+          # to the default branch. Waiting only on main is what let a failing
+          # gate ship: a PR's "SonarCloud Code Analysis" check reported success
+          # for merely uploading the scan, so #70, #71, #72 and #73 all merged
+          # green and only turned the main branch red afterwards. The gate is
+          # now enforced before merge, where it can still be acted on.
+          SONAR_QG_WAIT: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) }}
         run: |
           args=(
             "-Dsonar.projectKey=${SONAR_PROJECT_KEY}"
@@ -205,10 +210,30 @@ jobs:
             "-Dsonar.rust.clippy.enabled=false"
             "-Dsonar.python.version=3.10"
             "-Dsonar.python.coverage.reportPaths=python/coverage.xml"
+            # pythonsecurity:S8707 ("Agentic workflows should not be vulnerable
+            # to path injection") fires on `--config <path>` reaching
+            # `Path.read_text()` in config.py. It is a false positive for this
+            # program shape: mie-decoder is an operator-run CLI, the config path
+            # IS the interface, and the process holds exactly the permissions of
+            # the user who typed the command — there is no sandbox to escape and
+            # no privilege boundary to cross. The rule's premise (an agent
+            # escaping filesystem restrictions) presumes a confinement this tool
+            # does not have and does not claim.
+            #
+            # The read-safety hardening that WAS warranted is implemented and
+            # kept: config.py requires a *regular file* before reading, so
+            # `--config <dir>` and `--config /dev/zero` are rejected rather than
+            # raising IsADirectoryError or hanging (see load_config).
+            #
+            # Scoped to the one rule in the one file so any other finding there,
+            # and this rule anywhere else, still fails the build.
+            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection"
+            "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.ruleKey=pythonsecurity:S8707"
+            "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.resourcePath=python/src/mie_decoder/config.py"
           )
 
           if [ "$SONAR_QG_WAIT" = "true" ]; then
-            echo "Default branch push (${GITHUB_REF_NAME}) - waiting for Quality Gate..."
+            echo "${GITHUB_EVENT_NAME} on ${GITHUB_REF_NAME} - waiting for Quality Gate..."
             args+=("-Dsonar.qualitygate.wait=true" "-Dsonar.qualitygate.timeout=600")
           fi
 
