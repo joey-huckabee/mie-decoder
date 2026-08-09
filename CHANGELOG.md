@@ -137,6 +137,25 @@ full release workflow.
 
 ### Fixed
 
+- **Coverage and CI numbers had drifted out of the docs.** The Rust gate
+  enforces `--fail-under-lines 87 --fail-under-regions 86`
+  (`rust/.cargo/config.toml`), but `rust/README.md` and three separate places in
+  `CONTRIBUTING.md` still advertised the pre-ratchet **84% / 83%**. The Python
+  coverage floor is `fail_under = 92`, while the comment on the CI job that
+  enforces it said **88%**. And `MAINTAINER-GUIDE.md` §9 opened with
+  "`ci.yml` has seven jobs" when it defines **sixteen**.
+
+  Notably the guide's *table* was accurate throughout — every job present, and
+  its `rust` row already quoted 87/86. Only the prose above it had rotted, which
+  is the usual pattern: the structure people edit stays right, the sentence
+  nobody re-reads does not.
+
+  So the count is now gone rather than corrected — it would only drift again
+  (this release adds a job, taking it from fifteen to sixteen). The table is the
+  list, and `repo-hygiene` now **enforces** that: every job in `ci.yml` must
+  have a row in §9, or the build fails. Verified against a planted
+  undocumented job.
+
 - **The documented conformance command used the wrong Python.**
   `CONTRIBUTING.md`, `tests/conformance/README.md` and `MAINTAINER-GUIDE.md`'s
   test-suite table all said `python tests/conformance/run.py`. The runner drives

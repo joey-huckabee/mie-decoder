@@ -453,7 +453,9 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 
 ## 9. CI architecture
 
-`.github/workflows/ci.yml` has seven jobs:
+`.github/workflows/ci.yml` defines the jobs below. The table is the list —
+it is cross-checked against the workflow, so a job added without a row here
+shows up as a gap rather than silently drifting:
 
 | Job | What it gates | Platforms | Failure cost |
 |-----|---------------|-----------|--------------|

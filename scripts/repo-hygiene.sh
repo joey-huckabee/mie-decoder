@@ -133,6 +133,25 @@ while IFS=: read -r file line _; do
 done < <(grep -rnE '^[[:space:]]*unsafe[[:space:]]*([{(]|fn[[:space:]])' rust/src rust/tests 2>/dev/null || true)
 (( ${#offenders[@]} )) && { list "${offenders[@]}"; bad "unsafe block without a // SAFETY: comment"; }
 
+# ── 9. CI job table in MAINTAINER-GUIDE matches ci.yml ────────────────
+# §9 of the guide documents every CI job in a table. That table stayed
+# accurate while the prose above it did not ("seven jobs" when there were
+# fifteen), so the number is gone and the table is the list — which only works
+# if something keeps it honest. Adding a job without a row now fails here.
+step "MAINTAINER-GUIDE §9 lists every ci.yml job"
+mapfile -t yml_jobs < <(
+    awk '/^jobs:/{inj=1;next} inj && /^  [a-z0-9-]+:/{gsub(/[ :]/,"");print}' \
+        .github/workflows/ci.yml
+)
+missing_rows=()
+for job in "${yml_jobs[@]}"; do
+    grep -qF "| \`$job\` |" docs/MAINTAINER-GUIDE.md || missing_rows+=("$job")
+done
+if (( ${#missing_rows[@]} )); then
+    list "${missing_rows[@]}"
+    bad "ci.yml job(s) with no row in MAINTAINER-GUIDE.md section 9"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2

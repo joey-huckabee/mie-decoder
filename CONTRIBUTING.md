@@ -55,7 +55,7 @@ staged.
    (as a side-effect) leftover merge conflict markers. It does **not**
    report a *missing* final newline — `--check` implements
    `core.whitespace`, whose `blank-at-eof` is the opposite problem. That
-   is check 1b.
+   is check 2.
 2. **Missing final newline** — every staged text file must end in `\n`.
    Added in v2.11.2, when check 1 was found to have never enforced the
    guarantee its description claimed. `*.svg` is exempt: the committed
@@ -376,7 +376,7 @@ GitHub Actions runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on
 every push and pull request:
 
 - **Rust:** `cargo fmt --check`, Clippy with warnings denied, all-target tests,
-  and the `cargo cov-ci` 84% line / 83% region coverage gate.
+  and the `cargo cov-ci` 87% line / 86% region coverage gate.
 - **Python 3.10 through 3.14:** locked dependency synchronization and the full
   pytest suite on every supported minor version.
 - **Python 3.12:** strict package/lockfile validation and wheel + source
@@ -409,7 +409,7 @@ Three cargo aliases are pre-wired in `rust/.cargo/config.toml`:
 cd rust
 cargo cov         # Local: build instrumented, run tests, open HTML report
 cargo cov-lcov    # Generate target-relative lcov.info (for IDE / CI tooling)
-cargo cov-ci      # Enforced gate: --fail-under-lines 84 --fail-under-regions 83
+cargo cov-ci      # Enforced gate: --fail-under-lines 87 --fail-under-regions 86
 ```
 
 Or via the script wrapper, equivalent to `cargo cov`:
@@ -422,8 +422,8 @@ bash scripts/coverage.sh
 
 `cargo cov-ci` enforces:
 
-- **Lines: 84%** floor
-- **Regions: 83%** floor
+- **Lines: 87%** floor
+- **Regions: 86%** floor
 
 These have been ratcheted up from the original 70/70 floor to roughly
 two percentage points below the current baseline, so routine refactors
