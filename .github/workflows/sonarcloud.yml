@@ -229,7 +229,7 @@ jobs:
             # and this rule anywhere else, still fails the build.
             "-Dsonar.issue.ignore.multicriteria=agenticPathInjection"
             "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.ruleKey=pythonsecurity:S8707"
-            "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.resourcePath=python/src/mie_decoder/config.py"
+            "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.resourceKey=python/src/mie_decoder/config.py"
           )
 
           if [ "$SONAR_QG_WAIT" = "true" ]; then
