@@ -40,6 +40,13 @@ CORPUS: list[tuple[str, str, str]] = [
     # L2-WRT-022: the canonical-order run cap. In range on both, out of range on
     # both — a range check is exactly the kind of validation that has drifted
     # between the two loaders before.
+    # L2-MRG-005: the DELTA scope selector. Both names accepted on both sides,
+    # anything else rejected on both.
+    ("delta-scope-per-file", '[merge]\ndelta_scope = "per-file"\n', "accept"),
+    ("delta-scope-global", '[merge]\ndelta_scope = "global"\n', "accept"),
+    ("delta-scope-mixed-case", '[merge]\ndelta_scope = "Per-File"\n', "accept"),
+    ("delta-scope-unknown", '[merge]\ndelta_scope = "whole"\n', "reject"),
+    ("delta-scope-non-string", "[merge]\ndelta_scope = 1\n", "reject"),
     ("max-sort-group-valid", "[output]\nmax_sort_group = 64\n", "accept"),
     ("max-sort-group-min", "[output]\nmax_sort_group = 1\n", "accept"),
     ("max-sort-group-max", "[output]\nmax_sort_group = 1048576\n", "accept"),

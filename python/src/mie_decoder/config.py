@@ -31,9 +31,11 @@ from typing import Any
 
 from mie_decoder.models import (
     Bus,
+    DeltaScope,
     ErrorMode,
     MessageType,
     TimestampFormat,
+    parse_delta_scope,
     parse_timestamp_format,
 )
 from mie_decoder.order import (
@@ -94,6 +96,7 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
         ("mux", "field"),
         ("merge", "collapse_duplicates"),
         ("merge", "collapse_window_us"),
+        ("merge", "delta_scope"),
         ("filter", "exclude_types"),
         ("filter", "exclude_rts"),
         ("filter", "exclude_buses"),
@@ -143,14 +146,25 @@ def _require_table(data: dict[str, Any], section: str) -> dict[str, Any]:
 
 
 #: A simple identifier (section name or key): letters, digits, underscores.
-_IDENT_RE = re.compile(r"^[A-Za-z0-9_]+$")
+#:
+#: ``re.ASCII`` is load-bearing, not decoration. Python's ``\w`` is
+#: Unicode-aware by default and matches letters like ``é`` or ``中``, whereas the
+#: Rust parser gates on ``is_ascii_alphanumeric``. Without the flag this pattern
+#: would accept section names and keys that Rust rejects — a silent
+#: cross-implementation divergence of exactly the kind L2-CFG-010 exists to
+#: prevent. With it, ``\w`` is precisely ``[A-Za-z0-9_]``.
+_IDENT_RE = re.compile(r"^\w+$", re.ASCII)
 
 #: A numeric literal the flat schema accepts, matching the Rust
 #: `is_toml_number_literal` grammar: `[+-]? (0 | [1-9][0-9]*) (.[0-9]+)?
 #: ([eE][+-]?[0-9]+)?`. Rejects leading zeros (`08`, `01`), a bare trailing dot
 #: (`1.`), and `0x`/`0o`/`0b` / underscore forms that `tomllib` and native Rust
 #: parsing disagree on.
-_NUMBER_RE = re.compile(r"^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$")
+#:
+#: ``re.ASCII`` for the same reason as `_IDENT_RE`: bare ``\d`` also matches
+#: non-ASCII digits (Arabic-Indic ``٤``, Devanagari ``४``), which Rust's
+#: ``is_ascii_digit`` does not. With the flag, ``\d`` is precisely ``[0-9]``.
+_NUMBER_RE = re.compile(r"^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$", re.ASCII)
 
 
 def _basic_string_accepted(tok: str) -> bool:
@@ -206,6 +220,24 @@ def _strip_toml_comment(line: str) -> str:
     return line
 
 
+def _advance_inside_quote(ch: str, prev_backslash: bool) -> tuple[bool, bool]:
+    """State transition for one character read *inside* a quoted string.
+
+    Returns ``(still_in_quote, next_prev_backslash)``. Split out of
+    :func:`_split_array_items` so the scanner's loop shows only the three
+    top-level cases (inside a string / a separating comma / ordinary text) and
+    the escape rule lives in one place.
+
+    An unescaped backslash escapes whatever follows, so the string stays open; an
+    unescaped quote closes it. Anything else is ordinary content.
+    """
+    if ch == "\\" and not prev_backslash:
+        return True, True
+    if ch == '"' and not prev_backslash:
+        return False, False
+    return True, False
+
+
 def _split_array_items(inner: str) -> list[str]:
     """Split array element text on top-level commas, respecting quoted strings.
 
@@ -221,12 +253,7 @@ def _split_array_items(inner: str) -> list[str]:
     for ch in inner:
         if in_quote:
             buf.append(ch)
-            if ch == "\\" and not prev_backslash:
-                prev_backslash = True  # next char is escaped; stays quoted
-            else:
-                if ch == '"' and not prev_backslash:
-                    in_quote = False
-                prev_backslash = False
+            in_quote, prev_backslash = _advance_inside_quote(ch, prev_backslash)
         elif ch == ",":
             items.append("".join(buf))
             buf = []
@@ -267,41 +294,58 @@ def _reject_unsupported_toml_forms(text: str) -> None:
         line = _strip_toml_comment(raw).strip()
         if not line:
             continue
-        if line.startswith("[["):
-            raise ValueError(f"line {lineno}: array-of-tables headers ([[...]]) are not supported")
         if line.startswith("["):
-            if not line.endswith("]"):
-                raise ValueError(f"line {lineno}: malformed section header: {line!r}")
-            header = line[1:-1].strip()
-            if "." in header:
-                raise ValueError(
-                    f"line {lineno}: dotted section headers ([a.b]) are not "
-                    "supported; use a flat [section] header"
-                )
-            if not _IDENT_RE.match(header):
-                raise ValueError(
-                    f"line {lineno}: unsupported section header [{header}]; "
-                    "use a flat [section] name (letters, digits, underscore)"
-                )
+            _reject_bad_section_header(line, lineno)
             continue
-        if "=" not in line:
-            raise ValueError(f"line {lineno}: expected 'key = value' or a [section] header")
-        raw_key, value = line.split("=", 1)
-        key = raw_key.strip()
-        if "." in key and not key.startswith('"'):
-            raise ValueError(
-                f"line {lineno}: dotted keys (a.b = ...) are not supported; use a [section] header"
-            )
-        if not _IDENT_RE.match(key):
-            raise ValueError(
-                f"line {lineno}: unsupported key {key!r}; keys must be simple "
-                "identifiers (letters, digits, underscore)"
-            )
-        if not _value_accepted(value):
-            raise ValueError(
-                f"line {lineno}: unsupported value for {key!r}: {value.strip()!r}; only "
-                "strings, plain numbers, booleans, and single-line arrays are allowed"
-            )
+        _reject_bad_key_value(line, lineno)
+
+
+def _reject_bad_section_header(line: str, lineno: int) -> None:
+    """Whitelist check for a ``[section]`` header line.
+
+    Mirrors ``parse_section_header`` in ``rust/src/config.rs`` rule for rule, so
+    a header accepted by one implementation is accepted by the other.
+    """
+    if line.startswith("[["):
+        raise ValueError(f"line {lineno}: array-of-tables headers ([[...]]) are not supported")
+    if not line.endswith("]"):
+        raise ValueError(f"line {lineno}: malformed section header: {line!r}")
+    header = line[1:-1].strip()
+    if "." in header:
+        raise ValueError(
+            f"line {lineno}: dotted section headers ([a.b]) are not "
+            "supported; use a flat [section] header"
+        )
+    if not _IDENT_RE.match(header):
+        raise ValueError(
+            f"line {lineno}: unsupported section header [{header}]; "
+            "use a flat [section] name (letters, digits, underscore)"
+        )
+
+
+def _reject_bad_key_value(line: str, lineno: int) -> None:
+    """Whitelist check for a ``key = value`` line.
+
+    Mirrors ``parse_key_value`` in ``rust/src/config.rs``.
+    """
+    if "=" not in line:
+        raise ValueError(f"line {lineno}: expected 'key = value' or a [section] header")
+    raw_key, value = line.split("=", 1)
+    key = raw_key.strip()
+    if "." in key and not key.startswith('"'):
+        raise ValueError(
+            f"line {lineno}: dotted keys (a.b = ...) are not supported; use a [section] header"
+        )
+    if not _IDENT_RE.match(key):
+        raise ValueError(
+            f"line {lineno}: unsupported key {key!r}; keys must be simple "
+            "identifiers (letters, digits, underscore)"
+        )
+    if not _value_accepted(value):
+        raise ValueError(
+            f"line {lineno}: unsupported value for {key!r}: {value.strip()!r}; only "
+            "strings, plain numbers, booleans, and single-line arrays are allowed"
+        )
 
 
 def _require_rt_sa_range(  # pylint: disable=redefined-outer-name
@@ -485,6 +529,12 @@ class DecoderConfig:
     collapse_duplicates: bool = False
     collapse_window_us: int = 0
 
+    #: L2-MRG-005: scope over which DELTA is measured in a multi-file merge.
+    #: PER_FILE (default) leaves each reader's own DELTA in place, matching a
+    #: single-file decode and the vendor tool; GLOBAL measures across the merged
+    #: timeline. No effect on a single-input decode.
+    delta_scope: DeltaScope = DeltaScope.PER_FILE
+
     #: L2-WRT-022: cap on the number of consecutive equal-TIME_STAMP records the
     #: canonical-order stage (L2-WRT-021) buffers at once. Range
     #: [MAX_SORT_GROUP_MIN, MAX_SORT_GROUP_MAX]. Default 4096; 1 disables
@@ -520,6 +570,7 @@ class DecoderConfig:
             collapse_duplicates=self._override_present(kwargs, "collapse_duplicates"),
             collapse_window_us=self._override_present(kwargs, "collapse_window_us"),
             max_sort_group=self._override_present(kwargs, "max_sort_group"),
+            delta_scope=self._override_present(kwargs, "delta_scope"),
         )
 
     def _override_present(self, kwargs: dict[str, Any], name: str) -> Any:
@@ -665,9 +716,19 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         logger.debug("No config file specified, using defaults")
         return DecoderConfig()
 
+    # Validate the operator-supplied path BEFORE touching its contents
+    # (`pythonsecurity:S8707`). `--config` is attacker-influenced in any context
+    # where the decoder is driven by another program, and `exists()` alone is
+    # not a sufficient guard: it is true for directories, FIFOs, and character
+    # devices. Reading one of those gives either a confusing traceback
+    # (`IsADirectoryError`) or, for something like `--config /dev/zero`, a read
+    # that never returns. Requiring a *regular file* is the actual precondition
+    # this function needs, so state it explicitly.
     config_path = Path(path)
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
+    if not config_path.is_file():
+        raise ValueError(f"Config path is not a regular file: {config_path}")
 
     if tomllib is None:
         raise RuntimeError(
@@ -717,7 +778,9 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     )
     standard_tick_rate_hz = _load_standard_tick_rate(decode_section)
     mux_enabled, mux_delimiter, mux_field = _load_mux_section(_require_table(data, "mux"))
-    collapse_duplicates, collapse_window_us = _load_merge_section(_require_table(data, "merge"))
+    merge_section = _require_table(data, "merge")
+    collapse_duplicates, collapse_window_us = _load_merge_section(merge_section)
+    delta_scope = _load_delta_scope(merge_section)
 
     _warn_unknown_keys(data)
 
@@ -739,6 +802,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         collapse_duplicates=collapse_duplicates,
         collapse_window_us=collapse_window_us,
         max_sort_group=max_sort_group,
+        delta_scope=delta_scope,
     )
 
     logger.debug("Loaded config: %s", config)
@@ -833,6 +897,14 @@ def _load_mux_section(mux_section: dict[str, Any]) -> tuple[bool, str, int]:
     if isinstance(mux_field_raw, bool) or not isinstance(mux_field_raw, int):
         raise ValueError(f"Invalid mux.field: {mux_field_raw!r}; must be an integer")
     return mux_enabled, mux_delimiter_raw, mux_field_raw
+
+
+def _load_delta_scope(merge_section: dict[str, Any]) -> DeltaScope:
+    """`[merge] delta_scope` (L2-MRG-005). Defaults to ``per-file``."""
+    raw = merge_section.get("delta_scope", "per-file")
+    if not isinstance(raw, str):
+        raise ValueError(f"Invalid merge.delta_scope: expected string, got {type(raw).__name__}")
+    return parse_delta_scope(raw)
 
 
 def _load_merge_section(merge_section: dict[str, Any]) -> tuple[bool, int]:

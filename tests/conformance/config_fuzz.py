@@ -40,6 +40,7 @@ _SECTIONS = [
     "bad-section",  # non-identifier: hyphen
     '"bad"',  # non-identifier: quoted
     "bad section",  # non-identifier: space
+    "sectión",  # non-identifier: non-ASCII letter (see _KEYS note)
 ]
 # Keys: real identifiers plus a few that stress the key grammar.
 _KEYS = [
@@ -50,6 +51,7 @@ _KEYS = [
     "standard_tick_rate_hz",
     "no_clobber",
     "max_sort_group",
+    "delta_scope",
     "enabled",
     "delimiter",
     "field",
@@ -58,11 +60,22 @@ _KEYS = [
     "unknown_key",
     "decode.strict",  # dotted key
     '"strict"',  # quoted key
+    # Non-ASCII identifiers. Rust gates keys on `is_ascii_alphanumeric`, so
+    # these must be rejected on BOTH sides. Python's `\w` is Unicode-aware by
+    # default and would accept them, so `_IDENT_RE` is compiled with `re.ASCII`
+    # — these entries are what keeps that flag from being silently dropped.
+    "stricté",  # Latin-1 letter
+    "中文",  # CJK
 ]
 # Values: valid forms mixed heavily with edge cases that have historically
 # diverged (leading zeros, bare trailing dot, hex/oct/bin, underscores, string
 # escapes, inline tables, datetimes, multi-line-array openers).
 _VALUES = [
+    '"per-file"',  # a valid delta_scope name; nonsense for every other key
+    # Non-ASCII digits: Rust's `is_ascii_digit` rejects them, and Python's
+    # `_NUMBER_RE` only agrees because it is compiled with `re.ASCII`. Bare
+    # `\d` would match these and accept a literal Rust refuses.
+    "٤٢",  # Arabic-Indic 42
     "true",
     "false",
     "8",

@@ -515,6 +515,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     decode_parser.add_argument(
+        "--delta-scope",
+        type=str,
+        default=None,
+        metavar="SCOPE",
+        choices=None,  # validated by parse_delta_scope for a shared error message
+        help=(
+            "Scope DELTA is measured over in a multi-file merge: per-file "
+            "(default) measures each gap against the previous same-key record "
+            "from the record's OWN file, matching a single-file decode; global "
+            "measures across the merged timeline. No effect on a single input. "
+            "L2-MRG-005. Mirrors the merge.delta_scope config key."
+        ),
+    )
+    decode_parser.add_argument(
         "--max-sort-group",
         type=int,
         default=None,
@@ -788,6 +802,10 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
         if args.collapse_window_us < 0:
             raise ValueError("--collapse-window-us must be a non-negative integer")
         overrides["collapse_window_us"] = args.collapse_window_us
+    if args.delta_scope is not None:
+        from mie_decoder.models import parse_delta_scope
+
+        overrides["delta_scope"] = parse_delta_scope(args.delta_scope)
     if args.max_sort_group is not None:
         overrides["max_sort_group"] = _validate_int_range(
             args.max_sort_group,
@@ -862,7 +880,8 @@ def _build_message_stream(
     open_dropped: bool = False,
 ) -> Iterator[MieMessage]:
     """Build the decoded-message stream: a single filtered reader, or the
-    time-sorted k-way merge of several (global DELTA, L2-MRG-002/005).
+    time-sorted k-way merge of several (L2-MRG-002). DELTA is per-file on both
+    paths unless ``--delta-scope global`` is given (L2-MRG-005).
 
     ``merge_requested`` routes by the *requested* input count (not the surviving
     reader count) so an --allow-partial merge that dropped an input at open time
@@ -887,6 +906,7 @@ def _build_message_stream(
         strict=config.strict,
         collapse_duplicates=config.collapse_duplicates,
         collapse_window_us=config.collapse_window_us,
+        delta_scope=config.delta_scope,
     )
     stream = order_rows(apply_filters(merged, config.filters), config.max_sort_group)
     if open_dropped:
@@ -1150,11 +1170,12 @@ def _run_decode(args: argparse.Namespace) -> int:
     )
 
     # ── Build the message stream and write it ──────────────────────
-    # One input → the single-file path (per-file DELTA); two or more → the
-    # time-sorted k-way merge (global DELTA, L2-MRG-002/005), which validates
-    # eagerly. Build- and write-time decode failures (and a broken pipe on
-    # stdout) map to exit codes via _classify_decode_error; a clean run is
-    # classified by the cumulative sync-loss count (L1-EXIT-005).
+    # One input → the single-file path; two or more → the time-sorted k-way
+    # merge (L2-MRG-002), which validates eagerly. DELTA is per-file on both
+    # paths unless --delta-scope global is given (L2-MRG-005). Build- and
+    # write-time decode failures (and a broken pipe on stdout) map to exit codes
+    # via _classify_decode_error; a clean run is classified by the cumulative
+    # sync-loss count (L1-EXIT-005).
     try:
         messages = _build_message_stream(
             readers, config, merge_requested=merge_requested, open_dropped=open_dropped
@@ -1373,7 +1394,12 @@ def main_cli(argv: list[str] | None = None) -> int:
     code = main(argv)
     try:
         sys.stdout.flush()
-    except (BrokenPipeError, OSError):
+    except OSError:
+        # BrokenPipeError is the case this exists for, but it is a subclass of
+        # OSError — naming both was redundant (S5713). Catching OSError also
+        # covers the disk-full / closed-handle variants, which need the same
+        # treatment: neutralise stdout so CPython's shutdown flush cannot turn
+        # a clean exit code into 120.
         _neutralise_dead_stdout()
     return code
 

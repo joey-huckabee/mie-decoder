@@ -586,6 +586,18 @@
         "inputs/tie-merge-lo.hex"
       ],
       "expected": "expected/tie-merge-across-recorders.csv"
+    },
+    {
+      "name": "merge-delta-scope-global",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-b.hex"
+      ],
+      "args": [
+        "--delta-scope",
+        "global"
+      ],
+      "expected": "expected/merge-delta-scope-global.csv"
     }
   ]
 }

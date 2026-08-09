@@ -162,6 +162,7 @@ policy as a single decode. Rust and Python produce byte-identical merged output.
 
 | Flag | Value | Default | Description |
 |------|-------|---------|-------------|
+| `--delta-scope SCOPE` | `per-file` \| `global` | `per-file` | Scope the `DELTA` column is measured over in a **multi-file merge** (`L2-MRG-005`). `per-file` measures each gap against the previous same-RT/MSG record from the record's *own* file, so the value matches decoding that file alone — and matches DDC vendor output, which has no merge. `global` measures across the merged timeline instead. No effect on a single input. Mirrors `[merge] delta_scope`. |
 | `--collapse-duplicates` | flag | off | When several recorders on the same bus overlap, collapse each transaction's duplicate rows into one instead of inflating the count. Off by default, so the default never drops a row (multi-file merge only). Mirrors `[merge] collapse_duplicates`. |
 | `--collapse-window-us N` | int µs | `0` | Timestamp tolerance for `--collapse-duplicates`, for recorders whose clocks differ slightly. `0` = exact match. Mirrors `[merge] collapse_window_us`. |
 

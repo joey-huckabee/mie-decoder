@@ -146,6 +146,47 @@ pub enum ErrorMode {
     Inline = 1,
 }
 
+/// Scope over which DELTA is measured in a multi-file merge (L2-MRG-005).
+///
+/// Only meaningful when more than one input is decoded; with a single input the
+/// two are the same computation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum DeltaScope {
+    /// Default. Each record's gap is to the previous same-key record **from its
+    /// own file**, so the value matches what that file would produce decoded on
+    /// its own — and what the DDC vendor tool reports, since it has no merge.
+    PerFile = 0,
+    /// Each record's gap is to the previous same-key record from **any** input,
+    /// measured across the merged timeline. Answers "how long since any recorder
+    /// last saw this key"; compresses gaps whenever one key appears in several
+    /// inputs.
+    Global = 1,
+}
+
+impl DeltaScope {
+    /// Parse a `delta_scope` name (`per-file` / `global`) case-insensitively.
+    /// The single source of truth shared by the CLI (`--delta-scope`) and the
+    /// config loader (`merge.delta_scope`) so the two cannot disagree on which
+    /// spellings are accepted. Returns `None` for an unrecognized name; each
+    /// caller formats its own error type.
+    pub(crate) fn from_name_ci(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "per-file" => Some(Self::PerFile),
+            "global" => Some(Self::Global),
+            _ => None,
+        }
+    }
+
+    /// Canonical spelling, for help text and error messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PerFile => "per-file",
+            Self::Global => "global",
+        }
+    }
+}
+
 // ── DDC + decoder error codes ─────────────────────────────────────────
 
 /// Manchester encoding, parity, or bit count error.

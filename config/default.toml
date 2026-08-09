@@ -328,6 +328,27 @@ field = 4
 
 [merge]
 # ──────────────────────────────────────────────────────────────────────────
+# DELTA measurement scope (L2-MRG-005).
+#
+# Only affects a MULTI-FILE decode; with a single input the two are the same
+# computation and this key has no effect.
+#
+#   "per-file" — Default. Each record's DELTA is the gap to the previous
+#                same-RT/MSG record FROM ITS OWN FILE, so the value is
+#                identical to decoding that file on its own. This is also what
+#                the DDC vendor tool reports, since it has no merge feature.
+#   "global"   — Each record's DELTA is the gap to the previous same-RT/MSG
+#                record from ANY input, measured across the merged timeline.
+#                Answers "how long since any recorder last saw this key".
+#                Compresses gaps whenever one key appears in several inputs.
+#
+# Overridden by --delta-scope.
+#
+# Default: "per-file"
+# ──────────────────────────────────────────────────────────────────────────
+delta_scope = "per-file"
+
+# ──────────────────────────────────────────────────────────────────────────
 # Cross-recorder duplicate collapsing (L2-MRG-007).
 #
 # On a MIL-STD-1553 bus, multiple recorders can witness the SAME transaction

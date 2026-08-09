@@ -23,7 +23,7 @@ use crate::decode::{
     DEFAULT_DETECT_RECORDS, DEFAULT_MUX_DELIMITER, DEFAULT_MUX_ENABLED, DEFAULT_MUX_FIELD,
 };
 use crate::filter::FilterConfig;
-use crate::models::{Bus, ErrorMode, MessageType, TimestampFormat};
+use crate::models::{Bus, DeltaScope, ErrorMode, MessageType, TimestampFormat};
 use crate::order::{DEFAULT_MAX_SORT_GROUP, MAX_SORT_GROUP_MAX, MAX_SORT_GROUP_MIN};
 use crate::sync::DEFAULT_LOOKAHEAD_RECORDS;
 
@@ -100,6 +100,12 @@ pub struct DecoderConfig {
     /// Timestamp tolerance in microseconds for collapsing (0 = exact-µs match).
     /// Widen it for recorders whose IRIG clocks differ slightly.
     pub collapse_window_us: u64,
+    /// L2-MRG-005: scope over which DELTA is measured in a multi-file merge.
+    /// Default `PerFile` — each gap is to the previous same-key record from the
+    /// record's own file, matching a single-file decode and the vendor tool.
+    /// `Global` measures across the merged timeline instead. Set via
+    /// `[merge] delta_scope` in TOML or `--delta-scope` on the CLI.
+    pub delta_scope: DeltaScope,
     /// L2-WRT-022: cap on the number of consecutive equal-`TIME_STAMP` records
     /// the canonical-order stage (L2-WRT-021) buffers at once. Default
     /// `DEFAULT_MAX_SORT_GROUP` (`4096`). Set via `output.max_sort_group = N` in
@@ -128,6 +134,7 @@ impl Default for DecoderConfig {
             mux_field: DEFAULT_MUX_FIELD,
             collapse_duplicates: false,
             collapse_window_us: 0,
+            delta_scope: DeltaScope::PerFile,
             max_sort_group: DEFAULT_MAX_SORT_GROUP,
         }
     }
@@ -155,6 +162,7 @@ pub struct ConfigOverrides {
     pub mux_field: Option<i64>,
     pub collapse_duplicates: Option<bool>,
     pub collapse_window_us: Option<i64>,
+    pub delta_scope: Option<DeltaScope>,
     pub max_sort_group: Option<usize>,
 
     pub exclude_types: Vec<u8>,
@@ -168,57 +176,56 @@ pub struct ConfigOverrides {
     pub include_subaddresses: Vec<u8>,
 }
 
+/// Apply each present (`Some`) override onto the config field of the same name.
+///
+/// Used by [`DecoderConfig::with_overrides`] for the fields whose rule is simply
+/// "take the override if it was supplied". Fields needing anything more (a
+/// re-wrap, a clamp) are written out longhand at the call site.
+macro_rules! apply_plain_overrides {
+    ($cfg:ident, $ov:ident, $($field:ident),+ $(,)?) => {
+        $(
+            if let Some(v) = $ov.$field {
+                $cfg.$field = v;
+            }
+        )+
+    };
+}
+
 impl DecoderConfig {
     pub fn with_overrides(mut self, ov: ConfigOverrides) -> Self {
-        if let Some(v) = ov.log_level {
-            self.log_level = v;
-        }
-        if let Some(v) = ov.time_format {
-            self.time_format = v;
-        }
-        if let Some(v) = ov.strict {
-            self.strict = v;
-        }
-        if let Some(v) = ov.error_mode {
-            self.error_mode = v;
-        }
-        if let Some(v) = ov.output_format {
-            self.output_format = v;
-        }
-        if let Some(v) = ov.no_clobber {
-            self.no_clobber = v;
-        }
-        if let Some(v) = ov.allow_partial {
-            self.allow_partial = v;
-        }
-        if let Some(v) = ov.detect_records {
-            self.detect_records = v;
-        }
-        if let Some(v) = ov.lookahead_records {
-            self.lookahead_records = v;
-        }
+        // The plain fields — "if the override is present, take it" — are applied
+        // from a declarative name list rather than as fourteen near-identical
+        // `if let` blocks. Adding a decode option means adding its name here, and
+        // the two fields that need more than a straight copy stay spelled out
+        // below, where they are visible instead of buried in the repetition.
+        apply_plain_overrides!(
+            self,
+            ov,
+            log_level,
+            time_format,
+            strict,
+            error_mode,
+            output_format,
+            no_clobber,
+            allow_partial,
+            detect_records,
+            lookahead_records,
+            mux_enabled,
+            mux_delimiter,
+            mux_field,
+            collapse_duplicates,
+            max_sort_group,
+            delta_scope,
+        );
+
+        // Stored as `Option<f64>`, so the value is re-wrapped rather than copied.
         if let Some(v) = ov.standard_tick_rate_hz {
             self.standard_tick_rate_hz = Some(v);
-        }
-        if let Some(v) = ov.mux_enabled {
-            self.mux_enabled = v;
-        }
-        if let Some(v) = ov.mux_delimiter {
-            self.mux_delimiter = v;
-        }
-        if let Some(v) = ov.mux_field {
-            self.mux_field = v;
-        }
-        if let Some(v) = ov.collapse_duplicates {
-            self.collapse_duplicates = v;
         }
         if let Some(v) = ov.collapse_window_us {
             // CLI / config-load validation already rejects negatives; clamp
             // defensively so the cast can never wrap.
             self.collapse_window_us = v.max(0) as u64;
-        }
-        if let Some(v) = ov.max_sort_group {
-            self.max_sort_group = v;
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -265,9 +272,22 @@ pub fn load_config(path: Option<&Path>) -> Result<DecoderConfig, ConfigError> {
     let Some(path) = path else {
         return Ok(DecoderConfig::default());
     };
+    // Validate the operator-supplied path BEFORE reading it. `exists()` alone
+    // is not a sufficient guard: it is true for directories, FIFOs, and
+    // character devices, so `--config <dir>` produces a confusing OS error and
+    // `--config /dev/zero` reads forever. Requiring a *regular file* is the
+    // actual precondition. Mirrors the Python loader's check and message
+    // (`pythonsecurity:S8707` there); both are held to the same wording so a
+    // bad `--config` fails identically on either implementation.
     if !path.exists() {
         return Err(ConfigError(format!(
             "Config file not found: {}",
+            path.display()
+        )));
+    }
+    if !path.is_file() {
+        return Err(ConfigError(format!(
+            "Config path is not a regular file: {}",
             path.display()
         )));
     }
@@ -425,6 +445,13 @@ fn apply_merge_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), Co
     if let Some(b) = toml.get_bool("merge", "collapse_duplicates")? {
         cfg.collapse_duplicates = b;
     }
+    if let Some(name) = toml.get_string("merge", "delta_scope")? {
+        cfg.delta_scope = DeltaScope::from_name_ci(name).ok_or_else(|| {
+            ConfigError(format!(
+                "Invalid merge.delta_scope: {name:?}. Valid: per-file, global"
+            ))
+        })?;
+    }
     if let Some(n) = toml.get_int("merge", "collapse_window_us")? {
         if n < 0 {
             return Err(ConfigError(format!(
@@ -524,6 +551,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("mux", "field")
             | ("merge", "collapse_duplicates")
             | ("merge", "collapse_window_us")
+            | ("merge", "delta_scope")
             | ("filter", "exclude_types")
             | ("filter", "exclude_rts")
             | ("filter", "exclude_buses")
@@ -690,125 +718,135 @@ impl TomlDoc {
 }
 
 /// Parse the supported TOML subset. Returns a flat key/section map.
+/// True when `name` is a plain identifier (letters, digits, underscore),
+/// matching Python's `_IDENT_RE`. Shared by the section-header and key checks
+/// so the two implementations cannot drift on what an identifier is.
+fn is_plain_identifier(name: &str) -> bool {
+    name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Parse and validate a `[section]` header, returning the section name.
+///
+/// `stripped` is the line with its leading `[` already removed. Every rejection
+/// here exists to match Python's `tomllib` + loader behavior (L2-CFG-010): the
+/// forms below all *parse* on Python and are then refused by the loader, so
+/// accepting them on Rust would be a silent cross-implementation divergence.
+fn parse_section_header(
+    stripped: &str,
+    lineno: usize,
+    seen_sections: &mut Vec<String>,
+) -> Result<String, String> {
+    // `[[section]]` array-of-tables — rejected rather than misread as a section
+    // literally named `[decode]`.
+    if stripped.starts_with('[') {
+        return Err(format!(
+            "line {lineno}: array-of-tables headers ([[...]]) are not supported"
+        ));
+    }
+    let inner = stripped
+        .strip_suffix(']')
+        .ok_or_else(|| format!("line {lineno}: unterminated section header"))?;
+    let section = inner.trim().to_string();
+    if section.is_empty() {
+        return Err(format!("line {lineno}: empty section name"));
+    }
+    // A dotted header (`[output.no_clobber]`) nests a table, which the flat
+    // schema does not model — storing it verbatim would silently ignore its keys.
+    if section.contains('.') {
+        return Err(format!(
+            "line {lineno}: dotted section headers ([a.b]) are not supported; \
+             use a flat [section] header"
+        ));
+    }
+    // `[bad-section]` / `["bad"]` / `[bad section]` would otherwise be stored as
+    // oddly-named sections on Rust while Python rejects them.
+    if !is_plain_identifier(&section) {
+        return Err(format!(
+            "line {lineno}: unsupported section header [{section}]; use a flat \
+             [section] name (letters, digits, underscore)"
+        ));
+    }
+    // The TOML spec forbids defining a table twice. Without this the parser
+    // silently merged the second block into the first.
+    if seen_sections.iter().any(|s| s == &section) {
+        return Err(format!(
+            "line {lineno}: section [{section}] declared more than once"
+        ));
+    }
+    seen_sections.push(section.clone());
+    Ok(section)
+}
+
+/// Parse and validate a `key = value` line.
+///
+/// As with headers, each rejection mirrors a form Python's `tomllib` accepts
+/// syntactically but the loader refuses, so that both implementations agree
+/// (L2-CFG-010).
+fn parse_key_value(line: &str, lineno: usize) -> Result<(String, TomlValue), String> {
+    let eq = line
+        .find('=')
+        .ok_or_else(|| format!("line {lineno}: expected '=' in {line:?}"))?;
+    let key = line[..eq].trim().to_string();
+    let value_text = line[eq + 1..].trim();
+    if key.is_empty() {
+        return Err(format!("line {lineno}: empty key"));
+    }
+    // Dotted keys (`decode.strict = true`) would be nested by tomllib (honoring
+    // the value); dropping them here would silently ignore a safety option such
+    // as `output.no_clobber`.
+    if !key.starts_with('"') && key.contains('.') {
+        return Err(format!(
+            "line {lineno}: dotted keys (a.b = ...) are not supported; use a [section] header"
+        ));
+    }
+    // A quoted key (`"strict" = true`) is honored by tomllib (quotes stripped)
+    // but would be stored literally on Rust.
+    if !is_plain_identifier(&key) {
+        return Err(format!(
+            "line {lineno}: unsupported key {key:?}; keys must be simple identifiers"
+        ));
+    }
+    let value = parse_value(value_text, lineno)?;
+    Ok((key, value))
+}
+
+/// Message for a repeated `(section, key)`, which Python's `tomllib` raises on
+/// per the TOML spec. Without the check the parser silently kept the FIRST
+/// value (`TomlDoc::get` finds the head), so a repeated key decoded differently
+/// on each implementation.
+fn duplicate_key_error(section: &str, key: &str, lineno: usize) -> String {
+    let where_ = if section.is_empty() {
+        String::new()
+    } else {
+        format!(" in section '[{section}]'")
+    };
+    format!("line {lineno}: duplicate key '{key}'{where_}")
+}
+
 pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
     let mut doc = TomlDoc::default();
     let mut section = String::new();
     let mut seen_sections: Vec<String> = Vec::new();
 
-    for (lineno, raw) in text.lines().enumerate() {
+    for (index, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
         if line.is_empty() {
             continue;
         }
+        let lineno = index + 1;
 
         if let Some(stripped) = line.strip_prefix('[') {
-            // `[[section]]` array-of-tables headers are not part of the flat
-            // schema; reject them rather than misreading `[[decode]]` as a
-            // section literally named `[decode]`. Python's tomllib parses the
-            // array-of-tables and the loader then rejects the wrong shape, so
-            // both implementations refuse it (L2-CFG-010).
-            if stripped.starts_with('[') {
-                return Err(format!(
-                    "line {}: array-of-tables headers ([[...]]) are not supported",
-                    lineno + 1
-                ));
-            }
-            let inner = stripped
-                .strip_suffix(']')
-                .ok_or_else(|| format!("line {}: unterminated section header", lineno + 1))?;
-            section = inner.trim().to_string();
-            if section.is_empty() {
-                return Err(format!("line {}: empty section name", lineno + 1));
-            }
-            // A dotted section header (`[output.no_clobber]`) nests a table,
-            // which the flat schema does not model. tomllib nests it and the
-            // loader then rejects the wrong shape, so reject it here too rather
-            // than storing a section literally named `output.no_clobber` and
-            // silently ignoring its keys (L2-CFG-010).
-            if section.contains('.') {
-                return Err(format!(
-                    "line {}: dotted section headers ([a.b]) are not supported; \
-                     use a flat [section] header",
-                    lineno + 1
-                ));
-            }
-            // A section name must be a simple identifier, matching Python's
-            // `_IDENT_RE`. Otherwise `[bad-section]` / `["bad"]` / `[bad section]`
-            // would be stored as an oddly-named section on Rust while Python
-            // rejects them (L2-CFG-010).
-            if !section
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
-                return Err(format!(
-                    "line {}: unsupported section header [{section}]; use a flat \
-                     [section] name (letters, digits, underscore)",
-                    lineno + 1
-                ));
-            }
-            // Reject re-declaring a `[section]` header, matching Python's
-            // `tomllib` (the TOML spec forbids defining a table twice). Without
-            // this the parser silently merged the second block into the first,
-            // so a config that Python rejects was accepted on Rust.
-            if seen_sections.iter().any(|s| s == &section) {
-                return Err(format!(
-                    "line {}: section [{section}] declared more than once",
-                    lineno + 1
-                ));
-            }
-            seen_sections.push(section.clone());
+            section = parse_section_header(stripped, lineno, &mut seen_sections)?;
             continue;
         }
 
-        let eq = line
-            .find('=')
-            .ok_or_else(|| format!("line {}: expected '=' in {line:?}", lineno + 1))?;
-        let key = line[..eq].trim().to_string();
-        let value_text = line[eq + 1..].trim();
-        if key.is_empty() {
-            return Err(format!("line {}: empty key", lineno + 1));
-        }
-        // Dotted keys (`decode.strict = true`) are not part of the flat schema.
-        // Python's tomllib would nest them (honoring the value), so silently
-        // dropping them here diverges — and worse, silently ignores a safety
-        // option like `output.no_clobber`. Reject them so both implementations
-        // refuse the form (L2-CFG-010).
-        if !key.starts_with('"') && key.contains('.') {
-            return Err(format!(
-                "line {}: dotted keys (a.b = ...) are not supported; use a [section] header",
-                lineno + 1
-            ));
-        }
-        // Keys must be simple identifiers. A quoted key (`"strict" = true`) would
-        // be honored by tomllib (stripping the quotes) but stored literally on
-        // Rust — a silent divergence — so reject anything that is not a plain
-        // identifier, matching the Python whitelist.
-        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Err(format!(
-                "line {}: unsupported key {key:?}; keys must be simple identifiers",
-                lineno + 1
-            ));
-        }
-
-        let value = parse_value(value_text, lineno + 1)?;
-        // Reject a duplicate `(section, key)`, matching Python's `tomllib`
-        // (which raises on redefinition per the TOML spec). Without this the
-        // parser silently kept the FIRST value (`TomlDoc::get` finds the head),
-        // so a config with a repeated key decoded differently on each impl.
+        let (key, value) = parse_key_value(line, lineno)?;
         if doc
             .entries
             .iter()
             .any(|(s, k, _)| s == &section && k == &key)
         {
-            return Err(format!(
-                "line {}: duplicate key '{key}'{}",
-                lineno + 1,
-                if section.is_empty() {
-                    String::new()
-                } else {
-                    format!(" in section '[{section}]'")
-                }
-            ));
+            return Err(duplicate_key_error(&section, &key, lineno));
         }
         doc.entries.push((section.clone(), key, value));
     }
@@ -909,50 +947,78 @@ fn parse_bool(s: &str, lineno: usize) -> Result<bool, String> {
 /// leading zeros (`08`, `01`), a bare trailing dot (`1.`), and `0x`/`0o`/`0b` /
 /// underscore forms — keeping the two implementations aligned. Hand-rolled (no
 /// regex dependency).
+/// Consume a run of ASCII digits starting at `i`, returning the index after it
+/// (which is `i` itself when there are none).
+fn scan_digits(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    i
+}
+
+/// Consume an optional leading `+` or `-`.
+fn scan_sign(b: &[u8], i: usize) -> usize {
+    if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
+        i + 1
+    } else {
+        i
+    }
+}
+
+/// Integer part: a lone `0`, or a non-zero digit followed by more digits.
+/// `None` when absent or malformed.
+///
+/// A leading zero consumes exactly one byte, so `01` leaves the `1` unconsumed
+/// and the whole literal is ultimately rejected — TOML forbids leading zeros.
+fn scan_integer_part(b: &[u8], i: usize) -> Option<usize> {
+    match b.get(i) {
+        None => None,
+        Some(b'0') => Some(i + 1),
+        Some(&c) if c.is_ascii_digit() => Some(scan_digits(b, i)),
+        Some(_) => None,
+    }
+}
+
+/// Optional fractional part. A `.` MUST be followed by at least one digit, so a
+/// bare trailing dot yields `None`.
+fn scan_fraction(b: &[u8], i: usize) -> Option<usize> {
+    if i >= b.len() || b[i] != b'.' {
+        return Some(i);
+    }
+    let start = i + 1;
+    let end = scan_digits(b, start);
+    (end > start).then_some(end)
+}
+
+/// Optional exponent `[eE] [+-]? [0-9]+`. An exponent marker with no digits
+/// after it yields `None`.
+fn scan_exponent(b: &[u8], i: usize) -> Option<usize> {
+    if i >= b.len() || (b[i] != b'e' && b[i] != b'E') {
+        return Some(i);
+    }
+    let start = scan_sign(b, i + 1);
+    let end = scan_digits(b, start);
+    (end > start).then_some(end)
+}
+
+/// True when `s` is a well-formed TOML number literal.
+///
+/// Written as the grammar's own productions — sign, integer part, optional
+/// fraction, optional exponent — so each rule is named, independently testable,
+/// and readable on its own. The literal is valid only if the productions
+/// together consume the entire string.
 fn is_toml_number_literal(s: &str) -> bool {
     let b = s.as_bytes();
-    let mut i = 0;
-    if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
-        i += 1;
-    }
-    // Integer part: a lone `0`, or a non-zero digit followed by more digits.
-    if i >= b.len() {
+    let i = scan_sign(b, 0);
+    let Some(i) = scan_integer_part(b, i) else {
         return false;
-    }
-    if b[i] == b'0' {
-        i += 1;
-    } else if b[i].is_ascii_digit() {
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-    } else {
+    };
+    let Some(i) = scan_fraction(b, i) else {
         return false;
-    }
-    // Optional fractional part: `.` MUST be followed by ≥1 digit.
-    if i < b.len() && b[i] == b'.' {
-        i += 1;
-        let start = i;
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i == start {
-            return false;
-        }
-    }
-    // Optional exponent: `[eE] [+-]? [0-9]+`.
-    if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
-        i += 1;
-        if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
-            i += 1;
-        }
-        let start = i;
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i == start {
-            return false;
-        }
-    }
+    };
+    let Some(i) = scan_exponent(b, i) else {
+        return false;
+    };
     i == b.len()
 }
 
@@ -1432,6 +1498,30 @@ exclude_types = ["UNICORN"]
             assert_eq!(cfg.detect_records, 8);
             assert_eq!(cfg.lookahead_records, 2);
         }
+    }
+
+    /// `--config` is operator-supplied, so the path is validated before it is
+    /// read. `exists()` alone is not enough — it is true for directories and
+    /// device files. Mirrors `TestConfigPathValidation` in
+    /// `python/tests/test_config.py`, including the message wording.
+    /// Requirements: L2-CFG-001
+    #[test]
+    fn load_config_rejects_non_regular_file() {
+        let missing = std::env::temp_dir().join("mie-cfg-does-not-exist-xyz.toml");
+        let err = load_config(Some(&missing)).unwrap_err();
+        assert!(err.0.contains("Config file not found"), "got {:?}", err.0);
+
+        // A directory passes `exists()`; without the regular-file check this
+        // surfaced as a raw OS error from the read instead of a config error.
+        let dir = std::env::temp_dir().join(format!("mie-cfg-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = load_config(Some(&dir)).unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            err.0.contains("not a regular file"),
+            "a directory must be rejected as a non-regular file, got {:?}",
+            err.0
+        );
     }
 
     /// `[output] max_sort_group` drives the canonical-order run cap, and is a

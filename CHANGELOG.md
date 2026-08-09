@@ -15,6 +15,139 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.11.0] — 2026-08-08
+
+### Changed — BREAKING
+
+- **Merged `DELTA` is now measured per input file by default.** In a multi-file
+  decode, a record's `DELTA` is the gap to the previous same-RT/MSG record **from
+  its own file** — the value that record gets when its file is decoded alone.
+  Through v2.10.0 it was always measured across the merged timeline. Selectable
+  via the new **`--delta-scope per-file|global`** flag and `[merge] delta_scope`
+  config key (`L2-MRG-005`, `L3-WRT-004`); `--delta-scope global` restores the
+  previous behavior exactly.
+
+  **What actually changes.** Only RT/MSG keys that appear in **more than one
+  input file** are affected. A key found in just one file gets the same value
+  under either scope, because only that file's records can advance its tracker —
+  so a merge of recordings covering disjoint equipment produces byte-identical
+  output to v2.10.0. Single-file decodes are entirely unaffected: with one file
+  the two scopes are the same computation, and the flag is accepted as a no-op.
+
+  **Rationale.** The two scopes answer different questions — "how long since
+  *this recorder* last saw this key" versus "how long since *any* recorder last
+  saw it" — and which is wanted depends on what the inputs are, which the decoder
+  cannot infer. `global` as a default had two problems. It made merged `DELTA`
+  depend on the operator's choice of input set rather than on the bus traffic:
+  two recorders each observing a 0.2 s cadence reported an apparent 0.1 s, and
+  fully overlapping recorders degenerated to alternating `0.000000` values, one
+  per duplicate pair. And it diverged from the DDC vendor tool for every shared
+  key, since the vendor has no merge feature and always reports per-file — which
+  is what surfaced this: a user comparing merged output against vendor CSV.
+  `per-file` is the reading that composes: it matches a single-file decode, it
+  matches vendor output, and it stays meaningful however the input set is
+  assembled.
+
+  **Migration.** Add `--delta-scope global` (or `[merge] delta_scope = "global"`)
+  to any pipeline that depends on the previous values.
+
+  Implementation note: `per-file` is realised by **not** recomputing DELTA during
+  the merge — each reader already computed it for its own file — so the guarantee
+  that a merged record's value equals its single-file value holds by construction
+  rather than by a second implementation agreeing with the first (`L3-WRT-004`).
+
+### Added
+
+- **`--delta-scope <SCOPE>` / `[merge] delta_scope`** on both CLIs, accepting
+  `per-file` (default) and `global`, case-insensitively. An unrecognised name is
+  a config error (exit `5`) from TOML and a usage error (exit `4`) from the CLI.
+- Conformance case `merge-delta-scope-global` pins the `global` behavior so the
+  pre-v2.11.0 numbers stay covered, alongside five `delta_scope` snippets in the
+  config-parser parity corpus and the key in the fuzzer palette.
+- **`scripts/diagnose-vendor-delta.py`** — a maintainer/operator diagnostic for a
+  vendor CSV whose `DELTA` column disagrees with ours. It recomputes the column
+  under a range of candidate rules and reports which one reproduces the vendor's
+  own values (a rule at 100% is the vendor's definition), answering *what rule
+  the vendor follows* rather than merely *that* it differs. It reads the vendor
+  CSV only — no MIE file and no decoder run — so it works on a machine that has
+  the vendor output and nothing else. Wired into the divergence-reporting
+  checklist in `docs/VENDOR-CSV-DIFFS.md` §6/§7.
+
+### Fixed
+
+- **SonarCloud: the quality gate's only failing condition** — a `MAJOR`
+  path-traversal finding (`pythonsecurity:S8707`) on the `--config` path. The
+  operator-supplied path was read after only an `exists()` check, which is true
+  for directories, FIFOs and character devices: `--config <dir>` surfaced a raw
+  `IsADirectoryError` and `--config /dev/zero` would read forever. Both loaders
+  now require a **regular file** before reading, with identical message text.
+- **Six `CRITICAL` cognitive-complexity findings** (`S3776`), refactored without
+  behavior change: `order.rs::next` (18 → split into `accept`),
+  `config.rs::parse_toml` (32 → `parse_section_header` + `parse_key_value`),
+  `config.rs::is_toml_number_literal` (29 → rewritten as the grammar's own
+  productions), `config.rs::with_overrides` (16 → a declarative field list),
+  and the two Python config functions that mirror them.
+- **Regex character classes** (`S6353`) now use `\w` / `\d` — compiled with
+  `re.ASCII`. Taking the suggestion literally would have been a **bug**: Python's
+  `\w`/`\d` are Unicode-aware and would have accepted identifiers like `stricté`
+  and digits like `٤٢` that the Rust parser's `is_ascii_alphanumeric` /
+  `is_ascii_digit` reject, silently diverging the two config parsers. The fuzzer
+  palette gains non-ASCII identifiers and digits so the flag cannot be dropped
+  unnoticed.
+- **A redundant exception class** (`S5713`): `except (BrokenPipeError, OSError)`
+  → `except OSError`, since the former is a subclass of the latter.
+- **22 test-file findings**: `S5778` (15) hoists setup calls out of
+  `pytest.raises` blocks so only the call under test can satisfy them — a
+  constructor failure would otherwise pass those tests for the wrong reason;
+  `S9073` (7) splits composite assertions so a failure names which half broke.
+- **Six module comments that still described merged `DELTA` as recomputed on the
+  global timeline** — the behavior this release changes. They sat in exactly the
+  places a reader checks first: the `merge` module docs, the `_drain_heap`
+  docstring, and the branch comment above the single-file/merge split in both
+  CLIs (`rust/src/merge.rs`, `rust/src/cli.rs`,
+  `python/src/mie_decoder/merge.py`, `python/src/mie_decoder/cli.py`). The
+  `apply_global_delta` docstrings, which correctly describe the `global` branch
+  they belong to, are unchanged.
+- **The PlantUML sources had drifted several releases behind the code** — the
+  known gap recorded (and deferred) in the pre-release notes for this version,
+  now closed. `component.puml` and `dataflow.puml` were missing the `merge`
+  module entirely (v2.6) as well as `order` (v2.9); `dataflow.puml` labelled the
+  writer's row as "DDC vendor column order", stale since v2.10.0 moved `ERROR` /
+  `ERROR_CODE` to the tail; `class.puml` was missing `DeltaScope` and eight
+  `DecoderConfig` fields; and both diagrams' exit-code summaries stopped at `3`,
+  predating the usage / configuration / merge-incompatible codes `4`, `5` and
+  `6` and the `empty-recording` class at `0`. The CI drift check only verifies
+  that the committed SVGs match their PUML sources, so it cannot detect a PUML
+  that is missing a module — these were found by reading, and the same class of
+  gap can recur.
+
+### Notes
+
+- The `docs/ROADMAP.md` "per-recorder DELTA" item is partly delivered: the
+  common case (one file per recorder) is covered by `--delta-scope`. What remains
+  is keying DELTA on a recorder *identity* parsed from the file name, which
+  matters only if one recorder's output is split across files or several
+  recorders' output is combined into one.
+- **Known gap: the `diagrams` CI job is not currently enforcing anything.** The
+  pinned PlantUML 1.2026.5 throws `IllegalStateException` (smetana's `qsort`
+  during `mincross`) on a `!pragma layout smetana` diagram; PlantUML catches it
+  per-file, exits `0`, and never writes that diagram's SVG — so the
+  `git diff --exit-code` drift check compares a file the render never touched
+  and reports success. Two independent symptoms confirm it: the committed SVGs
+  are a mix of renderer versions (`1.2026.5` and `1.2026.7beta1`), which the
+  check should have rejected, and the PUML-only commit in this release passed
+  the job with knowingly stale SVGs. The SVGs here were rendered with
+  `1.2026.7beta11`, which does not crash. Resolving this means choosing a
+  renderer version that renders all three diagrams and failing the step on a
+  non-empty stderr or a missing output file, rather than trusting the exit
+  code — deferred so it can be done as its own change with its own CI run.
+- The canonical row order of L1-OUT-003 is unchanged by this release: at a tied
+  `TIME_STAMP` a merged decode still orders rows by `RT` then `MSG` across all
+  inputs. Only the `DELTA` *value* is now per-file. So a merged CSV restricted to
+  one input file carries that file's single-file `DELTA` values, while a row's
+  position within a tie may still interleave inputs — a deliberate split between
+  the value and its presentation.
+
 ## [2.10.0] — 2026-07-30
 
 ### Changed — BREAKING
@@ -2002,7 +2135,10 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.0...HEAD
+[2.11.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.10.0...v2.11.0
+[2.10.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.9.0...v2.10.0
+[2.9.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.7.1...v2.8.0
 [2.7.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.6.2...v2.7.0

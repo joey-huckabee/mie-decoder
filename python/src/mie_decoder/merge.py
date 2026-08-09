@@ -9,7 +9,10 @@ L2-MRG-002). The merged stream feeds the existing ``write_csv`` /
 Merge requires every input to be calendar-locked IRIG; Standard-format,
 freerun-leading, or mixed-format inputs are rejected up front
 (:class:`MieIncompatibleMergeInputsError`, CLI exit 6 — L2-MRG-003). DELTA is
-recomputed on the merged global timeline (L2-MRG-005).
+measured **per input file** by default — each reader already computed it for its
+own file, so this module leaves it alone and a merged record's value equals its
+single-file value by construction. ``--delta-scope global`` recomputes it across
+the merged timeline instead (L2-MRG-005).
 
 Mirrors ``rust/src/merge.rs``; the heap is the standard-library :mod:`heapq` and the
 ``--glob`` matcher is hand-rolled to the same single-directory ``*``/``?``
@@ -32,7 +35,7 @@ from mie_decoder.exceptions import (
     MieNonMonotonicInputError,
     MieUnrecoverableSyncLossError,
 )
-from mie_decoder.models import IrigTimestamp, MieMessage, StandardTimestamp
+from mie_decoder.models import DeltaScope, IrigTimestamp, MieMessage, StandardTimestamp
 from mie_decoder.reader import MieFileReader
 
 logger = logging.getLogger(__name__)
@@ -236,6 +239,7 @@ def merge_readers(
     strict: bool = False,
     collapse_duplicates: bool = False,
     collapse_window_us: int = 0,
+    delta_scope: DeltaScope = DeltaScope.PER_FILE,
 ) -> Iterator[MieMessage]:
     """Stream a time-sorted k-way merge over ``readers``.
 
@@ -305,6 +309,7 @@ def merge_readers(
         warned,
         dedup,
         priming_terminal,
+        delta_scope,
     )
 
 
@@ -321,9 +326,11 @@ def _merge_drain(
     warned: list[bool],
     dedup: _DedupWindow | None,
     pending_terminal: MieUnrecoverableSyncLossError | None = None,
+    delta_scope: DeltaScope = DeltaScope.PER_FILE,
 ) -> Iterator[MieMessage]:
     """Drain the primed heap: pop the min, optionally collapse cross-recorder
-    duplicates, recompute global DELTA, advance the file that record came from.
+    duplicates, recompute DELTA when ``delta_scope`` is ``global`` (per-file
+    keeps each reader's own value), advance the file that record came from.
 
     ``pending_terminal`` carries a priming-time --allow-partial failure (set in
     ``merge_readers``); a mid-file failure may overwrite it. Either is raised
@@ -338,7 +345,13 @@ def _merge_drain(
         if dedup is not None and dedup.is_duplicate(us, idx, msg):
             collapsed += 1
         else:
-            yield _apply_global_delta(msg, tick, tracker)
+            # L2-MRG-005: under PER_FILE (the default) the DELTA each reader
+            # already computed for its own file is left exactly as-is, which is
+            # what makes it identical to a single-file decode.
+            if delta_scope == DeltaScope.GLOBAL:
+                yield _apply_global_delta(msg, tick, tracker)
+            else:
+                yield msg
         try:
             nxt = next(iters[idx])
         except StopIteration:

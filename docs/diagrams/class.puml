@@ -61,6 +61,16 @@ package "Domain Model (models)" {
         INLINE
     }
 
+    enum DeltaScope {
+        PER_FILE=0   /' default: gap within the record's own file '/
+        GLOBAL=1     /' gap across the merged timeline '/
+    }
+    note bottom of DeltaScope
+      v2.11 (L2-MRG-005). Multi-file merge only —
+      with a single input the two are the same
+      computation and the flag is a no-op.
+    end note
+
     class IrigTimestamp <<frozen>> {
         +day, hour, minute, second: int
         +microsecond: int
@@ -187,12 +197,23 @@ package "Configuration (config)" {
         +no_clobber: bool             /' v2.0: L2-WRT-014 '/
         +filters: FilterConfig
         +output_format: str
+        +detect_records: usize        /' L2-SYN-005 '/
+        +lookahead_records: usize     /' L2-SYN-026 '/
+        +standard_tick_rate_hz: f64?  /' L2-DEC-017 '/
+        +mux_enabled: bool            /' L2-WRT-020 '/
+        +mux_delimiter: str
+        +mux_field: i64
+        +collapse_duplicates: bool    /' L2-MRG-007 '/
+        +collapse_window_us: u64
+        +delta_scope: DeltaScope      /' v2.11: L2-MRG-005 '/
+        +max_sort_group: usize        /' v2.9: L2-WRT-022 '/
         +with_overrides(over: ConfigOverrides): DecoderConfig
     }
 
     DecoderConfig *-- FilterConfig
     DecoderConfig --> ErrorMode
     DecoderConfig --> TimestampFormat
+    DecoderConfig --> DeltaScope
 }
 
 ' ============================================================================

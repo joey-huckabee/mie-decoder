@@ -17,6 +17,7 @@ from mie_decoder.config import (
 from mie_decoder.filters import apply_filters
 from mie_decoder.models import (
     Bus,
+    DeltaScope,
     CommandWord,
     Direction,
     ErrorMode,
@@ -711,7 +712,8 @@ class TestErrorModeConfig:
         assert rc == 0
 
         errors = tmp_path / "split_errors.csv"
-        assert out.exists() and errors.exists()
+        assert out.exists()
+        assert errors.exists()
         main_rows = list(csv.DictReader(out.read_text().splitlines()))
         err_rows = list(csv.DictReader(errors.read_text().splitlines()))
         assert [r["ERROR"] for r in main_rows] == [""]
@@ -1058,6 +1060,28 @@ class TestSharedDefaultConfig:
         assert cfg.max_sort_group == 4096
 
 
+class TestConfigPathValidation:
+    """`--config` is operator-supplied, so the path is validated before it is
+    read (`pythonsecurity:S8707`). `exists()` alone is not enough — it is true
+    for directories and device files. Held to the same behavior and message as
+    the Rust loader's `load_config`."""
+
+    @pytest.mark.requirement("L2-CFG-001")
+    def test_missing_path_raises_file_not_found(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError, match="Config file not found"):
+            load_config(tmp_path / "nope.toml")
+
+    @pytest.mark.requirement("L2-CFG-001")
+    def test_directory_is_rejected_not_read(self, tmp_path: Path) -> None:
+        """A directory passes `exists()`; without the regular-file check this
+        surfaced as an OS-level `IsADirectoryError` traceback instead of a
+        config error."""
+        d = tmp_path / "conf.d"
+        d.mkdir()
+        with pytest.raises(ValueError, match="not a regular file"):
+            load_config(d)
+
+
 class TestMaxSortGroupKey:
     """`[output] max_sort_group` — the L2-WRT-022 canonical-order run cap.
     Held to the same value and validation as the Rust loader (L3-WRT-003) so a
@@ -1099,3 +1123,39 @@ class TestMaxSortGroupKey:
         with caplog.at_level(logging.WARNING):
             load_config(cfg_file)
         assert not any("max_sort_group" in rec.getMessage() for rec in caplog.records)
+
+
+class TestDeltaScopeKey:
+    """`[merge] delta_scope` (L2-MRG-005). Same names, default, and rejection
+    behavior as the Rust loader (L3-WRT-004)."""
+
+    @pytest.mark.requirement("L2-MRG-005", "L3-WRT-004")
+    def test_defaults_to_per_file(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "c.toml"
+        cfg.write_text("[merge]\ncollapse_duplicates = true\n")
+        assert load_config(cfg).delta_scope == DeltaScope.PER_FILE
+
+    @pytest.mark.requirement("L2-MRG-005", "L3-WRT-004")
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("per-file", DeltaScope.PER_FILE),
+            ("global", DeltaScope.GLOBAL),
+            ("Per-File", DeltaScope.PER_FILE),
+            ("GLOBAL", DeltaScope.GLOBAL),
+        ],
+    )
+    def test_parses_both_names_case_insensitively(
+        self, tmp_path: Path, value: str, expected: DeltaScope
+    ) -> None:
+        cfg = tmp_path / "c.toml"
+        cfg.write_text(f'[merge]\ndelta_scope = "{value}"\n')
+        assert load_config(cfg).delta_scope == expected
+
+    @pytest.mark.requirement("L2-MRG-005", "L2-CFG-010")
+    @pytest.mark.parametrize("bad", ['"whole"', '"per_file"', "1", "true"])
+    def test_rejects_unknown_or_non_string(self, tmp_path: Path, bad: str) -> None:
+        cfg = tmp_path / "c.toml"
+        cfg.write_text(f"[merge]\ndelta_scope = {bad}\n")
+        with pytest.raises(ValueError, match="delta_scope"):
+            load_config(cfg)

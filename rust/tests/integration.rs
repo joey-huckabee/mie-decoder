@@ -1755,3 +1755,153 @@ fn canonical_order_is_visible_in_written_csv() {
         ]
     );
 }
+
+// ── L2-MRG-005: DELTA scope ───────────────────────────────────────────────
+
+/// File A carries a key unique to it plus one shared with B; B carries only the
+/// shared key, offset in time. The shared key is where the two scopes differ.
+fn two_files_sharing_a_key() -> (Vec<u8>, Vec<u8>) {
+    let a = [
+        rcv_record_at(15, 11, 100_000),
+        rcv_record_at(20, 5, 100_000),
+        rcv_record_at(15, 11, 300_000),
+        rcv_record_at(20, 5, 300_000),
+    ]
+    .concat();
+    let b = [rcv_record_at(20, 5, 200_000), rcv_record_at(20, 5, 400_000)].concat();
+    (a, b)
+}
+
+/// The guarantee that makes `per-file` the default: every merged record's DELTA
+/// equals the value that record gets when its own file is decoded alone.
+///
+/// Requirements: L2-MRG-005, L3-WRT-004
+#[test]
+fn per_file_delta_matches_single_file_decode() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::models::DeltaScope;
+
+    let (a, b) = two_files_sharing_a_key();
+    let fa = TempFile::new(&a);
+    let fb = TempFile::new(&b);
+
+    // Decode each file on its own: (file_offset -> delta).
+    let mut alone: Vec<(u64, Option<f64>)> = Vec::new();
+    for path in [fa.path(), fb.path()] {
+        let r = MieFileReader::new(path).unwrap();
+        for m in r.iter() {
+            let m = m.unwrap();
+            alone.push((m.file_offset, m.delta));
+        }
+    }
+
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let merged: Vec<_> = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .delta_scope(DeltaScope::PerFile)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(merged.len(), 6);
+
+    // Each single-file (offset, delta) pair must appear in the merged output.
+    for (offset, delta) in alone {
+        assert!(
+            merged
+                .iter()
+                .any(|m| m.file_offset == offset && m.delta == delta),
+            "offset {offset:#X} delta {delta:?} missing from the merged stream"
+        );
+    }
+}
+
+/// `global` compresses the shared key's gaps while leaving a file-unique key
+/// untouched.
+///
+/// Requirements: L2-MRG-005
+#[test]
+fn global_scope_measures_across_the_merged_timeline() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::models::DeltaScope;
+
+    let (a, b) = two_files_sharing_a_key();
+    let fa = TempFile::new(&a);
+    let fb = TempFile::new(&b);
+    let readers = vec![
+        MieFileReader::new(fa.path()).unwrap(),
+        MieFileReader::new(fb.path()).unwrap(),
+    ];
+    let merged: Vec<_> = MergedRecordIter::new(&readers, None, false, false)
+        .unwrap()
+        .delta_scope(DeltaScope::Global)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    let shared: Vec<Option<f64>> = merged
+        .iter()
+        .filter(|m| m.delta_key() == "20:5R")
+        .map(|m| m.delta)
+        .collect();
+    let unique: Vec<Option<f64>> = merged
+        .iter()
+        .filter(|m| m.delta_key() == "15:11R")
+        .map(|m| m.delta)
+        .collect();
+    assert_eq!(
+        shared,
+        vec![Some(0.0), Some(0.1), Some(0.1), Some(0.1)],
+        "shared key compresses under global scope"
+    );
+    assert_eq!(
+        unique,
+        vec![Some(0.0), Some(0.2)],
+        "a key unique to one file is unaffected by scope"
+    );
+}
+
+/// Requirements: L2-MRG-005
+#[test]
+fn per_file_is_the_default_scope() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::models::DeltaScope;
+
+    let (a, b) = two_files_sharing_a_key();
+    let fa = TempFile::new(&a);
+    let fb = TempFile::new(&b);
+    let deltas = |scope: Option<DeltaScope>| -> Vec<Option<f64>> {
+        let readers = vec![
+            MieFileReader::new(fa.path()).unwrap(),
+            MieFileReader::new(fb.path()).unwrap(),
+        ];
+        let it = MergedRecordIter::new(&readers, None, false, false).unwrap();
+        let it = match scope {
+            Some(s) => it.delta_scope(s),
+            None => it,
+        };
+        it.map(|m| m.unwrap().delta).collect()
+    };
+    assert_eq!(deltas(None), deltas(Some(DeltaScope::PerFile)));
+}
+
+/// With one file the two scopes are the same computation by definition.
+///
+/// Requirements: L2-MRG-005
+#[test]
+fn scope_does_not_affect_a_single_input() {
+    use mie_decoder::merge::MergedRecordIter;
+    use mie_decoder::models::DeltaScope;
+
+    let (a, _b) = two_files_sharing_a_key();
+    let fa = TempFile::new(&a);
+    let deltas = |scope: DeltaScope| -> Vec<Option<f64>> {
+        let readers = vec![MieFileReader::new(fa.path()).unwrap()];
+        MergedRecordIter::new(&readers, None, false, false)
+            .unwrap()
+            .delta_scope(scope)
+            .map(|m| m.unwrap().delta)
+            .collect()
+    };
+    assert_eq!(deltas(DeltaScope::PerFile), deltas(DeltaScope::Global));
+}

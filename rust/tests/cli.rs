@@ -1314,3 +1314,159 @@ fn decode_help_advertises_max_sort_group() {
         "decode --help must advertise --max-sort-group\n{stdout}"
     );
 }
+
+/// Requirements: L2-MRG-005, L3-WRT-004
+#[test]
+fn delta_scope_flag_and_config_key() {
+    let d = TempDir::new();
+    // Two files sharing RT20/SA5; A also holds RT15/SA11.
+    let a = [
+        record_at(15, 11, 100_000),
+        record_at(20, 5, 100_000),
+        record_at(15, 11, 300_000),
+        record_at(20, 5, 300_000),
+    ]
+    .concat();
+    let b = [record_at(20, 5, 200_000), record_at(20, 5, 400_000)].concat();
+    let fa = d.write("a.mie", &a);
+    let fb = d.write("b.mie", &b);
+
+    // DELTA column of each row for the shared key, in output order.
+    let shared_deltas = |csv: &str| -> Vec<String> {
+        csv.lines()
+            .skip(1)
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.split(',').map(str::to_string).collect::<Vec<_>>())
+            .filter(|c| c[1] == "20" && c[2] == "5R")
+            .map(|c| c[40].clone())
+            .collect()
+    };
+
+    // Default (per-file): each file keeps its own 0.2s cadence.
+    let out = d.path().join("default.csv");
+    let o = run([
+        "decode",
+        fa.to_str().unwrap(),
+        fb.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--no-mux",
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    let got = shared_deltas(&std::fs::read_to_string(&out).unwrap());
+    assert_eq!(
+        got,
+        vec!["0.000000", "0.000000", "0.200000", "0.200000"],
+        "default must be per-file"
+    );
+
+    // --delta-scope global: gaps compress across the merged timeline.
+    let out2 = d.path().join("global.csv");
+    let o = run([
+        "decode",
+        fa.to_str().unwrap(),
+        fb.to_str().unwrap(),
+        "-o",
+        out2.to_str().unwrap(),
+        "--no-mux",
+        "--delta-scope",
+        "global",
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    assert_eq!(
+        shared_deltas(&std::fs::read_to_string(&out2).unwrap()),
+        vec!["0.000000", "0.100000", "0.100000", "0.100000"]
+    );
+
+    // The config key drives it, and the CLI flag overrides the config.
+    let cfg = d.write("cfg.toml", b"[merge]\ndelta_scope = \"global\"\n");
+    let out3 = d.path().join("cfgglobal.csv");
+    let o = run([
+        "--config",
+        cfg.to_str().unwrap(),
+        "decode",
+        fa.to_str().unwrap(),
+        fb.to_str().unwrap(),
+        "-o",
+        out3.to_str().unwrap(),
+        "--no-mux",
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    assert_eq!(
+        shared_deltas(&std::fs::read_to_string(&out3).unwrap())[1],
+        "0.100000",
+        "config delta_scope = global must take effect"
+    );
+
+    let out4 = d.path().join("cliwins.csv");
+    let o = run([
+        "--config",
+        cfg.to_str().unwrap(),
+        "decode",
+        fa.to_str().unwrap(),
+        fb.to_str().unwrap(),
+        "-o",
+        out4.to_str().unwrap(),
+        "--no-mux",
+        "--delta-scope",
+        "per-file",
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    assert_eq!(
+        shared_deltas(&std::fs::read_to_string(&out4).unwrap())[1],
+        "0.000000",
+        "--delta-scope must override the config value"
+    );
+}
+
+/// An unrecognized scope is a usage error from the CLI and a config error from
+/// TOML, matching how the other named-enum options behave.
+///
+/// Requirements: L2-MRG-005, L3-WRT-004
+#[test]
+fn delta_scope_rejects_unknown_names() {
+    let d = TempDir::new();
+    let input = d.write("in.mie", &one_valid_record());
+    let out = d.path().join("out.csv");
+    let o = run([
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--delta-scope",
+        "per_file",
+    ]);
+    assert_eq!(
+        exit_code(&o),
+        4,
+        "an unknown --delta-scope is a usage error"
+    );
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("delta-scope"), "got: {stderr}");
+
+    let cfg = d.write("bad.toml", b"[merge]\ndelta_scope = \"whole\"\n");
+    let out2 = d.path().join("out2.csv");
+    let o = run([
+        "--config",
+        cfg.to_str().unwrap(),
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out2.to_str().unwrap(),
+    ]);
+    assert_ne!(exit_code(&o), 0);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(stderr.contains("delta_scope"), "got: {stderr}");
+}
+
+/// `--help` advertises the flag, which the conformance `check_cli_surface` gate
+/// compares against the Python CLI.
+///
+/// Requirements: L3-WRT-004
+#[test]
+fn decode_help_advertises_delta_scope() {
+    let out = run(["decode", "--help"]);
+    assert_eq!(exit_code(&out), 0);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("--delta-scope"), "{stdout}");
+}

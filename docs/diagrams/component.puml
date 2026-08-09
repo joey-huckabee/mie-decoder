@@ -29,8 +29,13 @@ package "Core Decode Pipeline" {
     [structural\ninvariants\n(WhichInvariant +\nSeverity)] as invariants
 }
 
-package "Filtering" {
+package "Multi-file Merge" {
+    [merge\n(streaming k-way heap,\nmanifest / glob resolve,\nduplicate collapsing)] as merge
+}
+
+package "Filtering and Ordering" {
     [filter\n(include + exclude:\ntype/RT/bus/SA)] as filters
+    [order\n(canonical row order,\nequal-TIME_STAMP runs)] as order
 }
 
 package "Data Model" {
@@ -58,7 +63,9 @@ main      --> cli            : dispatch (decode/count/dump)
 cli       --> logmod         : set global level
 cli       --> config         : load_config then with_overrides
 cli       --> reader         : open(path, time_format, strict)
+cli       --> merge          : two or more inputs\n(positionals / ~--manifest / ~--glob)
 cli       --> filters        : wrap iterator
+cli       --> order          : final stage before writer
 cli       --> writer         : write_csv / write_csv_split
 cli       --> dump           : count/dump subcommands
 cli       --> outsafe        : checks ~--no-clobber / ~--allow-partial
@@ -81,6 +88,15 @@ invariants --> models        : MieMessage, MessageFormat
 invariants --> errors        : Reject: MieRecordError;\nAnomalyWarn: log only
 
 filters   --> models         : reads MieMessage fields
+
+' ============================================================================
+'  Merge / ordering wiring
+' ============================================================================
+merge     --> reader         : pulls one record\nper open input
+merge     --> models         : yields MieMessage
+merge     --> errors         : IncompatibleMergeInputs (exit 6)\nNonMonotonicInput (strict mode)
+
+order     --> models         : reads timestamp,\nRT / subaddress / direction
 
 ' ============================================================================
 '  Writer / output safety wiring
@@ -137,6 +153,45 @@ note right of outsafe
   6. On error otherwise: unlink tmp  (L2-WRT-017)
 end note
 
+note right of merge
+  <b>Multi-file merge (v2.6, L1-MRG-*/L2-MRG-*):</b>
+  Min-heap keyed (IRIG microseconds, input index,
+  within-file sequence); at most one record per
+  open input, so memory is O(files) (L2-MRG-002).
+
+  Every input must be calendar-locked IRIG.
+  Standard-format, freerun-leading, or mixed sets
+  are rejected before any output (exit 6,
+  L2-MRG-003).
+
+  DELTA is measured per input file by default;
+  ~--delta-scope global recomputes it across the
+  merged timeline (L2-MRG-005).
+
+  Optional cross-recorder duplicate collapsing
+  (~--collapse-duplicates, L2-MRG-007).
+end note
+
+note right of order
+  <b>Canonical row order (v2.9, L1-OUT-003):</b>
+  Buffers one run of CONSECUTIVE equal-TIME_STAMP
+  records and stable-sorts it by (RT, subaddress,
+  direction), receive before transmit (L2-WRT-021).
+  Never reorders across a timestamp boundary.
+
+  Records with no Command Word (SPURIOUS_DATA) are
+  pinned to the record they followed, preserving
+  the 0x2000 error-continuation adjacency.
+
+  Run length is capped by output.max_sort_group
+  (default 4096); at the cap the run is emitted in
+  arrival order with one WARN (L2-WRT-022).
+  A cap of 1 disables reordering entirely.
+
+  Runs last on BOTH the single-file and merge
+  paths. Not applied to the dump subcommand.
+end note
+
 note right of config
   <b>Precedence (highest first):</b>
   1. CLI flags  (~--no-clobber, ~--allow-partial,
@@ -146,11 +201,18 @@ note right of config
 end note
 
 note left of main
-  <b>Exit-class summary (L1-EXIT-005):</b>
-  0: complete / partial-recovered / broken-pipe
-  1: record or usage error
+  <b>Exit codes (L1-EXIT-001..010, L2-CLI-011):</b>
+  0: complete / partial-recovered /
+     broken-pipe / empty-recording
+  1: record or file I/O error
   2: no records / homogeneous payload
   3: partial-unrecoverable (no ~--allow-partial)
+  4: usage error
+  5: configuration error
+  6: merge-incompatible inputs
+
+  See docs/ERROR-CATALOG.md section 1 for the
+  full table.
 end note
 
 @enduml

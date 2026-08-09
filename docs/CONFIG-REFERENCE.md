@@ -64,6 +64,7 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `mux.enabled` | bool | `true` | `--no-mux` (sets `false`) | L2-WRT-020 |
 | `mux.delimiter` | string | `"."` | `--mux-delimiter` | L2-WRT-020 |
 | `mux.field` | int | `4` | `--mux-field` | L2-WRT-020 |
+| `merge.delta_scope` | string | `"per-file"` | `--delta-scope` | L2-MRG-005, L3-WRT-004 |
 | `merge.collapse_duplicates` | bool | `false` | `--collapse-duplicates` | L2-MRG-007 |
 | `merge.collapse_window_us` | int | `0` | `--collapse-window-us` | L2-MRG-007 |
 | `filter.exclude_types` | array | `[]` | `--exclude-types` (additive) | L2-CFG-006, L2-CFG-007 |
@@ -281,7 +282,28 @@ Separator the file's basename is split on. **Validation:** must be a non-empty s
 
 ## `[merge]`
 
-Cross-recorder duplicate collapsing for the multi-file merge (L2-MRG-007). When several recorders on the same 1553 bus witness the same transaction, the merge can collapse those duplicate rows into one. **Off by default — the default never drops a row.** Applies only to a multi-file merge; a single-file decode is unaffected. A "duplicate" is the same wire content (Type / Command / Status Words, data words, error word) seen by a **different** input file within `collapse_window_us` microseconds; identical content from the same file is never collapsed.
+Multi-file merge behavior: DELTA scope (L2-MRG-005) and cross-recorder duplicate collapsing (L2-MRG-007). Every key here applies only to a multi-file merge; a single-file decode is unaffected by all of them.
+
+### `delta_scope`
+
+**Type:** string · **Default:** `"per-file"` · **Values:** `per-file`, `global` (case-insensitive) · **CLI:** `--delta-scope`
+
+Selects the scope over which the `DELTA` column is measured when more than one input is decoded.
+
+| Value | Meaning |
+|-------|---------|
+| `"per-file"` | **Default.** A record's gap is to the previous same-RT/MSG record **from its own file**. The value is identical to what that record gets when its file is decoded alone — and to what the DDC vendor tool reports, since the vendor has no merge feature. |
+| `"global"` | A record's gap is to the previous same-RT/MSG record from **any** input, measured across the merged timeline. Answers "how long since *any* recorder last saw this key". |
+
+The two differ **only for RT/MSG keys that appear in more than one input file.** A key present in just one file gets the same DELTA under either scope, because only that file's records can advance its tracker.
+
+`global` compresses inter-arrival gaps whenever a key is shared: two recorders each seeing a 0.2 s cadence produce an apparent 0.1 s under `global`. For fully overlapping recorders it degenerates further, to alternating `0.000000` values — one per duplicate pair — unless `collapse_duplicates` is also on.
+
+> **Changed in v2.11.0:** the default was `global` through v2.10.0. It is now `per-file`, so merged DELTA no longer depends on how the input set was assembled. Pass `--delta-scope global` (or set this key) to restore the previous behavior.
+
+**Interaction with `collapse_duplicates`:** under `per-file`, collapsing cannot change any surviving record's DELTA — that value is a property of the record's own file, not of the merged stream. Under `global` it can, since suppressed rows no longer advance the shared tracker.
+
+**Validation:** an unrecognized name is a config error at load time (exit `5`); an unrecognized `--delta-scope` is a usage error (exit `4`).
 
 ### `collapse_duplicates`
 

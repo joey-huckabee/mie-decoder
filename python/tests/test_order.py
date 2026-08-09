@@ -249,9 +249,11 @@ class TestStreamEdges:
             raise MieUnrecoverableSyncLossError(0x100, 1)
 
         got: list[MieMessage] = []
+        # Build the generator outside the block so only the drain can raise
+        # (S5778); `got.append` is deliberately the only other statement.
+        ordered_stream = order_rows(stream(), DEFAULT_MAX_SORT_GROUP)  # type: ignore[arg-type]
         with pytest.raises(MieUnrecoverableSyncLossError):
-            for msg in order_rows(stream(), DEFAULT_MAX_SORT_GROUP):  # type: ignore[arg-type]
-                got.append(msg)
+            got.extend(ordered_stream)
         assert [m.rt for m in got] == [2, 9], "the sorted run must reach the consumer"
 
     @pytest.mark.requirement("L3-PY-016")
@@ -262,8 +264,9 @@ class TestStreamEdges:
             yield from ()
             raise MieUnrecoverableSyncLossError(0, 0)
 
+        ordered_stream = order_rows(stream(), DEFAULT_MAX_SORT_GROUP)  # type: ignore[arg-type]
         with pytest.raises(MieDecoderError):
-            list(order_rows(stream(), DEFAULT_MAX_SORT_GROUP))  # type: ignore[arg-type]
+            list(ordered_stream)
 
     @pytest.mark.requirement("L3-PY-016")
     def test_early_close_does_not_raise(self) -> None:
