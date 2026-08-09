@@ -145,9 +145,14 @@ full release workflow.
   implements `core.whitespace`, whose `blank-at-eof` means a **new blank line
   at** EOF — the opposite problem. Staging a file with no trailing newline
   exits `0` with no output. Rather than just correcting the wording, the hook
-  now has a real final-newline check (all tracked text files already comply, so
-  it starts clean), and the mislabelled step in `.githooks/pre-commit` is
-  renamed. The list is also renumbered — it had grown a `1b.`, which is not
+  now has a real final-newline check and the mislabelled step in
+  `.githooks/pre-commit` is renamed. `*.svg` is exempt from that check: the
+  committed diagrams are PlantUML output, which ends at `>` with no trailing
+  newline — the three of them are the *only* tracked text files without one, and
+  hand-appending it would be undone by the next render. The exemption matches
+  `scripts/repo-hygiene.sh`; a hook stricter than its own backstop blocks
+  legitimate commits, which is exactly how this surfaced (the check rejected the
+  very SVG re-render that follows it in this branch). The list is also renumbered — it had grown a `1b.`, which is not
   valid Markdown list syntax.
 
   *"CI runs the same checks and will fail the merge anyway" was untrue for most
