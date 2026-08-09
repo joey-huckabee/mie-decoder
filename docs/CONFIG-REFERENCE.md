@@ -38,6 +38,7 @@ delimiter = "."                  # field separator (non-empty)
 field     = 4                    # 0-based field index (negative = from end)
 
 [merge]
+delta_scope         = "per-file" # per-file | global (multi-file DELTA scope)
 collapse_duplicates = false      # collapse cross-recorder duplicate rows
 collapse_window_us  = 0          # timestamp tolerance for collapsing (µs)
 
@@ -184,7 +185,7 @@ Controls how errored records (Type Word bit 14 set) and SPURIOUS_DATA records ap
 
 **Stdout output forces `inline` mode** in both implementations (you can't split stdout into two streams), so `--separate-errors` is ignored there with a WARN.
 
-> **Changed in this release:** the default flipped from `"separate"` to `"inline"`, and the CLI override changed from `--inline-errors` to `--separate-errors`. The old flag was removed, so passing it is a usage error (exit 4). A config file that sets `error_mode` explicitly is unaffected.
+> **Changed in v2.8.0:** the default flipped from `"separate"` to `"inline"`, and the CLI override changed from `--inline-errors` to `--separate-errors`. The old flag was removed, so passing it is a usage error (exit 4). A config file that sets `error_mode` explicitly is unaffected.
 
 **Validation:** rejected at load time if not one of the two values.
 

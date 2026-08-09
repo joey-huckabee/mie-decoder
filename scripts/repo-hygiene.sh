@@ -152,6 +152,50 @@ if (( ${#missing_rows[@]} )); then
     bad "ci.yml job(s) with no row in MAINTAINER-GUIDE.md section 9"
 fi
 
+# ── 10. Config key set agrees across its three text sources ───────────
+# CONFIG-REFERENCE.md calls itself the reference for *every* TOML key, and
+# states each one twice: a copyable quick-reference block and a normative
+# table. config/default.toml is the third copy. merge.delta_scope shipped in
+# v2.11.0 into two of the three, which is exactly the drift this catches.
+# (The two loaders are the fourth and fifth copies; they are code, and their
+# own parity is covered by tests/conformance/config_parity.py.)
+step "config keys agree: CONFIG-REFERENCE block, table, and default.toml"
+if ! python - <<'PY'
+import re, sys, pathlib
+
+def block_keys(text):
+    sec, keys = None, set()
+    for line in text.splitlines():
+        s = line.strip()
+        m = re.match(r'^\[([a-z_]+)\]', s)
+        if m:
+            sec = m.group(1)
+            continue
+        m = re.match(r'^#?\s*([a-z_]+)\s*=', s)
+        if m and sec:
+            keys.add(f"{sec}.{m.group(1)}")
+    return keys
+
+doc = pathlib.Path("docs/CONFIG-REFERENCE.md").read_text(encoding="utf-8")
+quick = block_keys(doc.split("## Quick reference", 1)[1].split("```")[1])
+table = set(re.findall(r'^\| `([a-z_]+\.[a-z_]+)` \|', doc, re.M))
+default = block_keys(pathlib.Path("config/default.toml").read_text(encoding="utf-8"))
+
+sources = {"quick-reference block": quick, "normative table": table,
+           "config/default.toml": default}
+union = set().union(*sources.values())
+bad = False
+for key in sorted(union):
+    absent = [n for n, s in sources.items() if key not in s]
+    if absent:
+        bad = True
+        print(f"  {key} missing from: {', '.join(absent)}", file=sys.stderr)
+sys.exit(1 if bad else 0)
+PY
+then
+    bad "config key set differs between CONFIG-REFERENCE.md and config/default.toml"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2

@@ -137,6 +137,24 @@ full release workflow.
 
 ### Fixed
 
+- **`CONFIG-REFERENCE.md` omitted a key from its own copyable block, and dated a
+  change relatively.** The document presents itself as the reference for *every*
+  TOML key and states each one twice — a copyable quick-reference block and a
+  normative table. `merge.delta_scope` shipped in v2.11.0 into the table and
+  `config/default.toml` but not the block, so anyone copying the block as a
+  starting config silently lost the key. It is the only key that had drifted.
+
+  Separately, the `error_mode` note read "**Changed in this release**" for a flip
+  that happened in **v2.8.0** — the only relative-version phrase in the docs;
+  every other such note names an absolute version. Relative wording ages badly
+  in a file nobody re-reads at release time, so it now says v2.8.0.
+
+  `repo-hygiene` gained a check that the three text sources — block, table and
+  `config/default.toml` — list the same key set, verified by re-planting the
+  exact `delta_scope` omission and confirming it fails. (The two loaders are the
+  fourth and fifth copies of that list; their agreement is already covered by
+  `tests/conformance/config_parity.py`.)
+
 - **Coverage and CI numbers had drifted out of the docs.** The Rust gate
   enforces `--fail-under-lines 87 --fail-under-regions 86`
   (`rust/.cargo/config.toml`), but `rust/README.md` and three separate places in
