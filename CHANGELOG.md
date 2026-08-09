@@ -137,6 +137,29 @@ full release workflow.
 
 ### Fixed
 
+- **The documented conformance command used the wrong Python.**
+  `CONTRIBUTING.md`, `tests/conformance/README.md` and `MAINTAINER-GUIDE.md`'s
+  test-suite table all said `python tests/conformance/run.py`. The runner drives
+  the Python CLI with `sys.executable` — the interpreter it is itself running
+  under — so after the `poetry -C python sync` those same docs prescribe, that
+  command uses the system Python and dies with `ModuleNotFoundError: No module
+  named 'mie_decoder'`. Verified by running it. CI is unaffected: it does
+  `pip install -e ./python` into the runner's own interpreter first, which is
+  why the same string works there and nowhere else.
+
+  All contributor-facing invocations now use
+  `poetry -C python run python ../tests/conformance/run.py`, with the reason
+  stated so the next person does not "simplify" it back. `--rust-only` is left
+  bare on purpose — it never touches the Python side, so it genuinely needs no
+  package, and that is now called out rather than left to be inferred.
+
+  Two path traps are documented alongside, both hit while verifying the fix:
+  `poetry -C python run` executes with the working directory set to `python/`,
+  so every relative path needs `../`; and `--rust-bin` is used exactly as given,
+  so a Windows path without `.exe` is reported as `failed to build the Rust CLI`
+  — the symptom rather than the cause. The `--python-bin` help text, which
+  claimed the default was "Poetry's environment", now states the real default.
+
 - **Contributor docs promised guarantees neither the hook nor CI provided.**
   Three separate overstatements in `CONTRIBUTING.md`:
 

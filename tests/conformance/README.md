@@ -11,17 +11,36 @@ Each case provides:
 The runner materializes temporary `.mie` files, invokes both CLIs, and requires
 both outputs to match the checked-in CSV oracle byte-for-byte.
 
-Run from the repository root:
+Run from the repository root, **through Poetry**:
 
 ```bash
-python tests/conformance/run.py
+poetry -C python run python ../tests/conformance/run.py
 ```
+
+The runner drives the Python CLI with `sys.executable` — the interpreter it is
+itself running under. A bare `python tests/conformance/run.py` therefore uses
+your system Python, which does not have `mie_decoder` after `poetry -C python
+sync` installs it into Poetry's virtualenv. The runner probes for the import and
+fails fast with the fix, but the form above is the one that works. (CI uses the
+bare form because it `pip install -e ./python` into its system interpreter
+first.) `--python-bin <path>` overrides the interpreter explicitly.
 
 To use an already-built Rust binary:
 
 ```bash
-python tests/conformance/run.py --rust-bin rust/target/debug/mie-decoder
+poetry -C python run python ../tests/conformance/run.py --rust-bin ../rust/target/debug/mie-decoder
 ```
+
+Two path traps here, both easy to hit:
+
+- `poetry -C python run` executes with the working directory set to `python/`,
+  so **every relative path is relative to `python/`** — hence the `../` on both
+  the script and `--rust-bin`.
+- `--rust-bin` is used exactly as given; the runner only appends `.exe` when it
+  locates the binary itself. On Windows pass
+  `../rust/target/debug/mie-decoder.exe`, or omit the flag and let the runner
+  find it. A path that does not exist is reported as `failed to build the Rust
+  CLI`, which names the symptom rather than the cause.
 
 ### Single-implementation runs (one toolchain)
 
@@ -32,8 +51,8 @@ implementation's setup and the cross-impl CLI-surface check; each side is still
 held to the same byte-exact oracle.
 
 ```bash
-python tests/conformance/run.py --python-only                     # no cargo needed
-python tests/conformance/run.py --rust-only --rust-bin <path>     # no mie_decoder package needed
+poetry -C python run python ../tests/conformance/run.py --python-only   # no cargo needed
+python tests/conformance/run.py --rust-only --rust-bin <path>           # no mie_decoder package needed
 ```
 
 (`--update-expected` still requires both implementations, since it regenerates
@@ -43,7 +62,7 @@ When intentionally changing shared CSV behavior, update the checked-in
 oracles only after both implementations produce identical output:
 
 ```bash
-python tests/conformance/run.py --update-expected
+poetry -C python run python ../tests/conformance/run.py --update-expected
 ```
 
 Keep implementation-specific CLI behavior in each implementation's own test

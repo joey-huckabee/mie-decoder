@@ -136,7 +136,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--python-bin",
         type=Path,
-        help="Use this Python interpreter instead of Poetry's environment.",
+        help="Use this Python interpreter for the Python CLI instead of the "
+        "one running this script (sys.executable). Needed when the runner is "
+        "not itself launched from an interpreter that has mie_decoder.",
     )
     parser.add_argument(
         "--update-expected",

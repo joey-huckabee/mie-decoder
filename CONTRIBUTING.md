@@ -207,8 +207,19 @@ poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P n
 Shared Rust/Python conformance:
 
 ```bash
-python tests/conformance/run.py
+poetry -C python run python ../tests/conformance/run.py
 ```
+
+Run it **through Poetry**. The runner drives the Python CLI with
+`sys.executable` — the interpreter it is itself running under — so a bare
+`python tests/conformance/run.py` uses your system Python, which does not
+have `mie_decoder` after a `poetry -C python sync` (Poetry installs into its
+own virtualenv). It fails fast and tells you so, but the Poetry form is the
+one that works. CI runs the bare form only because it does
+`pip install -e ./python` into the runner's system interpreter first.
+
+`--rust-only` is the exception: it never touches the Python side, so plain
+`python tests/conformance/run.py --rust-only` is fine.
 
 The conformance runner materializes text-based hexadecimal fixtures, invokes
 both CLIs, and compares their CSV output byte-for-byte against checked-in
@@ -223,7 +234,7 @@ runs inside `run.py`. For a deeper local sweep, raise the iteration count (this
 is a *different* knob from the reader/dump `MIE_FUZZ_ITERATIONS` below):
 
 ```bash
-MIE_CONFIG_FUZZ_ITERS=5000 python tests/conformance/run.py
+MIE_CONFIG_FUZZ_ITERS=5000 poetry -C python run python ../tests/conformance/run.py
 # optionally pin a starting point: MIE_CONFIG_FUZZ_SEED=<n>
 ```
 
