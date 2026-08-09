@@ -62,6 +62,39 @@ full release workflow.
   reach the same accept/reject class — holding two parsers that share no code to
   treating the forms as inert data.
 
+### Fixed
+
+- **`CLAUDE.md` stated the wrong default error mode.** Its "Output modes" section
+  opened with ``Default (`error_mode = separate`)``, contradicting the code
+  (`ErrorMode::Inline` / `ErrorMode.INLINE`), `config/default.toml`,
+  `CONFIG-REFERENCE.md`, and `CLAUDE.md`'s own module summary a few lines above.
+  The two bullets were also near-duplicates, both describing the split-file
+  behavior, so the section never actually documented what `inline` does — the
+  v2.8.0 polarity reversal appears to have rewritten one bullet and left the
+  superseded one in place. Rewritten to describe both modes, with the v2.8.0
+  reversal noted.
+
+- **`docs/CLI-REFERENCE.md` described `--help` as printing "help for the program
+  or the given subcommand"**, which only Python does; the Rust build prints one
+  combined screen covering every subcommand regardless of where `--help` appears.
+  The entry now states the difference and points at the `cli-surface-parity`
+  check that keeps the flag *surface* identical even though the help *shape*
+  differs.
+
+- **`docs/diagrams/class.puml` claimed `MieError` has 15 variants** — it has 18.
+  The count is now dropped rather than corrected: it is re-broken by the next
+  error variant, and the useful part of the note is the mapping, not the number.
+  That mapping is also stated more precisely: one variant per *raisable* Python
+  class, meaning the leaf classes plus `MieFileError`, which is raised directly
+  for a file-open failure and corresponds to Rust's `FileIo`.
+
+- **`docs/diagrams/component.puml` double-counted a sync check.** It called
+  `validate_record` a "six-check shape probe" while listing the look-ahead
+  separately as phase 3 of the same note — but the look-ahead *is* Check 6 inside
+  `validate_record` (`rust/src/sync.rs`), so it was counted twice.
+  `docs/ARCHITECTURE.md` already had it right ("5 checks + look-ahead"); the
+  diagram now agrees and says where Check 6 lives.
+
 ## [2.11.1] — 2026-08-08
 
 ### Fixed

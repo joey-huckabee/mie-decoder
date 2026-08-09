@@ -97,8 +97,10 @@ Error records and SPURIOUS_DATA continuations are **valid records** that pass sy
 
 ### Output modes
 
-- Default (`error_mode = separate`): clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — file isn't created if no error rows). Calls `write_csv_split`.
-- `--separate-errors`: clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — the file isn't created if there are no error rows). Calls `write_csv_split`. Ignored on stdout (you can't split stdout), with a WARN.
+- **Default (`error_mode = inline`)**: every record goes to the one CSV, with the `ERROR` / `ERROR_CODE` columns populated on errored and spurious rows. Calls `write_csv`. This is the mode a vendor-CSV diff uses, since the vendor tool also emits a single file.
+- `--separate-errors` (`error_mode = separate`): clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — the file isn't created if there are no error rows). Calls `write_csv_split`. Ignored on stdout (you can't split stdout), with a WARN.
+
+The polarity was reversed in v2.8.0 — `separate` was the old default and the former `--inline-errors` flag was removed, so passing it is a usage error.
 
 ### Error type
 

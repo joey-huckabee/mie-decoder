@@ -248,8 +248,10 @@ package "Sync (sync)" {
 package "Errors" {
 
     note as RustErrorNote
-      <b>Rust:</b> single flat enum <i>MieError</i> with 15 variants,
-      one per Python concrete class. Discriminant via
+      <b>Rust:</b> a single flat enum <i>MieError</i>, one variant
+      per raisable Python class — the leaf classes plus
+      <i>MieFileError</i>, which is raised directly for a
+      file-open failure (Rust's <i>FileIo</i>). Discriminant via
       <i>MieErrorKind</i> and predicates
       <i>is_file_error()</i> / <i>is_record_error()</i>.
     end note

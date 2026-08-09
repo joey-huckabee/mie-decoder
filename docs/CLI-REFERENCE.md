@@ -44,7 +44,7 @@ Global options are placed **before** the subcommand.
 | `--config PATH` | path | *(none)* | TOML configuration file. Applies to `decode`, `count`, and `dump` (the last consumes only its `[logging]` level). Must be a regular file; missing or unparseable is exit `5`. Any readable location is accepted — see [Trust boundary](CONFIG-REFERENCE.md#trust-boundary). |
 | `--log-level LEVEL` | `DEBUG` \| `INFO` \| `WARNING` \| `WARN` \| `ERROR` \| `CRITICAL` \| `OFF` | `WARNING` | Log verbosity (case-insensitive). Overrides the config file's `[logging] level`. Validated after `--version` / `--help`. |
 | `-V`, `-v`, `--version` | — | — | Print the version and exit. Both short forms are accepted, and `--version` matches in any letter case (`--VERSION`, `--Version`, …). |
-| `-h`, `--help` | — | — | Print help for the program or the given subcommand and exit. |
+| `-h`, `--help` | — | — | Print help and exit. The two builds differ in *shape*, not in content: Python (`argparse`) prints help for the given subcommand, while Rust prints one combined screen covering every subcommand regardless of where `--help` appears. The flag *surface* is identical either way, and `cli-surface-parity` in `tests/conformance/run.py` enforces that. |
 
 ---
 

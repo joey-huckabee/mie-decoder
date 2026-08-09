@@ -120,8 +120,9 @@ outsafe   ..> partial_file   : (~--allow-partial path)
 note right of sync
   <b>Four-phase sync</b> (docs/ARCHITECTURE.md section 3):
   1. find_first_record: header skip
-  2. validate_record: six-check shape probe
+  2. validate_record: five-check shape probe
   3. look-ahead: next record must also validate
+     (Check 6, inside validate_record itself)
   4. recover_sync: 2-byte step scan, <=64 KB
 
   <b>Homogeneity defense (v2.0):</b>
