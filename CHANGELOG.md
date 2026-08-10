@@ -33,6 +33,14 @@ full release workflow.
   caller's responsibility. `docs/CLI-REFERENCE.md` links to it from the
   `--config` row.
 
+- **A twelfth `scripts/repo-hygiene.sh` check: `docs/ROADMAP.md` may not
+  restate a `docs/TRACE-MATRIX.md` status.** The roadmap is hand-written and the
+  matrix is generated, so any status copied across is guaranteed to rot — and
+  did (see the `L2-DEC-012` entry under *Fixed*). The check rejects the
+  generator's own status tokens (`Draft`, `Implemented`, `Verified`) appearing
+  in the roadmap, case-sensitively, so ordinary prose like "not yet
+  implemented" still reads naturally. Link to the matrix; don't copy it.
+
 - **An eleventh `scripts/repo-hygiene.sh` check: the declared Rust MSRV must
   agree everywhere it is written down.** `rust-version` in `rust/Cargo.toml` is
   the only copy a toolchain enforces, but the number is also spelled out in
@@ -153,6 +161,27 @@ full release workflow.
   failure on the input.
 
 ### Fixed
+
+- **`docs/ROADMAP.md` deferred work that had already shipped, on a status that
+  was already wrong.** Its `L2-DEC-012` entry deferred the IRIG-wins-on-tie
+  conformance test, said the requirement was "still listed as Draft in
+  `docs/TRACE-MATRIX.md`", and gave the blocker as needing to reverse-engineer
+  the detection heuristic to force an equal-score tie. The matrix lists it
+  **Implemented**, with `test_zero_score_ties_to_irig` and
+  `probe_zero_score_ties_to_irig` on the two sides, and the blocker never
+  existed: the tie-break is the single comparison `irig_score >= std_score`,
+  which an all-zero buffer exercises directly. Wrong three ways over, in a file
+  whose own header says completed work is not tracked there. Entry removed.
+
+- **The Python package docstring described a format the decoder doesn't
+  read.** `mie_decoder/__init__.py` called the records "fixed-length" (in the
+  same sentence that says a Type Word determines their size) and said the files
+  carry "IRIG-format time tags", when Standard timestamps have been supported
+  and auto-detected throughout. It now states the real shape — no file header,
+  variable-length records, null Type Word as terminator, up to 32 data words,
+  and both timestamp formats with per-file auto-detection. Its `Version
+  history` block, frozen at `1.0.0` since the joint cut, is replaced by a
+  pointer to `CHANGELOG.md` and `__version__`.
 
 - **`.githooks/pre-commit` and `scripts/repo-hygiene.sh` assumed a bare
   `python` on PATH.** Both invoked `python` directly — the hook for the

@@ -124,12 +124,6 @@ so the request isn't folded into the time-merge contract without separate design
     a spec'd requirement with byte-exact conformance fixtures so output
     matches vendor CSV. Until then the advisory WARN stays.
 
-- **`L2-DEC-012` tie-break conformance test.** The IRIG-wins-on-tie tie-break
-  (`L2-DEC-012`) is specified and implemented, but is still listed as Draft in
-  `docs/TRACE-MATRIX.md`: constructing an input that yields a genuine
-  equal-score IRIG/Standard detection tie requires reverse-engineering the
-  auto-detection heuristic. Deferred until a crafted fixture can force the tie.
-
 ## Performance refinements (deferred)
 
 Surfaced by a source review and **verified real but deliberately deferred** —

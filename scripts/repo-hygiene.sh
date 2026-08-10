@@ -298,6 +298,19 @@ then
     bad "declared Rust MSRV differs between rust/Cargo.toml and the docs/CI"
 fi
 
+# ── 12. ROADMAP does not restate a TRACE-MATRIX status ────────────────
+# ROADMAP.md is hand-written and forward-looking; TRACE-MATRIX.md is
+# generated. Any status the roadmap copies out of the matrix is therefore
+# guaranteed to rot, and it rotted: an entry deferred the L2-DEC-012 tie-break
+# test "still listed as Draft in docs/TRACE-MATRIX.md" long after the matrix
+# had it Implemented with a test on each side. Link to the matrix; don't
+# restate it. Matched case-sensitively on the generator's own status tokens,
+# so ordinary lowercase prose ("not yet implemented") is unaffected.
+step "ROADMAP.md does not restate a TRACE-MATRIX status"
+if grep -nE '\b(Draft|Implemented|Verified)\b' docs/ROADMAP.md >&2; then
+    bad "docs/ROADMAP.md asserts a verification status; link to docs/TRACE-MATRIX.md instead of copying it"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2
