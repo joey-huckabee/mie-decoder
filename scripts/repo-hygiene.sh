@@ -311,6 +311,67 @@ if grep -nE '\b(Draft|Implemented|Verified)\b' docs/ROADMAP.md >&2; then
     bad "docs/ROADMAP.md asserts a verification status; link to docs/TRACE-MATRIX.md instead of copying it"
 fi
 
+# ── 13. Python exception hierarchy agrees with its two drawings ───────
+# exceptions.py is the truth; ERROR-CATALOG.md §2 redraws it as an ASCII tree
+# and docs/diagrams/class.puml redraws it again as UML, and both drawings
+# claim to be complete ("every variant has a counterpart", "correspond one to
+# one, in both directions"). Both had drifted: the ASCII tree lost
+# MieFileIoError when it was added in v2.11.2, and the diagram was missing
+# three leaf classes outright. A hand-maintained copy of a class tree is not
+# checkable by reading it — every child's *parent* has to match.
+step "Python exception hierarchy matches ERROR-CATALOG §2 and class.puml"
+if [[ -z "$PY_BIN" ]]; then
+    list "skipped: no Python 3 interpreter"
+elif ! "$PY_BIN" - <<'PY'
+import re, sys, pathlib
+
+src = pathlib.Path("python/src/mie_decoder/exceptions.py").read_text(encoding="utf-8")
+truth = dict(re.findall(r'^class (Mie\w+)\((\w+)\):', src, re.M))
+
+# ERROR-CATALOG §2 ASCII tree: depth comes from the column the "── " marker
+# sits in, so a stack of (depth, name) recovers each node's parent.
+doc = pathlib.Path("docs/ERROR-CATALOG.md").read_text(encoding="utf-8")
+block = doc.split("### Python (`mie_decoder.exceptions`)", 1)[1].split("```")[1]
+tree, stack = {}, []
+for line in block.splitlines():
+    m = re.match(r'^(.*?)(?:└──|├──) (Mie\w+)', line)
+    if not m:
+        continue
+    depth, name = len(m.group(1)), m.group(2)
+    while stack and stack[-1][0] >= depth:
+        stack.pop()
+    tree[name] = stack[-1][1] if stack else "Exception"
+    stack.append((depth, name))
+
+puml = pathlib.Path("docs/diagrams/class.puml").read_text(encoding="utf-8")
+uml = {c: p for p, c in re.findall(r'^\s*(Mie\w+) <\|-- (Mie\w+)', puml, re.M)}
+
+bad = False
+# Labels stay ASCII: this prints to a Windows console under cp437 as readily
+# as to a UTF-8 CI runner, and a UnicodeEncodeError here would look like a
+# check failure rather than a terminal limitation.
+for label, drawing in (("ERROR-CATALOG.md section 2 tree", tree), ("class.puml", uml)):
+    for name, parent in sorted(truth.items()):
+        if name == "MieDecoderError":
+            continue          # the root; drawn as a child of Exception
+        if name not in drawing:
+            bad = True
+            print(f"  {label}: missing {name} (exceptions.py: {parent})", file=sys.stderr)
+        elif drawing[name] != parent:
+            bad = True
+            print(f"  {label}: {name} drawn under {drawing[name]}, "
+                  f"exceptions.py says {parent}", file=sys.stderr)
+    for name in sorted(set(drawing) - set(truth) - {"MieDecoderError"}):
+        bad = True
+        print(f"  {label}: draws {name}, which exceptions.py does not define",
+              file=sys.stderr)
+
+sys.exit(1 if bad else 0)
+PY
+then
+    bad "the drawn Python exception hierarchy differs from python/src/mie_decoder/exceptions.py"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2

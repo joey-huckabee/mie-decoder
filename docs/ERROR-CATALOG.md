@@ -47,6 +47,7 @@ Exception
     ├── MieFileError                 (wrong file / file-system issue)
     │   ├── MieFileNotFoundError
     │   ├── MieFileEmptyError
+    │   ├── MieFileIoError
     │   ├── MieNoValidRecordsError
     │   ├── MieHomogeneousPayloadError
     │   ├── MieTimestampFormatMismatchError
@@ -67,7 +68,7 @@ Exception
 
 ### Rust (`mie_decoder::MieError`)
 
-A single `enum MieError { … }` with the same set of variants. `MieError::kind()` returns a `MieErrorKind` discriminant; `is_file_error()` / `is_record_error()` predicates mirror the Python class split.
+A single `enum MieError { … }` with the same set of variants. `MieError::kind()` returns a `MieErrorKind` discriminant. Of the two predicates, only `is_record_error()` mirrors the Python class split — it matches `MieRecordError` exactly. `is_file_error()` is deliberately **narrower** than `MieFileError`; see the note below the listing.
 
 ```
 MieError ├── FileNotFound             ── MieErrorKind::FileNotFound             (is_file_error)
@@ -98,7 +99,7 @@ Python's `MieFileError` is **wider** than `MieError::is_file_error()`, which ans
 
 ## 3. File-level errors
 
-These fire before any record is decoded, or before the writer touches the destination. Catchable in Python as `MieFileError`. In Rust only the I/O subset (`FileNotFound`, `FileEmpty`, `FileIo`) answers `true` to `is_file_error()`; for the rest of this section, match on `MieError::kind()` (see §2).
+These fire before any record is decoded, or before the writer touches the destination. All but the last row are catchable in Python as `MieFileError`; `MieNonMonotonicInputError` is grouped here because it fires at the same stage, but it extends `MieDecoderError` **directly** and a `MieFileError` handler will not catch it. In Rust only the I/O subset (`FileNotFound`, `FileEmpty`, `FileIo`) answers `true` to `is_file_error()`; for the rest of this section, match on `MieError::kind()` (see §2).
 
 | Variant | When it fires | Exit | What to do |
 |---------|---------------|------|------------|

@@ -254,24 +254,33 @@ package "Errors" {
       which since v2.11.2 converts the <i>OSError</i> from open/mmap
       instead of letting it escape. The <i>Mie*Error</i> base classes
       are never raised directly — they exist to be caught.
-      Discriminant via <i>MieErrorKind</i> and predicates
-      <i>is_file_error()</i> / <i>is_record_error()</i>.
+      Discriminant via <i>MieErrorKind</i>. Of the two predicates only
+      <i>is_record_error()</i> mirrors the Python split, matching
+      <i>MieRecordError</i> exactly; <i>is_file_error()</i> is narrower
+      than <i>MieFileError</i> — it answers "did input I/O fail", so it
+      is true only for <i>FileNotFound</i>, <i>FileEmpty</i>, <i>FileIo</i>.
+      The whole-file rejections and destination guards answer false to
+      <b>both</b> predicates; match on <i>kind()</i> for those.
     end note
 
     class MieDecoderError <<abstract>>
     class MieFileError    <<abstract>>
     class MieRecordError  <<abstract>>
     class MieWriterError
+    class MieNonMonotonicInputError       /' v2.11: NOT a MieFileError '/
 
     MieDecoderError <|-- MieFileError
     MieDecoderError <|-- MieRecordError
     MieDecoderError <|-- MieWriterError
+    MieDecoderError <|-- MieNonMonotonicInputError
 
     class MieFileNotFoundError
     class MieFileEmptyError
     class MieFileIoError
     class MieNoValidRecordsError
     class MieHomogeneousPayloadError      /' v2.0 '/
+    class MieTimestampFormatMismatchError
+    class MieIncompatibleMergeInputsError /' v2.11 '/
     class MieInputOutputCollisionError    /' v2.0 '/
     class MieClobberRefusedError          /' v2.0 '/
 
@@ -280,6 +289,8 @@ package "Errors" {
     MieFileError <|-- MieFileIoError
     MieFileError <|-- MieNoValidRecordsError
     MieFileError <|-- MieHomogeneousPayloadError
+    MieFileError <|-- MieTimestampFormatMismatchError
+    MieFileError <|-- MieIncompatibleMergeInputsError
     MieFileError <|-- MieInputOutputCollisionError
     MieFileError <|-- MieClobberRefusedError
 

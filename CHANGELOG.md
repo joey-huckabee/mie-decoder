@@ -33,6 +33,16 @@ full release workflow.
   caller's responsibility. `docs/CLI-REFERENCE.md` links to it from the
   `--config` row.
 
+- **A thirteenth `scripts/repo-hygiene.sh` check: the Python exception
+  hierarchy must match both of its drawings.** `exceptions.py` is the truth;
+  `ERROR-CATALOG.md` §2 redraws it as an ASCII tree and
+  `docs/diagrams/class.puml` redraws it as UML, and both drawings assert they
+  are complete. Both had drifted (see *Fixed*). The check parses all three and
+  compares each class's **parent**, not just the set of names, so a leaf
+  reparented in code — the `MieNonMonotonicInputError` case — fails as loudly
+  as one that is missing. Proven against three planted defects: a dropped tree
+  entry, a dropped UML edge, and a misparented class.
+
 - **A twelfth `scripts/repo-hygiene.sh` check: `docs/ROADMAP.md` may not
   restate a `docs/TRACE-MATRIX.md` status.** The roadmap is hand-written and the
   matrix is generated, so any status copied across is guaranteed to rot — and
@@ -161,6 +171,22 @@ full release workflow.
   failure on the input.
 
 ### Fixed
+
+- **`docs/ERROR-CATALOG.md` contradicted itself about the error predicates, and
+  both drawings of the exception tree were incomplete.** §2 introduced
+  `is_file_error()` / `is_record_error()` as mirroring "the Python class split"
+  while the paragraph below it correctly explained that `is_file_error()` is
+  **narrower** than `MieFileError`; only `is_record_error()` mirrors anything
+  exactly. The §2 Python tree had also never gained `MieFileIoError` (added in
+  v2.11.2 — the Rust listing and the §3 table were updated, the tree was
+  missed), and §3 said its rows are "catchable in Python as `MieFileError`"
+  while listing `MieNonMonotonicInputError`, which extends `MieDecoderError`
+  directly and would escape such a handler. `docs/diagrams/class.puml` claimed
+  its leaf classes "correspond one to one, in both directions" with the Rust
+  variants while omitting `MieTimestampFormatMismatchError`,
+  `MieIncompatibleMergeInputsError` and `MieNonMonotonicInputError` entirely.
+  All corrected, and the diagram now shows `MieNonMonotonicInputError` hanging
+  off `MieDecoderError` where it belongs.
 
 - **`docs/ROADMAP.md` deferred work that had already shipped, on a status that
   was already wrong.** Its `L2-DEC-012` entry deferred the IRIG-wins-on-tie
