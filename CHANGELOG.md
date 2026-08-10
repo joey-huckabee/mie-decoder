@@ -172,6 +172,25 @@ full release workflow.
 
 ### Fixed
 
+- **`L2-CLI-013`'s offset-overflow diagnostic was credited to tests that cannot
+  reach it.** The requirement mandates a WARN plus an inline `!! ...` note for
+  three dump scan-stop anomalies, and `TRACE-MATRIX.md` showed it Implemented
+  against two truncated-record tests. The overflow branch in `dump.rs` is
+  unreachable through a real scan: the loop advances only while
+  `offset + MIN_RECORD_BYTES <= file_len`, and `file_len` is a mapped file
+  length, so `offset` stays far below `usize::MAX` while a record's declared
+  extent is capped at 126 bytes (`word_count` is the Type Word's 6-bit field).
+  The sum cannot wrap.
+
+  Rather than delete a harmless guard or leave the claim unbacked, the branch is
+  now verified where it *is* reachable — `dump_record_extent` accepts an
+  arbitrary `offset`, so `dump_record_extent_notes_offset_overflow` calls it
+  directly with `usize::MAX - 4` and asserts both the returned stop and the
+  inline note. `L2-CLI-013` gains a note stating the branch is defense in depth
+  for that helper's contract, unreachable via the scan in both implementations
+  (Python integers do not overflow at all), and that it must not be credited to
+  the truncated-record tests.
+
 - **All three `docs/diagrams/*.svg` regenerated**, so `class.svg` reflects the
   three exception classes added to `class.puml` above. Rendered with PlantUML
   **1.2026.7beta11**, the same build that produced the previous set, and
