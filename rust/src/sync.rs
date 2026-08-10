@@ -628,6 +628,55 @@ mod tests {
             | (u16::from(us_hi4) & 0xF)
     }
 
+    /// L2-SYN-014 requires the boolean and detailed validators to be the
+    /// same rules, so the two can never disagree about validity. That is
+    /// true today because `validate_record` delegates to
+    /// `validate_record_detailed(..).is_ok()` — but delegation is an
+    /// implementation choice a later refactor could quietly undo, and until
+    /// v2.11.2 the requirement was reported as met with no artifact behind
+    /// it at all. This pins the property itself, across a corpus spanning a
+    /// valid record and every distinct rejection reason, so re-implementing
+    /// either form independently fails here.
+    /// Requirements: L2-SYN-014
+    #[test]
+    fn boolean_and_detailed_validation_never_disagree() {
+        let valid = make_irig_record_with_ts(irig_upper(false, 192, 15), irig_middle(54, 50, 0), 0);
+        let first = &valid[..10];
+
+        let corpus: Vec<Vec<u8>> = vec![
+            valid.clone(),
+            vec![],
+            vec![0x02],
+            [0x0503u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+            [0x0202u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+            [0x2402u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+            make_irig_record_with_ts(irig_upper(false, 192, 24), irig_middle(54, 50, 0), 0),
+            make_irig_record_with_ts(irig_upper(false, 192, 15), irig_middle(60, 50, 0), 0),
+            [first, 0x0503u16.to_le_bytes().as_slice()].concat(),
+            [first, 0x0202u16.to_le_bytes().as_slice()].concat(),
+        ];
+
+        for (i, data) in corpus.iter().enumerate() {
+            for lookahead in [1usize, DEFAULT_LOOKAHEAD_RECORDS, 4] {
+                let boolean =
+                    validate_record(data, 0, data.len(), Some(TimestampFormat::Irig), lookahead);
+                let detailed = validate_record_detailed(
+                    data,
+                    0,
+                    data.len(),
+                    Some(TimestampFormat::Irig),
+                    lookahead,
+                );
+                assert_eq!(
+                    boolean,
+                    detailed.is_ok(),
+                    "case {i} (lookahead {lookahead}): boolean said {boolean}, \
+                     detailed said {detailed:?}"
+                );
+            }
+        }
+    }
+
     /// Requirements: L2-SYN-004, L2-SYN-005
     #[test]
     fn detailed_validation_reports_each_failure_reason() {

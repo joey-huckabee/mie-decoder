@@ -242,7 +242,7 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 **Parent**: L1-SYN-001
 **Statement**: Header detection, continuous decoding, and sync recovery SHALL use the same full record-validation rules. The implementation SHALL expose both a compatibility boolean result and a detailed result identifying which validation check failed.
 **Rationale**: Validators with subtly different semantics would inevitably drift. The boolean compatibility wrapper and additive detailed API share one implementation; header scan, per-record decode, and recovery therefore cannot disagree on validity. The detailed reason lets strict mode report the exact check without reimplementing classification in the reader.
-**Verification Method**: Inspection (I)
+**Verification Method**: Test (T), Inspection (I)
 
 #### L2-SYN-015
 
@@ -968,6 +968,7 @@ A single-input decode SHALL be unaffected by the setting: with one file the two 
 **Statement**: Shared conformance inputs SHALL be stored as reviewable hexadecimal text rather than committed `.mie` binary recordings.
 **Rationale**: Hex text is reviewable in PR diffs; committed binaries are opaque and grow the repository unnecessarily. The conformance runner converts hex to binary at execution time.
 **Verification Method**: Inspection (I)
+**Evidence**: `scripts/repo-hygiene.sh` — its no-MIE-recordings-tracked check scans the whole tracked tree and fails the repo-hygiene CI job on any committed binary recording; `.githooks/pre-commit` applies the same check to staged blobs. The rule is mechanically enforced rather than reviewed for.
 
 #### L2-CONF-002
 
@@ -989,6 +990,7 @@ A single-input decode SHALL be unaffected by the setting: with one file the two 
 **Statement**: Expected CSV oracles SHALL be updated only after both implementations agree.
 **Rationale**: Updating the oracle to match one implementation while the other still differs would silently de-couple them. Both must agree before the oracle moves.
 **Verification Method**: Inspection (I)
+**Evidence**: `tests/conformance/run.py` — every fixture is decoded by **both** implementations and byte-compared against the one shared oracle, so an oracle moved to match a single implementation fails on the other; the conformance job in `.github/workflows/ci.yml` runs it on Linux and Windows and blocks the merge. The requirement is a process rule, but the process cannot be violated silently: the enforcement is that no single implementation can ratify an oracle change on its own.
 
 #### L2-CONF-005
 

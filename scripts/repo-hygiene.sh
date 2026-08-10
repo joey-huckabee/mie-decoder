@@ -372,6 +372,28 @@ then
     bad "the drawn Python exception hierarchy differs from python/src/mie_decoder/exceptions.py"
 fi
 
+# ── 14. No trace-matrix row claims Implemented with no artifact ───────
+# Until v2.11.2 build-trace-matrix.py returned "Implemented (I)" for any leaf
+# declaring Inspection/Analysis/Demonstration, from the declared method alone
+# — so L2-SYN-014, L2-CONF-001 and L2-CONF-004 read "Implemented (I)" beside a
+# literal _(TBD)_ in their own artifact column. The generator now requires an
+# **Evidence** line naming what carries the check. This is the backstop: it
+# fails on the rendered output, so reverting that rule in the generator is
+# caught here rather than by a reader noticing the contradiction.
+step "no TRACE-MATRIX row claims Implemented with a _(TBD)_ artifact"
+offenders=()
+while IFS= read -r row; do
+    [[ -n "$row" ]] && offenders+=("$row")
+done < <(awk -F'|' '
+    /^\| L[123]-/ && $4 ~ /_\(TBD\)_/ && $5 ~ /Implemented/ {
+        gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/^[ \t]+|[ \t]+$/, "", $5)
+        print $2 " -> " $5
+    }' docs/TRACE-MATRIX.md)
+if (( ${#offenders[@]} )); then
+    list "${offenders[@]}"
+    bad "TRACE-MATRIX rows claim Implemented with no verification artifact"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2

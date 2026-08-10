@@ -54,13 +54,25 @@ L1_HEADER = re.compile(r"^###\s+(L1-[A-Z]+-\d+)\s*$", re.MULTILINE)
 L2_HEADER = re.compile(r"^####\s+(L2-[A-Z]+-\d+)\s*$", re.MULTILINE)
 L2_PARENT_LINE = re.compile(r"^\*\*Parent\*\*:\s+(L1-[A-Z]+-\d+)\s*$", re.MULTILINE)
 L3_LINE = re.compile(
-    r"^\*\*L3-([A-Z]+)-(\d+)\*\*\s+·\s+Parent:\s+(L2-[A-Z]+-\d+)\s+·\s+Verification:\s+([^\n]+)",
+    r"^\*\*L3-([A-Z]+)-(\d+)\*\*\s+·\s+Parent:\s+(L2-[A-Z]+-\d+)\s+·\s+Verification:\s+([^\n·]+)"
+    r"(?:·\s+Evidence:\s+([^\n]+))?",
     re.MULTILINE,
 )
 L1_L2_VM_LINE = re.compile(
     r"^\*\*Verification Method\*\*:\s+([^\n]+)$",
     re.MULTILINE,
 )
+# Optional companion to Verification Method for requirements verified by
+# Inspection / Analysis / Demonstration. A declared method says only *how*
+# a requirement would be checked; it is not itself proof that anyone did.
+# This names the artifact that carries the check — a script, a CI job, a
+# source symbol — so an I/A/D requirement can be Implemented on the same
+# terms as a Test one: because something concrete backs it.
+L1_L2_EVIDENCE_LINE = re.compile(
+    r"^\*\*Evidence\*\*:\s+([^\n]+)$",
+    re.MULTILINE,
+)
+_BACKTICKED = re.compile(r"`([^`]+)`")
 # Single-letter DO-178 verification codes embedded in either the
 # free-form L1/L2 "Test (T), Inspection (I)" phrasing or the compact
 # L3 "T, I" form. Each letter sits at a word boundary in both shapes.
@@ -111,6 +123,20 @@ def _extract_methods(text: str) -> set[str]:
     return set(_METHOD_LETTER.findall(text))
 
 
+def _extract_evidence(text: str) -> list[str]:
+    """Pull the backticked artifact names out of an ``**Evidence**`` line.
+
+    Falls back to the whole stripped line when nothing is backticked, so a
+    prose-only evidence note still counts as evidence rather than silently
+    reading as none.
+    """
+    found = _BACKTICKED.findall(text)
+    if found:
+        return found
+    stripped = text.strip()
+    return [stripped] if stripped else []
+
+
 def parse_l1_methods(doc: str) -> dict[str, set[str]]:
     """Return mapping L1-id -> set of verification-method letters."""
     result: dict[str, set[str]] = {}
@@ -121,6 +147,18 @@ def parse_l1_methods(doc: str) -> dict[str, set[str]]:
         m = L1_L2_VM_LINE.search(body)
         if m:
             result[l1_id] = _extract_methods(m.group(1))
+    return result
+
+
+def parse_l1_evidence(doc: str) -> dict[str, list[str]]:
+    """Return mapping L1-id -> declared non-test evidence artifacts."""
+    result: dict[str, list[str]] = {}
+    blocks = re.split(r"^###\s+(L1-[A-Z]+-\d+)\s*$", doc, flags=re.MULTILINE)
+    for i in range(1, len(blocks), 2):
+        body = blocks[i + 1] if i + 1 < len(blocks) else ""
+        m = L1_L2_EVIDENCE_LINE.search(body)
+        if m:
+            result[blocks[i]] = _extract_evidence(m.group(1))
     return result
 
 
@@ -150,11 +188,23 @@ def parse_l2_methods(doc: str) -> dict[str, set[str]]:
     return result
 
 
+def parse_l2_evidence(doc: str) -> dict[str, list[str]]:
+    """Return mapping L2-id -> declared non-test evidence artifacts."""
+    result: dict[str, list[str]] = {}
+    blocks = re.split(r"^####\s+(L2-[A-Z]+-\d+)\s*$", doc, flags=re.MULTILINE)
+    for i in range(1, len(blocks), 2):
+        body = blocks[i + 1] if i + 1 < len(blocks) else ""
+        m = L1_L2_EVIDENCE_LINE.search(body)
+        if m:
+            result[blocks[i]] = _extract_evidence(m.group(1))
+    return result
+
+
 def parse_l3_parent_map(doc: str) -> dict[str, str]:
     """Return mapping L3-id -> L2-parent-id from L3-REQ.md."""
     result: dict[str, str] = {}
     for match in L3_LINE.finditer(doc):
-        cat, num, parent, _verification = match.groups()
+        cat, num, parent, _verification, _evidence = match.groups()
         result[f"L3-{cat}-{num}"] = parent
     return result
 
@@ -163,8 +213,22 @@ def parse_l3_methods(doc: str) -> dict[str, set[str]]:
     """Return mapping L3-id -> set of verification-method letters."""
     result: dict[str, set[str]] = {}
     for match in L3_LINE.finditer(doc):
-        cat, num, _parent, verification = match.groups()
+        cat, num, _parent, verification, _evidence = match.groups()
         result[f"L3-{cat}-{num}"] = _extract_methods(verification)
+    return result
+
+
+def parse_l3_evidence(doc: str) -> dict[str, list[str]]:
+    """Return mapping L3-id -> declared non-test evidence artifacts.
+
+    L3 statements are one-liners, so evidence rides on the same line as a
+    trailing ``· Evidence: ...`` segment.
+    """
+    result: dict[str, list[str]] = {}
+    for match in L3_LINE.finditer(doc):
+        cat, num, _parent, _verification, evidence = match.groups()
+        if evidence:
+            result[f"L3-{cat}-{num}"] = _extract_evidence(evidence)
     return result
 
 
@@ -289,10 +353,13 @@ def build_matrix() -> str:
 
     l1_ids = parse_l1_ids(l1_doc)
     l1_methods = parse_l1_methods(l1_doc)
+    l1_evidence = parse_l1_evidence(l1_doc)
     l2_parent = parse_l2_parent_map(l2_doc)
     l2_methods = parse_l2_methods(l2_doc)
+    l2_evidence = parse_l2_evidence(l2_doc)
     l3_parent = parse_l3_parent_map(l3_doc)
     l3_methods = parse_l3_methods(l3_doc)
+    l3_evidence = parse_l3_evidence(l3_doc)
     test_markers = collect_all_markers()
 
     l1_to_l2: dict[str, list[str]] = defaultdict(list)
@@ -337,8 +404,10 @@ def build_matrix() -> str:
     )
     lines.append(
         "* **Implemented (I)** / **(A)** / **(D)** — the spec declares"
-        " verification by Inspection / Analysis / Demonstration only;"
-        " satisfied by spec review without a test marker. Combinations"
+        " verification by Inspection / Analysis / Demonstration only **and**"
+        " names the artifact carrying that check on an `**Evidence**` line,"
+        " shown in the artifact column. A declared method with no evidence is"
+        " a plan rather than a result and stays **Draft**. Combinations"
         " appear as e.g. ``Implemented (A+I)``."
     )
     lines.append(
@@ -365,7 +434,15 @@ def build_matrix() -> str:
             children = l1_to_l2.get(l1_id, [])
             children_str = ", ".join(children) if children else "_(none)_"
             child_statuses = [
-                _l2_status(l2_id, l2_to_l3, test_markers, l2_methods, l3_methods)
+                _l2_status(
+                    l2_id,
+                    l2_to_l3,
+                    test_markers,
+                    l2_methods,
+                    l3_methods,
+                    l2_evidence,
+                    l3_evidence,
+                )
                 for l2_id in children
             ]
             # Render direct L1 markers. Most L1s decompose into L2/L3 and
@@ -382,6 +459,7 @@ def build_matrix() -> str:
                 has_direct_artifacts=bool(test_markers.get(l1_id)),
                 children_statuses=child_statuses,
                 verification_methods=l1_methods.get(l1_id),
+                evidence=l1_evidence.get(l1_id),
             )
             lines.append(f"| {l1_id} | {children_str} | {artifacts_str} | {status} |")
         lines.append("")
@@ -403,10 +481,27 @@ def build_matrix() -> str:
             artifacts = sorted(set(artifacts))
 
             children_str = ", ".join(l3_children) if l3_children else "_(none)_"
+            # With no test markers anywhere in the subtree, fall back to the
+            # declared non-test evidence — the artifact column then names what
+            # actually carries the check instead of reading "_(TBD)_" beside a
+            # status claiming the requirement is met.
+            if not artifacts:
+                artifacts = sorted(
+                    set(l2_evidence.get(l2_id, []))
+                    | {e for l3_id in l3_children for e in l3_evidence.get(l3_id, [])}
+                )
             artifacts_str = (
                 "<br>".join(f"`{a}`" for a in artifacts) if artifacts else "_(TBD)_"
             )
-            status = _l2_status(l2_id, l2_to_l3, test_markers, l2_methods, l3_methods)
+            status = _l2_status(
+                l2_id,
+                l2_to_l3,
+                test_markers,
+                l2_methods,
+                l3_methods,
+                l2_evidence,
+                l3_evidence,
+            )
             lines.append(f"| {l2_id} | {children_str} | {artifacts_str} | {status} |")
         lines.append("")
 
@@ -430,12 +525,17 @@ def build_matrix() -> str:
     total_l2_verified = total_l3_verified = 0
 
     def _is_verified(
-        req_id: str, methods: dict[str, set[str]]
+        req_id: str,
+        methods: dict[str, set[str]],
+        evidence: dict[str, list[str]] | None = None,
     ) -> bool:
         if test_markers.get(req_id):
             return True
         m = methods.get(req_id, set())
-        return bool(m) and "T" not in m
+        # An I/A/D declaration counts only when backed by evidence, on the
+        # same terms as compute_status — otherwise the summary would keep
+        # reporting requirements as verified that nothing checks.
+        return bool(m) and "T" not in m and bool((evidence or {}).get(req_id))
 
     for cat_code, _ in CATEGORIES:
         l1s = [req for req in l1_ids if req.startswith(f"L1-{cat_code}-")]
@@ -443,8 +543,8 @@ def build_matrix() -> str:
         l3s = [req for req in l3_parent if req.startswith(f"L3-{cat_code}-")]
         l2_tested = sum(1 for l2 in l2s if test_markers.get(l2))
         l3_tested = sum(1 for l3 in l3s if test_markers.get(l3))
-        l2_verified = sum(1 for l2 in l2s if _is_verified(l2, l2_methods))
-        l3_verified = sum(1 for l3 in l3s if _is_verified(l3, l3_methods))
+        l2_verified = sum(1 for l2 in l2s if _is_verified(l2, l2_methods, l2_evidence))
+        l3_verified = sum(1 for l3 in l3s if _is_verified(l3, l3_methods, l3_evidence))
         lines.append(
             f"| {cat_code} | {len(l1s)} | {len(l2s)} | {len(l3s)} | "
             f"{l2_tested} | {l3_tested} | {l2_verified} | {l3_verified} |"
@@ -471,7 +571,7 @@ def build_matrix() -> str:
     # their own right and are folded into the totals below.
     l1_leaves = [l1 for l1 in l1_ids if not l1_to_l2.get(l1)]
     l1_leaf_tested = sum(1 for l1 in l1_leaves if test_markers.get(l1))
-    l1_leaf_verified = sum(1 for l1 in l1_leaves if _is_verified(l1, l1_methods))
+    l1_leaf_verified = sum(1 for l1 in l1_leaves if _is_verified(l1, l1_methods, l1_evidence))
 
     countable = total_l2 + total_l3 + len(l1_leaves)
     if countable > 0:
@@ -543,28 +643,38 @@ def compute_status(
     has_direct_artifacts: bool,
     children_statuses: list[str],
     verification_methods: set[str] | None = None,
+    evidence: list[str] | None = None,
 ) -> str:
     """Roll up status for one requirement node.
 
     Verification-method awareness: a leaf with no test marker that
     declares only Inspection / Analysis / Demonstration verification
-    is treated as ``Implemented (I)`` / ``(A)`` / ``(D)`` (or a
-    combination), reflecting that those methods are satisfied by
-    review of the spec doc itself rather than a test artifact. A leaf
-    that lists Test among its methods still requires a test marker —
-    absent the marker, it remains ``Draft`` to surface the gap.
+    can reach ``Implemented (I)`` / ``(A)`` / ``(D)`` (or a
+    combination) — but **only** if it also declares ``**Evidence**``
+    naming what carries the check. A declared method describes how a
+    requirement *would* be verified; on its own it is a plan, not a
+    result, and until v2.11.2 three requirements were reported
+    ``Implemented (I)`` with a literal ``_(TBD)_`` in their artifact
+    column. Method without evidence is now ``Draft``, exactly as a
+    Test-verified leaf with no test marker is ``Draft``.
 
     Parent rollup treats any ``Implemented...`` child as a positive
     credit when deciding ``Implemented`` vs ``Partially Implemented``
     vs ``Draft``.
     """
+
+    def _non_test_status() -> str | None:
+        """``Implemented (…)`` for an evidenced I/A/D node, else None."""
+        if not verification_methods or "T" in verification_methods:
+            return None
+        if not evidence:
+            return None
+        return f"Implemented ({'+'.join(sorted(verification_methods))})"
+
     if not children_statuses:
         if has_direct_artifacts:
             return "Implemented"
-        if verification_methods is None or "T" in verification_methods:
-            return "Draft"
-        non_test = sorted(verification_methods)
-        return f"Implemented ({'+'.join(non_test)})" if non_test else "Draft"
+        return _non_test_status() or "Draft"
 
     n = len(children_statuses)
     impl_count = sum(1 for s in children_statuses if s.startswith("Implemented"))
@@ -573,10 +683,7 @@ def compute_status(
     if impl_count == n:
         return "Implemented"
     if draft_count == n and not has_direct_artifacts:
-        if verification_methods and "T" not in verification_methods:
-            non_test = sorted(verification_methods)
-            return f"Implemented ({'+'.join(non_test)})"
-        return "Draft"
+        return _non_test_status() or "Draft"
     return "Partially Implemented"
 
 
@@ -586,14 +693,19 @@ def _l2_status(
     test_markers: dict[str, list[str]],
     l2_methods: dict[str, set[str]],
     l3_methods: dict[str, set[str]],
+    l2_evidence: dict[str, list[str]] | None = None,
+    l3_evidence: dict[str, list[str]] | None = None,
 ) -> str:
     """Compute one L2's status by rolling up its L3 children + direct markers."""
+    l2_evidence = l2_evidence or {}
+    l3_evidence = l3_evidence or {}
     l3_children = l2_to_l3.get(l2_id, [])
     child_statuses = [
         compute_status(
             has_direct_artifacts=bool(test_markers.get(l3_id)),
             children_statuses=[],
             verification_methods=l3_methods.get(l3_id),
+            evidence=l3_evidence.get(l3_id),
         )
         for l3_id in l3_children
     ]
@@ -601,6 +713,7 @@ def _l2_status(
         has_direct_artifacts=bool(test_markers.get(l2_id)),
         children_statuses=child_statuses,
         verification_methods=l2_methods.get(l2_id),
+        evidence=l2_evidence.get(l2_id),
     )
 
 

@@ -229,11 +229,21 @@ Statement text on the next line.
 Single letters from DO-178: **T** = Test, **I** = Inspection, **A** = Analysis, **D** = Demonstration. Multiple methods comma-separated.
 
 - **Test (T)** — there's an automated test asserting the behavior. The trace matrix expects a `@pytest.mark.requirement` marker or a `/// Requirements:` doc-comment.
-- **Inspection (I)** — verified by reading the source. The trace matrix marks these `Implemented (I)` even without a test marker. Use for structural properties (a single function called from three places, an enum being exhaustively matched, build config declarations).
+- **Inspection (I)** — verified by reading the source. Use for structural properties (a single function called from three places, an enum being exhaustively matched, build config declarations).
 - **Analysis (A)** — verified by logical/mathematical argument. Use for bounded-loop proofs, memory complexity claims.
 - **Demonstration (D)** — verified by operator running the system. Use for things like "release binary runs on the target deployment host".
 
 Don't mark `Test (T)` if no test exists or will exist. The matrix will surface it as **Draft** and the gap will be obvious.
+
+**An I / A / D requirement needs an `**Evidence**` line too.** Add it under `**Verification Method**`, naming in backticks what carries the check — the script, CI job, or source symbol a reader can go look at:
+
+```markdown
+**Verification Method**: Inspection (I)
+**Evidence**: `scripts/repo-hygiene.sh` — its no-MIE-recordings-tracked check
+scans the whole tracked tree and fails the repo-hygiene CI job.
+```
+
+Those backticked names become the row's artifact column. Without an `**Evidence**` line the requirement stays **Draft**, exactly like a `Test (T)` requirement with no marker — before v2.11.2 a bare method letter was enough to report `Implemented (I)`, which is how three requirements came to claim they were met beside a literal `_(TBD)_` in their own artifact column. A declared method is a plan; evidence is a result. L3 statements are one-liners, so theirs rides on the same line: `· Evidence: \`path/to/thing\``.
 
 ### Tag the test
 
@@ -493,7 +503,7 @@ shows up as a gap rather than silently drifting:
 | `python-coverage` | `poetry run pytest --cov` — 92% combined line+branch floor (`fail_under` in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
-| `repo-hygiene` | `bash scripts/repo-hygiene.sh` — re-runs the pre-commit hook's file-level checks (final newline, CRLF, merge markers, 1 MB cap, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:`) over the whole tracked tree, so a `--no-verify` commit is still caught, plus the doc-drift checks that have no hook counterpart (this table lists every `ci.yml` job; the config-key set agrees across its three text sources; the declared Rust MSRV agrees across `Cargo.toml`, CI and the docs; `ROADMAP.md` doesn't restate a `TRACE-MATRIX.md` status; the Python exception hierarchy matches its ASCII-tree and UML drawings) | `ubuntu-latest` | Block merge |
+| `repo-hygiene` | `bash scripts/repo-hygiene.sh` — re-runs the pre-commit hook's file-level checks (final newline, CRLF, merge markers, 1 MB cap, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:`) over the whole tracked tree, so a `--no-verify` commit is still caught, plus the doc-drift checks that have no hook counterpart (this table lists every `ci.yml` job; the config-key set agrees across its three text sources; no TRACE-MATRIX row claims Implemented with no artifact; the declared Rust MSRV agrees across `Cargo.toml`, CI and the docs; `ROADMAP.md` doesn't restate a `TRACE-MATRIX.md` status; the Python exception hierarchy matches its ASCII-tree and UML drawings) | `ubuntu-latest` | Block merge |
 | `diagrams` | Re-renders every `docs/diagrams/*.puml` with the pinned PlantUML version and runs `git diff --exit-code` against the committed `*.svg`. **Currently a no-op** — PlantUML names its output after `@startuml <name>`, so the render lands in untracked files and the tracked `*.svg` are never compared; see the "Diagram rendering" section of `ROADMAP.md` | `ubuntu-latest` | Passes regardless |
 
 The Rust and Python deployment targets are Linux. Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.

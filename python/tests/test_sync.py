@@ -141,6 +141,56 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
+    @pytest.mark.requirement("L2-SYN-014")
+    def test_boolean_and_detailed_validation_never_disagree(self) -> None:
+        """L2-SYN-014: the two validators are one rule set, so they can
+        never disagree about validity.
+
+        True today because ``validate_record`` delegates to
+        ``validate_record_detailed(...) is None`` — but delegation is an
+        implementation choice a later refactor could quietly undo, and until
+        v2.11.2 the requirement was reported as met with no artifact behind
+        it. This pins the property across a valid record and every distinct
+        rejection reason. Mirrors the Rust
+        ``boolean_and_detailed_validation_never_disagree``.
+        """
+        valid = self._irig_record(
+            self._irig_upper(False, 192, 15),
+            self._irig_middle(54, 50, 0),
+            0,
+        )
+        first = valid[:10]
+        corpus = [
+            valid,
+            b"",
+            b"\x02",
+            b"\x03\x05" + bytes(8),
+            b"\x02\x02" + bytes(8),
+            b"\x02\x24" + bytes(8),
+            self._irig_record(
+                self._irig_upper(False, 192, 24),
+                self._irig_middle(54, 50, 0),
+                0,
+            ),
+            self._irig_record(
+                self._irig_upper(False, 192, 15),
+                self._irig_middle(60, 50, 0),
+                0,
+            ),
+            first + b"\x03\x05",
+            first + b"\x02\x02",
+        ]
+        for index, data in enumerate(corpus):
+            for lookahead in (1, 2, 4):
+                boolean = validate_record(data, 0, len(data), TimestampFormat.IRIG, lookahead)
+                detailed = validate_record_detailed(
+                    data, 0, len(data), TimestampFormat.IRIG, lookahead
+                )
+                assert boolean is (detailed is None), (
+                    f"case {index} (lookahead {lookahead}): "
+                    f"boolean said {boolean}, detailed said {detailed}"
+                )
+
     @pytest.mark.requirement("L2-SYN-004")
     def test_detailed_validation_reports_each_failure_reason(self) -> None:
         valid = self._irig_record(

@@ -33,6 +33,12 @@ full release workflow.
   caller's responsibility. `docs/CLI-REFERENCE.md` links to it from the
   `--config` row.
 
+- **A fourteenth `scripts/repo-hygiene.sh` check: no `TRACE-MATRIX.md` row may
+  claim Implemented with a `_(TBD)_` artifact.** The generator now makes that
+  state unreachable; this fails on the rendered output, so reverting the rule
+  in `build-trace-matrix.py` is caught mechanically rather than by a reader
+  noticing the contradiction. Proven to fail on a planted row.
+
 - **A thirteenth `scripts/repo-hygiene.sh` check: the Python exception
   hierarchy must match both of its drawings.** `exceptions.py` is the truth;
   `ERROR-CATALOG.md` §2 redraws it as an ASCII tree and
@@ -190,6 +196,35 @@ full release workflow.
   for that helper's contract, unreachable via the scan in both implementations
   (Python integers do not overflow at all), and that it must not be credited to
   the truncated-record tests.
+
+- **The trace matrix reported `Implemented (I)` from a declared verification
+  method alone.** `build-trace-matrix.py` credited any leaf whose spec said
+  Inspection / Analysis / Demonstration, with no artifact required, so
+  `L2-SYN-014`, `L2-CONF-001` and `L2-CONF-004` each read `Implemented (I)`
+  beside a literal `_(TBD)_` in their own artifact column. A declared method
+  describes how a requirement *would* be checked; on its own it is a plan, not
+  a result.
+
+  Requirements may now carry an `**Evidence**` line naming what actually
+  carries the check, and an I/A/D requirement without one is **Draft** —
+  exactly as a `Test (T)` requirement with no marker already was. The backticked
+  names fill the artifact column, so the row shows its own justification. The
+  coverage summary's "Verified" count applies the same rule, having previously
+  counted the same unbacked requirements. L3 statements are one-liners, so
+  theirs rides on the line as a trailing `· Evidence: ...`.
+
+  The three requirements were then resolved on their merits rather than by
+  annotation: **`L2-SYN-014`** (the boolean and detailed validators are one
+  rule set and cannot disagree) is now genuinely Test-verified, by a new
+  agreement test in each implementation running a valid record and every
+  distinct rejection reason through both forms at three look-ahead depths — the
+  property holds today only because one delegates to the other, which a
+  refactor could quietly undo. **`L2-CONF-001`** (hex fixtures, never committed
+  `.mie` binaries) cites the `repo-hygiene` check that already enforces it.
+  **`L2-CONF-004`** (oracles move only when both implementations agree) cites
+  `tests/conformance/run.py` and its CI job: the process rule cannot be
+  violated silently because no single implementation can ratify an oracle
+  change alone.
 
 - **All three `docs/diagrams/*.svg` regenerated**, so `class.svg` reflects the
   three exception classes added to `class.puml` above. Rendered with PlantUML
