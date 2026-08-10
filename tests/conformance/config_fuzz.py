@@ -105,6 +105,17 @@ _VALUES = [
     '"\\u002C"',
     '"\\t"',
     '"unterminated',
+    # Expansion / traversal syntax as plain data. A config value is TOML data:
+    # neither parser may expand, execute or resolve any of these, so whatever key
+    # a form lands on, both must reach the same accept/reject class. Pins the
+    # "TOML data, never interpolated" half of the CONFIG-REFERENCE.md trust
+    # boundary across two parsers that share no code.
+    '"$(whoami)"',
+    '"${HOME}"',
+    '"`id`"',
+    '"%PATH%"',
+    '"../../../etc/passwd"',
+    '"\\\\?\\C:\\Windows\\system32"',
     # exotic structures
     "{ a = 1 }",
     "1979-05-27",

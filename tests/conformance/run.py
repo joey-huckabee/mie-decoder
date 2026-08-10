@@ -16,6 +16,7 @@ from typing import Any
 
 from config_fuzz import check_config_parser_fuzz
 from config_parity import check_config_parser_parity
+from config_path_parity import check_config_path_parity
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -135,7 +136,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--python-bin",
         type=Path,
-        help="Use this Python interpreter instead of Poetry's environment.",
+        help="Use this Python interpreter for the Python CLI instead of the "
+        "one running this script (sys.executable). Needed when the runner is "
+        "not itself launched from an interpreter that has mie_decoder.",
     )
     parser.add_argument(
         "--update-expected",
@@ -507,8 +510,12 @@ def main() -> int:
             check_config_parser_fuzz(
                 args.rust_bin, args.python_bin, ROOT, parity_input, temp
             )
+            # Same idea one level up: the config *path*, not its contents.
+            check_config_path_parity(
+                args.rust_bin, args.python_bin, ROOT, parity_input, temp
+            )
         else:
-            print("SKIP config-parser-parity / -fuzz (single-implementation run)")
+            print("SKIP config-parser-parity / -fuzz / -path (single-implementation run)")
 
         for case in manifest["cases"]:
             name = case["name"]

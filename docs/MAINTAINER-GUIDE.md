@@ -45,6 +45,7 @@ mie-decoder/
 │   ├── build-trace-matrix.py    generates docs/TRACE-MATRIX.md
 │   ├── pytest-by-requirement.py runs pytest filtered by requirement marker
 │   ├── diagnose-vendor-delta.py identifies which DELTA rule a vendor CSV follows
+│   ├── repo-hygiene.sh          CI backstop for the pre-commit file checks
 │   ├── coverage.sh              local coverage run (Rust + Python)
 │   └── install-hooks.sh         points core.hooksPath at .githooks/
 ├── docs/
@@ -102,7 +103,9 @@ poetry -C python run python ../tests/conformance/run.py
 
 The runner reads `tests/conformance/manifest.json`, materializes each `.hex` fixture into a temp `.mie` file, invokes both CLIs against it, and diffs the produced CSVs against the checked-in oracle (or asserts the exit code for negative cases).
 
-When both CLIs are present, the runner additionally cross-checks the two **config parsers** (`tomllib` vs the hand-rolled Rust parser accept different TOML subsets): a curated corpus (`config_parity.py`) plus a differential **fuzzer** (`config_fuzz.py`) that generates config documents and asserts both implementations agree on accept/reject. Both run inside `run.py` — there is no separate command. The fuzzer is deterministic (fixed seed + `MIE_CONFIG_FUZZ_ITERS` iterations, default 100); for a deeper local sweep run `MIE_CONFIG_FUZZ_ITERS=5000 python tests/conformance/run.py` (a *distinct* knob from the reader/dump `MIE_FUZZ_ITERATIONS` in §11's fuzz workflow). A divergence prints the exact config to pin in `config_parity.py`. See `tests/conformance/README.md`.
+When both CLIs are present, the runner additionally cross-checks the two **config parsers** (`tomllib` vs the hand-rolled Rust parser accept different TOML subsets): a curated corpus (`config_parity.py`) plus a differential **fuzzer** (`config_fuzz.py`) that generates config documents and asserts both implementations agree on accept/reject. Both run inside `run.py` — there is no separate command. The fuzzer is deterministic (fixed seed + `MIE_CONFIG_FUZZ_ITERS` iterations, default 100); for a deeper local sweep run `MIE_CONFIG_FUZZ_ITERS=5000 poetry -C python run python ../tests/conformance/run.py` (a *distinct* knob from the reader/dump `MIE_FUZZ_ITERATIONS` in §11's fuzz workflow). A divergence prints the exact config to pin in `config_parity.py`. See `tests/conformance/README.md`.
+
+A third guard, `config_path_parity.py`, covers the layer above the parsers: the `--config` **path** rather than its contents. The other two never vary the path, so what counts as a usable config file — and which exit code and message a bad one produces — was pinned only by per-implementation unit tests that could drift apart unnoticed. It compares the **exact exit code** (not just accept/reject) and requires the promised message text from both CLIs, over the surface documented in `CONFIG-REFERENCE.md` §"Trust boundary": regular files only, missing/unusable is exit `5`, and any readable location is accepted (spaces, non-ASCII names, `..` segments). Platform-dependent cases (character devices, symlinks) skip themselves and report the skip, so a corpus that quietly shrinks on one OS is visible.
 
 ---
 
@@ -153,7 +156,27 @@ poetry -C python run mie-decoder decode path/to/recording.mie -o decoded.csv
 ```
 
 Commit each `docs/diagrams/*.puml` source with its matching rendered
-`docs/diagrams/*.svg`. Regenerate the SVG whenever the PlantUML source changes.
+`docs/diagrams/*.svg`. Regenerate the SVG whenever the PlantUML source changes —
+**nothing in CI will catch you if you don't** (the `diagrams` job is a known
+no-op; see §9 and `ROADMAP.md`).
+
+Two traps when regenerating:
+
+- **The output file is named after `@startuml <name>`, not the source.**
+  `plantuml -tsvg docs/diagrams/class.puml` writes
+  `MIE-Decoder Class Diagram.svg`. Rename it onto `class.svg` yourself.
+- **PlantUML exits 0 on a crashed render**, leaving a truncated SVG. Grep the
+  render output for `Exception`, and sanity-check the result (`class.svg`
+  should contain every type declared in `class.puml`; a whole
+  `component.svg` is ~60 KB, a crashed one ~14 KB).
+
+The committed SVGs are rendered with PlantUML **1.2026.7beta11**, from the
+project's rolling `snapshot` pre-release — on the stable releases tested,
+`component.puml` crashes in the smetana layout engine. Read the
+`<?plantuml VERSION?>` processing instruction inside any committed `*.svg` to
+confirm what produced it. Note also that PlantUML lays out using the JVM's font
+metrics, so re-rendering an *unchanged* source on a different machine will
+still shift the canvas; expect byte differences that are not content changes.
 
 ---
 
@@ -206,11 +229,21 @@ Statement text on the next line.
 Single letters from DO-178: **T** = Test, **I** = Inspection, **A** = Analysis, **D** = Demonstration. Multiple methods comma-separated.
 
 - **Test (T)** — there's an automated test asserting the behavior. The trace matrix expects a `@pytest.mark.requirement` marker or a `/// Requirements:` doc-comment.
-- **Inspection (I)** — verified by reading the source. The trace matrix marks these `Implemented (I)` even without a test marker. Use for structural properties (a single function called from three places, an enum being exhaustively matched, build config declarations).
+- **Inspection (I)** — verified by reading the source. Use for structural properties (a single function called from three places, an enum being exhaustively matched, build config declarations).
 - **Analysis (A)** — verified by logical/mathematical argument. Use for bounded-loop proofs, memory complexity claims.
 - **Demonstration (D)** — verified by operator running the system. Use for things like "release binary runs on the target deployment host".
 
 Don't mark `Test (T)` if no test exists or will exist. The matrix will surface it as **Draft** and the gap will be obvious.
+
+**An I / A / D requirement needs an `**Evidence**` line too.** Add it under `**Verification Method**`, naming in backticks what carries the check — the script, CI job, or source symbol a reader can go look at:
+
+```markdown
+**Verification Method**: Inspection (I)
+**Evidence**: `scripts/repo-hygiene.sh` — its no-MIE-recordings-tracked check
+scans the whole tracked tree and fails the repo-hygiene CI job.
+```
+
+Those backticked names become the row's artifact column. Without an `**Evidence**` line the requirement stays **Draft**, exactly like a `Test (T)` requirement with no marker — before v2.12.0 a bare method letter was enough to report `Implemented (I)`, which is how three requirements came to claim they were met beside a literal `_(TBD)_` in their own artifact column. A declared method is a plan; evidence is a result. L3 statements are one-liners, so theirs rides on the same line: `· Evidence: \`path/to/thing\``.
 
 ### Tag the test
 
@@ -273,7 +306,7 @@ The project uses four test tiers, narrowest scope at the bottom:
 | **Unit**              | one function / one module, in-process    | `rust/src/<module>.rs` `#[cfg(test)] mod tests` (Rust); `python/tests/test_*.py` (Python) | `cargo test --lib` / `pytest`                    | Linux + Windows |
 | **Integration**       | multiple modules via the library API, in-process | `rust/tests/integration.rs` (Rust); `python/tests/test_integration_*.py` (Python) | `cargo test --test integration` / `pytest`       | Linux + Windows |
 | **CLI acceptance**    | the **built binary** as a subprocess — exit codes, stdout, stderr, filesystem effects | `rust/tests/cli.rs` (Rust)               | `cargo test --test cli`                          | Linux + Windows |
-| **Conformance**       | byte-exact cross-impl equivalence (Rust ↔ Python CLI) | `tests/conformance/`                | `python tests/conformance/run.py`                | Linux + Windows |
+| **Conformance**       | byte-exact cross-impl equivalence (Rust ↔ Python CLI) | `tests/conformance/`                | `poetry -C python run python ../tests/conformance/run.py` | Linux + Windows |
 
 The two upper tiers both spawn the actual binary, but they serve different purposes:
 
@@ -393,7 +426,7 @@ When a new error class is needed (per `docs/ERROR-CATALOG.md` taxonomy), land it
 2. Add a matching value to `enum MieErrorKind`.
 3. Extend `MieError::kind()` to map the new variant.
 4. Add a match arm to the `impl fmt::Display for MieError` block with the user-facing message.
-5. If the variant is record-class, add it to the `is_record_error()` matches list. If file-class, add to `is_file_error()`.
+5. Classify it: add it to `is_record_error()` (tied to one record's byte offset), to `is_file_error()` (an I/O failure on the input itself), or to **neither** — whole-file rejections and destination guards deliberately answer `false` to both. Then list it in the matching arm of `every_error_kind_is_deliberately_classified` in `rust/src/error.rs`, which fails if a variant appears in no list, and mirror the decision in the Python test. Carrying an `offset` does not by itself make a variant record-class: `HomogeneousPayload` and `TimestampFormatMismatch` cite an offset but reject the whole file.
 
 ### Python (`python/src/mie_decoder/exceptions.py`)
 
@@ -450,7 +483,9 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 
 ## 9. CI architecture
 
-`.github/workflows/ci.yml` has seven jobs:
+`.github/workflows/ci.yml` defines the jobs below. The table is the list —
+it is cross-checked against the workflow, so a job added without a row here
+shows up as a gap rather than silently drifting:
 
 | Job | What it gates | Platforms | Failure cost |
 |-----|---------------|-----------|--------------|
@@ -468,15 +503,16 @@ If the flag has a TOML counterpart (which it usually should for site-wide config
 | `python-coverage` | `poetry run pytest --cov` — 92% combined line+branch floor (`fail_under` in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
-| `diagrams` | Re-render every `docs/diagrams/*.puml` with the pinned PlantUML version and `git diff --exit-code` against the committed `*.svg` — fails if a `.puml` source was changed without regenerating the matching `.svg` | `ubuntu-latest` | Block merge |
+| `repo-hygiene` | `bash scripts/repo-hygiene.sh` — re-runs the pre-commit hook's file-level checks (final newline, CRLF, merge markers, 1 MB cap, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:`) over the whole tracked tree, so a `--no-verify` commit is still caught, plus the doc-drift checks that have no hook counterpart (this table lists every `ci.yml` job; the config-key set agrees across its three text sources; no TRACE-MATRIX row claims Implemented with no artifact; the declared Rust MSRV agrees across `Cargo.toml`, CI and the docs; `ROADMAP.md` doesn't restate a `TRACE-MATRIX.md` status; the Python exception hierarchy matches its ASCII-tree and UML drawings) | `ubuntu-latest` | Block merge |
+| `diagrams` | Re-renders every `docs/diagrams/*.puml` with the pinned PlantUML version and runs `git diff --exit-code` against the committed `*.svg`. **Currently a no-op** — PlantUML names its output after `@startuml <name>`, so the render lands in untracked files and the tracked `*.svg` are never compared; see the "Diagram rendering" section of `ROADMAP.md` | `ubuntu-latest` | Passes regardless |
 
 The Rust and Python deployment targets are Linux. Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.
 
-The `diagrams` job pins PlantUML to the version that produced the committed SVGs (read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg` to find it). Bumping that pin generally reflows every diagram and requires a matching local re-render + commit of all `*.svg` files in the same PR.
+The `diagrams` job pins PlantUML to `1.2026.5`, which is **not** the version that produced the committed SVGs (`1.2026.7beta11`, from the unpinnable rolling `snapshot` pre-release — read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg`). That mismatch went unnoticed because the job never compares the tracked files at all. Three independent defects and the reproducibility constraint on any replacement are written up under "Diagram rendering" in `ROADMAP.md`.
 
 A separate scheduled workflow, `.github/workflows/fuzz.yml`, runs a deeper L1-ROB-001 fuzz burn-in daily (and on manual `workflow_dispatch`). The normal `rust` / `python` jobs run the fixed 256-iteration default; the burn-in sets `MIE_FUZZ_ITERATIONS` (default 25 000) so the deterministic harness sweeps a much larger input space. Because the PRNG seed is fixed, the burn-in is a strict superset of the default run and any failure prints a reproducible seed. To reproduce locally: `MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic` or `MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness`.
 
-Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, rust/Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs — the `diagrams` CI job is your safety net there.
+Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, rust/Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs, and neither does CI in practice — the `diagrams` job is a known no-op (§9), so a stale SVG is currently caught by nobody. Re-render by hand, following §3.
 
 ---
 

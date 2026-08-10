@@ -90,7 +90,7 @@ repeat
 
       if (--allow-partial?) then (yes)
         |Output Safety|
-        :commit_as_partial()\nrename tmp to <stem>.partial.csv;
+        :commit_partial()\nrename tmp to <output>.partial;
         :Log summary + EXIT-005;
         :Exit 0;
         stop

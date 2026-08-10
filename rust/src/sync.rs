@@ -17,10 +17,17 @@ pub const MAX_SCAN_BYTES: usize = 65_536;
 /// Word count field is 6 bits → max record = 63 × 2 = 126 bytes.
 pub const MAX_RECORD_BYTES: usize = 126;
 
-/// L2-SYN-026 default look-ahead depth. Two-record look-ahead preserves
-/// the historical default established by L2-SYN-005. Configurable via
+/// L2-SYN-026 default look-ahead depth. Configurable via
 /// `decode.lookahead_records` (TOML) or `--lookahead-records` (CLI),
 /// range `[1, 32]`.
+///
+/// Deliberately left at 2. Raising it does reject non-MIE input (ordinary prose
+/// yields a 2-record chain by chance; depth 8 rejects all but one file in this
+/// repo) — but the depth applies to *entry* decisions only. Continuous
+/// validation of an already-locked chain does no look-ahead at all, because a
+/// well-formed record must never be discarded on account of its successor
+/// (L2-SYN-005). Operators who want the stricter wrong-input screening can set
+/// `--lookahead-records` higher per invocation.
 pub const DEFAULT_LOOKAHEAD_RECORDS: usize = 2;
 
 /// Precise reason a candidate record failed sync validation.
@@ -619,6 +626,55 @@ mod tests {
         ((u16::from(minute) & 0x3F) << 10)
             | ((u16::from(second) & 0x3F) << 4)
             | (u16::from(us_hi4) & 0xF)
+    }
+
+    /// L2-SYN-014 requires the boolean and detailed validators to be the
+    /// same rules, so the two can never disagree about validity. That is
+    /// true today because `validate_record` delegates to
+    /// `validate_record_detailed(..).is_ok()` — but delegation is an
+    /// implementation choice a later refactor could quietly undo, and until
+    /// v2.12.0 the requirement was reported as met with no artifact behind
+    /// it at all. This pins the property itself, across a corpus spanning a
+    /// valid record and every distinct rejection reason, so re-implementing
+    /// either form independently fails here.
+    /// Requirements: L2-SYN-014
+    #[test]
+    fn boolean_and_detailed_validation_never_disagree() {
+        let valid = make_irig_record_with_ts(irig_upper(false, 192, 15), irig_middle(54, 50, 0), 0);
+        let first = &valid[..10];
+
+        let corpus: Vec<Vec<u8>> = vec![
+            valid.clone(),
+            vec![],
+            vec![0x02],
+            [0x0503u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+            [0x0202u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+            [0x2402u16.to_le_bytes().as_slice(), &[0; 8]].concat(),
+            make_irig_record_with_ts(irig_upper(false, 192, 24), irig_middle(54, 50, 0), 0),
+            make_irig_record_with_ts(irig_upper(false, 192, 15), irig_middle(60, 50, 0), 0),
+            [first, 0x0503u16.to_le_bytes().as_slice()].concat(),
+            [first, 0x0202u16.to_le_bytes().as_slice()].concat(),
+        ];
+
+        for (i, data) in corpus.iter().enumerate() {
+            for lookahead in [1usize, DEFAULT_LOOKAHEAD_RECORDS, 4] {
+                let boolean =
+                    validate_record(data, 0, data.len(), Some(TimestampFormat::Irig), lookahead);
+                let detailed = validate_record_detailed(
+                    data,
+                    0,
+                    data.len(),
+                    Some(TimestampFormat::Irig),
+                    lookahead,
+                );
+                assert_eq!(
+                    boolean,
+                    detailed.is_ok(),
+                    "case {i} (lookahead {lookahead}): boolean said {boolean}, \
+                     detailed said {detailed:?}"
+                );
+            }
+        }
     }
 
     /// Requirements: L2-SYN-004, L2-SYN-005

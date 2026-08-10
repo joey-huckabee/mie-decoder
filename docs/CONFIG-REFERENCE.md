@@ -38,6 +38,7 @@ delimiter = "."                  # field separator (non-empty)
 field     = 4                    # 0-based field index (negative = from end)
 
 [merge]
+delta_scope         = "per-file" # per-file | global (multi-file DELTA scope)
 collapse_duplicates = false      # collapse cross-recorder duplicate rows
 collapse_window_us  = 0          # timestamp tolerance for collapsing (µs)
 
@@ -92,6 +93,28 @@ mie-decoder --config my-config.toml decode rec.mie --exclude-types BC_TO_RT
 ```
 
 This matches the operator expectation that CLI filters add to a base set defined in site config, rather than silently replacing them.
+
+---
+
+## Trust boundary
+
+`--config` names a file the decoder **reads**, with the permissions of whoever ran the command. What that means in practice:
+
+| Property | Behavior |
+|---|---|
+| **Privileges** | The decoder runs as the invoking user and never elevates. It can read exactly what that user could already read with `cat`. |
+| **File type** | The path must resolve to a **regular file**. A directory, FIFO, or character device is rejected before any read — so `--config <dir>` reports a clear error instead of an `IsADirectoryError` traceback, and `--config /dev/zero` cannot hang the process on an endless read. |
+| **Missing file** | Reported as a configuration error, exit `5`. Never silently ignored, and never falls back to defaults. |
+| **Interpretation** | The contents are parsed as TOML **data** and nothing else. There is no `include` directive, no shell interpolation, no code execution, and no network access. An unparseable file is a configuration error (exit `5`), not a partial load. |
+| **Location** | **Deliberately unrestricted.** Any readable path is accepted — `/etc/mie-decoder/site.toml`, a mounted share, a path relative to the working directory. See [Site-wide config + per-invocation tweak](#site-wide-config--per-invocation-tweak). |
+
+Both implementations enforce this identically, with the same message text (`Config path is not a regular file: …`), pinned across the two CLIs by `tests/conformance/config_path_parity.py`.
+
+**Why location is not restricted.** Static analysis flags the `--config` path as a possible path-injection vector (SonarCloud `pythonsecurity:S8707`, "Agentic workflows should not be vulnerable to path injection"). That rule assumes a program confined to some root that an attacker-supplied path could escape. MIE-Decoder is an operator-run CLI with no such confinement: the config path *is* the interface, and a caller who can pass `--config` can already read the same file directly. Constraining configs to an allowlist of roots would therefore add no protection while breaking the site-config deployments the tool is built for.
+
+That finding is suppressed for `python/src/mie_decoder/config.py` — scoped to that one rule in that one file, so any other finding there, and that rule anywhere else, still fails the build. The rationale is recorded next to the exclusion in `.github/workflows/sonarcloud.yml`; keep the two in step if either changes.
+
+**What this does not cover.** If you run the decoder somewhere the invoking user is *not* the trust boundary — a setuid wrapper, a shared service account, a job runner that accepts a config path from an untrusted submitter — then `--config` is as privileged as that context, and restricting the path is the caller's responsibility, not the decoder's.
 
 ---
 
@@ -162,7 +185,7 @@ Controls how errored records (Type Word bit 14 set) and SPURIOUS_DATA records ap
 
 **Stdout output forces `inline` mode** in both implementations (you can't split stdout into two streams), so `--separate-errors` is ignored there with a WARN.
 
-> **Changed in this release:** the default flipped from `"separate"` to `"inline"`, and the CLI override changed from `--inline-errors` to `--separate-errors`. The old flag was removed, so passing it is a usage error (exit 4). A config file that sets `error_mode` explicitly is unaffected.
+> **Changed in v2.8.0:** the default flipped from `"separate"` to `"inline"`, and the CLI override changed from `--inline-errors` to `--separate-errors`. The old flag was removed, so passing it is a usage error (exit 4). A config file that sets `error_mode` explicitly is unaffected.
 
 **Validation:** rejected at load time if not one of the two values.
 

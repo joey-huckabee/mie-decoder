@@ -21,7 +21,7 @@ not a transliteration: its CLI was redesigned, its writer is streaming
 buffer. Maintain each implementation according to its own architecture while
 keeping shared format and CSV behavior aligned.
 
-Edition 2024, MSRV 1.88 (`memmap2` requires ≥1.88; edition 2024 itself only floors at 1.85). The crate has exactly one external dependency: `memmap2`. Argument parsing, CSV writing, TOML config, logging, and error types are all hand-rolled — preserve this property when adding features.
+Edition 2024, MSRV 1.88 — the floor is set by the crate's own use of **let-chains** (stabilized 1.88), not by its dependency: edition 2024 floors at 1.85 and `memmap2` declares 1.65. (`is_multiple_of` independently needs 1.87.) The crate has exactly one external dependency: `memmap2`. Argument parsing, CSV writing, TOML config, logging, and error types are all hand-rolled — preserve this property when adding features.
 
 ## Common Commands
 
@@ -97,12 +97,14 @@ Error records and SPURIOUS_DATA continuations are **valid records** that pass sy
 
 ### Output modes
 
-- Default (`error_mode = separate`): clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — file isn't created if no error rows). Calls `write_csv_split`.
-- `--separate-errors`: clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — the file isn't created if there are no error rows). Calls `write_csv_split`. Ignored on stdout (you can't split stdout), with a WARN.
+- **Default (`error_mode = inline`)**: every record goes to the one CSV, with the `ERROR` / `ERROR_CODE` columns populated on errored and spurious rows. Calls `write_csv`. This is the mode a vendor-CSV diff uses, since the vendor tool also emits a single file.
+- `--separate-errors` (`error_mode = separate`): clean messages → main CSV, errored + spurious → `<stem>_errors<suffix>` (lazy — the file isn't created if there are no error rows). Calls `write_csv_split`. Ignored on stdout (you can't split stdout), with a WARN.
+
+The polarity was reversed in v2.8.0 — `separate` was the old default and the former `--inline-errors` flag was removed, so passing it is a usage error.
 
 ### Error type
 
-All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not a hierarchy). `kind()` returns a `MieErrorKind` discriminant. The `is_file_error()` / `is_record_error()` predicates approximate the two intermediate classes from the Python implementation.
+All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not a hierarchy). `kind()` returns a `MieErrorKind` discriminant. `is_record_error()` matches Python's `MieRecordError` exactly; `is_file_error()` is deliberately narrower than `MieFileError` (input I/O only — the whole-file rejections and destination guards answer `false` to both predicates). Both implementations pin the full classification by test, so a new variant can't be added without classifying it on both sides.
 
 ## Reference docs
 

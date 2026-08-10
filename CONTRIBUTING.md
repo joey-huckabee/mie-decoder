@@ -11,8 +11,14 @@ workflow, and commit conventions.
 ## Prerequisites
 
 - Rust toolchain ≥ 1.88 (`rustup toolchain install stable`). The crate
-  uses edition 2024; the 1.88 floor comes from `memmap2`.
-- Python 3.10 or newer and Poetry for work under `python/`.
+  uses edition 2024, which floors at 1.85; the 1.88 requirement comes from
+  the crate's own use of let-chains (see `L3-RS-001`), not from `memmap2`.
+- Python 3.10 or newer and Poetry for work under `python/`. Commands in
+  this repo's docs are written `python …`; read that as *your Python 3
+  interpreter*. Many Linux distributions and WSL images provide only
+  `python3`, and nothing here depends on the `python` alias existing —
+  `.githooks/pre-commit` and `scripts/repo-hygiene.sh` probe for
+  `python3`, `python`, then `py` and use whichever actually runs Python 3.
 - A Bash shell. On Windows, Git for Windows ships **Git Bash**, which
   Git invokes for hooks transparently — no extra setup.
 
@@ -50,44 +56,58 @@ staged.
 
 ### File-level (always)
 
-1. **Whitespace + missing-final-newline** — `git diff --cached --check`.
-   Reports `file:line` for trailing whitespace, missing trailing
-   newline, and (as a side-effect) leftover merge conflict markers.
-2. **CRLF line endings** — staged text files must be LF-only.
+1. **Whitespace** — `git diff --cached --check`. Reports `file:line` for
+   trailing whitespace, space-before-tab, a *new blank line* at EOF, and
+   (as a side-effect) leftover merge conflict markers. It does **not**
+   report a *missing* final newline — `--check` implements
+   `core.whitespace`, whose `blank-at-eof` is the opposite problem. That
+   is check 2.
+2. **Missing final newline** — every staged text file must end in `\n`.
+   Added in v2.12.0, when check 1 was found to have never enforced the
+   guarantee its description claimed. `*.svg` is exempt: the committed
+   diagrams are PlantUML output, which ends at `>` with no trailing
+   newline, and hand-appending one would be undone by the next render.
+3. **CRLF line endings** — staged text files must be LF-only.
    Belt-and-suspenders alongside `.gitattributes` if you add one.
-3. **Merge conflict markers** — explicit scan for `<<<<<<<`, `=======`,
+4. **Merge conflict markers** — explicit scan for `<<<<<<<`, `=======`,
    `>>>>>>>` in staged blobs. (`git diff --cached --check` also
    catches these; the dedicated check is in case `--check` is ever
    bypassed for one path.)
-4. **Large file guard** — staged files over 1 MB are rejected.
+5. **Large file guard** — staged files over 1 MB are rejected.
    Catches accidental binary commits (`git add -f` on a `*.mie`
    recording, etc.). Use git-lfs or extend `.gitignore` if you
    genuinely need a large file.
-5. **`*.mie` recordings** — defense-in-depth on top of `.gitignore`.
+6. **`*.mie` recordings** — defense-in-depth on top of `.gitignore`.
    Sample binaries shouldn't be committed.
-6. **`rust/Cargo.lock` parity** — if `rust/Cargo.toml` is staged, `rust/Cargo.lock`
+7. **`rust/Cargo.lock` parity** — if `rust/Cargo.toml` is staged, `rust/Cargo.lock`
    must also be staged (or already match). Catches the common
    "bumped a dep version, forgot to commit the lock update" mistake.
    Uses `cargo metadata --locked --offline` to confirm.
-7. **`shellcheck` on hooks/scripts** — runs only if `shellcheck` is
+8. **`shellcheck` on hooks/scripts** — runs only if `shellcheck` is
    installed. Lints the hook itself and `scripts/*.sh`. Skipped
    silently if the tool isn't on `$PATH`.
+9. **Requirements trace matrix** — `python scripts/build-trace-matrix.py
+   --check`. Fails if `docs/TRACE-MATRIX.md` is stale relative to the
+   L1/L2/L3 docs and the test markers. Regenerate with the same command
+   minus `--check`.
 
 ### Rust-only (skipped if no `.rs`/`.toml` staged)
 
-8. **`cargo fmt --check`** — formatting is consistent. Fix locally
+10. **`cargo fmt --check`** — formatting is consistent. Fix locally
    with `cargo fmt`, then re-stage.
-9. **`cargo clippy --all-targets -- -D warnings`** — all clippy lints
+11. **`cargo clippy --all-targets -- -D warnings`** — all clippy lints
    pass with warnings treated as errors. Either fix the lint or
    justify the suppression with a scoped `#[allow(...)]` and a
    comment explaining why.
-10. **`cargo test --all-targets`** — all unit + integration tests
-    pass.
-11. **`dbg!()` scan** — staged `.rs` files do not contain forgotten
+12. **`cargo test --all-targets` + `cargo test --doc`** — all unit,
+    integration **and documentation** tests pass. `--all-targets`
+    excludes doctests, so the hook runs them as a second invocation;
+    CI mirrors this at `ci.yml`'s `cargo test --locked --doc` step.
+13. **`dbg!()` scan** — staged `.rs` files do not contain forgotten
     `dbg!` macros. (`todo!` and `unimplemented!` are sometimes
     intentional placeholders, so they're not blocked — but you'll
     see them in code review.)
-12. **`unsafe` blocks require `// SAFETY:`** — every `unsafe { ... }`
+14. **`unsafe` blocks require `// SAFETY:`** — every `unsafe { ... }`
     or `unsafe fn` in a staged `.rs` file must have a comment
     containing `SAFETY:` within the three preceding lines. Catches
     new unsafe code added without justifying its invariants.
@@ -115,7 +135,33 @@ return a defensive error or carry a narrow documented lint allowance.
 ### Bypassing the hook
 
 `git commit --no-verify` skips the hook. Reserve this for genuine
-emergencies; CI runs the same checks and will fail the merge anyway.
+emergencies.
+
+CI does back the hook up, but the two are not identical and it is worth
+knowing which is which:
+
+| Hook check | Backed by |
+|---|---|
+| Whitespace (`--check`) | `repo-hygiene` (final newline), plus `cargo fmt` for Rust |
+| Missing final newline, CRLF, merge markers, large file, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:` | **`repo-hygiene`** job |
+| Trace matrix | `trace-matrix` job |
+| `cargo fmt` / `clippy` / tests / doctests | `rust` job |
+| `shellcheck` | *nothing* — hook-only, and skipped there too unless installed |
+
+The `repo-hygiene` job runs `scripts/repo-hygiene.sh`, which re-applies
+the file-level checks to the whole tracked tree rather than to a diff, so
+it catches anything already committed however it got there. Run it
+locally the same way:
+
+```bash
+bash scripts/repo-hygiene.sh
+```
+
+That job was added in v2.12.0. Before it, this section claimed "CI runs
+the same checks and will fail the merge anyway", which was untrue for
+nine of the hook's fourteen checks — a `--no-verify` commit could land a
+CRLF file, a stray `dbg!()`, a merge marker, an oversized blob or a
+committed `*.mie` recording with nothing downstream to catch it.
 
 ### Why these checks (and not others)
 
@@ -167,8 +213,19 @@ poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P n
 Shared Rust/Python conformance:
 
 ```bash
-python tests/conformance/run.py
+poetry -C python run python ../tests/conformance/run.py
 ```
+
+Run it **through Poetry**. The runner drives the Python CLI with
+`sys.executable` — the interpreter it is itself running under — so a bare
+`python tests/conformance/run.py` uses your system Python, which does not
+have `mie_decoder` after a `poetry -C python sync` (Poetry installs into its
+own virtualenv). It fails fast and tells you so, but the Poetry form is the
+one that works. CI runs the bare form only because it does
+`pip install -e ./python` into the runner's system interpreter first.
+
+`--rust-only` is the exception: it never touches the Python side, so plain
+`python tests/conformance/run.py --rust-only` is fine.
 
 The conformance runner materializes text-based hexadecimal fixtures, invokes
 both CLIs, and compares their CSV output byte-for-byte against checked-in
@@ -183,7 +240,7 @@ runs inside `run.py`. For a deeper local sweep, raise the iteration count (this
 is a *different* knob from the reader/dump `MIE_FUZZ_ITERATIONS` below):
 
 ```bash
-MIE_CONFIG_FUZZ_ITERS=5000 python tests/conformance/run.py
+MIE_CONFIG_FUZZ_ITERS=5000 poetry -C python run python ../tests/conformance/run.py
 # optionally pin a starting point: MIE_CONFIG_FUZZ_SEED=<n>
 ```
 
@@ -325,7 +382,7 @@ GitHub Actions runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on
 every push and pull request:
 
 - **Rust:** `cargo fmt --check`, Clippy with warnings denied, all-target tests,
-  and the `cargo cov-ci` 84% line / 83% region coverage gate.
+  and the `cargo cov-ci` 87% line / 86% region coverage gate.
 - **Python 3.10 through 3.14:** locked dependency synchronization and the full
   pytest suite on every supported minor version.
 - **Python 3.12:** strict package/lockfile validation and wheel + source
@@ -358,7 +415,7 @@ Three cargo aliases are pre-wired in `rust/.cargo/config.toml`:
 cd rust
 cargo cov         # Local: build instrumented, run tests, open HTML report
 cargo cov-lcov    # Generate target-relative lcov.info (for IDE / CI tooling)
-cargo cov-ci      # Enforced gate: --fail-under-lines 84 --fail-under-regions 83
+cargo cov-ci      # Enforced gate: --fail-under-lines 87 --fail-under-regions 86
 ```
 
 Or via the script wrapper, equivalent to `cargo cov`:
@@ -371,8 +428,8 @@ bash scripts/coverage.sh
 
 `cargo cov-ci` enforces:
 
-- **Lines: 84%** floor
-- **Regions: 83%** floor
+- **Lines: 87%** floor
+- **Regions: 86%** floor
 
 These have been ratcheted up from the original 70/70 floor to roughly
 two percentage points below the current baseline, so routine refactors

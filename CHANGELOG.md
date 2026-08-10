@@ -15,6 +15,539 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.12.0] — 2026-08-09
+
+### Notes
+
+- **This release ships with the SonarCloud quality gate red, knowingly.**
+  `new_security_rating` is 5 against a required 1; every other condition passes
+  (reliability 1, maintainability 1, coverage 94.7%, duplication 0.0%, hotspots
+  reviewed 100%) and all 51 non-Sonar CI checks pass. Two findings,
+  `pythonsecurity:S2083` (blocker) and `pythonsecurity:S8707` (major), both on
+  the `open(self._path, "rb")` in `python/src/mie_decoder/reader.py` added by the
+  `MieFileIoError` conversion above.
+
+  They were not excluded at the cut because the existing exclusion is scoped to
+  one rule in one file *by design* — "this rule anywhere else, still fails the
+  build" — and `S2083` has never been suppressed in this repository. Worth
+  stating plainly: **v2.11.1 was cut specifically to stop releases merging
+  against a failing gate**, and that fix is what surfaced this. Merging anyway
+  restores the state v2.11.1 removed, deliberately and with the cost recorded.
+  The analysis and the two ways out are in the "SonarCloud security findings on
+  the input path" section of `docs/ROADMAP.md`.
+
+- The `diagrams` CI gap is **still open** and is now fully diagnosed — see the
+  entry under *Fixed* and the "Diagram rendering" section of `ROADMAP.md`.
+
+### Added
+
+- **A "Trust boundary" section in `docs/CONFIG-REFERENCE.md`** stating what
+  `--config` does and does not promise: the file is read with the invoking user's
+  permissions and never with elevated ones, must resolve to a regular file, is
+  parsed as TOML data with no include directive / interpolation / code execution
+  / network access, and may live at **any readable path** — site configs under
+  `/etc`, a mounted share, or a relative path all remain valid.
+
+  It also records *why* the location is unrestricted, and where the corresponding
+  SonarCloud `pythonsecurity:S8707` exclusion lives, so a decision that was
+  previously visible only in a CI workflow file is now discoverable by the people
+  it affects. A closing note names the contexts the guarantee does **not** cover
+  — a setuid wrapper, a shared service account, or a job runner accepting a
+  config path from an untrusted submitter — where restricting the path is the
+  caller's responsibility. `docs/CLI-REFERENCE.md` links to it from the
+  `--config` row.
+
+- **A fourteenth `scripts/repo-hygiene.sh` check: no `TRACE-MATRIX.md` row may
+  claim Implemented with a `_(TBD)_` artifact.** The generator now makes that
+  state unreachable; this fails on the rendered output, so reverting the rule
+  in `build-trace-matrix.py` is caught mechanically rather than by a reader
+  noticing the contradiction. Proven to fail on a planted row.
+
+- **A thirteenth `scripts/repo-hygiene.sh` check: the Python exception
+  hierarchy must match both of its drawings.** `exceptions.py` is the truth;
+  `ERROR-CATALOG.md` §2 redraws it as an ASCII tree and
+  `docs/diagrams/class.puml` redraws it as UML, and both drawings assert they
+  are complete. Both had drifted (see *Fixed*). The check parses all three and
+  compares each class's **parent**, not just the set of names, so a leaf
+  reparented in code — the `MieNonMonotonicInputError` case — fails as loudly
+  as one that is missing. Proven against three planted defects: a dropped tree
+  entry, a dropped UML edge, and a misparented class.
+
+- **A twelfth `scripts/repo-hygiene.sh` check: `docs/ROADMAP.md` may not
+  restate a `docs/TRACE-MATRIX.md` status.** The roadmap is hand-written and the
+  matrix is generated, so any status copied across is guaranteed to rot — and
+  did (see the `L2-DEC-012` entry under *Fixed*). The check rejects the
+  generator's own status tokens (`Draft`, `Implemented`, `Verified`) appearing
+  in the roadmap, case-sensitively, so ordinary prose like "not yet
+  implemented" still reads naturally. Link to the matrix; don't copy it.
+
+- **An eleventh `scripts/repo-hygiene.sh` check: the declared Rust MSRV must
+  agree everywhere it is written down.** `rust-version` in `rust/Cargo.toml` is
+  the only copy a toolchain enforces, but the number is also spelled out in
+  `CLAUDE.md`, `CONTRIBUTING.md`, `rust/README.md`, `L3-RS-001`,
+  `MAINTAINER-GUIDE.md` §9, `ci.yml` (four times) and `sonarcloud.yml`. The
+  check extracts the declared version and requires every *floor-declaring*
+  statement across the tracked tree to match it, and requires the seven files
+  that are supposed to state it to still do so — so a bump can neither land in
+  six places and miss the seventh, nor quietly vanish.
+
+  The patterns are deliberately narrow (`MSRV <v>`, `toolchain ≥ <v>`,
+  `cargo +<v>`, `rustup default <v>`, `pinned **<v>** toolchain`), so contrast
+  statements — "edition 2024 requires only 1.85", "`memmap2` declares
+  `rust-version = "1.65"`" — are facts about other things and don't trip it.
+  `CHANGELOG.md` is exempt as a historical record. Proven to fail on both a
+  planted mismatch and a planted omission before being committed.
+
+- **`tests/conformance/config_path_parity.py`** — a third cross-implementation
+  config guard, covering the `--config` **path** rather than its contents.
+  `config_parity.py` and `config_fuzz.py` both always hand the CLIs a perfectly
+  ordinary file, so the path's own behavior had no cross-implementation check:
+  the regular-file rule, its exit code and its message were pinned only by
+  per-implementation unit tests that could drift apart silently. (The v2.11.0
+  claim that both loaders reject a non-regular file "with identical message
+  text" was, until now, never actually compared across the two.)
+
+  It runs inside `run.py` alongside the other two and is stricter than the
+  content corpus: it compares the **exact exit code** rather than an
+  accept/reject class, and requires the promised message substring from both
+  CLIs. Cases: a regular file, a missing path, a directory, names with spaces,
+  non-ASCII names, `..` traversal segments, a character device, and a symlink to
+  a regular file. The last two skip themselves where the platform lacks support
+  and the skip is printed, so a corpus that quietly shrinks on one OS is visible.
+
+- **Unit tests in both implementations pinning the "TOML data, never
+  interpolated" promise** — a value of `$(whoami)${HOME}`` `id` ``%PATH%` is
+  stored verbatim rather than expanded, executed or resolved — and pinning that a
+  `..` path loads normally, so reversing the unrestricted-location decision fails
+  a test rather than silently contradicting the documentation.
+
+- **Expansion and traversal syntax in the config fuzzer's value palette**
+  (`$(…)`, `${…}`, backticks, `%VAR%`, `../../../etc/passwd`, an extended-length
+  Windows path). Wherever the generator lands one of these, both parsers must
+  reach the same accept/reject class — holding two parsers that share no code to
+  treating the forms as inert data.
+
+- **`MieFileIoError`, closing the last Rust/Python error-mapping gap.** Opening,
+  stat-ing, reading or memory-mapping the input now converts to a decoder
+  exception instead of escaping as a bare `OSError`. The originating error is
+  preserved as `.source` and chained with `raise ... from`, so nothing is lost.
+
+  Every `MieError` variant now has exactly one Python class and vice versa;
+  `FileIo` was the sole unmatched one. `docs/diagrams/class.puml` had **already
+  declared `MieFileIoError`** — the diagram described the intended design and
+  the implementation simply never had the class, which is also why
+  `MieFileError`'s docstring claimed it covered failures to open.
+
+  **Ordering is now mirrored too.** Both implementations attempt the open
+  *before* checking the size, matching `MieFileReader::new` in Rust. Python
+  previously stat-ed first, so an unopenable path was mis-reported as empty — a
+  directory stats as zero bytes on Windows, and `decode <dir>` said "MIE file is
+  empty" where Rust said "I/O error". Both now report the same class with the
+  same `I/O error on <path>: ` prefix and the same exit code (`1` for `decode`,
+  `4` for `dump`); only the OS-supplied detail differs, which no amount of
+  alignment can fix across two runtimes.
+
+  Taking the size from the open handle also closes the stat/open race.
+
+- **`scripts/repo-hygiene.sh` and the `repo-hygiene` CI job**, the backstop the
+  bypass advice always assumed existed. It re-runs the hook's file-level checks
+  over the whole *tracked tree* rather than a staged diff, so it catches
+  anything already committed however it got there.
+
+  Two details worth recording, because both were bugs in the first draft. The
+  CRLF check reads the **index** (`git ls-files --eol`), not the worktree: a
+  Windows checkout legitimately holds CRLF while the committed blob is LF, so a
+  worktree-based check fails locally and passes on the Linux runner — worse than
+  no check. And the `unsafe`/`SAFETY:` detection mirrors the hook's regex
+  exactly rather than being stricter; a backstop that rejects what the hook
+  accepts just moves the surprise from commit time to merge time.
+
+  Each of the eight checks was verified to **fail** on a planted violation, not
+  merely to pass on the clean tree — the `diagrams` job in this release is a
+  standing reminder of what an unverified gate is worth.
+
+### Changed — behavior
+
+- **Python callers catching `OSError` around the reader must widen to
+  `MieFileIoError`.** It extends `MieFileError` → `MieDecoderError`, so anything
+  already catching a decoder exception now covers this case (that is the point).
+  Code catching *only* `OSError` around `MieFileReader` construction or
+  iteration will no longer match. The CLI is unaffected — it catches
+  `(MieDecoderError, OSError)` — and no exit code, log line or CSV output
+  changes.
+
+- **`MieError::is_record_error()` now returns `true` for `UnrecoverableSyncLoss`.**
+  It was the one variant misfiled against the repo's own definitions: Python's
+  `MieUnrecoverableSyncLossError` extends `MieRecordError`, the variant carries
+  the `offset` field the predicate's doc comment describes, `ERROR-CATALOG.md`
+  lists it under "Record-level errors" as catchable via that very predicate, and
+  `MAINTAINER-GUIDE.md` requires every variant to be classified. The predicate
+  disagreed with all four.
+
+  **Scope of the change:** nothing in either implementation calls these
+  predicates — exit-code classification matches on `kind()` — so no CSV output,
+  log line or exit code changes. The effect is confined to downstream Rust
+  callers branching on `is_record_error()`, which now see `true` where they saw
+  `false`. `cargo-semver-checks` cannot detect a behavioral change of this kind,
+  so it is called out here rather than caught by a gate.
+
+  `is_file_error()` is **unchanged** and stays deliberately narrower than
+  Python's `MieFileError`: it answers "did input I/O fail" (`FileNotFound`,
+  `FileEmpty`, `FileIo`). The whole-file rejections (`NoValidRecords`,
+  `HomogeneousPayload`, `TimestampFormatMismatch`, `IncompatibleMergeInputs`)
+  and the destination guards (`InputOutputCollision`, `ClobberRefused`) extend
+  `MieFileError` in Python but answer `false` to both Rust predicates; folding
+  them in would make the predicate mean less, since none of them is an I/O
+  failure on the input.
+
+### Fixed
+
+- **`L2-CLI-013`'s offset-overflow diagnostic was credited to tests that cannot
+  reach it.** The requirement mandates a WARN plus an inline `!! ...` note for
+  three dump scan-stop anomalies, and `TRACE-MATRIX.md` showed it Implemented
+  against two truncated-record tests. The overflow branch in `dump.rs` is
+  unreachable through a real scan: the loop advances only while
+  `offset + MIN_RECORD_BYTES <= file_len`, and `file_len` is a mapped file
+  length, so `offset` stays far below `usize::MAX` while a record's declared
+  extent is capped at 126 bytes (`word_count` is the Type Word's 6-bit field).
+  The sum cannot wrap.
+
+  Rather than delete a harmless guard or leave the claim unbacked, the branch is
+  now verified where it *is* reachable — `dump_record_extent` accepts an
+  arbitrary `offset`, so `dump_record_extent_notes_offset_overflow` calls it
+  directly with `usize::MAX - 4` and asserts both the returned stop and the
+  inline note. `L2-CLI-013` gains a note stating the branch is defense in depth
+  for that helper's contract, unreachable via the scan in both implementations
+  (Python integers do not overflow at all), and that it must not be credited to
+  the truncated-record tests.
+
+- **The trace matrix reported `Implemented (I)` from a declared verification
+  method alone.** `build-trace-matrix.py` credited any leaf whose spec said
+  Inspection / Analysis / Demonstration, with no artifact required, so
+  `L2-SYN-014`, `L2-CONF-001` and `L2-CONF-004` each read `Implemented (I)`
+  beside a literal `_(TBD)_` in their own artifact column. A declared method
+  describes how a requirement *would* be checked; on its own it is a plan, not
+  a result.
+
+  Requirements may now carry an `**Evidence**` line naming what actually
+  carries the check, and an I/A/D requirement without one is **Draft** —
+  exactly as a `Test (T)` requirement with no marker already was. The backticked
+  names fill the artifact column, so the row shows its own justification. The
+  coverage summary's "Verified" count applies the same rule, having previously
+  counted the same unbacked requirements. L3 statements are one-liners, so
+  theirs rides on the line as a trailing `· Evidence: ...`.
+
+  The three requirements were then resolved on their merits rather than by
+  annotation: **`L2-SYN-014`** (the boolean and detailed validators are one
+  rule set and cannot disagree) is now genuinely Test-verified, by a new
+  agreement test in each implementation running a valid record and every
+  distinct rejection reason through both forms at three look-ahead depths — the
+  property holds today only because one delegates to the other, which a
+  refactor could quietly undo. **`L2-CONF-001`** (hex fixtures, never committed
+  `.mie` binaries) cites the `repo-hygiene` check that already enforces it.
+  **`L2-CONF-004`** (oracles move only when both implementations agree) cites
+  `tests/conformance/run.py` and its CI job: the process rule cannot be
+  violated silently because no single implementation can ratify an oracle
+  change alone.
+
+- **All three `docs/diagrams/*.svg` regenerated**, so `class.svg` reflects the
+  three exception classes added to `class.puml` above. Rendered with PlantUML
+  **1.2026.7beta11**, the same build that produced the previous set, and
+  verified whole rather than merely changed: no exception in the render output,
+  every one of the 44 types declared in `class.puml` present in the SVG, and
+  each file terminated. `component.svg` and `dataflow.svg` shift their canvas
+  slightly despite unchanged sources — PlantUML lays out using the JVM's font
+  metrics, so the same jar on a different host reflows. That is a rendering
+  artifact, not a content change.
+
+- **The `diagrams` CI job has never verified an SVG, and now says so.** Three
+  independent defects, none of which could be seen from the job's green tick:
+  PlantUML names its output after `@startuml <name>`, so rendering into
+  `docs/diagrams/` writes untracked `MIE-Decoder Class Diagram.svg` and leaves
+  the tracked `class.svg` alone — `git diff --exit-code` inspects tracked files
+  only, so it was trivially clean; PlantUML exits **0** when a diagram crashes
+  mid-layout, so even correct filenames would have passed (`component.puml`
+  dies in smetana's `qsort` on stable 1.2026.5 and 1.2026.6, emitting ~14 KB
+  where a whole file is ~60 KB); and the pinned `1.2026.5` never matched the
+  committed SVGs' `1.2026.7beta11`, which exists only in PlantUML's rolling
+  `snapshot` pre-release and cannot be pinned by URL.
+
+  The job is left running and is now labelled a known no-op in `ci.yml`, in
+  `MAINTAINER-GUIDE.md` §9 (which had claimed it "fails if a `.puml` source was
+  changed without regenerating the matching `.svg`") and in §3, which now
+  documents both traps and the render-verification steps for doing it by hand.
+  The full write-up — including a fourth constraint, that font-metric-dependent
+  layout makes a byte-diff guard unsound unless one fixed environment renders
+  everything — is a new "Diagram rendering" section in `docs/ROADMAP.md`.
+
+- **`docs/ERROR-CATALOG.md` contradicted itself about the error predicates, and
+  both drawings of the exception tree were incomplete.** §2 introduced
+  `is_file_error()` / `is_record_error()` as mirroring "the Python class split"
+  while the paragraph below it correctly explained that `is_file_error()` is
+  **narrower** than `MieFileError`; only `is_record_error()` mirrors anything
+  exactly. The §2 Python tree had also never gained `MieFileIoError` (added in
+  v2.12.0 — the Rust listing and the §3 table were updated, the tree was
+  missed), and §3 said its rows are "catchable in Python as `MieFileError`"
+  while listing `MieNonMonotonicInputError`, which extends `MieDecoderError`
+  directly and would escape such a handler. `docs/diagrams/class.puml` claimed
+  its leaf classes "correspond one to one, in both directions" with the Rust
+  variants while omitting `MieTimestampFormatMismatchError`,
+  `MieIncompatibleMergeInputsError` and `MieNonMonotonicInputError` entirely.
+  All corrected, and the diagram now shows `MieNonMonotonicInputError` hanging
+  off `MieDecoderError` where it belongs.
+
+- **`docs/ROADMAP.md` deferred work that had already shipped, on a status that
+  was already wrong.** Its `L2-DEC-012` entry deferred the IRIG-wins-on-tie
+  conformance test, said the requirement was "still listed as Draft in
+  `docs/TRACE-MATRIX.md`", and gave the blocker as needing to reverse-engineer
+  the detection heuristic to force an equal-score tie. The matrix lists it
+  **Implemented**, with `test_zero_score_ties_to_irig` and
+  `probe_zero_score_ties_to_irig` on the two sides, and the blocker never
+  existed: the tie-break is the single comparison `irig_score >= std_score`,
+  which an all-zero buffer exercises directly. Wrong three ways over, in a file
+  whose own header says completed work is not tracked there. Entry removed.
+
+- **The Python package docstring described a format the decoder doesn't
+  read.** `mie_decoder/__init__.py` called the records "fixed-length" (in the
+  same sentence that says a Type Word determines their size) and said the files
+  carry "IRIG-format time tags", when Standard timestamps have been supported
+  and auto-detected throughout. It now states the real shape — no file header,
+  variable-length records, null Type Word as terminator, up to 32 data words,
+  and both timestamp formats with per-file auto-detection. Its `Version
+  history` block, frozen at `1.0.0` since the joint cut, is replaced by a
+  pointer to `CHANGELOG.md` and `__version__`.
+
+- **`.githooks/pre-commit` and `scripts/repo-hygiene.sh` assumed a bare
+  `python` on PATH.** Both invoked `python` directly — the hook for the
+  trace-matrix check, the hygiene script for the config-key check. On Debian,
+  most WSL images, and anywhere else that ships only `python3`, the hook failed
+  on every commit touching a spec doc and the hygiene check failed spuriously,
+  even though `CONTRIBUTING.md` asks for Python 3 and never for a particular
+  alias. Both now probe `python3`, `python`, then `py` and use the first that
+  actually reports `sys.version_info[0] == 3` — which also rejects Windows' App
+  Execution Alias stub, a `python` that exists on PATH and runs nothing. When
+  none is found, the hook fails with a message naming what it tried instead of
+  a bare `command not found`, and the hygiene script reports the affected
+  checks as skipped rather than passing them silently.
+
+- **The stated reason for the Rust MSRV was wrong in four places.** `CLAUDE.md`,
+  `CONTRIBUTING.md`, `rust/README.md`, and `L3-RS-001` all credited the 1.88
+  floor to `memmap2`. The locked `memmap2` 0.9.11 declares `rust-version =
+  "1.65"` and edition 2021, so it constrains nothing here. The floor comes from
+  the decoder's own source: **let-chains** (`if let` / `while let` joined by
+  `&&`), stabilized in 1.88 and used at seven sites — `cli.rs`, `dump.rs`,
+  `filter.rs` ×2, `merge.rs` ×2, `writer.rs` — plus `u64::is_multiple_of` in
+  `reader.rs`, which independently needs 1.87. Proven by
+  `cargo +1.85.1 check --all-targets --ignore-rust-version`, which reports
+  exactly those eight sites and nothing from the dependency.
+
+  **1.88 remains correct**; only the rationale was false, which is the dangerous
+  kind of stale doc — it would have justified *lowering* the floor once someone
+  checked `memmap2`'s manifest and found 1.65. `scripts/repo-hygiene.sh` now
+  cross-checks the declared `rust-version` against every place the number is
+  written down, so the *value* cannot drift even where prose explains it
+  differently. The v2.4.0 entry below preserves the original claim as it was
+  published; this entry supersedes it. (That entry also asserted `memmap2`
+  itself used let-chains — it could not have: it is an edition-2021 crate, and
+  let-chains are edition-2024-only. On 1.85 the dependency compiles cleanly and
+  only our own eight sites fail.)
+
+- **The diagrams named the `--allow-partial` output file backwards.** All three
+  showed `<stem>.partial.csv`, implying `out.partial.csv`. Both implementations
+  append the suffix to the whole name — `writer.rs` does `name.push(".partial")`
+  — so the real files are **`out.csv.partial`** and, in separate-error mode,
+  **`out_errors.csv.partial`**. Verified by running both CLIs against a fixture
+  built to produce error rows *and* an unrecoverable sync loss, rather than
+  inferred from the code.
+
+  Every other reference was already correct — fifteen of them across the
+  writers, CLIs, `run.py`, the tests and `USER-GUIDE.md`, and `L3-REQ.md` even
+  cites `out.csv.partial` explicitly. Only the generated artifacts said
+  otherwise, which is the failure mode this release keeps meeting: the copy
+  nobody executes is the copy that rots.
+
+- **`L2-MRG-004` mis-stated the separate-mode partial name** as
+  `<stem>_errors.partial`, dropping the `.csv`. It now gives both concrete
+  names, and says explicitly that `.partial` is appended to the whole file name.
+
+- **The diagrams called a method that does not exist.** `class.puml` and
+  `dataflow.puml` referred to `commit_as_partial()`; both implementations define
+  **`commit_partial`**. `class.puml` also gave `commit()` a `PathBuf` return —
+  it returns nothing in Python and `MieResult<()>` in Rust; only
+  `commit_partial` returns a path.
+
+- **`CONFIG-REFERENCE.md` omitted a key from its own copyable block, and dated a
+  change relatively.** The document presents itself as the reference for *every*
+  TOML key and states each one twice — a copyable quick-reference block and a
+  normative table. `merge.delta_scope` shipped in v2.11.0 into the table and
+  `config/default.toml` but not the block, so anyone copying the block as a
+  starting config silently lost the key. It is the only key that had drifted.
+
+  Separately, the `error_mode` note read "**Changed in this release**" for a flip
+  that happened in **v2.8.0** — the only relative-version phrase in the docs;
+  every other such note names an absolute version. Relative wording ages badly
+  in a file nobody re-reads at release time, so it now says v2.8.0.
+
+  `repo-hygiene` gained a check that the three text sources — block, table and
+  `config/default.toml` — list the same key set, verified by re-planting the
+  exact `delta_scope` omission and confirming it fails. (The two loaders are the
+  fourth and fifth copies of that list; their agreement is already covered by
+  `tests/conformance/config_parity.py`.)
+
+- **Coverage and CI numbers had drifted out of the docs.** The Rust gate
+  enforces `--fail-under-lines 87 --fail-under-regions 86`
+  (`rust/.cargo/config.toml`), but `rust/README.md` and three separate places in
+  `CONTRIBUTING.md` still advertised the pre-ratchet **84% / 83%**. The Python
+  coverage floor is `fail_under = 92`, while the comment on the CI job that
+  enforces it said **88%**. And `MAINTAINER-GUIDE.md` §9 opened with
+  "`ci.yml` has seven jobs" when it defines **sixteen**.
+
+  Notably the guide's *table* was accurate throughout — every job present, and
+  its `rust` row already quoted 87/86. Only the prose above it had rotted, which
+  is the usual pattern: the structure people edit stays right, the sentence
+  nobody re-reads does not.
+
+  So the count is now gone rather than corrected — it would only drift again
+  (this release adds a job, taking it from fifteen to sixteen). The table is the
+  list, and `repo-hygiene` now **enforces** that: every job in `ci.yml` must
+  have a row in §9, or the build fails. Verified against a planted
+  undocumented job.
+
+- **The documented conformance command used the wrong Python.**
+  `CONTRIBUTING.md`, `tests/conformance/README.md` and `MAINTAINER-GUIDE.md`'s
+  test-suite table all said `python tests/conformance/run.py`. The runner drives
+  the Python CLI with `sys.executable` — the interpreter it is itself running
+  under — so after the `poetry -C python sync` those same docs prescribe, that
+  command uses the system Python and dies with `ModuleNotFoundError: No module
+  named 'mie_decoder'`. Verified by running it. CI is unaffected: it does
+  `pip install -e ./python` into the runner's own interpreter first, which is
+  why the same string works there and nowhere else.
+
+  All contributor-facing invocations now use
+  `poetry -C python run python ../tests/conformance/run.py`, with the reason
+  stated so the next person does not "simplify" it back. `--rust-only` is left
+  bare on purpose — it never touches the Python side, so it genuinely needs no
+  package, and that is now called out rather than left to be inferred.
+
+  Two path traps are documented alongside, both hit while verifying the fix:
+  `poetry -C python run` executes with the working directory set to `python/`,
+  so every relative path needs `../`; and `--rust-bin` is used exactly as given,
+  so a Windows path without `.exe` is reported as `failed to build the Rust CLI`
+  — the symptom rather than the cause. The `--python-bin` help text, which
+  claimed the default was "Poetry's environment", now states the real default.
+
+- **Contributor docs promised guarantees neither the hook nor CI provided.**
+  Three separate overstatements in `CONTRIBUTING.md`:
+
+  *The whitespace check never did what it said.* Check 1 was labelled
+  "Whitespace + missing-final-newline", but `git diff --cached --check`
+  implements `core.whitespace`, whose `blank-at-eof` means a **new blank line
+  at** EOF — the opposite problem. Staging a file with no trailing newline
+  exits `0` with no output. Rather than just correcting the wording, the hook
+  now has a real final-newline check and the mislabelled step in
+  `.githooks/pre-commit` is renamed. `*.svg` is exempt from that check: the
+  committed diagrams are PlantUML output, which ends at `>` with no trailing
+  newline — the three of them are the *only* tracked text files without one, and
+  hand-appending it would be undone by the next render. The exemption matches
+  `scripts/repo-hygiene.sh`; a hook stricter than its own backstop blocks
+  legitimate commits, which is exactly how this surfaced (the check rejected the
+  very SVG re-render that follows it in this branch). The list is also renumbered — it had grown a `1b.`, which is not
+  valid Markdown list syntax.
+
+  *"CI runs the same checks and will fail the merge anyway" was untrue for most
+  of the list.* Nine of the hook's fourteen checks had no CI equivalent —
+  verified by grepping each one, and by confirming that the apparent `CRLF` and
+  `Cargo.lock` matches in the workflows are `core.autocrlf` configuration and
+  cache keys, not checks. A `--no-verify` commit could land a CRLF blob, a stray
+  `dbg!()`, a merge marker, an oversized file or a committed `*.mie` with
+  nothing downstream to catch it. That advice is now a table of what backs up
+  what, and the gap is closed by the new job below.
+
+  *Two hook steps were undocumented* — the trace-matrix check, and the
+  `cargo test --doc` half of the test step (`--all-targets` excludes doctests).
+
+- **Nothing pinned the error-classification boundary, which is why it drifted.**
+  Coverage was two spot-check assertions in Rust and six in Python; adding a
+  variant to neither predicate failed no test. Both implementations now assert
+  the *whole* boundary — `every_error_kind_is_deliberately_classified`
+  (`rust/src/error.rs`) walks every `MieErrorKind` and requires it to be
+  record-class, file-class, or on an explicit "neither" list, with a
+  wildcard-free match so a new variant cannot compile without a decision;
+  `test_every_exception_class_is_classified` (`python/tests/test_exceptions.py`)
+  does the same over the exception classes and asserts the record-class set
+  matches Rust's name for name. This makes the MAINTAINER-GUIDE "classify the
+  new variant" step mechanical rather than a matter of reviewer memory.
+
+- **Four documents disagreed about what the predicates cover.**
+  `ARCHITECTURE.md` claimed both predicates "mirror" the Python intermediate
+  classes (true for records only after the fix above, never true for files) and
+  its reconciliation note omitted `TimestampFormatMismatch` and
+  `IncompatibleMergeInputs` from the file-side extras. `ERROR-CATALOG.md`
+  contradicted itself — §2 called `UnrecoverableSyncLoss` "non-classified" while
+  §4 promised it was catchable via `is_record_error()` — and its §3 preamble
+  implied `is_file_error()` covers the whole file-level section. `CLAUDE.md` said
+  the predicates "approximate" the Python classes without saying how they differ.
+  All four now state the same rule, and the tree annotation in `ERROR-CATALOG.md`
+  §2 marks `UnrecoverableSyncLoss` and `WriterError` explicitly.
+
+- **The README's error-mode example did the opposite of what it said.** It was
+  captioned "Errors inline with normal messages" but passed `--separate-errors`,
+  which routes errored and spurious rows *out* of the main CSV — and the output
+  name `clean-plus-errors.csv` reinforced the wrong reading. An operator
+  following it would inspect only the main file and reasonably conclude records
+  had been dropped, when they were in the sibling `_errors.csv` all along. The
+  README contradicted itself: its "Error output modes" section thirty lines later
+  describes the flag correctly. Same v2.8.0 polarity-reversal residue as the
+  `CLAUDE.md` entry below — the example predates the reversal, when the flag was
+  `--inline-errors`, and only the flag name was updated. This was the last
+  surviving instance; `EXAMPLES.md`, `USER-GUIDE.md`, `DATA-SCENARIOS.md` and
+  `VENDOR-CSV-DIFFS.md` all describe it correctly.
+
+- **`CLAUDE.md` stated the wrong default error mode.** Its "Output modes" section
+  opened with ``Default (`error_mode = separate`)``, contradicting the code
+  (`ErrorMode::Inline` / `ErrorMode.INLINE`), `config/default.toml`,
+  `CONFIG-REFERENCE.md`, and `CLAUDE.md`'s own module summary a few lines above.
+  The two bullets were also near-duplicates, both describing the split-file
+  behavior, so the section never actually documented what `inline` does — the
+  v2.8.0 polarity reversal appears to have rewritten one bullet and left the
+  superseded one in place. Rewritten to describe both modes, with the v2.8.0
+  reversal noted.
+
+- **`docs/CLI-REFERENCE.md` described `--help` as printing "help for the program
+  or the given subcommand"**, which only Python does; the Rust build prints one
+  combined screen covering every subcommand regardless of where `--help` appears.
+  The entry now states the difference and points at the `cli-surface-parity`
+  check that keeps the flag *surface* identical even though the help *shape*
+  differs.
+
+- **`docs/diagrams/class.puml` claimed `MieError` has 15 variants** — it has 18.
+  The count is now dropped rather than corrected: it is re-broken by the next
+  error variant, and the useful part of the note is the mapping, not the number.
+  That mapping is also stated correctly: every Python leaf class has exactly one
+  matching variant, and the reverse does not hold — `FileIo` has no Python
+  counterpart, because Python lets an unwrapped `OSError` propagate from
+  open/mmap rather than converting it.
+
+- **The exception base classes documented a guarantee the library does not make.**
+  `MieDecoderError` claimed "all exceptions raised by the MIE-Decoder library
+  inherit from this class" and showed a bare `except MieDecoderError` example —
+  but opening and reading the input is left to the standard library, so a
+  permission error, a non-regular path, or a device I/O error propagates as a
+  plain `OSError` straight past that handler. A library consumer following the
+  docstring would have an unhandled failure mode. `MieFileError` compounded it by
+  claiming it is "raised when the input file cannot be opened", which is both the
+  one case it does *not* cover and something it never does at all — it is a base
+  class, never raised directly. Both docstrings now state what is and is not
+  converted, and point at `(MieDecoderError, OSError)` as the catch-both form the
+  CLI itself uses.
+
+- **`docs/diagrams/component.puml` double-counted a sync check.** It called
+  `validate_record` a "six-check shape probe" while listing the look-ahead
+  separately as phase 3 of the same note — but the look-ahead *is* Check 6 inside
+  `validate_record` (`rust/src/sync.rs`), so it was counted twice.
+  `docs/ARCHITECTURE.md` already had it right ("5 checks + look-ahead"); the
+  diagram now agrees and says where Check 6 lives.
+
 ## [2.11.1] — 2026-08-08
 
 ### Fixed
@@ -2184,7 +2717,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.12.0...HEAD
+[2.12.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...v2.12.0
 [2.11.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.9.0...v2.10.0

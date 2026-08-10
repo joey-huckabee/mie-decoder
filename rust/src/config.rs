@@ -1524,6 +1524,40 @@ exclude_types = ["UNICORN"]
         );
     }
 
+    /// Config values are TOML *data*. Shell, make and cmd expansion syntax is
+    /// stored verbatim — loading never spawns a process, expands an environment
+    /// variable, or resolves an include. Pins the `docs/CONFIG-REFERENCE.md`
+    /// "Trust boundary" claim on the one key taking a free-form string; mirrors
+    /// `test_string_values_are_data_never_interpolated` on the Python side.
+    /// Requirements: L2-CFG-001
+    #[test]
+    fn string_values_are_data_never_interpolated() {
+        let literal = "$(whoami)${HOME}`id`%PATH%";
+        let cfg = parse_into_config(&format!("[mux]\ndelimiter = \"{literal}\"\n")).unwrap();
+        assert_eq!(cfg.mux_delimiter, literal);
+    }
+
+    /// A path containing `..` is ordinary input, not an attack to block: the
+    /// config location is unrestricted by design (see "Trust boundary"). If that
+    /// is ever reversed, this test fails and forces the doc to change with it.
+    /// Requirements: L2-CFG-001
+    #[test]
+    fn traversal_segments_resolve_and_load() {
+        let base = std::env::temp_dir().join(format!("mie-cfg-trav-{}", std::process::id()));
+        let nested = base.join("sub");
+        std::fs::create_dir_all(&nested).unwrap();
+        let cfg_path = nested.join("site.toml");
+        std::fs::write(&cfg_path, b"[decode]\nstrict = true\n").unwrap();
+
+        let traversed = nested.join("..").join("sub").join("site.toml");
+        let loaded = load_config(Some(&traversed));
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(
+            loaded.unwrap().strict,
+            "a traversing path must load normally"
+        );
+    }
+
     /// `[output] max_sort_group` drives the canonical-order run cap, and is a
     /// recognized schema key (no unknown-key WARN).
     /// Requirements: L2-WRT-022, L3-WRT-003, L2-CFG-001

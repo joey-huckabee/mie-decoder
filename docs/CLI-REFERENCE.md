@@ -41,10 +41,10 @@ Global options are placed **before** the subcommand.
 
 | Flag | Value | Default | Description |
 |------|-------|---------|-------------|
-| `--config PATH` | path | *(none)* | TOML configuration file. Applies to `decode`, `count`, and `dump` (the last consumes only its `[logging]` level). |
+| `--config PATH` | path | *(none)* | TOML configuration file. Applies to `decode`, `count`, and `dump` (the last consumes only its `[logging]` level). Must be a regular file; missing or unparseable is exit `5`. Any readable location is accepted — see [Trust boundary](CONFIG-REFERENCE.md#trust-boundary). |
 | `--log-level LEVEL` | `DEBUG` \| `INFO` \| `WARNING` \| `WARN` \| `ERROR` \| `CRITICAL` \| `OFF` | `WARNING` | Log verbosity (case-insensitive). Overrides the config file's `[logging] level`. Validated after `--version` / `--help`. |
 | `-V`, `-v`, `--version` | — | — | Print the version and exit. Both short forms are accepted, and `--version` matches in any letter case (`--VERSION`, `--Version`, …). |
-| `-h`, `--help` | — | — | Print help for the program or the given subcommand and exit. |
+| `-h`, `--help` | — | — | Print help and exit. The two builds differ in *shape*, not in content: Python (`argparse`) prints help for the given subcommand, while Rust prints one combined screen covering every subcommand regardless of where `--help` appears. The flag *surface* is identical either way, and `cli-surface-parity` in `tests/conformance/run.py` enforces that. |
 
 ---
 
@@ -71,9 +71,15 @@ multi-file merge — see [Merge](#merge-multi-file) below.
 > **`--glob` selects by *filename*, not by content.** Every file whose name
 > matches is treated as a recording and decoded — the glob does no content or
 > extension sniffing. If the pattern catches a non-recording (a `README.txt`, a
-> log file, etc.), the run fails with **exit 2** (`no valid records`); in a
-> multi-file merge that failure happens *before any output is written*, so one
-> stray file loses the whole batch. Prefer a pattern that matches recordings
+> log file, etc.), the decoder will try to decode it. Often that fails with
+> **exit 2** (`no valid records`) — and in a multi-file merge that failure
+> happens *before any output is written*, so one stray file loses the whole
+> batch. But **exit 2 is not guaranteed**: detection is heuristic, and a text
+> file can present enough plausible structure to decode into rows, silently
+> polluting the output with fabricated records rather than failing (see
+> L1-EXIT-002). Raising `--lookahead-records` cuts this down a lot — and costs
+> a genuine recording nothing — but no depth eliminates it. Either
+> way, prefer a pattern that matches recordings
 > only — `dir/*.mie` (or `dir/*.mie_irig` for the IRIG naming) — over a broad
 > `dir/*`. The same applies to a `--manifest` that lists a non-recording path.
 >

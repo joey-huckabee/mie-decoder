@@ -395,7 +395,11 @@ def test_merge_allow_partial_writes_partial_on_file_failure(tmp_path: Path) -> N
     out = tmp_path / "out.csv"
     outcome = write_csv(merged, output=out, opts=WriteOptions(allow_partial=True))
     assert outcome.partial is not None
-    assert outcome.normal_count == 3  # A:100 + B:200 + A:300 before B's loss
+    # A:100 + B:200 + A:300 + the record immediately before B's sync loss.
+    # That last one used to be discarded because its *successor* boundary was
+    # corrupt; continuous validation no longer looks ahead (L2-SYN-005), so a
+    # well-formed record is no longer lost to its neighbour's damage.
+    assert outcome.normal_count == 4
     assert (tmp_path / "out.csv.partial").exists()
 
 

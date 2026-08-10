@@ -227,6 +227,9 @@ jobs:
             #
             # Scoped to the one rule in the one file so any other finding there,
             # and this rule anywhere else, still fails the build.
+            #
+            # The operator-facing statement of the same decision lives in
+            # docs/CONFIG-REFERENCE.md "Trust boundary". Keep the two in step.
             "-Dsonar.issue.ignore.multicriteria=agenticPathInjection"
             "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.ruleKey=pythonsecurity:S8707"
             "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.resourceKey=python/src/mie_decoder/config.py"

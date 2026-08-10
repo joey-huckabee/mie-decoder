@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -90,6 +91,110 @@ class TestExceptionHierarchy:
         for exc in exceptions:
             with pytest.raises(MieDecoderError):
                 raise exc
+
+    @pytest.mark.requirement("L3-PY-006")
+    def test_unopenable_input_raises_file_io_error(self, tmp_path: Path) -> None:
+        """An input that exists but cannot be opened converts to
+        :class:`MieFileIoError`, not a bare ``OSError``.
+
+        A directory is the portable way to provoke this — `open()` on one fails
+        with `PermissionError` on Windows and `IsADirectoryError` on POSIX, both
+        `OSError`. Rust reports the same condition as `MieError::FileIo`; before
+        v2.12.0 Python let the `OSError` escape, so a caller catching
+        `MieDecoderError` (as the class docstring advertises) missed it.
+        """
+        from mie_decoder.exceptions import MieFileIoError
+        from mie_decoder.reader import MieFileReader
+
+        target = tmp_path / "not-a-file.mie"
+        target.mkdir()
+
+        with pytest.raises(MieFileIoError) as caught:
+            MieFileReader(target)
+        exc = caught.value
+        assert isinstance(exc, MieFileError), "must be catchable as a file error"
+        assert isinstance(exc, MieDecoderError), "must be catchable as a decoder error"
+        assert isinstance(exc.source, OSError), "the originating OSError is preserved"
+        assert exc.__cause__ is exc.source, "and chained, so the traceback keeps it"
+        assert str(exc).startswith("I/O error on "), "message prefix mirrors Rust's FileIo"
+
+    @pytest.mark.requirement("L3-PY-006")
+    def test_unopenable_input_is_not_reported_as_empty(self, tmp_path: Path) -> None:
+        """The open must be attempted *before* the size check.
+
+        A directory stats as zero bytes on Windows, so checking size first
+        reported "MIE file is empty" for something that was never readable.
+        `MieFileReader::new` in Rust opens first; this pins the same order here.
+        """
+        from mie_decoder.exceptions import MieFileEmptyError, MieFileIoError
+        from mie_decoder.reader import MieFileReader
+
+        target = tmp_path / "stats-as-zero.mie"
+        target.mkdir()
+
+        with pytest.raises(MieFileIoError):
+            MieFileReader(target)
+        # Belt and braces: the emptiness class must not be what surfaces.
+        try:
+            MieFileReader(target)
+        except MieFileEmptyError:  # pragma: no cover - fails the assert below
+            pytest.fail("an unopenable path must not be reported as empty")
+        except MieFileIoError:
+            pass
+
+    @pytest.mark.requirement("L3-PY-006")
+    def test_every_exception_class_is_classified(self) -> None:
+        """Every concrete exception must deliberately be file-class,
+        record-class, or an explicitly-listed direct child of the base.
+
+        The mechanical form of the "extend `MieFileError` or `MieRecordError` as
+        appropriate" step in MAINTAINER-GUIDE.md §"Adding an error variant".
+        Adding a class without deciding fails here rather than passing review.
+
+        The record-class set is also asserted to match Rust's
+        `is_record_error()` exactly — that pairing is what drifted:
+        `MieUnrecoverableSyncLossError` extended `MieRecordError` here while the
+        Rust predicate omitted it until v2.12.0. Mirrors
+        `every_error_kind_is_deliberately_classified` in `rust/src/error.rs`.
+        """
+        import inspect
+
+        from mie_decoder import exceptions as exc_mod
+
+        # Direct children of the base by design: neither a file-level nor a
+        # record-level failure. Mirrors Rust's NEITHER list.
+        direct = {"MieNonMonotonicInputError", "MieWriterError"}
+        # Must equal Rust's is_record_error() set, name for name.
+        expected_record = {
+            "MieInvalidTypeWordError",
+            "MieUnknownTypeWordError",
+            "MieRecordTruncatedError",
+            "MieFirstRecordTruncatedError",
+            "MiePayloadError",
+            "MieUnknownErrorCodeError",
+            "MieUnrecoverableSyncLossError",
+        }
+
+        bases = {"MieDecoderError", "MieFileError", "MieRecordError"}
+        record_class: set[str] = set()
+        for name, obj in inspect.getmembers(exc_mod, inspect.isclass):
+            if not issubclass(obj, MieDecoderError) or name in bases:
+                continue
+            if issubclass(obj, MieRecordError):
+                record_class.add(name)
+            elif issubclass(obj, MieFileError):
+                pass  # file-class
+            else:
+                assert name in direct, (
+                    f"{name} extends MieDecoderError directly but is not a known "
+                    "direct child — classify it under MieFileError or "
+                    "MieRecordError, or add it to `direct` here and to Rust's "
+                    "NEITHER list"
+                )
+        assert record_class == expected_record, (
+            "the record-class set must match Rust's is_record_error() exactly; "
+            "update both sides together"
+        )
 
 
 class TestExceptionAttributes:

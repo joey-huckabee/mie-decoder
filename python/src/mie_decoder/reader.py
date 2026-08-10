@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import mmap
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
@@ -66,6 +67,7 @@ from mie_decoder.decode import (
 )
 from mie_decoder.exceptions import (
     MieFileEmptyError,
+    MieFileIoError,
     MieFileNotFoundError,
     MieFirstRecordTruncatedError,
     MieHomogeneousPayloadError,
@@ -230,7 +232,15 @@ class MieFileReader:
         )
         if not self._path.exists():
             raise MieFileNotFoundError(str(self._path))
-        self._file_size = self._path.stat().st_size
+        # Order mirrors `MieFileReader::new` in Rust: open first, size second.
+        # Checking the size first would mis-report an unopenable path as empty,
+        # because a directory stats as zero bytes on Windows. Taking the size
+        # from the open handle also closes the stat/open race.
+        try:
+            with open(self._path, "rb") as probe:
+                self._file_size = os.fstat(probe.fileno()).st_size
+        except OSError as exc:
+            raise MieFileIoError(str(self._path), exc) from exc
         if self._file_size == 0:
             raise MieFileEmptyError(str(self._path))
         logger.debug(
@@ -307,9 +317,20 @@ class MieFileReader:
 
         logger.info("Beginning decode of %s", self._path.name)
 
-        with open(self._path, "rb") as fh:
+        # Acquisition is wrapped, the decode loop below is not: an OSError from
+        # open/mmap is a file-level failure (MieFileIoError, mirroring Rust's
+        # FileIo), while one raised further down belongs to whatever raised it.
+        try:
+            fh = open(self._path, "rb")
+        except OSError as exc:
+            raise MieFileIoError(str(self._path), exc) from exc
+        with fh:
             fd = fh.fileno()
-            with mmap.mmap(fd, 0, access=mmap.ACCESS_READ) as mm:
+            try:
+                mm = mmap.mmap(fd, 0, access=mmap.ACCESS_READ)
+            except OSError as exc:
+                raise MieFileIoError(str(self._path), exc) from exc
+            with mm:
                 file_len = len(mm)
 
                 setup = self._detect_format_and_setup(mm, file_len, resolved_format)
@@ -677,12 +698,26 @@ class MieFileReader:
         record_bytes = tw.word_count * 2
 
         # ── Validate current record ────────────────
+        # Depth 1 — no look-ahead — is deliberate here, and is the one place it
+        # differs from `find_first_record` / `recover_sync`, which keep the
+        # configured `lookahead_records` (L2-SYN-026). Those two answer "is this
+        # the start of a record stream?", where a wrong answer costs nothing but
+        # a resumption point. This call site walks a chain that is *already*
+        # locked on, and rejecting here discards the record.
+        #
+        # With look-ahead, a well-formed record sitting immediately before a
+        # corrupt region was dropped because its *successor* failed — one valid
+        # record lost per corruption site at the default depth of 2, and N-1 at
+        # depth N. A record that passes checks 1-5 is complete and in-bounds;
+        # whether the *next* boundary is corrupt is the next iteration's problem,
+        # and sync recovery already handles it (L2-SYN-005). Mirrors the same
+        # call site in `rust/src/reader.rs`.
         validation_failure = validate_record_detailed(
             mm,
             offset,
             file_len,
             ts_format=fmt,
-            lookahead_records=self._lookahead_records,
+            lookahead_records=1,
         )
         if validation_failure is not None:
             return self._handle_validation_failure(

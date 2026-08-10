@@ -658,7 +658,8 @@ def write_csv_split(
 ) -> WriteOutcome:
     """Write normal messages to main CSV, errors to a separate file.
 
-    Used for SEPARATE error mode (default). Normal messages go to
+    Used for SEPARATE error mode (`--separate-errors`; INLINE is the
+    default). Normal messages go to
     ``output``, errored and spurious records go to
     ``<output_stem>_errors<output_suffix>``.
 

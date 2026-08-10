@@ -206,7 +206,16 @@ impl MieError {
         )
     }
 
-    /// True if this error originated at the file level (open/empty/io).
+    /// True if this error originated in **file I/O** — the input could not be
+    /// opened, was empty, or the read itself failed.
+    ///
+    /// Deliberately narrower than Python's `MieFileError`, which additionally
+    /// covers the file-shape rejections (`NoValidRecords`, `HomogeneousPayload`,
+    /// `TimestampFormatMismatch`, `IncompatibleMergeInputs`) and the
+    /// destination guards (`InputOutputCollision`, `ClobberRefused`). Those are
+    /// not I/O failures on the input, so folding them in would make the
+    /// predicate mean less. Match on [`MieError::kind`] when you need the wider
+    /// set. See `docs/ERROR-CATALOG.md` §2 for the full mapping.
     pub fn is_file_error(&self) -> bool {
         matches!(
             self.kind(),
@@ -214,7 +223,13 @@ impl MieError {
         )
     }
 
-    /// True if this error is tied to a specific record byte offset.
+    /// True if this error is tied to a specific record byte offset — the
+    /// analogue of Python's `MieRecordError`, which this set matches exactly.
+    ///
+    /// Note that carrying an `offset` field is *not* on its own sufficient:
+    /// `HomogeneousPayload` and `TimestampFormatMismatch` both cite an offset
+    /// but reject the file as a whole, and Python classes them under
+    /// `MieFileError` accordingly.
     pub fn is_record_error(&self) -> bool {
         matches!(
             self.kind(),
@@ -224,6 +239,7 @@ impl MieError {
                 | MieErrorKind::FirstRecordTruncated
                 | MieErrorKind::PayloadError
                 | MieErrorKind::UnknownErrorCode
+                | MieErrorKind::UnrecoverableSyncLoss
         )
     }
 }
@@ -420,6 +436,185 @@ mod tests {
         };
         assert!(!e.is_file_error());
         assert!(e.is_record_error());
+
+        // The sync-loss terminal is record-class: it names the offset it gave
+        // up at, and Python's MieUnrecoverableSyncLossError extends
+        // MieRecordError. It was omitted from the predicate until v2.12.0.
+        let e = MieError::UnrecoverableSyncLoss {
+            offset: 0x40,
+            sync_losses: 2,
+        };
+        assert!(e.is_record_error(), "sync loss is a record-class failure");
+        assert!(!e.is_file_error());
+    }
+
+    /// Every `MieErrorKind` must be deliberately classified as file-class,
+    /// record-class, or neither — adding a variant without deciding fails here.
+    ///
+    /// This is the mechanical form of the "add it to `is_record_error()` or
+    /// `is_file_error()`" step in MAINTAINER-GUIDE.md §"Adding an error
+    /// variant". The predicates had drifted out of step with the Python
+    /// hierarchy precisely because nothing pinned the whole boundary — only two
+    /// spot-check assertions existed. Mirrored by
+    /// `test_every_exception_class_is_classified` on the Python side.
+    ///
+    /// Requirements: L3-RS-006
+    #[test]
+    fn every_error_kind_is_deliberately_classified() {
+        use MieErrorKind as K;
+
+        // Record-class: tied to one record's byte offset. Matches the Python
+        // classes extending MieRecordError, one for one.
+        const RECORD: &[K] = &[
+            K::InvalidTypeWord,
+            K::UnknownTypeWord,
+            K::RecordTruncated,
+            K::FirstRecordTruncated,
+            K::PayloadError,
+            K::UnknownErrorCode,
+            K::UnrecoverableSyncLoss,
+        ];
+        // File-class: an I/O failure on the input itself.
+        const FILE: &[K] = &[K::FileNotFound, K::FileEmpty, K::FileIo];
+        // Neither predicate, by design. Python groups the first four under
+        // MieFileError (whole-file rejections and destination guards) and
+        // leaves the last two directly under MieDecoderError; Rust's narrower
+        // is_file_error() covers I/O only, so these answer false to both.
+        const NEITHER: &[K] = &[
+            K::NoValidRecords,
+            K::HomogeneousPayload,
+            K::TimestampFormatMismatch,
+            K::IncompatibleMergeInputs,
+            K::InputOutputCollision,
+            K::ClobberRefused,
+            K::WriterError,
+            K::NonMonotonicInput,
+        ];
+
+        // Exhaustiveness: a new variant added to MieErrorKind but to none of the
+        // three lists trips this match, which has no wildcard arm.
+        for kind in RECORD.iter().chain(FILE).chain(NEITHER) {
+            match kind {
+                K::FileNotFound
+                | K::FileEmpty
+                | K::FileIo
+                | K::InvalidTypeWord
+                | K::UnknownTypeWord
+                | K::RecordTruncated
+                | K::FirstRecordTruncated
+                | K::PayloadError
+                | K::UnknownErrorCode
+                | K::NoValidRecords
+                | K::HomogeneousPayload
+                | K::WriterError
+                | K::InputOutputCollision
+                | K::ClobberRefused
+                | K::UnrecoverableSyncLoss
+                | K::TimestampFormatMismatch
+                | K::IncompatibleMergeInputs
+                | K::NonMonotonicInput => {}
+            }
+        }
+        let listed = RECORD.len() + FILE.len() + NEITHER.len();
+        assert_eq!(
+            listed, 18,
+            "every MieErrorKind variant must appear in exactly one list; \
+             add the new variant to RECORD, FILE or NEITHER (and to the \
+             matching Python base class)"
+        );
+
+        for k in RECORD {
+            assert!(sample(*k).is_record_error(), "{k:?} should be record-class");
+            assert!(!sample(*k).is_file_error(), "{k:?} must not be file-class");
+        }
+        for k in FILE {
+            assert!(sample(*k).is_file_error(), "{k:?} should be file-class");
+            assert!(
+                !sample(*k).is_record_error(),
+                "{k:?} must not be record-class"
+            );
+        }
+        for k in NEITHER {
+            assert!(!sample(*k).is_file_error(), "{k:?} is not file-class");
+            assert!(!sample(*k).is_record_error(), "{k:?} is not record-class");
+        }
+    }
+
+    /// One representative `MieError` per kind, for the classification sweep.
+    fn sample(kind: MieErrorKind) -> MieError {
+        let p = || PathBuf::from("/x");
+        match kind {
+            MieErrorKind::FileNotFound => MieError::FileNotFound { path: p() },
+            MieErrorKind::FileEmpty => MieError::FileEmpty { path: p() },
+            MieErrorKind::FileIo => MieError::FileIo {
+                path: p(),
+                source: io::Error::other("x"),
+            },
+            MieErrorKind::InvalidTypeWord => MieError::InvalidTypeWord {
+                offset: 0,
+                raw_type_word: 0,
+                word_count: 0,
+            },
+            MieErrorKind::UnknownTypeWord => MieError::UnknownTypeWord {
+                offset: 0,
+                raw_type_word: 0,
+                message_type: 0,
+            },
+            MieErrorKind::RecordTruncated => MieError::RecordTruncated {
+                offset: 0,
+                record_bytes: 0,
+                available_bytes: 0,
+            },
+            MieErrorKind::FirstRecordTruncated => MieError::FirstRecordTruncated {
+                offset: 0,
+                record_bytes: 0,
+                available_bytes: 0,
+            },
+            MieErrorKind::PayloadError => MieError::PayloadError {
+                offset: 0,
+                detail: "x".into(),
+            },
+            MieErrorKind::UnknownErrorCode => MieError::UnknownErrorCode {
+                offset: 0,
+                error_code: 0,
+            },
+            MieErrorKind::NoValidRecords => MieError::NoValidRecords {
+                path: p(),
+                scan_bytes: 0,
+            },
+            MieErrorKind::HomogeneousPayload => MieError::HomogeneousPayload {
+                path: p(),
+                offset: 0,
+                sample_records: 0,
+            },
+            MieErrorKind::WriterError => MieError::WriterError {
+                destination: "x".into(),
+                source: io::Error::other("x"),
+            },
+            MieErrorKind::InputOutputCollision => MieError::InputOutputCollision { path: p() },
+            MieErrorKind::ClobberRefused => MieError::ClobberRefused { path: p() },
+            MieErrorKind::UnrecoverableSyncLoss => MieError::UnrecoverableSyncLoss {
+                offset: 0,
+                sync_losses: 0,
+            },
+            MieErrorKind::TimestampFormatMismatch => MieError::TimestampFormatMismatch {
+                offset: 0,
+                irig_score: 0,
+                std_score: 0,
+                records_probed: 0,
+            },
+            MieErrorKind::IncompatibleMergeInputs => MieError::IncompatibleMergeInputs {
+                file_index: 0,
+                path: p(),
+                detail: "x".into(),
+            },
+            MieErrorKind::NonMonotonicInput => MieError::NonMonotonicInput {
+                file_index: 0,
+                path: p(),
+                prev_us: 0,
+                curr_us: 0,
+            },
+        }
     }
 
     /// Requirements: L3-RS-006

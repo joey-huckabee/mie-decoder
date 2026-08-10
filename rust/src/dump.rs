@@ -574,6 +574,37 @@ mod tests {
         assert!(s.contains("0 records dumped"));
     }
 
+    /// The L2-CLI-013 offset-overflow anomaly, exercised where it is
+    /// actually reachable.
+    ///
+    /// `hex_dump_records` cannot reach it: its loop guard requires
+    /// `offset + MIN_RECORD_BYTES <= file_len`, and `file_len` is a real
+    /// mapped length, so `offset` is bounded well below `usize::MAX` while
+    /// `record_bytes` maxes out at 126 (`word_count` is a 6-bit Type Word
+    /// field, so at most 63 words). The two tests above pin that guard by
+    /// showing the loop declines to enter.
+    ///
+    /// The guard inside `dump_record_extent` is therefore defense in depth
+    /// for the helper's own contract — it accepts any `offset` — and this
+    /// calls it there directly rather than leaving the requirement's third
+    /// anomaly credited to truncated-record tests that never touch it.
+    /// Requirements: L2-CLI-013
+    #[test]
+    fn dump_record_extent_notes_offset_overflow() {
+        // word_count=36 (72 bytes), comfortably above MIN_RECORD_WORDS, so
+        // the invalid-word_count branch is not the one that fires.
+        let tw = decode_type_word(0x2402);
+        assert!(tw.word_count >= MIN_RECORD_WORDS);
+
+        let mut out = Vec::new();
+        let stop = dump_record_extent(&tw, usize::MAX - 4, usize::MAX, &mut out).unwrap();
+
+        assert!(stop.is_none(), "overflow must stop the scan");
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("!! Offset overflow"), "inline note missing: {s}");
+        assert!(s.contains("record_bytes=72"), "record_bytes missing: {s}");
+    }
+
     /// A `Write` that fails every write/flush with a configurable error
     /// kind — used to prove the dump surfaces output I/O failures rather
     /// than reporting success (L2-WRT-018).

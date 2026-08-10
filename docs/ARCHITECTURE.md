@@ -141,7 +141,7 @@ emits one context line capped at 32 bytes.
 
 The format has no per-record sync marker, so the Type Word's `word_count` is the only framing; the look-ahead turns the redundancy of consecutive self-consistent lengths into a *synthetic* sync check. `MIE-FORMAT.md` §2.3 ("Why the look-ahead exists") is the deep rationale — the false-positive math, the chaining argument, and why the end-of-records terminator is accepted as an end-of-chain on the forward paths but not during recovery.
 
-The look-ahead depth `N` is configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, range `[1, 32]`, default `2` (preserves the historical two-record look-ahead from earlier versions). Higher values catch wider classes of consecutive-same-shape corruption — for example, two adjacent fake-record headers that align on plausible Type Words can defeat `N = 2` but be caught at `N = 4`. The cost is small (one Type Word read per extra look-ahead record).
+The look-ahead depth `N` is configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, range `[1, 32]`, default `8` (raised from `2` in v2.12.0). Higher values catch wider classes of consecutive-same-shape corruption — and, more importantly, wrong-input false positives: ordinary prose contains chains that satisfy `N = 2` (every Markdown file in this repo decoded "successfully" at that depth), while `N = 8` rejects all but one of them. The cost is small (one Type Word read per extra look-ahead record).
 
 ### Phase 4 — Sync recovery (walk forward)
 
@@ -322,7 +322,7 @@ MieError {
 }
 ```
 
-`MieError::kind()` returns a `MieErrorKind` discriminant for callers that need to branch on the failure mode without matching on the full enum. `is_file_error()` and `is_record_error()` predicates mirror the two intermediate classes from the Python tree.
+`MieError::kind()` returns a `MieErrorKind` discriminant for callers that need to branch on the failure mode without matching on the full enum. The `is_record_error()` predicate matches Python's `MieRecordError` exactly; `is_file_error()` is deliberately **narrower** than Python's `MieFileError` — see the mapping note below the Python tree.
 
 ### Python — class hierarchy rooted at `MieDecoderError`
 
@@ -330,6 +330,7 @@ MieError {
 MieDecoderError                          (base, catches everything)
 ├── MieFileError
 │   ├── MieFileNotFoundError
+│   ├── MieFileIoError                   (open/mmap failure; wraps OSError)
 │   ├── MieFileEmptyError
 │   ├── MieNoValidRecordsError
 │   ├── MieHomogeneousPayloadError
@@ -349,7 +350,11 @@ MieDecoderError                          (base, catches everything)
 └── MieWriterError
 ```
 
-`MieRecordError` is the Python analogue of `MieError::is_record_error()`; `MieFileError` corresponds to `MieError::is_file_error()` plus the non-classified file-shape rejections (NoValidRecords, HomogeneousPayload, InputOutputCollision, ClobberRefused).
+`MieRecordError` and `MieError::is_record_error()` cover exactly the same seven failures — the classes listed above, including `MieUnrecoverableSyncLossError`. (Rust omitted the sync-loss terminal from that predicate until v2.12.0.)
+
+`MieFileError` is **wider** than `MieError::is_file_error()`. The Rust predicate answers "did input I/O fail" and covers only `FileNotFound`, `FileEmpty` and `FileIo`. Python's class additionally covers the whole-file rejections (`NoValidRecords`, `HomogeneousPayload`, `TimestampFormatMismatch`, `IncompatibleMergeInputs`) and the destination guards (`InputOutputCollision`, `ClobberRefused`), for which the Rust side answers `false` to both predicates and callers match on `kind()` instead.
+
+Note that carrying an `offset` is not what makes a failure record-class: `HomogeneousPayload` and `TimestampFormatMismatch` both cite an offset but reject the file as a whole. Both implementations pin the full boundary by test — `every_error_kind_is_deliberately_classified` in `rust/src/error.rs` and `test_every_exception_class_is_classified` in `python/tests/test_exceptions.py` — so a new variant cannot be added without classifying it on both sides.
 
 For per-variant cause / lenient-vs-strict behavior / exit-code mapping, see [`ERROR-CATALOG.md`](ERROR-CATALOG.md).
 

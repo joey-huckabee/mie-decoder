@@ -177,7 +177,7 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-SYN-005
 
 **Parent**: L1-SYN-001
-**Statement**: Record validation SHALL confirm that the next `(N − 1)` record boundaries each contain a plausible Type Word, where `N` is the configured look-ahead depth per L2-SYN-026 (default `2`). The walk SHALL advance by each candidate's declared `word_count`; if fewer than 2 bytes remain at any candidate position, look-ahead SHALL terminate without rejecting the original candidate, and validation checks 1 through 5 (type, word count, fits-in-file, IRIG range, IRIG day-of-year) SHALL be authoritative for the records that were not reachable within the file. The minimum `N` is `1` (no look-ahead beyond the candidate itself); higher values catch wider classes of consecutive-same-shape corruption at small additional per-record-read cost.
+**Statement**: Record validation SHALL confirm that the next `(N − 1)` record boundaries each contain a plausible Type Word, where `N` is the configured look-ahead depth per L2-SYN-026 (default `8`). The walk SHALL advance by each candidate's declared `word_count`; if fewer than 2 bytes remain at any candidate position, look-ahead SHALL terminate without rejecting the original candidate, and validation checks 1 through 5 (type, word count, fits-in-file, IRIG range, IRIG day-of-year) SHALL be authoritative for the records that were not reachable within the file. The minimum `N` is `1` (no look-ahead beyond the candidate itself); higher values catch wider classes of consecutive-same-shape corruption at small additional per-record-read cost.
 **Rationale**: A single-record validation produces too many false positives during header detection and sync recovery. The two-record look-ahead (the historical default) is what made the validator usable in practice; the parameterization adds defense against two-consecutive same-shape corruption patterns that defeat the historical default. Wording is generalized in place rather than retired and re-issued so the trace matrix and the codebase keep a single canonical identifier for the look-ahead policy.
 **Verification Method**: Test (T)
 
@@ -242,7 +242,7 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 **Parent**: L1-SYN-001
 **Statement**: Header detection, continuous decoding, and sync recovery SHALL use the same full record-validation rules. The implementation SHALL expose both a compatibility boolean result and a detailed result identifying which validation check failed.
 **Rationale**: Validators with subtly different semantics would inevitably drift. The boolean compatibility wrapper and additive detailed API share one implementation; header scan, per-record decode, and recovery therefore cannot disagree on validity. The detailed reason lets strict mode report the exact check without reimplementing classification in the reader.
-**Verification Method**: Inspection (I)
+**Verification Method**: Test (T), Inspection (I)
 
 #### L2-SYN-015
 
@@ -324,7 +324,7 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-SYN-026
 
 **Parent**: L1-SYN-001
-**Statement**: The look-ahead depth `N` referenced by L2-SYN-005 SHALL be configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, with valid range `[1, 32]` and default `2` (preserving the historical two-record look-ahead behavior). Values outside the range SHALL be rejected at config-load time or CLI parse time with a clear error naming the offending value and the valid range. The configured `N` SHALL apply uniformly to every sync-validation call site: header detection (`find_first_record`), mid-iteration per-record validation, and sync-recovery scan (`recover_sync`).
+**Statement**: The look-ahead depth `N` referenced by L2-SYN-005 SHALL be configurable via the `decode.lookahead_records` TOML key or the `--lookahead-records` CLI flag, with valid range `[1, 32]` and default `8`. The default was `2` through v2.11.1; it was raised because a two-record chain occurs by chance in ordinary text, so non-MIE inputs decoded "successfully" in violation of L1-EXIT-002 (see L1-ROB-002). Values outside the range SHALL be rejected at config-load time or CLI parse time with a clear error naming the offending value and the valid range. The configured `N` SHALL apply uniformly to every sync-validation call site: header detection (`find_first_record`), mid-iteration per-record validation, and sync-recovery scan (`recover_sync`).
 **Rationale**: A small number of operators encounter recordings where two consecutive corrupt frames happen to align on plausible-looking Type Words and defeat the default two-record look-ahead. Letting them increase `N` to (say) `4` or `8` catches a wider failure class without changing behavior for the common case. The `[1, 32]` range matches the equivalent range used by L2-DEC-015's `decode.detect_records` for consistency; values above `32` add little benefit (the look-ahead walk is bounded by the file's actual record count anyway).
 **Verification Method**: Test (T)
 
@@ -368,8 +368,8 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-RDR-004
 
 **Parent**: L1-MODE-001
-**Statement**: Header detection followed by a first-record truncation (the first valid Type Word's declared extent runs past EOF) SHALL surface a distinct error class in strict mode (e.g., `MieError::FirstRecordTruncated`) and SHALL terminate cleanly with zero records emitted in lenient mode.
-**Rationale**: This is the post-header counterpart to L2-RDR-002/003. Treating it identically to "no records found" would obscure the distinction between "no records at all" and "the header parsed but the first record is truncated"; the latter is operationally distinct and worth its own error class.
+**Statement**: Header detection followed by a first-record truncation (the first valid Type Word's declared extent runs past EOF) SHALL surface a distinct error class in strict mode (e.g., `MieError::FirstRecordTruncated`). In lenient mode it SHALL emit zero records and SHALL terminate with the no-valid-records class (exit `2` per L1-EXIT-002), logging a WARN that names the truncation specifically rather than the generic "no records" wording.
+**Rationale**: This is the post-header counterpart to L2-RDR-002/003. The strict-mode error class stays distinct because "the header parsed but the first record is truncated" is operationally different from "no records at all". Lenient mode previously terminated *cleanly* — exit `0` with a header-only CSV — which was indistinguishable from a successful decode and, worse, was a route by which non-MIE inputs reported success (v2.12.0). A decode that produces no rows from a file that is not a valid empty recording is a failure; the WARN preserves the specific diagnosis while the exit code stays honest.
 **Verification Method**: Test (T)
 
 #### L2-RDR-005
@@ -667,7 +667,7 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-WRT-019
 
 **Parent**: L1-OUT-002
-**Statement**: In separate (default) error mode, the main CSV and the errors CSV SHALL each be committed via its own atomic temp+rename (L2-WRT-015), and the main CSV SHALL be committed **before** the errors CSV. The two commits are sequential — no cross-file atomic rename exists — so this is explicitly **not** an all-or-nothing guarantee across the two files: a failure of the second (errors) commit SHALL leave the already-committed main CSV in place, and a failure of the first (main) commit SHALL leave neither file (the errors output is still an un-renamed temp and is unlinked). Both implementations SHALL use this main-before-errors order.
+**Statement**: In separate error mode (`--separate-errors`; inline is the default since v2.8.0), the main CSV and the errors CSV SHALL each be committed via its own atomic temp+rename (L2-WRT-015), and the main CSV SHALL be committed **before** the errors CSV. The two commits are sequential — no cross-file atomic rename exists — so this is explicitly **not** an all-or-nothing guarantee across the two files: a failure of the second (errors) commit SHALL leave the already-committed main CSV in place, and a failure of the first (main) commit SHALL leave neither file (the errors output is still an un-renamed temp and is unlinked). Both implementations SHALL use this main-before-errors order.
 **Rationale**: There is no portable way to atomically commit two files together. Since one file may survive a mid-commit failure, the residue must be the main CSV — the primary deliverable — never an orphan errors file with no corresponding main output. Pinning the order also removes a latent cross-implementation divergence: Rust previously committed errors-first while Python committed main-first, so the file left behind on failure differed by implementation.
 **Verification Method**: Test (T)
 
@@ -813,8 +813,8 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 #### L2-CLI-001
 
 **Parent**: L1-CLI-001
-**Statement**: Decode capability SHALL accept one input path.
-**Rationale**: A decode invocation operates on one file at a time; multi-file decode is delegated to the operator's shell loop or pipeline scheduler.
+**Statement**: Decode capability SHALL accept **one or more** input paths, supplied by exactly one of the three mutually exclusive methods of L2-MRG-001 (positionals, `--manifest`, `--glob`). A single input SHALL follow the single-file decode path unchanged; two or more SHALL invoke the time-sorted merge of L2-MRG-002.
+**Rationale**: Through v2.5.x this requirement read "one input path", and delegated multi-file decode to the operator's shell loop. The multi-file merge (L1-MRG-001 / L2-MRG-001) superseded that: a shell loop cannot interleave records from several recorders onto one absolute timeline, which is the whole point of the merge. The statement is restated here rather than left to L2-MRG-* because a reader looking up the CLI's input contract starts at L2-CLI-001, and finding "one input path" there contradicted both the shipped interface and `docs/CLI-REFERENCE.md`.
 **Verification Method**: Test (T)
 
 #### L2-CLI-002
@@ -897,6 +897,7 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 **Parent**: L1-CLI-001
 **Statement**: The record-aware dump SHALL emit each scan-stop anomaly it encounters — invalid Type Word `word_count`, a record whose declared extent runs past EOF (truncated record), and (where the host integer type can overflow) record-offset overflow — through the logger at `WARN`, in addition to the inline `!! …` note written into the hex report. The log message SHALL name the byte offset. Emission is subject to the configured global log level (default `WARN`); the inline report note is unchanged.
 **Rationale**: The record-aware dump previously surfaced these anomalies only inside the report stream, so an operator piping the dump report elsewhere — or any caller that captures the report separately — could not see the diagnostics on the normal stderr log channel the way the reader's diagnostics appear. Routing them through the logger as well makes the dump's diagnostics consistent with the reader's and visible at the configured level, while the inline note is retained for the at-a-glance visual report. (The reader's logger writes to process stderr in Rust and through the `mie_decoder` logger in Python; the dump uses the same channels.)
+**Note on the overflow anomaly**: it is unreachable through a real scan, in both implementations, and the wording above is scoped accordingly. Python integers do not overflow at all. In Rust the scan loop only advances while `offset + MIN_RECORD_BYTES <= file_len`, and `file_len` is a mapped file length, so `offset` stays far below `usize::MAX` while a record's declared extent is capped at 126 bytes (`word_count` is the Type Word's 6-bit field, `(raw >> 8) & 0x3F`, so at most 63 words) — the sum cannot wrap. The guard remains as defense in depth for the contract of `dump_record_extent`, which accepts an arbitrary `offset`, and is verified by calling that helper directly (`dump_record_extent_notes_offset_overflow`). It SHALL NOT be credited to the truncated-record tests, which never reach it.
 **Verification Method**: Test (T), Inspection (I)
 
 ---
@@ -927,7 +928,7 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 #### L2-MRG-004
 
 **Parent**: L1-MRG-001
-**Statement**: Per-file failure during a merge SHALL follow the same strict/lenient/`--allow-partial` policy as a single-file decode, applied across the batch: strict mode SHALL surface the first record or structural-invariant failure in any file; lenient mode SHALL skip invalid records; an unrecoverable failure in any file (unrecoverable sync loss, or an unreadable/empty/non-MIE input) SHALL fail the batch unless `--allow-partial`, in which case that file SHALL be truncated at its failure point with a WARN naming it, the merge SHALL complete from the remaining inputs, and the combined output SHALL be written with the `.partial` suffix (and `<stem>_errors.partial` in separate mode), exit `0`. This applies regardless of **where** the per-file failure is detected — at **open** (an empty / unreadable / missing file), at **priming** (the first record is non-MIE), or **mid-file** (an unrecoverable sync loss): each truncates that input at its failure point (offset 0 for an open- or priming-time failure) and contributes whatever it already decoded, if anything, to the one combined `.partial`.
+**Statement**: Per-file failure during a merge SHALL follow the same strict/lenient/`--allow-partial` policy as a single-file decode, applied across the batch: strict mode SHALL surface the first record or structural-invariant failure in any file; lenient mode SHALL skip invalid records; an unrecoverable failure in any file (unrecoverable sync loss, or an unreadable/empty/non-MIE input) SHALL fail the batch unless `--allow-partial`, in which case that file SHALL be truncated at its failure point with a WARN naming it, the merge SHALL complete from the remaining inputs, and the combined output SHALL be written with the `.partial` suffix **appended to the whole file name** — `<output>.partial`, and `<stem>_errors<suffix>.partial` in separate mode (so `out.csv` yields `out.csv.partial` and `out_errors.csv.partial`) — exit `0`. This applies regardless of **where** the per-file failure is detected — at **open** (an empty / unreadable / missing file), at **priming** (the first record is non-MIE), or **mid-file** (an unrecoverable sync loss): each truncates that input at its failure point (offset 0 for an open- or priming-time failure) and contributes whatever it already decoded, if anything, to the one combined `.partial`.
 **Rationale**: Reusing the established within-file semantics means operators learn one failure model. Because the output is a single time-sorted stream, an incomplete batch yields one `.partial` artifact containing everything decoded, consistent with how a single-file partial is surfaced.
 **Verification Method**: Test (T)
 
@@ -967,6 +968,7 @@ A single-input decode SHALL be unaffected by the setting: with one file the two 
 **Statement**: Shared conformance inputs SHALL be stored as reviewable hexadecimal text rather than committed `.mie` binary recordings.
 **Rationale**: Hex text is reviewable in PR diffs; committed binaries are opaque and grow the repository unnecessarily. The conformance runner converts hex to binary at execution time.
 **Verification Method**: Inspection (I)
+**Evidence**: `scripts/repo-hygiene.sh` — its no-MIE-recordings-tracked check scans the whole tracked tree and fails the repo-hygiene CI job on any committed binary recording; `.githooks/pre-commit` applies the same check to staged blobs. The rule is mechanically enforced rather than reviewed for.
 
 #### L2-CONF-002
 
@@ -988,6 +990,7 @@ A single-input decode SHALL be unaffected by the setting: with one file the two 
 **Statement**: Expected CSV oracles SHALL be updated only after both implementations agree.
 **Rationale**: Updating the oracle to match one implementation while the other still differs would silently de-couple them. Both must agree before the oracle moves.
 **Verification Method**: Inspection (I)
+**Evidence**: `tests/conformance/run.py` — every fixture is decoded by **both** implementations and byte-compared against the one shared oracle, so an oracle moved to match a single implementation fails on the other; the conformance job in `.github/workflows/ci.yml` runs it on Linux and Windows and blocks the merge. The requirement is a process rule, but the process cannot be violated silently: the enforcement is that no single implementation can ratify an oracle change on its own.
 
 #### L2-CONF-005
 

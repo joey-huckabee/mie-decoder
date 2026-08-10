@@ -28,7 +28,7 @@ from mie_decoder.decode import (
     decode_type_word,
     read_u16,
 )
-from mie_decoder.exceptions import MieFileEmptyError, MieFileNotFoundError
+from mie_decoder.exceptions import MieFileEmptyError, MieFileIoError, MieFileNotFoundError
 from mie_decoder.models import DDC_ERROR_DESCRIPTIONS, MessageType, TypeWord
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,13 @@ def hex_dump_raw(
     fpath = Path(path)
     if not fpath.exists():
         raise MieFileNotFoundError(str(fpath))
-    data = fpath.read_bytes()
+    # Read before the emptiness check, and convert the failure, so an
+    # unopenable path reports I/O rather than "empty" — matching `dump_hex` /
+    # `dump_records` in `rust/src/dump.rs`.
+    try:
+        data = fpath.read_bytes()
+    except OSError as exc:
+        raise MieFileIoError(str(fpath), exc) from exc
     if len(data) == 0:
         raise MieFileEmptyError(str(fpath))
 
@@ -106,7 +112,13 @@ def hex_dump_records(
     fpath = Path(path)
     if not fpath.exists():
         raise MieFileNotFoundError(str(fpath))
-    data = fpath.read_bytes()
+    # Read before the emptiness check, and convert the failure, so an
+    # unopenable path reports I/O rather than "empty" — matching `dump_hex` /
+    # `dump_records` in `rust/src/dump.rs`.
+    try:
+        data = fpath.read_bytes()
+    except OSError as exc:
+        raise MieFileIoError(str(fpath), exc) from exc
     if len(data) == 0:
         raise MieFileEmptyError(str(fpath))
 

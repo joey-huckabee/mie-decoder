@@ -32,26 +32,40 @@ from __future__ import annotations
 
 
 class MieDecoderError(Exception):
-    """Base exception for all MIE-Decoder errors.
+    """Base exception for every error the decoder *converts*.
 
-    All exceptions raised by the MIE-Decoder library inherit from this
-    class, enabling callers to catch any decoder-related error with a
-    single handler::
+    Catch it to handle any decoder-level failure with a single handler::
 
         try:
             for msg in MieFileReader("recording.mie"):
                 process(msg)
         except MieDecoderError as exc:
             logger.error("Decoder failure: %s", exc)
+
+    Input-side failures are all converted, including the ones raised by the
+    open/mmap itself — permission denied, a path that is not a regular file, a
+    device I/O error — which become :class:`MieFileIoError` (v2.12.0; they
+    previously escaped as a bare ``OSError`` and slipped past the handler
+    above). Every variant of Rust's ``MieError`` now has a class here, and the
+    two sets correspond one to one.
+
+    Output-side failures still reach you as ``OSError`` where the standard
+    library raises them outside a converted path, so a caller writing to an
+    arbitrary sink may still want ``(MieDecoderError, OSError)`` — which is
+    what the CLI uses, chiefly so a broken pipe on stdout stays a clean exit.
     """
 
 
 class MieFileError(MieDecoderError):
     """Base exception for file-level errors.
 
-    Raised when the input file cannot be opened, is missing, or is
-    structurally invalid at the file level (as opposed to individual
-    record-level corruption).
+    Never raised directly — it exists to be caught, and every file-level
+    failure is one of its subclasses: the file is missing, empty, or
+    unreadable; it holds no decodable records, is a single-byte pad, or has an
+    undecidable timestamp format; it cannot join a merge; or the destination is
+    refused. Corresponds to Rust's `is_file_error()` predicate **plus** the
+    whole-file rejections and destination guards that predicate excludes; see
+    `docs/ERROR-CATALOG.md` §2.
     """
 
 
@@ -105,6 +119,30 @@ class MieFileEmptyError(MieFileError):
     def __init__(self, path: str) -> None:
         self.path = path
         super().__init__(f"MIE file is empty (0 bytes): {path}")
+
+
+class MieFileIoError(MieFileError):
+    """Raised when opening, stat-ing, reading or memory-mapping the input fails.
+
+    Covers the failures that are neither "missing" nor "empty": permission
+    denied, a path that is not a regular file, a device-level read error. The
+    underlying ``OSError`` is preserved as ``source`` and chained via
+    ``raise ... from``, so nothing is lost by the conversion.
+
+    Mirrors Rust's ``MieError::FileIo``, including the ordering: the input is
+    opened *before* its size is checked, so an unopenable path reports an I/O
+    failure rather than being mis-reported as empty (a directory stats as zero
+    bytes on Windows).
+
+    Attributes:
+        path: The file path whose I/O failed.
+        source: The originating ``OSError``.
+    """
+
+    def __init__(self, path: str, source: OSError) -> None:
+        self.path = path
+        self.source = source
+        super().__init__(f"I/O error on {path}: {source}")
 
 
 class MieInputOutputCollisionError(MieFileError):

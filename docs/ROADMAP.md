@@ -124,11 +124,99 @@ so the request isn't folded into the time-merge contract without separate design
     a spec'd requirement with byte-exact conformance fixtures so output
     matches vendor CSV. Until then the advisory WARN stays.
 
-- **`L2-DEC-012` tie-break conformance test.** The IRIG-wins-on-tie tie-break
-  (`L2-DEC-012`) is specified and implemented, but is still listed as Draft in
-  `docs/TRACE-MATRIX.md`: constructing an input that yields a genuine
-  equal-score IRIG/Standard detection tie requires reverse-engineering the
-  auto-detection heuristic. Deferred until a crafted fixture can force the tie.
+## SonarCloud security findings on the input path (deferred, gate is red)
+
+**`main` currently fails the SonarCloud quality gate**, knowingly, as of the
+v2.12.0 cut. `new_security_rating` is 5 where the gate requires 1. Every other
+condition passes (reliability 1, maintainability 1, coverage 94.7%, duplication
+0.0%, hotspots reviewed 100%), and all 51 non-Sonar CI checks pass.
+
+Two findings, both on the `open(self._path, "rb")` in
+`python/src/mie_decoder/reader.py` that landed with the `MieFileIoError`
+conversion:
+
+- **`pythonsecurity:S2083`** (blocker) — "Change this code to not construct the
+  path from user-controlled data."
+- **`pythonsecurity:S8707`** (major) — the agentic path-injection rule, the same
+  one already excluded for `config.py`.
+
+**Why this was not simply excluded at the cut.** The exclusion in
+`.github/workflows/sonarcloud.yml` is scoped to one rule in one file, and its
+comment says that was deliberate: *"any other finding there, and this rule
+anywhere else, still fails the build."* The gate caught a new occurrence in a
+new file exactly as designed. Widening it silently would spend that design, and
+`S2083` has never been suppressed anywhere in this repository — a first blocker
+suppression is a decision to take deliberately, not as a step in a release.
+
+**Note the cost being carried.** v2.11.1 was cut *specifically* to stop releases
+merging against a failing gate: before it, `sonar.qualitygate.wait` was set only
+for pushes to the default branch, so four PRs merged green while `main` was red.
+That fix works — the gate is blocking, and this entry exists because it blocked.
+Merging anyway restores the very state v2.11.1 removed, and it stays until one
+of the options below is taken. Anyone reading a red `main` should find this
+section rather than assume the gate is broken again.
+
+**The two real options:**
+
+1. **Extend the exclusion to `reader.py` for both rules.** The false-positive
+   argument is identical to the documented `config.py` one: mie-decoder is an
+   operator-run CLI, the input path *is* the interface, and the process holds
+   exactly the permissions of the user who typed the command — there is no
+   sandbox to escape and no privilege boundary to cross. Cheapest, and
+   consistent with reasoning already written down. Requires accepting the first
+   `S2083` suppression, and `CONFIG-REFERENCE.md`'s "Trust boundary" section
+   should be extended to cover the input file so the two stay in step.
+2. **Harden rather than suppress.** Mirror what `config.py` already does and
+   require a *regular file* before opening, so a directory or a character device
+   is rejected up front rather than at the `OSError`. This is the repo's own
+   established answer to this rule class and is a genuine improvement, but it
+   needs Rust parity, tests on both sides, and a conformance case — and it may
+   not clear the `S2083` taint path regardless, since the path still flows from
+   an argument to an open.
+
+## Diagram rendering: make the SVG guard real (deferred)
+
+The `diagrams` CI job re-renders `docs/diagrams/*.puml` and byte-diffs the
+result against the committed `*.svg`. It has never actually verified anything,
+for three independent reasons found on 2026-08-09. The job still runs and is
+harmless; what follows is what it would take to make it mean something.
+
+- **PlantUML names its output after the diagram, not the source file.** Every
+  source opens `@startuml MIE-Decoder Class Diagram`, so `-o docs/diagrams`
+  writes `MIE-Decoder Class Diagram.svg` and never touches the tracked
+  `class.svg`. `git diff --exit-code` only inspects tracked files, so the
+  untracked renders are invisible and the step passes unconditionally. Fix:
+  render into a scratch directory and map `@startuml` names back to source
+  basenames explicitly.
+- **PlantUML exits 0 on a failed render.** `component.puml` crashes in the
+  smetana layout engine (`java.lang.IllegalStateException` in
+  `smetana.core.JUtils.qsort`, reached from `dot_mincross`) on stable 1.2026.5
+  and 1.2026.6, emitting a truncated ~14 KB SVG where a whole one is ~60 KB —
+  and the process still returns 0. Any fix has to scan the render output for
+  exceptions, and should assert each expected file was rewritten, rather than
+  trusting the exit code. Upstream bug worth reporting with `component.puml` as
+  the repro.
+- **The pinned version has never matched the committed SVGs, and the version
+  that does can't be pinned.** CI pins stable `1.2026.5`; all three committed
+  SVGs carry `<?plantuml 1.2026.7beta11?>`, a build published only under
+  PlantUML's rolling `snapshot` pre-release, whose assets are named
+  `plantuml-SNAPSHOT.jar` and are overwritten in place. It is the only build
+  tested here that renders all three diagrams without crashing, and it is
+  precisely the one a URL cannot pin. Resolving this means either moving
+  `component.puml` off smetana onto Graphviz `dot` (which CI already installs
+  for `dataflow.puml`) so a stable release suffices, or waiting for the
+  smetana fix to reach a stable release.
+
+A fourth problem constrains whatever is built: **the render is not reproducible
+across machines.** Re-rendering the *unchanged* `component.puml` and
+`dataflow.puml` with the *same* jar on a different host shifted the canvas
+(3350×1490 → 3370×1537 and 3871 → 3844 wide), because PlantUML measures text
+with the JVM's font metrics and those differ by platform and font set. So a
+byte-diff guard can only ever hold if one fixed environment renders every
+committed SVG — a pinned container image, or CI as the sole renderer. A guard
+that instead asserts *"the render completes without error and produces every
+expected file"* is weaker but environment-independent, and would have caught
+two of the three defects above.
 
 ## Performance refinements (deferred)
 

@@ -80,8 +80,8 @@ mie-decoder decode rec.mie -o clean.csv \
 # Only Bus A, only RT 15 (positive filters)
 mie-decoder decode rec.mie -o rt15.csv --include-buses A --include-rts 15
 
-# Errors inline with normal messages
-mie-decoder decode rec.mie -o clean-plus-errors.csv --separate-errors
+# Split errored + spurious rows out (the default keeps them inline)
+mie-decoder decode rec.mie -o split.csv --separate-errors   # -> split.csv + split_errors.csv
 
 # Multi-file, time-sorted merge; de-dup overlapping recorders
 mie-decoder decode a.mie b.mie -o merged.csv --collapse-duplicates

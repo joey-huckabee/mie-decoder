@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mie_decoder.decode import DEFAULT_DETECT_RECORDS
 from mie_decoder.models import (
     Bus,
     DeltaScope,
@@ -43,6 +44,7 @@ from mie_decoder.order import (
     MAX_SORT_GROUP_MAX,
     MAX_SORT_GROUP_MIN,
 )
+from mie_decoder.sync import DEFAULT_LOOKAHEAD_RECORDS
 
 logger = logging.getLogger(__name__)
 
@@ -504,12 +506,16 @@ class DecoderConfig:
     #: L2-DEC-015: number of records the timestamp-format auto-detect
     #: probe walks before committing to IRIG vs Standard. Range
     #: [DETECT_RECORDS_MIN, DETECT_RECORDS_MAX]. Default 8.
-    detect_records: int = 8
+    detect_records: int = DEFAULT_DETECT_RECORDS
     #: L2-SYN-026: total number of records sync.validate_record checks
     #: (1 candidate + N-1 look-ahead). Range
-    #: [LOOKAHEAD_RECORDS_MIN, LOOKAHEAD_RECORDS_MAX]. Default 2,
-    #: preserving the historical two-record look-ahead.
-    lookahead_records: int = 2
+    #: [LOOKAHEAD_RECORDS_MIN, LOOKAHEAD_RECORDS_MAX].
+    #:
+    #: Both defaults reference the defining constant rather than repeating its
+    #: value. Repeating it is why the look-ahead default silently stayed at 2
+    #: here when `sync.DEFAULT_LOOKAHEAD_RECORDS` moved to 4 — Rust had always
+    #: referenced its constant, so only Python drifted.
+    lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS
     #: L2-DEC-017: optional Standard-counter tick rate in Hz. None (the
     #: default) keeps the historical empty-DELTA behavior for Standard
     #: records; a finite, strictly-positive value enables tick->microsecond
@@ -772,7 +778,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     )
     lookahead_records = _require_int_range(
         "decode.lookahead_records",
-        decode_section.get("lookahead_records", 2),
+        decode_section.get("lookahead_records", DEFAULT_LOOKAHEAD_RECORDS),
         LOOKAHEAD_RECORDS_MIN,
         LOOKAHEAD_RECORDS_MAX,
     )

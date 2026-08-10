@@ -3,12 +3,15 @@
 This package provides a decoder for proprietary binary files produced by
 DDC (Data Device Corporation) MIL-STD-1553 PCI recording cards. These
 files use the ``.mie`` or ``.mie_alta`` extension and contain timestamped
-1553 bus monitor captures with IRIG-format time tags.
+1553 bus monitor captures.
 
-The binary format consists of fixed-length records whose size is
-determined by a Type Word at the start of each record. Each record
-contains an IRIG timestamp, a MIL-STD-1553 command word, an optional
-status word, and data words captured from the bus.
+The binary format is a bare stream of **variable-length** records — there
+is no file header, and a null Type Word terminates the stream. Each record
+opens with a Type Word that determines its length and shape, followed by a
+timestamp, a MIL-STD-1553 command word, an optional status word, and up to
+32 data words captured from the bus. Two timestamp formats are supported,
+**IRIG** and **Standard**; the format is auto-detected per file by probing
+the Command Word at both candidate offsets and scoring the results.
 
 Typical usage::
 
@@ -21,8 +24,8 @@ Typical usage::
 The decoder entry point ``MieFileReader`` and the ``MieMessage`` records it
 yields are importable directly from the package root (``mie_decoder``).
 
-Version history:
-    1.0.0 - Joint Rust + Python initial release. See CHANGELOG.md.
+The release history lives in ``CHANGELOG.md``; the installed version is
+available as ``mie_decoder.__version__``.
 """
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version

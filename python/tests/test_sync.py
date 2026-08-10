@@ -141,6 +141,56 @@ class TestValidateRecord:
         )
         assert validate_record(data, 0, len(data), TimestampFormat.IRIG) is False
 
+    @pytest.mark.requirement("L2-SYN-014")
+    def test_boolean_and_detailed_validation_never_disagree(self) -> None:
+        """L2-SYN-014: the two validators are one rule set, so they can
+        never disagree about validity.
+
+        True today because ``validate_record`` delegates to
+        ``validate_record_detailed(...) is None`` — but delegation is an
+        implementation choice a later refactor could quietly undo, and until
+        v2.12.0 the requirement was reported as met with no artifact behind
+        it. This pins the property across a valid record and every distinct
+        rejection reason. Mirrors the Rust
+        ``boolean_and_detailed_validation_never_disagree``.
+        """
+        valid = self._irig_record(
+            self._irig_upper(False, 192, 15),
+            self._irig_middle(54, 50, 0),
+            0,
+        )
+        first = valid[:10]
+        corpus = [
+            valid,
+            b"",
+            b"\x02",
+            b"\x03\x05" + bytes(8),
+            b"\x02\x02" + bytes(8),
+            b"\x02\x24" + bytes(8),
+            self._irig_record(
+                self._irig_upper(False, 192, 24),
+                self._irig_middle(54, 50, 0),
+                0,
+            ),
+            self._irig_record(
+                self._irig_upper(False, 192, 15),
+                self._irig_middle(60, 50, 0),
+                0,
+            ),
+            first + b"\x03\x05",
+            first + b"\x02\x02",
+        ]
+        for index, data in enumerate(corpus):
+            for lookahead in (1, 2, 4):
+                boolean = validate_record(data, 0, len(data), TimestampFormat.IRIG, lookahead)
+                detailed = validate_record_detailed(
+                    data, 0, len(data), TimestampFormat.IRIG, lookahead
+                )
+                assert boolean is (detailed is None), (
+                    f"case {index} (lookahead {lookahead}): "
+                    f"boolean said {boolean}, detailed said {detailed}"
+                )
+
     @pytest.mark.requirement("L2-SYN-004")
     def test_detailed_validation_reports_each_failure_reason(self) -> None:
         valid = self._irig_record(
@@ -290,10 +340,15 @@ class TestRecoverSync:
         fpath = tmp_path / "corrupt.mie"
         fpath.write_bytes(data)
         messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
-        # The second pre-corruption record fails look-ahead validation because
-        # its next boundary is corrupt. The first and both recovered records
-        # remain.
-        assert len(messages) == 3
+        # All four genuine records survive. Through v2.11.1 this was 3: the
+        # second pre-corruption record was discarded because its *successor*
+        # boundary was corrupt, even though the record itself was complete and
+        # in-bounds. Continuous validation no longer looks ahead (L2-SYN-005),
+        # so a well-formed record is never lost to its neighbour's damage; the
+        # corruption is detected when the loop reaches it, and recovery
+        # proceeds from there. Mirrors `reader_recovers_from_corruption` in
+        # `rust/src/reader.rs`.
+        assert len(messages) == 4
 
     @pytest.mark.requirement("L1-SYN-002")
     def test_recovery_scan_forward_only_and_bounded(
@@ -334,14 +389,18 @@ class TestRecoverSync:
     ) -> None:
         """Strict mode should raise on sync loss."""
         from mie_decoder.reader import MieFileReader
-        from mie_decoder.exceptions import MiePayloadError
+        from mie_decoder.exceptions import MieUnknownTypeWordError
 
         good = single_receive_record * 2
         corruption = b"\x03\x00" * 5  # invalid type 0x03
         data = good + corruption
         fpath = tmp_path / "strict_corrupt.mie"
         fpath.write_bytes(data)
-        with pytest.raises(MiePayloadError, match="look-ahead message type is unknown"):
+        # The reason names the offending position itself. Before v2.12.0 this
+        # was "look-ahead message type is unknown", raised against the last good
+        # record; that also discarded it. Now the corruption is reported where
+        # it is, and the good records are kept.
+        with pytest.raises(MieUnknownTypeWordError, match="Unknown message type"):
             list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
 
     @pytest.mark.requirement("L2-SYN-013")
@@ -354,13 +413,13 @@ class TestRecoverSync:
         """DEBUG diagnostics include one bounded context line."""
         import logging
 
-        from mie_decoder.exceptions import MiePayloadError
+        from mie_decoder.exceptions import MieUnknownTypeWordError
         from mie_decoder.reader import MieFileReader
 
         fpath = tmp_path / "strict_corrupt.mie"
         fpath.write_bytes(single_receive_record * 2 + b"\x03\x00" * 5)
         with caplog.at_level(logging.DEBUG, logger="mie_decoder.reader"):
-            with pytest.raises(MiePayloadError):
+            with pytest.raises(MieUnknownTypeWordError):
                 list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
 
         context = [

@@ -47,6 +47,7 @@ Exception
     ├── MieFileError                 (wrong file / file-system issue)
     │   ├── MieFileNotFoundError
     │   ├── MieFileEmptyError
+    │   ├── MieFileIoError
     │   ├── MieNoValidRecordsError
     │   ├── MieHomogeneousPayloadError
     │   ├── MieTimestampFormatMismatchError
@@ -67,12 +68,12 @@ Exception
 
 ### Rust (`mie_decoder::MieError`)
 
-A single `enum MieError { … }` with the same set of variants. `MieError::kind()` returns a `MieErrorKind` discriminant; `is_file_error()` / `is_record_error()` predicates mirror the Python class split.
+A single `enum MieError { … }` with the same set of variants. `MieError::kind()` returns a `MieErrorKind` discriminant. Of the two predicates, only `is_record_error()` mirrors the Python class split — it matches `MieRecordError` exactly. `is_file_error()` is deliberately **narrower** than `MieFileError`; see the note below the listing.
 
 ```
 MieError ├── FileNotFound             ── MieErrorKind::FileNotFound             (is_file_error)
          ├── FileEmpty                ── MieErrorKind::FileEmpty                (is_file_error)
-         ├── FileIo                   ── MieErrorKind::FileIo                   (is_file_error)
+         ├── FileIo                   ── MieErrorKind::FileIo                   (is_file_error)   ↔ MieFileIoError
          ├── NoValidRecords           ── MieErrorKind::NoValidRecords
          ├── HomogeneousPayload       ── MieErrorKind::HomogeneousPayload
          ├── TimestampFormatMismatch  ── MieErrorKind::TimestampFormatMismatch
@@ -85,24 +86,26 @@ MieError ├── FileNotFound             ── MieErrorKind::FileNotFound   
          ├── FirstRecordTruncated     ── MieErrorKind::FirstRecordTruncated     (is_record_error)
          ├── PayloadError             ── MieErrorKind::PayloadError             (is_record_error)
          ├── UnknownErrorCode         ── MieErrorKind::UnknownErrorCode         (is_record_error)
-         ├── UnrecoverableSyncLoss    ── MieErrorKind::UnrecoverableSyncLoss
-         ├── WriterError              ── MieErrorKind::WriterError
+         ├── UnrecoverableSyncLoss    ── MieErrorKind::UnrecoverableSyncLoss    (is_record_error)
+         ├── WriterError              ── MieErrorKind::WriterError              (neither predicate)
          └── NonMonotonicInput        ── MieErrorKind::NonMonotonicInput        (neither predicate — no byte offset)
 ```
 
-Python `mie_decoder.MieFileError` is the analogue of Rust's `MieError::is_file_error()` predicate; `MieRecordError` is the analogue of `is_record_error()`. The non-classified variants (`NoValidRecords`, `HomogeneousPayload`, `InputOutputCollision`, `ClobberRefused`, `UnrecoverableSyncLoss`, `WriterError`) inherit from `MieFileError` or `MieRecordError` in Python by the same rule the Rust predicate applies.
+`MieRecordError` and `MieError::is_record_error()` cover the same seven failures exactly, `UnrecoverableSyncLoss` included. (Rust omitted it until v2.12.0 — see the CHANGELOG.)
+
+Python's `MieFileError` is **wider** than `MieError::is_file_error()`, which answers only "did input I/O fail" (`FileNotFound`, `FileEmpty`, `FileIo`). The whole-file rejections (`NoValidRecords`, `HomogeneousPayload`, `TimestampFormatMismatch`, `IncompatibleMergeInputs`) and the destination guards (`InputOutputCollision`, `ClobberRefused`) extend `MieFileError` in Python but answer `false` to **both** Rust predicates; match on `kind()` for those. `WriterError` and `NonMonotonicInput` sit directly under `MieDecoderError` and likewise answer `false` to both.
 
 ---
 
 ## 3. File-level errors
 
-These fire before any record is decoded, or before the writer touches the destination. Catchable in Python as `MieFileError`; in Rust via `MieError::is_file_error()` for the I/O subset.
+These fire before any record is decoded, or before the writer touches the destination. All but the last row are catchable in Python as `MieFileError`; `MieNonMonotonicInputError` is grouped here because it fires at the same stage, but it extends `MieDecoderError` **directly** and a `MieFileError` handler will not catch it. In Rust only the I/O subset (`FileNotFound`, `FileEmpty`, `FileIo`) answers `true` to `is_file_error()`; for the rest of this section, match on `MieError::kind()` (see §2).
 
 | Variant | When it fires | Exit | What to do |
 |---------|---------------|------|------------|
 | `MieFileNotFoundError` / `FileNotFound` | Input path does not exist (L2-RDR-005). | 1 | Check the path; verify mount / permissions. |
 | `MieFileEmptyError` / `FileEmpty` | Input file exists but is zero bytes (L2-RDR-006). | 1 | Upstream recording or transfer failure; check the source. |
-| (Python `OSError` / Rust `MieError::FileIo`) | Read or mmap fails (permission denied, disk error, etc.). | 1 | Inspect the underlying OS error; usually a filesystem permission or hardware issue. |
+| `MieFileIoError` / `FileIo` | Open, stat, read or mmap fails — permission denied, the path is not a regular file, a device error. Both implementations attempt the **open before the size check**, so an unopenable path reports I/O rather than "empty" (a directory stats as zero bytes on Windows). Python wraps the originating `OSError` and keeps it as `.source`; before v2.12.0 it escaped unconverted. | 1 | Inspect the underlying OS error; usually a filesystem permission or hardware issue. |
 | `MieNoValidRecordsError` / `NoValidRecords` | The first 64 KB contain no valid MIE record at all (L1-EXIT-002). Typical cause: input isn't an MIE recording. | **2** | Verify the input is actually MIE; if it is, records may begin past the 64 KB scan window. |
 | `MieHomogeneousPayloadError` / `HomogeneousPayload` | The first 4 candidate records are byte-identical in non-timestamp positions (L2-SYN-018). Typical cause: 0x20-padded or otherwise pathological single-byte file. | **2** | Verify the input file; almost always a wrong-file-type or corruption indicator. |
 | `MieTimestampFormatMismatchError` / `TimestampFormatMismatch` | L2-DEC-015 multi-record probe completed with an L2-DEC-016 Ambiguous classification (max aggregate score < 4 OR margin < 3). **Strict mode only**: lenient mode logs a single WARN with the score breakdown and proceeds with the chosen format. Typical cause: the file genuinely isn't an MIE recording, OR the first N records score weakly enough that the probe can't pick a side. | **2** | First confirm the file is actually an MIE recording. If it is, pass `--time-format irig` or `--time-format standard` to force the choice. If a one-time decode is acceptable with the auto-picked format (IRIG on ties per L2-DEC-012), drop `--strict` to take the lenient path. |

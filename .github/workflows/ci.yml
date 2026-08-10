@@ -304,7 +304,7 @@ jobs:
         # platform- or interpreter-dependent, so running it across the
         # full python-job matrix would waste CI minutes. Mirrors how
         # cargo cov-ci is invoked only on the Linux cell of the Rust
-        # job. The floor (88% combined line+branch) is `fail_under` in
+        # job. The floor (92% combined line+branch) is `fail_under` in
         # python/pyproject.toml's [tool.coverage.report] — see the comment
         # block there for the ratchet rationale.
         run: poetry -C python run pytest --cov --cov-report=term-missing
@@ -509,6 +509,25 @@ jobs:
         # works on both runners.
         run: python tests/conformance/run.py
 
+  repo-hygiene:
+    name: Repo hygiene (pre-commit backstop)
+    runs-on: ubuntu-latest
+    # Re-runs the file-level checks from .githooks/pre-commit over the whole
+    # tracked tree. The hook is skippable (`git commit --no-verify`) and until
+    # v2.12.0 nothing in CI re-ran it, so CONTRIBUTING's "CI runs the same
+    # checks" was untrue for most of the list: a CRLF blob, a stray dbg!(), a
+    # merge marker, an oversized file or a committed *.mie could all land
+    # unnoticed. This is that backstop.
+
+    steps:
+      - name: Check out repository
+        # eol conversion is left off so the index/worktree comparison the
+        # script makes is meaningful.
+        uses: actions/checkout@v6
+
+      - name: Run repo hygiene checks
+        run: bash scripts/repo-hygiene.sh
+
   trace-matrix:
     name: Requirements trace matrix
     runs-on: ubuntu-latest
@@ -547,11 +566,25 @@ jobs:
 
       - name: Download pinned PlantUML jar
         env:
-          # Pin to the same PlantUML version that produced the
-          # committed SVGs (see <?plantuml ...?> processing
-          # instruction inside docs/diagrams/class.svg). Bumping
-          # this version typically reflows diagrams and requires a
-          # matching local re-render + commit.
+          # NOTE: this pin does NOT match the committed SVGs, and this
+          # job does not currently verify them. The committed files carry
+          # <?plantuml 1.2026.7beta11?>, a build published only under
+          # PlantUML's rolling `snapshot` pre-release (asset name
+          # plantuml-SNAPSHOT.jar, overwritten in place) and therefore not
+          # pinnable by URL. It is also the only build tested that renders
+          # all three diagrams without crashing: on this pinned stable
+          # release, component.puml dies in the smetana layout engine and
+          # PlantUML still exits 0.
+          #
+          # The verify step below cannot catch any of that, because
+          # PlantUML names its output after `@startuml <name>` rather than
+          # the source file — the render lands in untracked
+          # "MIE-Decoder Class Diagram.svg" and friends, leaving the
+          # tracked *.svg untouched, so `git diff` is trivially clean.
+          # Kept running (it is harmless and downloads the jar we would
+          # need) while the real fix is scoped; see the "Diagram
+          # rendering" section of docs/ROADMAP.md for the three defects
+          # and the reproducibility constraint on any replacement.
           PLANTUML_VERSION: 1.2026.5
         run: |
           mkdir -p "$HOME/plantuml"
@@ -564,6 +597,9 @@ jobs:
           java -Djava.awt.headless=true -jar "$PLANTUML_JAR" \
             -tsvg -o "$PWD/docs/diagrams" docs/diagrams/*.puml
 
+      # Known no-op — see the PLANTUML_VERSION comment above and
+      # docs/ROADMAP.md. Left in place so the intent stays visible in the
+      # workflow rather than only in the roadmap.
       - name: Verify committed SVGs match rendered output
         run: |
           if ! git diff --exit-code -- docs/diagrams/*.svg; then
