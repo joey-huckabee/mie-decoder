@@ -156,7 +156,27 @@ poetry -C python run mie-decoder decode path/to/recording.mie -o decoded.csv
 ```
 
 Commit each `docs/diagrams/*.puml` source with its matching rendered
-`docs/diagrams/*.svg`. Regenerate the SVG whenever the PlantUML source changes.
+`docs/diagrams/*.svg`. Regenerate the SVG whenever the PlantUML source changes —
+**nothing in CI will catch you if you don't** (the `diagrams` job is a known
+no-op; see §9 and `ROADMAP.md`).
+
+Two traps when regenerating:
+
+- **The output file is named after `@startuml <name>`, not the source.**
+  `plantuml -tsvg docs/diagrams/class.puml` writes
+  `MIE-Decoder Class Diagram.svg`. Rename it onto `class.svg` yourself.
+- **PlantUML exits 0 on a crashed render**, leaving a truncated SVG. Grep the
+  render output for `Exception`, and sanity-check the result (`class.svg`
+  should contain every type declared in `class.puml`; a whole
+  `component.svg` is ~60 KB, a crashed one ~14 KB).
+
+The committed SVGs are rendered with PlantUML **1.2026.7beta11**, from the
+project's rolling `snapshot` pre-release — on the stable releases tested,
+`component.puml` crashes in the smetana layout engine. Read the
+`<?plantuml VERSION?>` processing instruction inside any committed `*.svg` to
+confirm what produced it. Note also that PlantUML lays out using the JVM's font
+metrics, so re-rendering an *unchanged* source on a different machine will
+still shift the canvas; expect byte differences that are not content changes.
 
 ---
 
@@ -474,15 +494,15 @@ shows up as a gap rather than silently drifting:
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py` — every fixture, both impls | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
 | `repo-hygiene` | `bash scripts/repo-hygiene.sh` — re-runs the pre-commit hook's file-level checks (final newline, CRLF, merge markers, 1 MB cap, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:`) over the whole tracked tree, so a `--no-verify` commit is still caught, plus the doc-drift checks that have no hook counterpart (this table lists every `ci.yml` job; the config-key set agrees across its three text sources; the declared Rust MSRV agrees across `Cargo.toml`, CI and the docs; `ROADMAP.md` doesn't restate a `TRACE-MATRIX.md` status; the Python exception hierarchy matches its ASCII-tree and UML drawings) | `ubuntu-latest` | Block merge |
-| `diagrams` | Re-render every `docs/diagrams/*.puml` with the pinned PlantUML version and `git diff --exit-code` against the committed `*.svg` — fails if a `.puml` source was changed without regenerating the matching `.svg` | `ubuntu-latest` | Block merge |
+| `diagrams` | Re-renders every `docs/diagrams/*.puml` with the pinned PlantUML version and runs `git diff --exit-code` against the committed `*.svg`. **Currently a no-op** — PlantUML names its output after `@startuml <name>`, so the render lands in untracked files and the tracked `*.svg` are never compared; see the "Diagram rendering" section of `ROADMAP.md` | `ubuntu-latest` | Passes regardless |
 
 The Rust and Python deployment targets are Linux. Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.
 
-The `diagrams` job pins PlantUML to the version that produced the committed SVGs (read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg` to find it). Bumping that pin generally reflows every diagram and requires a matching local re-render + commit of all `*.svg` files in the same PR.
+The `diagrams` job pins PlantUML to `1.2026.5`, which is **not** the version that produced the committed SVGs (`1.2026.7beta11`, from the unpinnable rolling `snapshot` pre-release — read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg`). That mismatch went unnoticed because the job never compares the tracked files at all. Three independent defects and the reproducibility constraint on any replacement are written up under "Diagram rendering" in `ROADMAP.md`.
 
 A separate scheduled workflow, `.github/workflows/fuzz.yml`, runs a deeper L1-ROB-001 fuzz burn-in daily (and on manual `workflow_dispatch`). The normal `rust` / `python` jobs run the fixed 256-iteration default; the burn-in sets `MIE_FUZZ_ITERATIONS` (default 25 000) so the deterministic harness sweeps a much larger input space. Because the PRNG seed is fixed, the burn-in is a strict superset of the default run and any failure prints a reproducible seed. To reproduce locally: `MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic` or `MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness`.
 
-Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, rust/Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs — the `diagrams` CI job is your safety net there.
+Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, rust/Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs, and neither does CI in practice — the `diagrams` job is a known no-op (§9), so a stale SVG is currently caught by nobody. Re-render by hand, following §3.
 
 ---
 

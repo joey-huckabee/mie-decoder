@@ -124,6 +124,50 @@ so the request isn't folded into the time-merge contract without separate design
     a spec'd requirement with byte-exact conformance fixtures so output
     matches vendor CSV. Until then the advisory WARN stays.
 
+## Diagram rendering: make the SVG guard real (deferred)
+
+The `diagrams` CI job re-renders `docs/diagrams/*.puml` and byte-diffs the
+result against the committed `*.svg`. It has never actually verified anything,
+for three independent reasons found on 2026-08-09. The job still runs and is
+harmless; what follows is what it would take to make it mean something.
+
+- **PlantUML names its output after the diagram, not the source file.** Every
+  source opens `@startuml MIE-Decoder Class Diagram`, so `-o docs/diagrams`
+  writes `MIE-Decoder Class Diagram.svg` and never touches the tracked
+  `class.svg`. `git diff --exit-code` only inspects tracked files, so the
+  untracked renders are invisible and the step passes unconditionally. Fix:
+  render into a scratch directory and map `@startuml` names back to source
+  basenames explicitly.
+- **PlantUML exits 0 on a failed render.** `component.puml` crashes in the
+  smetana layout engine (`java.lang.IllegalStateException` in
+  `smetana.core.JUtils.qsort`, reached from `dot_mincross`) on stable 1.2026.5
+  and 1.2026.6, emitting a truncated ~14 KB SVG where a whole one is ~60 KB —
+  and the process still returns 0. Any fix has to scan the render output for
+  exceptions, and should assert each expected file was rewritten, rather than
+  trusting the exit code. Upstream bug worth reporting with `component.puml` as
+  the repro.
+- **The pinned version has never matched the committed SVGs, and the version
+  that does can't be pinned.** CI pins stable `1.2026.5`; all three committed
+  SVGs carry `<?plantuml 1.2026.7beta11?>`, a build published only under
+  PlantUML's rolling `snapshot` pre-release, whose assets are named
+  `plantuml-SNAPSHOT.jar` and are overwritten in place. It is the only build
+  tested here that renders all three diagrams without crashing, and it is
+  precisely the one a URL cannot pin. Resolving this means either moving
+  `component.puml` off smetana onto Graphviz `dot` (which CI already installs
+  for `dataflow.puml`) so a stable release suffices, or waiting for the
+  smetana fix to reach a stable release.
+
+A fourth problem constrains whatever is built: **the render is not reproducible
+across machines.** Re-rendering the *unchanged* `component.puml` and
+`dataflow.puml` with the *same* jar on a different host shifted the canvas
+(3350×1490 → 3370×1537 and 3871 → 3844 wide), because PlantUML measures text
+with the JVM's font metrics and those differ by platform and font set. So a
+byte-diff guard can only ever hold if one fixed environment renders every
+committed SVG — a pinned container image, or CI as the sole renderer. A guard
+that instead asserts *"the render completes without error and produces every
+expected file"* is weaker but environment-independent, and would have caught
+two of the three defects above.
+
 ## Performance refinements (deferred)
 
 Surfaced by a source review and **verified real but deliberately deferred** —

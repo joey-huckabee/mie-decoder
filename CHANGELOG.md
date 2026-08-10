@@ -172,6 +172,36 @@ full release workflow.
 
 ### Fixed
 
+- **All three `docs/diagrams/*.svg` regenerated**, so `class.svg` reflects the
+  three exception classes added to `class.puml` above. Rendered with PlantUML
+  **1.2026.7beta11**, the same build that produced the previous set, and
+  verified whole rather than merely changed: no exception in the render output,
+  every one of the 44 types declared in `class.puml` present in the SVG, and
+  each file terminated. `component.svg` and `dataflow.svg` shift their canvas
+  slightly despite unchanged sources — PlantUML lays out using the JVM's font
+  metrics, so the same jar on a different host reflows. That is a rendering
+  artifact, not a content change.
+
+- **The `diagrams` CI job has never verified an SVG, and now says so.** Three
+  independent defects, none of which could be seen from the job's green tick:
+  PlantUML names its output after `@startuml <name>`, so rendering into
+  `docs/diagrams/` writes untracked `MIE-Decoder Class Diagram.svg` and leaves
+  the tracked `class.svg` alone — `git diff --exit-code` inspects tracked files
+  only, so it was trivially clean; PlantUML exits **0** when a diagram crashes
+  mid-layout, so even correct filenames would have passed (`component.puml`
+  dies in smetana's `qsort` on stable 1.2026.5 and 1.2026.6, emitting ~14 KB
+  where a whole file is ~60 KB); and the pinned `1.2026.5` never matched the
+  committed SVGs' `1.2026.7beta11`, which exists only in PlantUML's rolling
+  `snapshot` pre-release and cannot be pinned by URL.
+
+  The job is left running and is now labelled a known no-op in `ci.yml`, in
+  `MAINTAINER-GUIDE.md` §9 (which had claimed it "fails if a `.puml` source was
+  changed without regenerating the matching `.svg`") and in §3, which now
+  documents both traps and the render-verification steps for doing it by hand.
+  The full write-up — including a fourth constraint, that font-metric-dependent
+  layout makes a byte-diff guard unsound unless one fixed environment renders
+  everything — is a new "Diagram rendering" section in `docs/ROADMAP.md`.
+
 - **`docs/ERROR-CATALOG.md` contradicted itself about the error predicates, and
   both drawings of the exception tree were incomplete.** §2 introduced
   `is_file_error()` / `is_record_error()` as mirroring "the Python class split"
