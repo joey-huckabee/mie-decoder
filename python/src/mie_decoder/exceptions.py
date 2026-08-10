@@ -44,7 +44,7 @@ class MieDecoderError(Exception):
 
     Input-side failures are all converted, including the ones raised by the
     open/mmap itself — permission denied, a path that is not a regular file, a
-    device I/O error — which become :class:`MieFileIoError` (v2.11.2; they
+    device I/O error — which become :class:`MieFileIoError` (v2.12.0; they
     previously escaped as a bare ``OSError`` and slipped past the handler
     above). Every variant of Rust's ``MieError`` now has a class here, and the
     two sets correspond one to one.

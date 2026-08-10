@@ -633,7 +633,7 @@ mod tests {
     /// true today because `validate_record` delegates to
     /// `validate_record_detailed(..).is_ok()` — but delegation is an
     /// implementation choice a later refactor could quietly undo, and until
-    /// v2.11.2 the requirement was reported as met with no artifact behind
+    /// v2.12.0 the requirement was reported as met with no artifact behind
     /// it at all. This pins the property itself, across a corpus spanning a
     /// valid record and every distinct rejection reason, so re-implementing
     /// either form independently fails here.

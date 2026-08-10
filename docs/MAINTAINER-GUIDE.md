@@ -243,7 +243,7 @@ Don't mark `Test (T)` if no test exists or will exist. The matrix will surface i
 scans the whole tracked tree and fails the repo-hygiene CI job.
 ```
 
-Those backticked names become the row's artifact column. Without an `**Evidence**` line the requirement stays **Draft**, exactly like a `Test (T)` requirement with no marker — before v2.11.2 a bare method letter was enough to report `Implemented (I)`, which is how three requirements came to claim they were met beside a literal `_(TBD)_` in their own artifact column. A declared method is a plan; evidence is a result. L3 statements are one-liners, so theirs rides on the same line: `· Evidence: \`path/to/thing\``.
+Those backticked names become the row's artifact column. Without an `**Evidence**` line the requirement stays **Draft**, exactly like a `Test (T)` requirement with no marker — before v2.12.0 a bare method letter was enough to report `Implemented (I)`, which is how three requirements came to claim they were met beside a literal `_(TBD)_` in their own artifact column. A declared method is a plan; evidence is a result. L3 statements are one-liners, so theirs rides on the same line: `· Evidence: \`path/to/thing\``.
 
 ### Tag the test
 

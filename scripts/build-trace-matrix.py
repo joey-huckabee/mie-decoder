@@ -653,7 +653,7 @@ def compute_status(
     combination) — but **only** if it also declares ``**Evidence**``
     naming what carries the check. A declared method describes how a
     requirement *would* be verified; on its own it is a plan, not a
-    result, and until v2.11.2 three requirements were reported
+    result, and until v2.12.0 three requirements were reported
     ``Implemented (I)`` with a literal ``_(TBD)_`` in their artifact
     column. Method without evidence is now ``Draft``, exactly as a
     Test-verified leaf with no test marker is ``Draft``.

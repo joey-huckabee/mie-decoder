@@ -856,7 +856,7 @@ fn debug_sync_failure_includes_bounded_validation_context() {
     assert_ne!(exit_code(&out), 0);
 
     let stderr = String::from_utf8_lossy(&out.stderr);
-    // The precise reason names the *offending* position. Before v2.11.2 this
+    // The precise reason names the *offending* position. Before v2.12.0 this
     // read "look-ahead message type is unknown", because the last good record
     // was rejected on account of its corrupt successor — which also discarded
     // that valid record. Continuous validation no longer looks ahead, so the

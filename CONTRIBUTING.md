@@ -63,7 +63,7 @@ staged.
    `core.whitespace`, whose `blank-at-eof` is the opposite problem. That
    is check 2.
 2. **Missing final newline** — every staged text file must end in `\n`.
-   Added in v2.11.2, when check 1 was found to have never enforced the
+   Added in v2.12.0, when check 1 was found to have never enforced the
    guarantee its description claimed. `*.svg` is exempt: the committed
    diagrams are PlantUML output, which ends at `>` with no trailing
    newline, and hand-appending one would be undone by the next render.
@@ -157,7 +157,7 @@ locally the same way:
 bash scripts/repo-hygiene.sh
 ```
 
-That job was added in v2.11.2. Before it, this section claimed "CI runs
+That job was added in v2.12.0. Before it, this section claimed "CI runs
 the same checks and will fail the merge anyway", which was untrue for
 nine of the hook's fourteen checks — a `--no-verify` commit could land a
 CRLF file, a stray `dbg!()`, a merge marker, an oversized blob or a

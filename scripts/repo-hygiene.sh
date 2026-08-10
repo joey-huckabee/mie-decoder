@@ -4,7 +4,7 @@
 #
 # `.githooks/pre-commit` inspects *staged blobs*, which makes it fast but also
 # skippable: `git commit --no-verify` bypasses every one of its checks. Until
-# v2.11.2 nothing in CI re-ran them, so CONTRIBUTING.md's "CI runs the same
+# v2.12.0 nothing in CI re-ran them, so CONTRIBUTING.md's "CI runs the same
 # checks and will fail the merge anyway" was untrue for most of the list — a
 # CRLF file, a stray `dbg!()`, a merge marker, an oversized blob or a committed
 # `*.mie` recording could all land unnoticed.
@@ -218,7 +218,7 @@ fi
 # ── 11. Declared Rust MSRV agrees everywhere it is written down ───────
 # `rust-version` in rust/Cargo.toml is the only enforceable copy; the number
 # is also written into CI, CONTRIBUTING, both READMEs, CLAUDE.md, the
-# MAINTAINER-GUIDE and L3-RS-001. Until v2.11.2 the *rationale* in four of
+# MAINTAINER-GUIDE and L3-RS-001. Until v2.12.0 the *rationale* in four of
 # those was false (it credited memmap2, which declares 1.65 — the real driver
 # is the crate's own let-chains). Prose explaining a number is not mechanically
 # checkable, but the number is: this pins every floor-declaring statement to
@@ -316,7 +316,7 @@ fi
 # and docs/diagrams/class.puml redraws it again as UML, and both drawings
 # claim to be complete ("every variant has a counterpart", "correspond one to
 # one, in both directions"). Both had drifted: the ASCII tree lost
-# MieFileIoError when it was added in v2.11.2, and the diagram was missing
+# MieFileIoError when it was added in v2.12.0, and the diagram was missing
 # three leaf classes outright. A hand-maintained copy of a class tree is not
 # checkable by reading it — every child's *parent* has to match.
 step "Python exception hierarchy matches ERROR-CATALOG §2 and class.puml"
@@ -373,7 +373,7 @@ then
 fi
 
 # ── 14. No trace-matrix row claims Implemented with no artifact ───────
-# Until v2.11.2 build-trace-matrix.py returned "Implemented (I)" for any leaf
+# Until v2.12.0 build-trace-matrix.py returned "Implemented (I)" for any leaf
 # declaring Inspection/Analysis/Demonstration, from the declared method alone
 # — so L2-SYN-014, L2-CONF-001 and L2-CONF-004 read "Implemented (I)" beside a
 # literal _(TBD)_ in their own artifact column. The generator now requires an

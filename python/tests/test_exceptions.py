@@ -100,7 +100,7 @@ class TestExceptionHierarchy:
         A directory is the portable way to provoke this — `open()` on one fails
         with `PermissionError` on Windows and `IsADirectoryError` on POSIX, both
         `OSError`. Rust reports the same condition as `MieError::FileIo`; before
-        v2.11.2 Python let the `OSError` escape, so a caller catching
+        v2.12.0 Python let the `OSError` escape, so a caller catching
         `MieDecoderError` (as the class docstring advertises) missed it.
         """
         from mie_decoder.exceptions import MieFileIoError
@@ -154,7 +154,7 @@ class TestExceptionHierarchy:
         The record-class set is also asserted to match Rust's
         `is_record_error()` exactly — that pairing is what drifted:
         `MieUnrecoverableSyncLossError` extended `MieRecordError` here while the
-        Rust predicate omitted it until v2.11.2. Mirrors
+        Rust predicate omitted it until v2.12.0. Mirrors
         `every_error_kind_is_deliberately_classified` in `rust/src/error.rs`.
         """
         import inspect

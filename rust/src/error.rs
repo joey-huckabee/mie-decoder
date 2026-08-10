@@ -439,7 +439,7 @@ mod tests {
 
         // The sync-loss terminal is record-class: it names the offset it gave
         // up at, and Python's MieUnrecoverableSyncLossError extends
-        // MieRecordError. It was omitted from the predicate until v2.11.2.
+        // MieRecordError. It was omitted from the predicate until v2.12.0.
         let e = MieError::UnrecoverableSyncLoss {
             offset: 0x40,
             sync_losses: 2,

@@ -15,6 +15,8 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.12.0] — 2026-08-09
+
 ### Added
 
 - **A "Trust boundary" section in `docs/CONFIG-REFERENCE.md`** stating what
@@ -262,7 +264,7 @@ full release workflow.
   while the paragraph below it correctly explained that `is_file_error()` is
   **narrower** than `MieFileError`; only `is_record_error()` mirrors anything
   exactly. The §2 Python tree had also never gained `MieFileIoError` (added in
-  v2.11.2 — the Rust listing and the §3 table were updated, the tree was
+  v2.12.0 — the Rust listing and the §3 table were updated, the tree was
   missed), and §3 said its rows are "catchable in Python as `MieFileError`"
   while listing `MieNonMonotonicInputError`, which extends `MieDecoderError`
   directly and would escape such a handler. `docs/diagrams/class.puml` claimed
@@ -2693,7 +2695,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.12.0...HEAD
+[2.12.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...v2.12.0
 [2.11.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.9.0...v2.10.0

@@ -514,7 +514,7 @@ jobs:
     runs-on: ubuntu-latest
     # Re-runs the file-level checks from .githooks/pre-commit over the whole
     # tracked tree. The hook is skippable (`git commit --no-verify`) and until
-    # v2.11.2 nothing in CI re-ran it, so CONTRIBUTING's "CI runs the same
+    # v2.12.0 nothing in CI re-ran it, so CONTRIBUTING's "CI runs the same
     # checks" was untrue for most of the list: a CRLF blob, a stray dbg!(), a
     # merge marker, an oversized file or a committed *.mie could all land
     # unnoticed. This is that backstop.

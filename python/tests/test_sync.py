@@ -149,7 +149,7 @@ class TestValidateRecord:
         True today because ``validate_record`` delegates to
         ``validate_record_detailed(...) is None`` — but delegation is an
         implementation choice a later refactor could quietly undo, and until
-        v2.11.2 the requirement was reported as met with no artifact behind
+        v2.12.0 the requirement was reported as met with no artifact behind
         it. This pins the property across a valid record and every distinct
         rejection reason. Mirrors the Rust
         ``boolean_and_detailed_validation_never_disagree``.
@@ -396,7 +396,7 @@ class TestRecoverSync:
         data = good + corruption
         fpath = tmp_path / "strict_corrupt.mie"
         fpath.write_bytes(data)
-        # The reason names the offending position itself. Before v2.11.2 this
+        # The reason names the offending position itself. Before v2.12.0 this
         # was "look-ahead message type is unknown", raised against the last good
         # record; that also discarded it. Now the corruption is reported where
         # it is, and the good records are kept.

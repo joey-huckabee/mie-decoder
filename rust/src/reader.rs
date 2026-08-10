@@ -1617,7 +1617,7 @@ mod tests {
         // signal. It proceeds with the forced format and skips what will not
         // decode under it.
         //
-        // Since v2.11.2 a stream that decodes *nothing* ends with
+        // Since v2.12.0 a stream that decodes *nothing* ends with
         // NoValidRecords (L1-EXIT-002): forcing Standard onto IRIG records
         // means none of them validate, and silently reporting success with a
         // header-only CSV is the outcome that change removed. So the terminal
