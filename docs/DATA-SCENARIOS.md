@@ -48,7 +48,7 @@ below calls out where the two differ.
 | A spurious continuation sharing its parent's timestamp | [§9](#row-order-l1-out-003) | Stays pinned right after its error row |
 | A corrupt file whose timestamps all decode alike | [§9](#row-order-l1-out-003) | Run cap hit: arrival order + one WARN, no rows lost, exit 0 |
 | A need for byte-exact vendor row order | [§9](#row-order-l1-out-003) | `--max-sort-group 1 --no-mux` |
-| A choice of output layout | [§9 Output modes](#9-output-mode-scenarios) | Separate errors file (default), inline, or stdout |
+| A choice of output layout | [§9 Output modes](#9-output-mode-scenarios) | Inline (default), separate errors file (`--separate-errors`), or stdout |
 | Records you want to keep or drop | [§10 Filters & MUX](#10-filter--mux-scenarios) | `--include-*` / `--exclude-*` |
 | Any exit code, explained | [§11 Exit codes](#11-exit-code-quick-reference) | 0–6 reference |
 

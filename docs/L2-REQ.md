@@ -667,7 +667,7 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-WRT-019
 
 **Parent**: L1-OUT-002
-**Statement**: In separate (default) error mode, the main CSV and the errors CSV SHALL each be committed via its own atomic temp+rename (L2-WRT-015), and the main CSV SHALL be committed **before** the errors CSV. The two commits are sequential — no cross-file atomic rename exists — so this is explicitly **not** an all-or-nothing guarantee across the two files: a failure of the second (errors) commit SHALL leave the already-committed main CSV in place, and a failure of the first (main) commit SHALL leave neither file (the errors output is still an un-renamed temp and is unlinked). Both implementations SHALL use this main-before-errors order.
+**Statement**: In separate error mode (`--separate-errors`; inline is the default since v2.8.0), the main CSV and the errors CSV SHALL each be committed via its own atomic temp+rename (L2-WRT-015), and the main CSV SHALL be committed **before** the errors CSV. The two commits are sequential — no cross-file atomic rename exists — so this is explicitly **not** an all-or-nothing guarantee across the two files: a failure of the second (errors) commit SHALL leave the already-committed main CSV in place, and a failure of the first (main) commit SHALL leave neither file (the errors output is still an un-renamed temp and is unlinked). Both implementations SHALL use this main-before-errors order.
 **Rationale**: There is no portable way to atomically commit two files together. Since one file may survive a mid-commit failure, the residue must be the main CSV — the primary deliverable — never an orphan errors file with no corresponding main output. Pinning the order also removes a latent cross-implementation divergence: Rust previously committed errors-first while Python committed main-first, so the file left behind on failure differed by implementation.
 **Verification Method**: Test (T)
 
@@ -813,8 +813,8 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 #### L2-CLI-001
 
 **Parent**: L1-CLI-001
-**Statement**: Decode capability SHALL accept one input path.
-**Rationale**: A decode invocation operates on one file at a time; multi-file decode is delegated to the operator's shell loop or pipeline scheduler.
+**Statement**: Decode capability SHALL accept **one or more** input paths, supplied by exactly one of the three mutually exclusive methods of L2-MRG-001 (positionals, `--manifest`, `--glob`). A single input SHALL follow the single-file decode path unchanged; two or more SHALL invoke the time-sorted merge of L2-MRG-002.
+**Rationale**: Through v2.5.x this requirement read "one input path", and delegated multi-file decode to the operator's shell loop. The multi-file merge (L1-MRG-001 / L2-MRG-001) superseded that: a shell loop cannot interleave records from several recorders onto one absolute timeline, which is the whole point of the merge. The statement is restated here rather than left to L2-MRG-* because a reader looking up the CLI's input contract starts at L2-CLI-001, and finding "one input path" there contradicted both the shipped interface and `docs/CLI-REFERENCE.md`.
 **Verification Method**: Test (T)
 
 #### L2-CLI-002
