@@ -33,6 +33,23 @@ full release workflow.
   caller's responsibility. `docs/CLI-REFERENCE.md` links to it from the
   `--config` row.
 
+- **An eleventh `scripts/repo-hygiene.sh` check: the declared Rust MSRV must
+  agree everywhere it is written down.** `rust-version` in `rust/Cargo.toml` is
+  the only copy a toolchain enforces, but the number is also spelled out in
+  `CLAUDE.md`, `CONTRIBUTING.md`, `rust/README.md`, `L3-RS-001`,
+  `MAINTAINER-GUIDE.md` §9, `ci.yml` (four times) and `sonarcloud.yml`. The
+  check extracts the declared version and requires every *floor-declaring*
+  statement across the tracked tree to match it, and requires the seven files
+  that are supposed to state it to still do so — so a bump can neither land in
+  six places and miss the seventh, nor quietly vanish.
+
+  The patterns are deliberately narrow (`MSRV <v>`, `toolchain ≥ <v>`,
+  `cargo +<v>`, `rustup default <v>`, `pinned **<v>** toolchain`), so contrast
+  statements — "edition 2024 requires only 1.85", "`memmap2` declares
+  `rust-version = "1.65"`" — are facts about other things and don't trip it.
+  `CHANGELOG.md` is exempt as a historical record. Proven to fail on both a
+  planted mismatch and a planted omission before being committed.
+
 - **`tests/conformance/config_path_parity.py`** — a third cross-implementation
   config guard, covering the `--config` **path** rather than its contents.
   `config_parity.py` and `config_fuzz.py` both always hand the CLIs a perfectly
@@ -136,6 +153,41 @@ full release workflow.
   failure on the input.
 
 ### Fixed
+
+- **`.githooks/pre-commit` and `scripts/repo-hygiene.sh` assumed a bare
+  `python` on PATH.** Both invoked `python` directly — the hook for the
+  trace-matrix check, the hygiene script for the config-key check. On Debian,
+  most WSL images, and anywhere else that ships only `python3`, the hook failed
+  on every commit touching a spec doc and the hygiene check failed spuriously,
+  even though `CONTRIBUTING.md` asks for Python 3 and never for a particular
+  alias. Both now probe `python3`, `python`, then `py` and use the first that
+  actually reports `sys.version_info[0] == 3` — which also rejects Windows' App
+  Execution Alias stub, a `python` that exists on PATH and runs nothing. When
+  none is found, the hook fails with a message naming what it tried instead of
+  a bare `command not found`, and the hygiene script reports the affected
+  checks as skipped rather than passing them silently.
+
+- **The stated reason for the Rust MSRV was wrong in four places.** `CLAUDE.md`,
+  `CONTRIBUTING.md`, `rust/README.md`, and `L3-RS-001` all credited the 1.88
+  floor to `memmap2`. The locked `memmap2` 0.9.11 declares `rust-version =
+  "1.65"` and edition 2021, so it constrains nothing here. The floor comes from
+  the decoder's own source: **let-chains** (`if let` / `while let` joined by
+  `&&`), stabilized in 1.88 and used at seven sites — `cli.rs`, `dump.rs`,
+  `filter.rs` ×2, `merge.rs` ×2, `writer.rs` — plus `u64::is_multiple_of` in
+  `reader.rs`, which independently needs 1.87. Proven by
+  `cargo +1.85.1 check --all-targets --ignore-rust-version`, which reports
+  exactly those eight sites and nothing from the dependency.
+
+  **1.88 remains correct**; only the rationale was false, which is the dangerous
+  kind of stale doc — it would have justified *lowering* the floor once someone
+  checked `memmap2`'s manifest and found 1.65. `scripts/repo-hygiene.sh` now
+  cross-checks the declared `rust-version` against every place the number is
+  written down, so the *value* cannot drift even where prose explains it
+  differently. The v2.4.0 entry below preserves the original claim as it was
+  published; this entry supersedes it. (That entry also asserted `memmap2`
+  itself used let-chains — it could not have: it is an edition-2021 crate, and
+  let-chains are edition-2024-only. On 1.85 the dependency compiles cleanly and
+  only our own eight sites fail.)
 
 - **The diagrams named the `--allow-partial` output file backwards.** All three
   showed `<stem>.partial.csv`, implying `out.partial.csv`. Both implementations

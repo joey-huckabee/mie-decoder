@@ -113,7 +113,7 @@ The Python canonical row ordering SHALL be implemented in a dedicated module `mi
 ## L3-RS: Rust implementation technology
 
 **L3-RS-001** · Parent: L2-CONF-005 · Verification: I
-The Rust crate SHALL declare `edition = "2024"` in `rust/Cargo.toml` and SHALL declare a Minimum Supported Rust Version (MSRV) via `rust-version`. The floor is **1.88**: edition 2024 itself only requires 1.85, but the crate's sole dependency `memmap2` requires 1.88. CI gates the declared floor with `cargo +1.88 check --all-targets`.
+The Rust crate SHALL declare `edition = "2024"` in `rust/Cargo.toml` and SHALL declare a Minimum Supported Rust Version (MSRV) via `rust-version`. The floor is **1.88**, and it comes from the crate's own source, not from its dependency: edition 2024 requires only 1.85, and `memmap2` 0.9 declares `rust-version = "1.65"`. The binding feature is **let-chains** (`if let` / `while let` joined by `&&`), stabilized in 1.88 and used at seven sites (`cli.rs`, `dump.rs`, `filter.rs` ×2, `merge.rs` ×2, `writer.rs`); `u64::is_multiple_of` in `reader.rs` independently requires 1.87. CI gates the declared floor with `cargo +1.88 check --all-targets`.
 
 **L3-RS-002** · Parent: L2-CONF-005 · Verification: I
 The Rust crate SHALL declare `memmap2` as its only external runtime dependency. Additional dependencies SHALL require explicit justification; argument parsing, CSV writing, TOML parsing, logging, and error types are hand-rolled by design.

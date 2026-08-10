@@ -11,8 +11,14 @@ workflow, and commit conventions.
 ## Prerequisites
 
 - Rust toolchain ≥ 1.88 (`rustup toolchain install stable`). The crate
-  uses edition 2024; the 1.88 floor comes from `memmap2`.
-- Python 3.10 or newer and Poetry for work under `python/`.
+  uses edition 2024, which floors at 1.85; the 1.88 requirement comes from
+  the crate's own use of let-chains (see `L3-RS-001`), not from `memmap2`.
+- Python 3.10 or newer and Poetry for work under `python/`. Commands in
+  this repo's docs are written `python …`; read that as *your Python 3
+  interpreter*. Many Linux distributions and WSL images provide only
+  `python3`, and nothing here depends on the `python` alias existing —
+  `.githooks/pre-commit` and `scripts/repo-hygiene.sh` probe for
+  `python3`, `python`, then `py` and use whichever actually runs Python 3.
 - A Bash shell. On Windows, Git for Windows ships **Git Bash**, which
   Git invokes for hooks transparently — no extra setup.
 

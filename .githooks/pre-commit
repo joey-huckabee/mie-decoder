@@ -18,7 +18,7 @@
 #
 #   Trace-matrix parity (runs if Rust source, Python tests, the spec
 #   docs, the matrix itself, or the generator are staged):
-#     8. python scripts/build-trace-matrix.py --check
+#     8. scripts/build-trace-matrix.py --check  (via python3/python/py)
 #
 #   Rust-only (skipped if no .rs / .toml staged):
 #     9. cargo fmt --check
@@ -41,6 +41,23 @@ ok()   { printf '%spre-commit:%s %s\n' "$GREEN"  "$RESET" "$1" >&2; }
 
 # Run from repo root so all paths are unambiguous.
 cd "$(git rev-parse --show-toplevel)"
+
+# ── Python interpreter ────────────────────────────────────────────────
+# CONTRIBUTING requires Python 3, not a particular command name. A Debian
+# or WSL environment routinely ships only `python3`; Git Bash on Windows
+# routinely ships only `python`. Hard-coding either alias breaks the hook
+# for half the contributors, so probe for one that actually runs Python 3
+# rather than trusting the name. The `-c` probe also rejects Windows'
+# App Execution Alias stub, which exists on PATH but runs nothing.
+PY_BIN=''
+for candidate in python3 python py; do
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)' \
+        >/dev/null 2>&1; then
+        PY_BIN="$candidate"
+        break
+    fi
+done
 
 # Cache the staged-file list once.
 mapfile -t STAGED < <(git diff --cached --name-only --diff-filter=ACM)
@@ -190,7 +207,7 @@ fi
 # docs/TRACE-MATRIX.md is regenerated from /// Requirements: doc
 # comments in Rust source and @pytest.mark.requirement markers in
 # Python tests, layered over the L1/L2/L3 spec docs. CI gates on
-# `python scripts/build-trace-matrix.py --check`; running the same
+# `scripts/build-trace-matrix.py --check`; running the same
 # check here turns the "push, CI fails, regen, push again" loop into
 # "commit fails, regen, retry commit." Triggered when any input to the
 # generator is staged.
@@ -202,9 +219,12 @@ for file in "${STAGED[@]}"; do
     esac
 done
 if (( need_trace == 1 )); then
-    step "python scripts/build-trace-matrix.py --check"
-    if ! python scripts/build-trace-matrix.py --check; then
-        fail "trace matrix out of date — run \`python scripts/build-trace-matrix.py\` then stage docs/TRACE-MATRIX.md"
+    if [ -z "$PY_BIN" ]; then
+        fail "no Python 3 interpreter on PATH (tried python3, python, py) — needed for scripts/build-trace-matrix.py"
+    fi
+    step "$PY_BIN scripts/build-trace-matrix.py --check"
+    if ! "$PY_BIN" scripts/build-trace-matrix.py --check; then
+        fail "trace matrix out of date — run \`$PY_BIN scripts/build-trace-matrix.py\` then stage docs/TRACE-MATRIX.md"
     fi
 fi
 

@@ -31,6 +31,23 @@ list() { printf '  %s\n' "$@" >&2; }
 # Tracked files, NUL-safe. Binary-ish suffixes are skipped by the text checks.
 mapfile -d '' -t TRACKED < <(git ls-files -z)
 
+# Python interpreter for the checks that need one. CONTRIBUTING requires
+# Python 3, not a particular command name: a Debian or WSL environment
+# routinely ships only `python3`, Git Bash on Windows routinely ships only
+# `python`. Probe for one that actually runs Python 3 rather than trusting the
+# name — the `-c` probe also rejects Windows' App Execution Alias stub, which
+# sits on PATH but runs nothing.
+PY_BIN=''
+for candidate in python3 python py; do
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)' \
+        >/dev/null 2>&1; then
+        PY_BIN="$candidate"
+        break
+    fi
+done
+[[ -n "$PY_BIN" ]] || bad "no Python 3 interpreter on PATH (tried python3, python, py); checks needing one are skipped"
+
 is_binary() {
     case "$1" in
         *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf|*.bin|*.mie|*.svg) return 0 ;;
@@ -160,7 +177,9 @@ fi
 # (The two loaders are the fourth and fifth copies; they are code, and their
 # own parity is covered by tests/conformance/config_parity.py.)
 step "config keys agree: CONFIG-REFERENCE block, table, and default.toml"
-if ! python - <<'PY'
+if [[ -z "$PY_BIN" ]]; then
+    list "skipped: no Python 3 interpreter"
+elif ! "$PY_BIN" - <<'PY'
 import re, sys, pathlib
 
 def block_keys(text):
@@ -194,6 +213,89 @@ sys.exit(1 if bad else 0)
 PY
 then
     bad "config key set differs between CONFIG-REFERENCE.md and config/default.toml"
+fi
+
+# ── 11. Declared Rust MSRV agrees everywhere it is written down ───────
+# `rust-version` in rust/Cargo.toml is the only enforceable copy; the number
+# is also written into CI, CONTRIBUTING, both READMEs, CLAUDE.md, the
+# MAINTAINER-GUIDE and L3-RS-001. Until v2.11.2 the *rationale* in four of
+# those was false (it credited memmap2, which declares 1.65 — the real driver
+# is the crate's own let-chains). Prose explaining a number is not mechanically
+# checkable, but the number is: this pins every floor-declaring statement to
+# Cargo.toml, so a bump can't land in six places and miss the seventh.
+#
+# CHANGELOG.md is exempt: it is a historical record and legitimately names
+# superseded floors.
+step "declared Rust MSRV agrees across Cargo.toml, CI, and the docs"
+if [[ -z "$PY_BIN" ]]; then
+    list "skipped: no Python 3 interpreter"
+elif ! "$PY_BIN" - <<'PY'
+import re, sys, pathlib, subprocess
+
+CARGO = pathlib.Path("rust/Cargo.toml")
+m = re.search(r'^rust-version\s*=\s*"([^"]+)"', CARGO.read_text(encoding="utf-8"), re.M)
+if not m:
+    print("  rust/Cargo.toml declares no rust-version", file=sys.stderr)
+    sys.exit(1)
+declared = m.group(1)
+
+# Forms that *declare the floor*. Deliberately narrow: contrast statements
+# ("edition 2024 requires only 1.85", "memmap2 declares rust-version = 1.65")
+# are facts about other things and must not trip this.
+PATTERNS = [
+    r'MSRV[ ]*\(?\*{0,2}(\d+\.\d+)',
+    r'toolchain (?:>=|≥) \*{0,2}(\d+\.\d+)',
+    r'cargo \+(\d+\.\d+)',
+    r'rustup (?:toolchain install|default) (\d+\.\d+)',
+    r'pinned \*\*(\d+\.\d+)\*\* toolchain',
+]
+
+# Files that must each carry at least one floor declaration — losing the
+# statement entirely is drift too.
+REQUIRED = [
+    "rust/Cargo.toml", "CLAUDE.md", "CONTRIBUTING.md", "rust/README.md",
+    "docs/L3-REQ.md", "docs/MAINTAINER-GUIDE.md", ".github/workflows/ci.yml",
+]
+
+tracked = subprocess.run(["git", "ls-files", "-z"], capture_output=True,
+                         check=True).stdout.decode().split("\0")
+EXEMPT = {"CHANGELOG.md", "scripts/repo-hygiene.sh"}
+SKIP_SUFFIX = (".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".bin",
+               ".mie", ".svg", ".lock")
+
+bad = False
+seen = {}
+for name in tracked:
+    if not name or name in EXEMPT or name.endswith(SKIP_SUFFIX):
+        continue
+    path = pathlib.Path(name)
+    if not path.is_file():
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        continue
+    if name == "rust/Cargo.toml":
+        seen[name] = True
+        continue
+    for pat in PATTERNS:
+        for found in re.findall(pat, text):
+            seen[name] = True
+            if found != declared:
+                bad = True
+                print(f"  {name}: declares MSRV {found}, "
+                      f"rust/Cargo.toml declares {declared}", file=sys.stderr)
+
+for name in REQUIRED:
+    if name not in seen:
+        bad = True
+        print(f"  {name}: states no Rust MSRV; expected {declared}",
+              file=sys.stderr)
+
+sys.exit(1 if bad else 0)
+PY
+then
+    bad "declared Rust MSRV differs between rust/Cargo.toml and the docs/CI"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────
