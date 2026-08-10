@@ -17,6 +17,28 @@ full release workflow.
 
 ## [2.12.0] — 2026-08-09
 
+### Notes
+
+- **This release ships with the SonarCloud quality gate red, knowingly.**
+  `new_security_rating` is 5 against a required 1; every other condition passes
+  (reliability 1, maintainability 1, coverage 94.7%, duplication 0.0%, hotspots
+  reviewed 100%) and all 51 non-Sonar CI checks pass. Two findings,
+  `pythonsecurity:S2083` (blocker) and `pythonsecurity:S8707` (major), both on
+  the `open(self._path, "rb")` in `python/src/mie_decoder/reader.py` added by the
+  `MieFileIoError` conversion above.
+
+  They were not excluded at the cut because the existing exclusion is scoped to
+  one rule in one file *by design* — "this rule anywhere else, still fails the
+  build" — and `S2083` has never been suppressed in this repository. Worth
+  stating plainly: **v2.11.1 was cut specifically to stop releases merging
+  against a failing gate**, and that fix is what surfaced this. Merging anyway
+  restores the state v2.11.1 removed, deliberately and with the cost recorded.
+  The analysis and the two ways out are in the "SonarCloud security findings on
+  the input path" section of `docs/ROADMAP.md`.
+
+- The `diagrams` CI gap is **still open** and is now fully diagnosed — see the
+  entry under *Fixed* and the "Diagram rendering" section of `ROADMAP.md`.
+
 ### Added
 
 - **A "Trust boundary" section in `docs/CONFIG-REFERENCE.md`** stating what

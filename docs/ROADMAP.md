@@ -124,6 +124,56 @@ so the request isn't folded into the time-merge contract without separate design
     a spec'd requirement with byte-exact conformance fixtures so output
     matches vendor CSV. Until then the advisory WARN stays.
 
+## SonarCloud security findings on the input path (deferred, gate is red)
+
+**`main` currently fails the SonarCloud quality gate**, knowingly, as of the
+v2.12.0 cut. `new_security_rating` is 5 where the gate requires 1. Every other
+condition passes (reliability 1, maintainability 1, coverage 94.7%, duplication
+0.0%, hotspots reviewed 100%), and all 51 non-Sonar CI checks pass.
+
+Two findings, both on the `open(self._path, "rb")` in
+`python/src/mie_decoder/reader.py` that landed with the `MieFileIoError`
+conversion:
+
+- **`pythonsecurity:S2083`** (blocker) — "Change this code to not construct the
+  path from user-controlled data."
+- **`pythonsecurity:S8707`** (major) — the agentic path-injection rule, the same
+  one already excluded for `config.py`.
+
+**Why this was not simply excluded at the cut.** The exclusion in
+`.github/workflows/sonarcloud.yml` is scoped to one rule in one file, and its
+comment says that was deliberate: *"any other finding there, and this rule
+anywhere else, still fails the build."* The gate caught a new occurrence in a
+new file exactly as designed. Widening it silently would spend that design, and
+`S2083` has never been suppressed anywhere in this repository — a first blocker
+suppression is a decision to take deliberately, not as a step in a release.
+
+**Note the cost being carried.** v2.11.1 was cut *specifically* to stop releases
+merging against a failing gate: before it, `sonar.qualitygate.wait` was set only
+for pushes to the default branch, so four PRs merged green while `main` was red.
+That fix works — the gate is blocking, and this entry exists because it blocked.
+Merging anyway restores the very state v2.11.1 removed, and it stays until one
+of the options below is taken. Anyone reading a red `main` should find this
+section rather than assume the gate is broken again.
+
+**The two real options:**
+
+1. **Extend the exclusion to `reader.py` for both rules.** The false-positive
+   argument is identical to the documented `config.py` one: mie-decoder is an
+   operator-run CLI, the input path *is* the interface, and the process holds
+   exactly the permissions of the user who typed the command — there is no
+   sandbox to escape and no privilege boundary to cross. Cheapest, and
+   consistent with reasoning already written down. Requires accepting the first
+   `S2083` suppression, and `CONFIG-REFERENCE.md`'s "Trust boundary" section
+   should be extended to cover the input file so the two stay in step.
+2. **Harden rather than suppress.** Mirror what `config.py` already does and
+   require a *regular file* before opening, so a directory or a character device
+   is rejected up front rather than at the `OSError`. This is the repo's own
+   established answer to this rule class and is a genuine improvement, but it
+   needs Rust parity, tests on both sides, and a conformance case — and it may
+   not clear the `S2083` taint path regardless, since the path still flows from
+   an argument to an open.
+
 ## Diagram rendering: make the SVG guard real (deferred)
 
 The `diagrams` CI job re-renders `docs/diagrams/*.puml` and byte-diffs the
