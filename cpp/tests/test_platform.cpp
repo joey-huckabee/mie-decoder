@@ -44,7 +44,13 @@ std::string temp_root() {
 std::string temp_path(const std::string& leaf) {
     static int counter = 0;
     char suffix[32];
-    std::sprintf(suffix, "-%d-%d", static_cast<int>(plat::process_id()), counter++);
+    // snprintf, not sprintf, and the result is checked. A test helper that can
+    // silently truncate produces two fixtures with the same path, and the
+    // resulting failure looks like a bug in the code under test.
+    const int written = std::snprintf(suffix, sizeof(suffix), "-%d-%d",
+                                      static_cast<int>(plat::process_id()), counter++);
+    REQUIRE(written > 0);
+    REQUIRE(static_cast<std::size_t>(written) < sizeof(suffix));
     return plat::path_join(temp_root(), std::string("mie-cpp-test-") + leaf + suffix);
 }
 
@@ -54,7 +60,10 @@ void write_raw(const std::string& path, const std::string& contents) {
     if (!contents.empty()) {
         REQUIRE(std::fwrite(contents.data(), 1, contents.size(), f) == contents.size());
     }
-    std::fclose(f);
+    // fclose is where a buffered write actually reports failure. A fixture that
+    // never reached the disk would make the test it feeds fail for the wrong
+    // reason, so this is asserted rather than ignored.
+    REQUIRE(std::fclose(f) == 0);
 }
 
 /// Read a file back as raw bytes. Binary mode matters: the whole point of
@@ -70,7 +79,9 @@ std::string read_raw(const std::string& path) {
     while ((n = std::fread(buffer, 1, sizeof(buffer), f)) > 0) {
         out.append(buffer, n);
     }
-    std::fclose(f);
+    // Read-only: a close failure here cannot have lost data, so it is discarded
+    // explicitly rather than asserted.
+    (void)std::fclose(f);
     return out;
 }
 
@@ -79,13 +90,14 @@ bool raw_exists(const std::string& path) {
     if (f == 0) {
         return false;
     }
-    std::fclose(f);
+    (void)std::fclose(f);
     return true;
 }
 
 /// Removes a path if present, ignoring failure. Used in teardown, where a
-/// missing file is the expected case as often as not.
-void discard(const std::string& path) { std::remove(path.c_str()); }
+/// missing file is the expected case as often as not -- several tests assert
+/// that a file was NOT created and then clean up unconditionally.
+void discard(const std::string& path) { (void)std::remove(path.c_str()); }
 
 }  // namespace
 
@@ -232,11 +244,15 @@ TEST_CASE("a moved-from MappedFile releases its mapping", "[platform][mmap]") {
     REQUIRE(source.open(path, err));
     const uint8_t* original = source.data();
 
-    plat::MappedFile moved(static_cast<plat::MappedFile&&>(source));
+    const plat::MappedFile moved(static_cast<plat::MappedFile&&>(source));
     CHECK(moved.data() == original);
     CHECK(moved.size() == 7);
+    // Interrogating a moved-from object is the ENTIRE POINT of this test, so the
+    // analyzer's cplusplus.Move warning is suppressed here and nowhere else.
     // The source must not still believe it owns the mapping, or both objects
-    // unmap the same range at scope exit.
+    // unmap the same range at scope exit -- a double-munmap that valgrind
+    // catches only if something first makes the moved-from state observable.
+    // NOLINTNEXTLINE(clang-analyzer-cplusplus.Move)
     CHECK_FALSE(source.is_open());
 
     discard(path);
@@ -348,8 +364,7 @@ TEST_CASE("AtomicFile writes bytes verbatim, with no newline translation",
     discard(destination);
 }
 
-TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary",
-          "[platform][atomic]") {
+TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary", "[platform][atomic]") {
     // Three shapes that each take a different branch: comfortably inside the
     // buffer, exactly at it, and a single write larger than it (which bypasses
     // buffering entirely).
@@ -381,8 +396,7 @@ TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary",
 // Directory enumeration
 // ---------------------------------------------------------------------------
 
-TEST_CASE("list_directory returns entry names without the dot entries",
-          "[platform][glob]") {
+TEST_CASE("list_directory returns entry names without the dot entries", "[platform][glob]") {
     const std::string marker = temp_path("listed.mie");
     write_raw(marker, std::string("x"));
 
@@ -440,8 +454,7 @@ TEST_CASE("paths_same_file detects an output aimed at its own input",
     discard(path);
 }
 
-TEST_CASE("paths_same_file says no for two distinct files",
-          "[platform][identity][L2-WRT-014]") {
+TEST_CASE("paths_same_file says no for two distinct files", "[platform][identity][L2-WRT-014]") {
     const std::string input = temp_path("in.mie");
     const std::string output = temp_path("out.csv");
     write_raw(input, std::string("data"));
@@ -537,8 +550,7 @@ TEST_CASE("remove_file deletes and then reports the absence", "[platform][metada
     CHECK_FALSE(err.ok());
 }
 
-TEST_CASE("wide/narrow conversion round-trips ASCII on every platform",
-          "[platform][encoding]") {
+TEST_CASE("wide/narrow conversion round-trips ASCII on every platform", "[platform][encoding]") {
     const std::string original("C:/logs/flight-01.mie");
     CHECK(plat::from_wide(plat::to_wide(original)) == original);
     CHECK(plat::to_wide(std::string()).empty());
@@ -546,8 +558,7 @@ TEST_CASE("wide/narrow conversion round-trips ASCII on every platform",
 }
 
 #if defined(_WIN32)
-TEST_CASE("wide/narrow conversion round-trips non-ASCII UTF-8 on Windows",
-          "[platform][encoding]") {
+TEST_CASE("wide/narrow conversion round-trips non-ASCII UTF-8 on Windows", "[platform][encoding]") {
     // Windows is a shipping target, so a non-ASCII path has to survive the trip
     // through the W entry points rather than being mangled by whatever the
     // active ANSI codepage happens to be. The POSIX backend does not convert at

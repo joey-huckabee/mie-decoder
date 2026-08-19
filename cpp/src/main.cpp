@@ -34,44 +34,50 @@ const char kProgram[] = "mie-decoder";
 // docs/ERROR-CATALOG.md. Only the two Phase 0 can reach are named here; the
 // rest arrive with the code paths that produce them.
 const int kExitSuccess = 0;
+const int kExitError = 1;
 const int kExitUsage = 4;
 
-void emit(std::FILE* stream, const char* text) { std::fputs(text, stream); }
+/// Write `text` and report whether it reached the stream.
+///
+/// The return value is checked at every call site rather than discarded. That
+/// is not pedantry about a help message: `mie-decoder --help | head -1` closes
+/// the pipe while this is still writing, and a program that ignores the failure
+/// exits 0 having produced nothing. Reporting it is what makes the exit code
+/// mean something in a shell pipeline.
+bool emit(std::FILE* stream, const char* text) { return std::fputs(text, stream) >= 0; }
 
-void print_version() {
+bool print_version() {
     // Format is pinned to the other two implementations: "mie-decoder 2.12.0".
     // A conformance case compares this string across implementations, so the
     // spacing is contract, not cosmetics.
-    std::fputs(kProgram, stdout);
-    std::fputc(' ', stdout);
-    std::fputs(kVersion, stdout);
-    std::fputc('\n', stdout);
+    return emit(stdout, kProgram) && emit(stdout, " ") && emit(stdout, kVersion) &&
+           emit(stdout, "\n");
 }
 
-void print_help() {
-    emit(stdout,
-         "mie-decoder \xE2\x80\x94 DDC MIL-STD-1553 MIE binary decoder\n"
-         "\n"
-         "USAGE:\n"
-         "  mie-decoder [--log-level L] [--config PATH] <command> [options]\n"
-         "\n"
-         "COMMANDS:\n"
-         "  decode <INPUT>... Decode MIE file(s) to CSV (2+ inputs "
-         "\xE2\x86\x92 time-sorted merge)\n"
-         "  count  <INPUT>    Print message count (no CSV)\n"
-         "  dump   <INPUT>    Hex dump (raw or record-aware)\n"
-         "\n"
-         "GLOBAL OPTIONS:\n"
-         "  --log-level LEVEL                     DEBUG|INFO|WARNING|WARN|ERROR|\n"
-         "                                        CRITICAL|OFF (default WARNING;\n"
-         "                                        case-insensitive; CRITICAL/OFF silence)\n"
-         "  --config PATH                         TOML configuration file\n"
-         "  -V, -v, --version                     Print version and exit\n"
-         "  -h, --help                            Print this help and exit\n"
-         "\n"
-         "NOTE: this build implements --version and --help only. The decode,\n"
-         "count and dump subcommands are not yet ported to C++; use the Rust or\n"
-         "Python implementation for them.\n");
+bool print_help() {
+    return emit(stdout,
+                "mie-decoder \xE2\x80\x94 DDC MIL-STD-1553 MIE binary decoder\n"
+                "\n"
+                "USAGE:\n"
+                "  mie-decoder [--log-level L] [--config PATH] <command> [options]\n"
+                "\n"
+                "COMMANDS:\n"
+                "  decode <INPUT>... Decode MIE file(s) to CSV (2+ inputs "
+                "\xE2\x86\x92 time-sorted merge)\n"
+                "  count  <INPUT>    Print message count (no CSV)\n"
+                "  dump   <INPUT>    Hex dump (raw or record-aware)\n"
+                "\n"
+                "GLOBAL OPTIONS:\n"
+                "  --log-level LEVEL                     DEBUG|INFO|WARNING|WARN|ERROR|\n"
+                "                                        CRITICAL|OFF (default WARNING;\n"
+                "                                        case-insensitive; CRITICAL/OFF silence)\n"
+                "  --config PATH                         TOML configuration file\n"
+                "  -V, -v, --version                     Print version and exit\n"
+                "  -h, --help                            Print this help and exit\n"
+                "\n"
+                "NOTE: this build implements --version and --help only. The decode,\n"
+                "count and dump subcommands are not yet ported to C++; use the Rust or\n"
+                "Python implementation for them.\n");
 }
 
 /// Case-insensitive ASCII comparison.
@@ -115,20 +121,22 @@ int main(int argc, char** argv) {
         const char* arg = argv[i];
         if (equals_ignoring_ascii_case(arg, "--version") || std::strcmp(arg, "-V") == 0 ||
             std::strcmp(arg, "-v") == 0) {
-            print_version();
-            return kExitSuccess;
+            return print_version() ? kExitSuccess : kExitError;
         }
         if (equals_ignoring_ascii_case(arg, "--help") || std::strcmp(arg, "-h") == 0) {
-            print_help();
-            return kExitSuccess;
+            return print_help() ? kExitSuccess : kExitError;
         }
     }
 
     if (argc <= 1) {
-        print_help();
+        // Bare invocation prints help but still exits non-zero: a script that
+        // calls the tool with no arguments has a bug, and exiting 0 would hide
+        // it. A write failure does not change that verdict -- the usage error
+        // is the more specific fact, so it wins.
+        (void)print_help();
         return kExitUsage;
     }
 
-    emit(stderr, "error: this build implements --version and --help only\n");
+    (void)emit(stderr, "error: this build implements --version and --help only\n");
     return kExitUsage;
 }

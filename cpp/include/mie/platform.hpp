@@ -83,8 +83,13 @@ class MappedFile {
     MappedFile();
     ~MappedFile();
 
-    MappedFile(MappedFile&& other);
-    MappedFile& operator=(MappedFile&& other);
+    // noexcept is load-bearing, not decoration: a container holding MappedFile
+    // falls back to COPYING on reallocation if the move operations can throw,
+    // and this type is deliberately non-copyable, so the fallback is a compile
+    // error rather than a slow path. These genuinely cannot throw -- they move
+    // four scalars and null the source.
+    MappedFile(MappedFile&& other) noexcept;
+    MappedFile& operator=(MappedFile&& other) noexcept;
 
     /// Map `utf8_path` read-only. On failure returns false and fills `err`.
     ///

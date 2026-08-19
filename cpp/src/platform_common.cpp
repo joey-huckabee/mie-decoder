@@ -22,7 +22,11 @@ namespace platform {
 // 64 KiB. Large enough that a CSV row -- at most a few hundred bytes -- never
 // costs a syscall on its own, small enough to stay irrelevant against the
 // constant-memory design point the writer is held to.
-const std::size_t kWriteBufferSize = 64 * 1024;
+// The multiplication is done in std::size_t rather than in int and widened
+// afterwards. At this value the difference is invisible, but the pattern is not:
+// the same expression with a larger constant overflows int silently and yields a
+// buffer size nobody asked for.
+const std::size_t kWriteBufferSize = std::size_t(64) * 1024;
 
 namespace {
 

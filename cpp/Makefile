@@ -80,8 +80,8 @@ DECODER_OBJ := $(BUILD_DIR)/src/main.o
 DEPFLAGS := -MMD -MP
 
 .PHONY: all check clean clean-all toolchain versions check-valgrind \
-        check-gcc48 check-ci verify-ci print-test-bin print-decoder-bin \
-        print-lib-sources decoder coverage tidy format-check
+        check-gcc48 verify-ci print-test-bin print-decoder-bin \
+        print-lib-sources decoder tidy format format-check
 
 all: $(TEST_BIN) $(DECODER_BIN)
 
@@ -177,10 +177,78 @@ FORMAT ?= clang-format
 
 # Only project sources: vendored headers arrive via -isystem precisely so they
 # do not trip the gates, and pointing an analyzer at them would undo that.
+#
+# clang-tidy sees only what this host compiles. It cannot analyse
+# platform_win32.cpp on Linux -- there is no <windows.h> to parse -- so that
+# file is covered by the MSVC tier's /W4 /WX instead.
 TIDY_SRC := $(LIB_SRC) src/main.cpp $(TEST_SRC)
 
+# clang-format has no such excuse: it never compiles anything, so it can and
+# must cover BOTH backends. Leaving the inactive one out means the Windows
+# backend is never format-checked on the Linux tiers and never format-checked on
+# the Windows tier either (which runs no clang-format), so it drifts silently
+# until someone opens it.
+FORMAT_SRC := $(sort $(TIDY_SRC) src/platform_posix.cpp src/platform_win32.cpp) \
+              $(wildcard include/mie/*.hpp)
+
+# --warnings-as-errors='*' lives HERE, not in .clang-tidy's WarningsAsErrors.
+#
+# clang-tidy exits 0 when it emits warnings unless told otherwise, so a gate
+# without this flag prints findings and reports success -- which is worse than
+# no gate, because the log looks like it was checked. The enabled/disabled check
+# list stays in .clang-tidy where the reasoning lives; the severity is a property
+# of running it as a gate.
 tidy:
-	$(TIDY) -p $(BUILD_DIR) $(TIDY_SRC)
+	$(TIDY) -p $(BUILD_DIR) --warnings-as-errors='*' $(TIDY_SRC)
 
 format-check:
-	$(FORMAT) --dry-run --Werror $(TIDY_SRC) $(wildcard include/mie/*.hpp)
+	$(FORMAT) --dry-run --Werror $(FORMAT_SRC)
+
+format:
+	$(FORMAT) -i $(FORMAT_SRC)
+
+# --- CI parity ---------------------------------------------------------------
+# The pre-push check: the gates whose LOCAL tool differs from CI's, run with
+# CI's tools in CI's image.
+#
+# Every analysis tool a developer runs here is older than the one CI runs. On
+# the WSL2 development host (Ubuntu 22.04) against the CI runner (Ubuntu 24.04):
+#
+#     clang-format   14  vs  18
+#     clang-tidy     14  vs  18
+#     cppcheck      2.7  vs  2.13
+#
+# That matters because a passing local run can mean "my tool does not know about
+# this check" rather than "this code is fine" -- and in the other direction,
+# formatting with clang-format 14 and having CI check with 18 produces a red
+# build with no code change behind it. Both have already happened here.
+#
+# Not a substitute for the sanitizer, Valgrind or GCC 4.8.5 tiers, which run
+# against the real compilers. This is what to run before pushing a formatting or
+# lint-affecting change.
+CI_BASE_IMAGE ?= docker.io/library/ubuntu:24.04
+
+verify-ci:
+	@echo "Running the divergence-prone gates in $(CI_BASE_IMAGE) via $(CI_ENGINE)..."
+	$(CI_ENGINE) run --rm -v "$(CURDIR)":/cpp -w /cpp $(CI_BASE_IMAGE) bash -c '\
+	  apt-get update -qq >/dev/null && \
+	  apt-get install -y -qq --no-install-recommends \
+	      g++-14 make clang-format-18 clang-tidy-18 cppcheck bear >/dev/null && \
+	  echo "--- versions ---" && \
+	  g++-14 --version | head -1 && \
+	  clang-format-18 --version && \
+	  clang-tidy-18 --version | grep -i version | head -1 && \
+	  cppcheck --version && \
+	  echo "--- format ---" && \
+	  make format-check FORMAT=clang-format-18 && \
+	  echo "--- build (CI compiler) ---" && \
+	  make clean CXX=g++-14 && bear -- make -j$(CI_JOBS) all CXX=g++-14 && \
+	  echo "--- clang-tidy ---" && \
+	  make tidy TIDY=clang-tidy-18 CXX=g++-14 && \
+	  echo "--- cppcheck ---" && \
+	  cppcheck --error-exitcode=1 --enable=warning,style,performance,portability \
+	           --inline-suppr --std=c++11 --language=c++ \
+	           --suppress=missingIncludeSystem -I include src tests'
+	@echo ""
+	@echo "verify-ci OK. This leaves the build tree built with g++-14;"
+	@echo "your next local 'make check' will rebuild against the host compiler."

@@ -60,17 +60,18 @@ void fill_last_error(OsError& err, DWORD captured) {
     err.message.clear();
 
     LPWSTR buffer = 0;
-    const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                        FORMAT_MESSAGE_IGNORE_INSERTS;
-    const DWORD length = ::FormatMessageW(flags, 0, captured,
-                                          MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                                          reinterpret_cast<LPWSTR>(&buffer), 0, 0);
+    const DWORD flags =
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+    const DWORD length =
+        ::FormatMessageW(flags, 0, captured, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                         reinterpret_cast<LPWSTR>(&buffer), 0, 0);
     if (length != 0 && buffer != 0) {
         std::wstring wide(buffer, length);
         // FormatMessage terminates its text with CRLF. Leaving it in would put
         // a line break in the middle of a diagnostic that the logger then
         // prefixes -- one message across two lines, only on Windows.
-        while (!wide.empty() && (wide[wide.size() - 1] == L'\r' || wide[wide.size() - 1] == L'\n')) {
+        while (!wide.empty() &&
+               (wide[wide.size() - 1] == L'\r' || wide[wide.size() - 1] == L'\n')) {
             wide.erase(wide.size() - 1);
         }
         err.message = from_wide(wide);
@@ -113,7 +114,7 @@ MappedFile::MappedFile() : file_handle_(0), mapping_handle_(0), data_(0), size_(
 
 MappedFile::~MappedFile() { close(); }
 
-MappedFile::MappedFile(MappedFile&& other)
+MappedFile::MappedFile(MappedFile&& other) noexcept
     : file_handle_(other.file_handle_),
       mapping_handle_(other.mapping_handle_),
       data_(other.data_),
@@ -124,7 +125,7 @@ MappedFile::MappedFile(MappedFile&& other)
     other.size_ = 0;
 }
 
-MappedFile& MappedFile::operator=(MappedFile&& other) {
+MappedFile& MappedFile::operator=(MappedFile&& other) noexcept {
     if (this != &other) {
         close();
         file_handle_ = other.file_handle_;
@@ -288,8 +289,7 @@ bool AtomicFile::raw_write(const char* bytes, std::size_t len, OsError& err) {
         // WriteFile counts in DWORD. A single call therefore cannot exceed 4 GiB,
         // and the loop below already handles a short write, so clamping here is
         // free rather than a special case.
-        const DWORD chunk =
-            remaining > 0x40000000u ? 0x40000000u : static_cast<DWORD>(remaining);
+        const DWORD chunk = remaining > 0x40000000u ? 0x40000000u : static_cast<DWORD>(remaining);
         DWORD produced = 0;
         if (::WriteFile(as_handle(handle_), bytes + written, chunk, &produced, 0) == 0) {
             fill_last_error(err);
@@ -437,10 +437,9 @@ bool canonical_path(const std::string& utf8_path, std::string& out, OsError& err
     // FILE_FLAG_BACKUP_SEMANTICS is required to open a DIRECTORY handle, and
     // this function is called on directories -- paths_same_file resolves the
     // output's parent when the output itself does not exist yet.
-    const HANDLE handle = ::CreateFileW(
-        wide.c_str(), FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS, 0);
+    const HANDLE handle = ::CreateFileW(wide.c_str(), FILE_READ_ATTRIBUTES,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0,
+                                        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
     if (handle == INVALID_HANDLE_VALUE) {
         fill_last_error(err);
         return false;
@@ -454,8 +453,7 @@ bool canonical_path(const std::string& utf8_path, std::string& out, OsError& err
     }
 
     std::vector<wchar_t> buffer(needed + 1, L'\0');
-    const DWORD written =
-        ::GetFinalPathNameByHandleW(handle, &buffer[0], needed, VOLUME_NAME_DOS);
+    const DWORD written = ::GetFinalPathNameByHandleW(handle, &buffer[0], needed, VOLUME_NAME_DOS);
     ::CloseHandle(handle);
 
     if (written == 0 || written >= needed + 1) {
@@ -525,8 +523,7 @@ std::string from_wide(const std::wstring& wide) {
         return std::string();
     }
     const int source_len = static_cast<int>(wide.size());
-    const int needed =
-        ::WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), source_len, 0, 0, 0, 0);
+    const int needed = ::WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), source_len, 0, 0, 0, 0);
     if (needed <= 0) {
         return std::string();
     }

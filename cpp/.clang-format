@@ -28,7 +28,18 @@ PointerAlignment: Left
 SortIncludes:    true
 IncludeBlocks:   Preserve
 
-AllowShortFunctionsOnASingleLine: Inline
+# All, not Google's Inline. Inline permits a one-line body only for a function
+# defined INSIDE a class, so namespace-scope one-liners like
+#
+#     uint64_t process_id() { return static_cast<uint64_t>(::getpid()); }
+#
+# get expanded to three lines. The platform layer is full of these -- thin
+# wrappers whose entire content is one call -- and three lines each buries the
+# handful of functions that actually do something. Widened deliberately.
+AllowShortFunctionsOnASingleLine: All
+
+# Never, not Google's WithoutElse. A one-line `if` is where a second statement
+# gets appended later and silently falls outside the branch. Braces always.
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortCaseLabelsOnASingleLine: true
 

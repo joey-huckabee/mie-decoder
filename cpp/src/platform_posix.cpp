@@ -44,7 +44,21 @@ namespace {
 /// legitimately open-able -- if stdin were closed before the decoder ran, the
 /// next open() returns 0 -- and treating that as "closed" would leak the
 /// descriptor and then map a file the object claims not to hold.
-void* encode_fd(int fd) { return reinterpret_cast<void*>(static_cast<intptr_t>(fd) + 1); }
+///
+/// NOLINT(performance-no-int-to-ptr) here and in decode_fd, deliberately and
+/// only here. The check is right in general, but the void* in the header is not
+/// a pointer -- it is opaque storage, chosen so that mie/platform.hpp can be
+/// included without dragging <windows.h> into every consumer. The Win32 backend
+/// stores a real HANDLE in the same slot. Changing the member to intptr_t would
+/// not remove the cast, it would move it to the Windows side, where the same
+/// check would fire on a genuine pointer instead of on an integer.
+///
+/// Suppressed at the two call sites rather than disabled in .clang-tidy, so a
+/// real int-to-pointer cast introduced anywhere else still trips the gate.
+void* encode_fd(int fd) {
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    return reinterpret_cast<void*>(static_cast<intptr_t>(fd) + 1);
+}
 
 int decode_fd(void* handle) {
     if (handle == 0) {
@@ -72,7 +86,7 @@ MappedFile::MappedFile() : file_handle_(0), mapping_handle_(0), data_(0), size_(
 
 MappedFile::~MappedFile() { close(); }
 
-MappedFile::MappedFile(MappedFile&& other)
+MappedFile::MappedFile(MappedFile&& other) noexcept
     : file_handle_(other.file_handle_),
       mapping_handle_(other.mapping_handle_),
       data_(other.data_),
@@ -83,7 +97,7 @@ MappedFile::MappedFile(MappedFile&& other)
     other.size_ = 0;
 }
 
-MappedFile& MappedFile::operator=(MappedFile&& other) {
+MappedFile& MappedFile::operator=(MappedFile&& other) noexcept {
     if (this != &other) {
         close();
         file_handle_ = other.file_handle_;
@@ -138,7 +152,9 @@ bool MappedFile::open(const std::string& utf8_path, OsError& err) {
     }
 
     const size_t length = static_cast<size_t>(st.st_size);
-    void* addr = ::mmap(0, length, PROT_READ, MAP_PRIVATE, fd, 0);
+    // const void*: the mapping is PROT_READ, so nothing here may write through
+    // it, and saying so lets the compiler and cppcheck both hold that line.
+    const void* addr = ::mmap(0, length, PROT_READ, MAP_PRIVATE, fd, 0);
     if (addr == MAP_FAILED) {
         fill_errno(err, errno);
         ::close(fd);
