@@ -1,0 +1,215 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Tests for the locale-free formatting primitives (L3-CPP-007).
+//
+// The fixed6 cases carry the most weight: DELTA is the one column whose
+// rendering can silently differ from the Rust and Python implementations on a
+// host configured for a comma decimal separator, and a wrong separator produces
+// a CSV that still parses.
+
+#include "mie/text.hpp"
+
+#include <catch2/catch.hpp>
+
+#include <clocale>
+#include <limits>
+#include <string>
+
+namespace {
+
+namespace txt = mie::text;
+
+}  // namespace
+
+TEST_CASE("ASCII classification does not consult the locale", "[text][L3-CPP-007]") {
+    CHECK(txt::is_ascii_digit('0'));
+    CHECK(txt::is_ascii_digit('9'));
+    CHECK_FALSE(txt::is_ascii_digit('/'));
+    CHECK_FALSE(txt::is_ascii_digit(':'));
+
+    CHECK(txt::is_ascii_alpha('a'));
+    CHECK(txt::is_ascii_alpha('Z'));
+    CHECK_FALSE(txt::is_ascii_alpha('_'));
+
+    SECTION("blank is space and tab only, never a newline") {
+        // A "whitespace" predicate that quietly included '\n' would let a
+        // line-oriented parser join two config lines into one.
+        CHECK(txt::is_ascii_blank(' '));
+        CHECK(txt::is_ascii_blank('\t'));
+        CHECK_FALSE(txt::is_ascii_blank('\n'));
+        CHECK_FALSE(txt::is_ascii_blank('\r'));
+    }
+
+    SECTION("high bytes are not letters") {
+        // Under a single-byte locale these can classify as alphabetic, which is
+        // how a locale-aware parser starts accepting keys it should reject.
+        CHECK_FALSE(txt::is_ascii_alpha(static_cast<char>(0xC3)));
+        CHECK_FALSE(txt::is_ascii_digit(static_cast<char>(0xB1)));
+    }
+}
+
+TEST_CASE("case folding is ASCII-only", "[text][L3-CPP-007]") {
+    CHECK(txt::ascii_lower('I') == 'i');
+    CHECK(txt::ascii_upper('i') == 'I');
+    CHECK(txt::to_ascii_lower("MODE_COMMAND") == "mode_command");
+    CHECK(txt::equals_ignoring_ascii_case("--VERSION", "--version"));
+    CHECK(txt::equals_ignoring_ascii_case("Irig", "IRIG"));
+    CHECK_FALSE(txt::equals_ignoring_ascii_case("irig", "irigg"));
+    CHECK_FALSE(txt::equals_ignoring_ascii_case("", "x"));
+    CHECK(txt::equals_ignoring_ascii_case("", ""));
+}
+
+TEST_CASE("hex digit values cover both cases and reject non-digits", "[text]") {
+    CHECK(txt::ascii_hex_value('0') == 0);
+    CHECK(txt::ascii_hex_value('9') == 9);
+    CHECK(txt::ascii_hex_value('a') == 10);
+    CHECK(txt::ascii_hex_value('F') == 15);
+    CHECK(txt::ascii_hex_value('g') == -1);
+    CHECK(txt::ascii_hex_value(' ') == -1);
+}
+
+TEST_CASE("trim removes blanks from both ends only", "[text]") {
+    CHECK(txt::trim_ascii_blank("  key = value  ") == "key = value");
+    CHECK(txt::trim_ascii_blank("\t\tx") == "x");
+    CHECK(txt::trim_ascii_blank("") == "");
+    CHECK(txt::trim_ascii_blank("   ") == "");
+}
+
+TEST_CASE("decimal formatting handles zero and the boundaries", "[text]") {
+    CHECK(txt::decimal(0) == "0");
+    CHECK(txt::decimal(1) == "1");
+    CHECK(txt::decimal(4294967295u) == "4294967295");
+    // A uint64 at full width -- the case a 32-bit intermediate would truncate.
+    CHECK(txt::decimal(18446744073709551615ull) == "18446744073709551615");
+}
+
+TEST_CASE("signed decimal negates without undefined behaviour", "[text]") {
+    CHECK(txt::decimal_signed(0) == "0");
+    CHECK(txt::decimal_signed(-1) == "-1");
+    CHECK(txt::decimal_signed(42) == "42");
+    // INT64_MIN has no positive counterpart, so negating it directly is
+    // undefined behaviour -- which the UBSan CI tier would catch.
+    CHECK(txt::decimal_signed(-9223372036854775807LL - 1) == "-9223372036854775808");
+}
+
+TEST_CASE("zero padding widens rather than truncates", "[text]") {
+    CHECK(txt::decimal_padded(7, 2) == "07");
+    CHECK(txt::decimal_padded(0, 6) == "000000");
+    CHECK(txt::decimal_padded(456225, 6) == "456225");
+
+    SECTION("a value too wide for the field is not cut") {
+        // Truncating would turn microsecond 1234567 into a plausible "234567"
+        // and shift nothing visibly. Widening makes the anomaly obvious.
+        CHECK(txt::decimal_padded(1234567, 6) == "1234567");
+    }
+}
+
+TEST_CASE("hex is uppercase, unprefixed and zero-padded", "[text]") {
+    CHECK(txt::hex_upper(0, 4) == "0000");
+    CHECK(txt::hex_upper(0x2402, 4) == "2402");
+    CHECK(txt::hex_upper(0x797E, 4) == "797E");
+    CHECK(txt::hex_upper(0xDEADBEEFu, 8) == "DEADBEEF");
+    CHECK(txt::hex_upper(0xABCDEF, 4) == "ABCDEF");
+}
+
+// ---------------------------------------------------------------------------
+// fixed6 -- the DELTA column
+// ---------------------------------------------------------------------------
+
+TEST_CASE("fixed6 renders exactly six decimals", "[text][delta][L3-CPP-007]") {
+    CHECK(txt::fixed6(0.0) == "0.000000");
+    CHECK(txt::fixed6(1.0) == "1.000000");
+    CHECK(txt::fixed6(0.5) == "0.500000");
+    CHECK(txt::fixed6(1.2345) == "1.234500");
+    CHECK(txt::fixed6(0.000001) == "0.000001");
+}
+
+TEST_CASE("fixed6 declines to invent a spelling for non-finite values", "[text][delta]") {
+    // Neither of the other implementations emits a token here, so emitting
+    // "nan" or "inf" would be a divergence that only shows up on pathological
+    // input -- exactly where an operator is least able to spot it.
+    //
+    // Built from <limits> rather than by dividing by a zero constant: MSVC
+    // constant-folds `1.0 / zero` and rejects it outright as C2124 "divide or
+    // mod by zero", where GCC and Clang quietly produce the IEEE infinity. That
+    // is a compile-time divergence between the tiers, not a runtime one, so it
+    // fails the Windows build rather than a test.
+    CHECK(txt::fixed6(std::numeric_limits<double>::infinity()).empty());
+    CHECK(txt::fixed6(-std::numeric_limits<double>::infinity()).empty());
+    CHECK(txt::fixed6(std::numeric_limits<double>::quiet_NaN()).empty());
+}
+
+TEST_CASE("fixed6 emits a dot even under a comma-separator locale", "[text][delta][L3-CPP-007]") {
+    // THE case this function exists for. The decoder never calls setlocale, but
+    // as a library it can be linked into a host that already has -- and a comma
+    // here corrupts every DELTA cell while leaving the CSV parseable.
+    //
+    // The locale is restored before the assertion is evaluated, so a Catch2
+    // failure message cannot itself be formatted under the altered locale.
+    const char* previous = std::setlocale(LC_NUMERIC, 0);
+    const std::string saved = previous != 0 ? std::string(previous) : std::string("C");
+
+    const char* applied = std::setlocale(LC_NUMERIC, "de_DE.UTF-8");
+    if (applied == 0) {
+        applied = std::setlocale(LC_NUMERIC, "de_DE");
+    }
+    const bool locale_available = applied != 0;
+
+    const std::string rendered = txt::fixed6(1.2345);
+    // Restoring the locale is best-effort teardown: if it fails there is
+    // nothing useful to do about it here, and failing the test would report a
+    // teardown problem as a formatting problem.
+    (void)std::setlocale(LC_NUMERIC, saved.c_str());
+
+    CHECK(rendered == "1.234500");
+    CHECK(rendered.find(',') == std::string::npos);
+
+    if (!locale_available) {
+        // Reported rather than silently skipped: a gate that cannot run is not
+        // a gate that passed, and on a runner without the German locale this
+        // case proves only that the C-locale path works.
+        WARN(
+            "de_DE locale unavailable; fixed6 separator normalisation was not "
+            "exercised against a comma locale on this host");
+    }
+}
+
+TEST_CASE("fixed6 rounds the way the other implementations round", "[text][delta]") {
+    // Rust's {:.6}, Python's f"{d:.6f}" and C's %.6f all round the EXACT BINARY
+    // VALUE, and that is the subtlety worth pinning: none of the literals below
+    // is a true tie, because none is exactly representable as a double. Which
+    // way each one goes is decided by whether the nearest double sits above or
+    // below the decimal it was written as -- not by a tie-breaking rule.
+    //
+    // 0.0000005 is stored slightly BELOW five ten-millionths, so it rounds down.
+    // 2.0000005 is stored slightly ABOVE, so it rounds up. Reasoning about these
+    // as "ties to even" predicts the wrong answer for the second one; the first
+    // draft of this test did exactly that.
+    //
+    // Every expectation here was taken from the two reference implementations
+    // rather than derived: Rust and Python were both run on these inputs and
+    // agree with all of them. The conformance oracles remain the real proof.
+    CHECK(txt::fixed6(0.0000005) == "0.000000");
+    CHECK(txt::fixed6(0.0000015) == "0.000002");
+    CHECK(txt::fixed6(2.0000005) == "2.000001");
+    CHECK(txt::fixed6(-0.5) == "-0.500000");
+    CHECK(txt::fixed6(0.5) == "0.500000");
+}
+
+TEST_CASE("fixed6 handles a very large magnitude without truncating", "[text][delta]") {
+    // A double's exact decimal expansion runs to ~310 integer digits, and the
+    // internal buffer has to clear that. A silent truncation would emit a
+    // shortened number rather than nothing -- a wrong value that still looks
+    // like one.
+    //
+    // The expected length and leading digits were taken from Rust and Python,
+    // which produce byte-identical output for this input. Digits past the first
+    // seventeen are not "precision": they are the exact value of the nearest
+    // double, and all three implementations print it in full rather than
+    // zero-filling, so a divergence here would be a real one.
+    const std::string big = txt::fixed6(1e300);
+    REQUIRE_FALSE(big.empty());
+    CHECK(big.size() == 308);
+    CHECK(big.compare(0, 40, "1000000000000000052504760255204420248704") == 0);
+    CHECK(big.substr(big.size() - 10) == "160.000000");
+}

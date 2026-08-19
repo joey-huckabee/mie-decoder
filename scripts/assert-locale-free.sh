@@ -54,6 +54,15 @@ check_pattern() {
                  2>/dev/null | sort)
 }
 
+# cpp/tests is DELIBERATELY not scanned. The suite has to call setlocale in
+# order to prove the property this gate protects: one test switches LC_NUMERIC
+# to a comma-separator locale, formats a DELTA value, and asserts a dot comes
+# back. Scanning the tests would make that test unwritable, leaving the
+# guarantee asserted by a grep and demonstrated by nothing.
+#
+# The tests are also not shipped, so a locale call there cannot reach an
+# operator's CSV.
+
 # setlocale in any form. The program must run in the "C" locale it starts in.
 check_pattern 'setlocale[[:space:]]*\(' \
     'calls setlocale; the decoder must stay in the C locale so %.6f emits a dot'

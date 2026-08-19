@@ -86,7 +86,22 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends g++-14
+          sudo apt-get install -y -qq --no-install-recommends g++-14 locales
+      # Two hostile locales, generated so the locale-independence tests can
+      # actually switch to them. Without them those tests find setlocale
+      # returning NULL, downgrade themselves to a WARN, and the gate silently
+      # checks less than it appears to -- it would still pass on a build that
+      # emitted "1,234500" into every DELTA cell.
+      #
+      # de_DE has a comma decimal separator, which is what would corrupt DELTA.
+      # tr_TR redefines the case mapping of 'i' and 'I' specifically, which is
+      # what would make a <cctype>-based config or CLI parser stop recognising
+      # a key. They break different things, so both are needed.
+      - name: Generate the hostile locales
+        run: |
+          sudo locale-gen de_DE.UTF-8
+          sudo locale-gen tr_TR.UTF-8
+          sudo update-locale
       # Printed so a toolchain change shows up as a visible diff in the log
       # rather than as an unexplained warning in some other job.
       - name: Toolchain versions
@@ -211,16 +226,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends cppcheck
-      # Vendored Catch2 is excluded: it is 650 kB of generated third-party code
-      # this project is forbidden to edit, so analysing it could only ever
-      # produce findings nobody is allowed to act on.
+      # Driven through the Makefile target so this job and a developer's
+      # `make cppcheck` (and the `make verify-ci` pre-push run) are the same
+      # invocation with the same suppression list. Spelling the command out here
+      # as well is how the two came to differ once already: a tests-only
+      # suppression was added to one and would have been missing from the other,
+      # so CI and local would have disagreed about a clean tree.
       - name: cppcheck
-        run: |
-          cppcheck --error-exitcode=1 --enable=warning,style,performance,portability \
-                   --inline-suppr --std=c++11 --language=c++ \
-                   --suppress=missingIncludeSystem \
-                   -I cpp/include \
-                   cpp/src cpp/tests
+        run: make -C cpp cppcheck
 
   clang-tidy:
     name: clang-tidy

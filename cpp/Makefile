@@ -107,7 +107,7 @@ DEPFLAGS := -MMD -MP
 
 .PHONY: all check clean clean-all toolchain versions check-valgrind \
         check-gcc48 verify-ci print-test-bin print-decoder-bin \
-        print-lib-sources decoder tidy format format-check
+        print-lib-sources decoder tidy cppcheck format format-check
 
 all: $(TEST_BIN) $(DECODER_BIN)
 
@@ -227,6 +227,47 @@ FORMAT_SRC := $(sort $(TIDY_SRC) src/platform_posix.cpp src/platform_win32.cpp) 
 tidy:
 	$(TIDY) -p $(BUILD_DIR) --warnings-as-errors='*' $(TIDY_SRC)
 
+# --- cppcheck ----------------------------------------------------------------
+# A target rather than a command spelled out in the workflow AND in verify-ci.
+# Two copies of an analyser invocation is the same drift hazard sources.txt
+# exists to prevent, and it had already started: the suppression list below was
+# added in one place and would have been missing from the other.
+#
+# Two checks are suppressed FOR TESTS ONLY. Both fire on deliberate patterns,
+# and cppcheck is right about the code in each case -- it is wrong about the
+# intent. Neither is suppressed in src/, where both would be genuine bugs.
+#
+# knownConditionTrueFalse
+#   Several tests pin wire-format constants by asserting their literal values --
+#   `ERROR_NO_RESPONSE == 0x0120`. cppcheck correctly observes this is always
+#   true. It is always true *because the constant is currently right*; the
+#   assertion exists so that changing the constant fails the build.
+#
+# knownArgument
+#   The exhaustive sweeps assert only on mismatch:
+#
+#       if (got != want) { INFO(...); REQUIRE(got == want); }
+#
+#   so the REQUIRE is reached only when it is going to fail, and its argument is
+#   indeed always false there. That is the point of the shape: a million passing
+#   CHECKs would make the suite slow and its assertion count meaningless, while
+#   one REQUIRE on the first divergence -- with the offending input in the
+#   message -- is what a failure actually needs. Rewriting it to satisfy the
+#   check would mean asserting unconditionally, which is the thing being avoided.
+#
+# Vendored Catch2 is excluded by pointing cppcheck at src and tests only; it
+# arrives through -isystem and this project is forbidden to edit it, so findings
+# there could not be acted on.
+CPPCHECK ?= cppcheck
+CPPCHECK_FLAGS := --error-exitcode=1 --enable=warning,style,performance,portability \
+                  --inline-suppr --std=c++11 --language=c++ \
+                  --suppress=missingIncludeSystem \
+                  --suppress=knownConditionTrueFalse:tests/* \
+                  --suppress=knownArgument:tests/*
+
+cppcheck:
+	$(CPPCHECK) $(CPPCHECK_FLAGS) -I include src tests
+
 format-check:
 	$(FORMAT) --dry-run --Werror $(FORMAT_SRC)
 
@@ -284,9 +325,7 @@ verify-ci:
 	  echo "--- clang-tidy ---" && \
 	  make tidy TIDY=clang-tidy-18 CXX=g++-14 && \
 	  echo "--- cppcheck ---" && \
-	  cppcheck --error-exitcode=1 --enable=warning,style,performance,portability \
-	           --inline-suppr --std=c++11 --language=c++ \
-	           --suppress=missingIncludeSystem -I include src tests && \
+	  make cppcheck && \
 	  echo "--- sanitizers (CI compiler) ---" && \
 	  make -j$(CI_JOBS) check SANITIZE=1 CXX=g++-14'
 	@echo ""
