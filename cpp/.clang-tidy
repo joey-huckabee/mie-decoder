@@ -1,0 +1,62 @@
+# clang-tidy configuration for the C++ tree.
+#
+# Run with:  make tidy          (needs compile_commands.json -- see cpp/README.md)
+#
+# This complements cppcheck rather than replacing it. The two disagree often
+# enough that running both is worth the minute it costs.
+
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  misc-*,
+  performance-*,
+  readability-misleading-indentation,
+  readability-non-const-parameter,
+  -bugprone-easily-swappable-parameters,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -performance-enum-size
+
+# Disabled checks are recorded here, with the reason, rather than suppressed at
+# each call site -- so the decision survives the person who made it.
+#
+# bugprone-easily-swappable-parameters
+#   paths_same_file(input, output) and path_join(dir, name) take two strings
+#   because that is what the operations are. Wrapping each in a distinct type to
+#   satisfy the check would obscure the API rather than protect it, and the
+#   argument order is pinned by test in both directions.
+#
+# misc-include-cleaner            (clang-tidy 17+)
+#   Include-what-you-use enforcement. It wants every translation unit to restate
+#   includes its own header already guarantees. A defensible school of thought,
+#   but adopting it means churn across every file to say again what the headers
+#   say once. Declined.
+#
+# misc-non-private-member-variables-in-classes
+#   The decoder's model types (MieMessage, TypeWord, CommandWord, IrigTimestamp)
+#   are records that get copied and formatted, not encapsulated services. They
+#   mirror plain structs in the Rust and Python implementations, and adding
+#   accessors here would make the three harder to read against each other --
+#   which is the property the conformance work depends on.
+#
+# performance-enum-size           (clang-tidy 18+)
+#   Suggests a narrower base type for the model enums. Those enums have explicit
+#   discriminants pinned to the wire format and shared with the other two
+#   implementations; changing the underlying type to save bytes would make the
+#   layout an implementation detail nobody asked to vary. Declined.
+#
+# VERSION DRIFT WARNING
+#   The list above enables whole families (bugprone-*, cert-*, misc-*,
+#   performance-*), and CI runs a pinned clang-tidy from the toolchain image.
+#   Bumping that image therefore adds checks silently. When a bump turns the
+#   gate red with no code change behind it, judge the new check on merit and
+#   either fix the code or add it here with a reason. Do not respond by
+#   weakening the gate.
+
+WarningsAsErrors: ''
+# Project headers only. Vendored Catch2 arrives via -isystem precisely so it is
+# not analysed, and a HeaderFilterRegex that reached it would undo that.
+HeaderFilterRegex: 'include/mie/.*'
+FormatStyle: file
