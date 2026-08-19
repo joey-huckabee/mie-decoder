@@ -15,6 +15,65 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **A third implementation: C++11 under `cpp/`, targeting SLES 12 SP5.** Neither
+  existing implementation can be deployed there — SLES 12 has no Python ≥3.10
+  package, and the Rust build needs an approved toolchain on the build host. A
+  C++11 binary compiled against the platform's own GCC 4.8.5 removes the
+  prerequisite entirely. The same source also builds with MSVC, so Windows is a
+  shipping target rather than a development convenience.
+
+  This is **Phase 0 of a phased delivery**: the platform layer, both build
+  descriptions and the full gate suite. The CLI implements `--version` and
+  `--help` only — `decode`, `count` and `dump` arrive with the decoder modules
+  in later phases. Nothing about the Rust or Python implementations changes.
+  See `cpp/README.md` for current status and `docs/adr/` for the three decisions
+  that shape the tree.
+
+  - `cpp/include/mie/platform.hpp` and its POSIX and Win32 backends. The decoder
+    proper has no operating-system surface; exactly five concerns do — mapping
+    the input read-only, the atomic temp-file-and-rename output, directory
+    enumeration for `--glob`, byte-exact (binary-mode) output, and path identity
+    plus encoding — and all five are confined here, so the rest of the tree
+    needs no conditional compilation.
+  - `cpp/Makefile` (authoritative on Linux, and the only build the GCC 4.8.5
+    fidelity container can run — it ships CMake 2.8) and `cpp/CMakeLists.txt`
+    (authoritative for MSVC; Visual Studio 2022 opens `cpp/` directly). Both
+    read one `cpp/sources.txt`, so the file list cannot drift.
+  - A Catch2 v2.13.10 suite over the platform layer, green on g++ 11,
+    GCC 4.8.5, MSVC 19.44 at `/W4 /WX /permissive-`, AddressSanitizer +
+    UndefinedBehaviorSanitizer + LeakSanitizer, and Valgrind memcheck with zero
+    leaks. Catch2 is pinned to the v2 line because v3 requires C++14.
+  - `.github/workflows/cpp-ci.yml` — nine jobs gating independently of `ci.yml`,
+    so a Rust change never waits on a Valgrind run. The GCC 4.8.5 tier runs the
+    **full suite**, not a compile check: it is the only tier that enforces the
+    C++11 boundary, because MSVC has no `/std:c++11` and compiles this source as
+    C++14.
+  - Three invariant gates, each verified to fail on a planted violation as well
+    as to pass on clean code: `scripts/assert-platform-confined.sh` (OS headers
+    only in the platform backends), `scripts/assert-locale-free.sh` (no
+    `setlocale`, no `<cctype>` classification — `DELTA` is formatted `%.6f`,
+    whose decimal separator the locale chooses), and
+    `scripts/assert-sources-agree.sh` (both builds resolve the same sources).
+  - `docs/adr/` — the repository's first architecture decision records.
+    ADR-0001 sets the C++11 / GCC 4.8.5 floor and records why the SLE 12
+    Toolchain module was considered and not taken; ADR-0002 explains the
+    two-build one-source-list arrangement; ADR-0003 makes Windows a shipping
+    target and lists the five behaviours that commits to.
+  - An `L3-CPP` requirement category in `docs/L3-REQ.md`, and Catch2 tag
+    scanning in `scripts/build-trace-matrix.py`. Each implementation now uses
+    whatever its own test framework can select on — pytest markers, Rust doc
+    comments, Catch2 tags — so every artifact the trace matrix names is
+    directly runnable.
+
+### Fixed
+
+- `scripts/repo-hygiene.sh`'s CI-job check read only `ci.yml`. Adding a second
+  gating workflow left its jobs invisible to the check, which would have gone on
+  reporting success while an entire implementation's CI ran undocumented. It now
+  scans both workflows.
+
 ## [2.12.0] — 2026-08-09
 
 ### Notes

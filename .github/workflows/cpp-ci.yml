@@ -1,0 +1,274 @@
+name: C++ CI
+
+# Build, test and gate the C++ tree under cpp/. Separate from ci.yml so the
+# three implementations gate independently: a Rust or Python change must not
+# wait on a Valgrind run, and a C++ change must not wait on the Python matrix.
+#
+# THREE TIERS (ADR-0001, ADR-0003):
+#   1. modern toolchain  -- fast feedback, plus the instrumentation GCC 4.8
+#                           cannot host (LSan, full UBSan, libFuzzer)
+#   2. gcc 4.8.5         -- fidelity for the SLES 12 SP5 system compiler
+#   3. MSVC              -- the shipping Windows artifact (ADR-0003)
+#   ( real SLES 12 SP5   -- NOT here. Deployability is verified by hand on
+#                           hardware; the container proves C++11 conformance
+#                           only, not deployability. )
+#
+# Tier 2 runs the FULL test suite, not just a compile. That is what closes the
+# gap between the instrumented build and the shipped build -- do not reduce it
+# to `make all`. It is also the only tier that enforces the C++11 boundary:
+# MSVC has no /std:c++11 and compiles this source as C++14, so it silently
+# accepts two constructs GCC 4.8.5 rejects (see CONTRIBUTING.md).
+#
+# TOOLCHAIN POLICY
+# Runner images and analysis tools are pinned by explicit version.
+# `ubuntu-latest` is deliberately not used: it is a moving pointer, and a
+# GitHub-side bump turns jobs red with no code change behind them.
+#
+# The modern toolchain is an *instrument*, not a target -- it never produces a
+# shipped artifact, so tracking current versions carries no SLES 12 risk.
+#
+# WHY apt-get RATHER THAN A PREBUILT IMAGE
+# background-file-mover maintains a ghcr.io toolchain image for its modern tier,
+# and its Makefile records the reason: it already maintained the GCC 4.8.5
+# mirror, so the cost of a second image was marginal. This repository maintains
+# no images, and the note that image replaced -- "that is the price of not
+# maintaining a second distro" -- is the right trade here for now. Revisit when
+# the install time becomes the dominant cost of a run, and when it does, publish
+# ghcr.io/joey-huckabee/mie-ci rather than pointing at another project's image:
+# a shared image means a change made for one repository silently changes what
+# the other's gates check.
+#
+# The GCC 4.8.5 mirror IS reused, because it is an immutable pin of a 2015
+# compiler rather than a moving toolchain.
+
+on:
+  push:
+    paths:
+      - "cpp/**"
+      - ".github/workflows/cpp-ci.yml"
+      - "scripts/assert-platform-confined.sh"
+      - "scripts/assert-locale-free.sh"
+      - "scripts/assert-sources-agree.sh"
+  pull_request:
+    paths:
+      - "cpp/**"
+      - ".github/workflows/cpp-ci.yml"
+      - "scripts/assert-platform-confined.sh"
+      - "scripts/assert-locale-free.sh"
+      - "scripts/assert-sources-agree.sh"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpp-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# A job with `container:` defaults to `sh`, not `bash`. Nothing here relies on
+# a bash-ism today; this is set so the first one someone writes fails on their
+# branch rather than mysteriously only inside a container.
+defaults:
+  run:
+    shell: bash
+
+env:
+  # The Makefile honours CXX, so this selects the compiler for the functional,
+  # sanitizer and coverage tiers alike. Deliberately newer than the image
+  # default (g++-13 on ubuntu-24.04), because newer analysers find more.
+  CXX: g++-14
+
+jobs:
+  build-test-modern:
+    name: build & test (g++-14)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends g++-14
+      # Printed so a toolchain change shows up as a visible diff in the log
+      # rather than as an unexplained warning in some other job.
+      - name: Toolchain versions
+        run: make -C cpp versions
+      - name: Build
+        run: make -C cpp -j"$(nproc)" all
+      - name: Test
+        run: make -C cpp -j"$(nproc)" check
+      # A smoke check that the linked binary actually runs and that its output
+      # is byte-identical to the other implementations -- LF, no CRLF, no
+      # trailing spaces. The full conformance comparison arrives in Phase 1.
+      - name: CLI smoke
+        run: |
+          BIN=$(make -C cpp -s print-decoder-bin)
+          "cpp/${BIN#cpp/}" --version | od -c | head -3
+          test "$("cpp/${BIN#cpp/}" --version)" = "mie-decoder 2.12.0"
+
+  # Fidelity job: the SLES 12 SP5 system compiler, via a mirror of the official
+  # gcc:4.8 image (Debian 7 "wheezy", glibc 2.13, GCC 4.8.5).
+  #
+  # It is a PROXY, not the target: older glibc (2.13 vs SUSE's 2.22), different
+  # kernel. Being *older* makes it a conservative floor -- passing here implies
+  # passing there -- but it proves C++11 conformance, not deployability.
+  #
+  # This does NOT use a job-level `container:`. Doing so runs every step inside
+  # the image, and node-based actions (checkout, upload-artifact) cannot execute
+  # against glibc 2.13. The runner checks out with modern tooling instead and
+  # the old compiler is invoked over the mounted workspace, so the container
+  # only has to compile -- which is all it is good for.
+  #
+  # CXX is unset deliberately: inside the container the only compiler is GCC
+  # 4.8.5's `g++`, and the workflow-level g++-14 must not leak in.
+  build-test-gcc48:
+    name: build & test (gcc 4.8.5)
+    runs-on: ubuntu-24.04
+    env:
+      CXX: ""
+    steps:
+      - uses: actions/checkout@v4
+      # Driven through the Makefile target rather than a hand-written
+      # `docker run`, so this job and a developer's `make check-gcc48` are the
+      # same command reading the same GCC48_IMAGE. Separately maintained copies
+      # of that invocation are how CI and local come to pull different images
+      # without either noticing.
+      #
+      # A mirror of docker.io/library/gcc:4.8, byte-identical, republished with
+      # a v2s2 manifest: the upstream tag was pushed in 2016 with a manifest v2
+      # *schema 1*, which modern Docker refuses by default. Keep this in step
+      # with GCC48_IMAGE in cpp/Makefile.
+      - name: Build and test on GCC 4.8.5
+        run: make -C cpp check-gcc48 CI_ENGINE=docker
+
+  # The shipping Windows artifact (ADR-0003). Not a convenience build: the
+  # suite pins behaviours that differ from POSIX -- replacing an existing
+  # destination, no CRLF translation on stdout, shared read on the in-progress
+  # temp file -- and two of those were found by running this suite rather than
+  # by reading documentation.
+  build-test-msvc:
+    name: build & test (MSVC)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B cpp/build-msvc -S cpp -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build cpp/build-msvc --config Release
+      - name: Test
+        run: ctest --test-dir cpp/build-msvc -C Release --output-on-failure
+      # LF, not CRLF. Without _setmode(_fileno(stdout), _O_BINARY) the CRT
+      # rewrites newlines and every stdout oracle fails on Windows alone.
+      - name: CLI smoke and newline check
+        shell: pwsh
+        run: |
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = "cpp\build-msvc\Release\mie-decoder.exe"
+          $psi.Arguments = "--version"
+          $psi.RedirectStandardOutput = $true
+          $psi.UseShellExecute = $false
+          $out = [System.Diagnostics.Process]::Start($psi).StandardOutput.ReadToEnd()
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes($out)
+          if ($bytes -contains 13) { throw "stdout contained CR: binary mode is not in effect" }
+          if ($out.TrimEnd("`n") -ne "mie-decoder 2.12.0") { throw "unexpected --version output: $out" }
+
+  # ASan (heap/stack overflow, use-after-free), UBSan (undefined behaviour) and
+  # LSan (leaks), all fatal on first finding. Modern toolchain only: GCC 4.8 has
+  # partial ASan and no LSan at all, which is precisely why the 4.8 tier runs
+  # the functional suite instead.
+  sanitizers:
+    name: ASan + UBSan + LSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends g++-14
+      - name: Test under sanitizers
+        run: make -C cpp -j"$(nproc)" check SANITIZE=1
+
+  valgrind:
+    name: Valgrind memcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends g++-14 valgrind
+      - name: Build
+        run: make -C cpp -j"$(nproc)" all
+      # --errors-for-leak-kinds=all: a "still reachable" block at exit is a leak
+      # for a short-lived CLI, not a tolerable steady state.
+      - name: memcheck
+        run: make -C cpp check-valgrind
+
+  static-analysis:
+    name: cppcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cppcheck
+      # Vendored Catch2 is excluded: it is 650 kB of generated third-party code
+      # this project is forbidden to edit, so analysing it could only ever
+      # produce findings nobody is allowed to act on.
+      - name: cppcheck
+        run: |
+          cppcheck --error-exitcode=1 --enable=warning,style,performance,portability \
+                   --inline-suppr --std=c++11 --language=c++ \
+                   --suppress=missingIncludeSystem \
+                   -I cpp/include \
+                   cpp/src cpp/tests
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends g++-14 clang-tidy-18 bear
+      # bear intercepts the real build to produce compile_commands.json, so
+      # clang-tidy analyses the translation units as they are actually compiled
+      # -- same flags, same defines -- rather than a reconstruction of them.
+      - name: Generate the compilation database
+        run: bear -- make -C cpp -j"$(nproc)" all
+      - name: clang-tidy
+        run: make -C cpp tidy TIDY=clang-tidy-18
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang-format-18
+      - name: format-check
+        run: make -C cpp format-check FORMAT=clang-format-18
+
+  # The three invariants that make the portability argument true rather than
+  # aspirational. Cheap enough to share one job.
+  invariants:
+    name: Platform confinement, locale, source-list agreement
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # cmake is needed by assert-sources-agree.sh, which configures the real
+      # CMakeLists and asks it what it resolved -- comparing the two builds'
+      # actual output rather than re-implementing the parsing and comparing the
+      # build against a copy of itself.
+      - name: Install cmake
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake
+      - name: OS headers are confined to the platform backends
+        run: bash scripts/assert-platform-confined.sh
+      - name: No locale-sensitive parsing or formatting
+        run: bash scripts/assert-locale-free.sh
+      - name: The Makefile and CMake resolve the same sources
+        run: bash scripts/assert-sources-agree.sh

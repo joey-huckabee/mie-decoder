@@ -150,15 +150,26 @@ while IFS=: read -r file line _; do
 done < <(grep -rnE '^[[:space:]]*unsafe[[:space:]]*([{(]|fn[[:space:]])' rust/src rust/tests 2>/dev/null || true)
 (( ${#offenders[@]} )) && { list "${offenders[@]}"; bad "unsafe block without a // SAFETY: comment"; }
 
-# ── 9. CI job table in MAINTAINER-GUIDE matches ci.yml ────────────────
+# ── 9. CI job table in MAINTAINER-GUIDE matches the workflows ─────────
 # §9 of the guide documents every CI job in a table. That table stayed
 # accurate while the prose above it did not ("seven jobs" when there were
 # fifteen), so the number is gone and the table is the list — which only works
 # if something keeps it honest. Adding a job without a row now fails here.
-step "MAINTAINER-GUIDE §9 lists every ci.yml job"
+#
+# Both gating workflows are scanned. When cpp-ci.yml was added it was invisible
+# to this check, which read only ci.yml — so the guide could have gone on
+# describing two implementations' worth of CI while a third ran unlisted, and
+# the check would still have reported success. A gate that silently narrows as
+# the repository grows is worse than one that was never written.
+step "MAINTAINER-GUIDE §9 lists every CI job"
+# FNR==1 resets the in-jobs flag at the start of each file. Without it the flag
+# set by ci.yml stays on into cpp-ci.yml, and every two-space key ABOVE that
+# file's own `jobs:` — `push:`, `group:`, `contents:`, `CXX:` — gets collected
+# as though it were a job name, demanding guide rows for things that are not
+# jobs.
 mapfile -t yml_jobs < <(
-    awk '/^jobs:/{inj=1;next} inj && /^  [a-z0-9-]+:/{gsub(/[ :]/,"");print}' \
-        .github/workflows/ci.yml
+    awk 'FNR==1{inj=0} /^jobs:/{inj=1;next} inj && /^  [a-z0-9-]+:/{gsub(/[ :]/,"");print}' \
+        .github/workflows/ci.yml .github/workflows/cpp-ci.yml
 )
 missing_rows=()
 for job in "${yml_jobs[@]}"; do
@@ -166,7 +177,7 @@ for job in "${yml_jobs[@]}"; do
 done
 if (( ${#missing_rows[@]} )); then
     list "${missing_rows[@]}"
-    bad "ci.yml job(s) with no row in MAINTAINER-GUIDE.md section 9"
+    bad "CI job(s) with no row in MAINTAINER-GUIDE.md section 9"
 fi
 
 # ── 10. Config key set agrees across its three text sources ───────────
