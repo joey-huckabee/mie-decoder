@@ -173,7 +173,8 @@ TEST_CASE("make_temp_name sits beside the destination and never repeats",
     }
 }
 
-TEST_CASE("make_temp_name handles a destination with no directory", "[platform][atomic][L3-CPP-004]") {
+TEST_CASE("make_temp_name handles a destination with no directory",
+          "[platform][atomic][L3-CPP-004]") {
     const std::string name = plat::make_temp_name("out.csv");
     CHECK(plat::path_parent(name).empty());
     CHECK(name.find("out.csv.mie-decoder.tmp.") == 0);
@@ -282,7 +283,8 @@ TEST_CASE("AtomicFile commits through a temp file", "[platform][atomic][L2-WRT-0
     discard(destination);
 }
 
-TEST_CASE("AtomicFile replaces an existing destination", "[platform][atomic][L2-WRT-015][L3-CPP-006]") {
+TEST_CASE("AtomicFile replaces an existing destination",
+          "[platform][atomic][L2-WRT-015][L3-CPP-006]") {
     // THE Windows trap, and the reason the backend uses MoveFileExW with
     // MOVEFILE_REPLACE_EXISTING: the MSVC CRT's rename() fails outright when the
     // destination exists. Rust's std::fs::rename uses MoveFileEx internally, so
@@ -364,7 +366,8 @@ TEST_CASE("AtomicFile writes bytes verbatim, with no newline translation",
     discard(destination);
 }
 
-TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary", "[platform][atomic][L3-CPP-004]") {
+TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary",
+          "[platform][atomic][L3-CPP-004]") {
     // Three shapes that each take a different branch: comfortably inside the
     // buffer, exactly at it, and a single write larger than it (which bypasses
     // buffering entirely).
@@ -396,7 +399,8 @@ TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary", "[pl
 // Directory enumeration
 // ---------------------------------------------------------------------------
 
-TEST_CASE("list_directory returns entry names without the dot entries", "[platform][glob][L3-CPP-004]") {
+TEST_CASE("list_directory returns entry names without the dot entries",
+          "[platform][glob][L3-CPP-004]") {
     const std::string marker = temp_path("listed.mie");
     write_raw(marker, std::string("x"));
 
@@ -430,7 +434,8 @@ TEST_CASE("list_directory returns entry names without the dot entries", "[platfo
     discard(marker);
 }
 
-TEST_CASE("list_directory reports a missing directory as an error", "[platform][glob][L3-CPP-004]") {
+TEST_CASE("list_directory reports a missing directory as an error",
+          "[platform][glob][L3-CPP-004]") {
     std::vector<std::string> names;
     plat::OsError err;
     CHECK_FALSE(plat::list_directory(temp_path("no-such-dir"), names, err));
@@ -454,7 +459,8 @@ TEST_CASE("paths_same_file detects an output aimed at its own input",
     discard(path);
 }
 
-TEST_CASE("paths_same_file says no for two distinct files", "[platform][identity][L2-WRT-014][L3-CPP-008]") {
+TEST_CASE("paths_same_file says no for two distinct files",
+          "[platform][identity][L2-WRT-014][L3-CPP-008]") {
     const std::string input = temp_path("in.mie");
     const std::string output = temp_path("out.csv");
     write_raw(input, std::string("data"));
@@ -512,7 +518,8 @@ TEST_CASE("canonical_path resolves an existing file", "[platform][identity][L3-C
 // Metadata and encoding
 // ---------------------------------------------------------------------------
 
-TEST_CASE("file_metadata reports size and regular-file status", "[platform][metadata][L3-CPP-004]") {
+TEST_CASE("file_metadata reports size and regular-file status",
+          "[platform][metadata][L3-CPP-004]") {
     const std::string path = temp_path("meta.mie");
     write_raw(path, std::string("1234567890"));
 
@@ -550,7 +557,8 @@ TEST_CASE("remove_file deletes and then reports the absence", "[platform][metada
     CHECK_FALSE(err.ok());
 }
 
-TEST_CASE("wide/narrow conversion round-trips ASCII on every platform", "[platform][encoding][L3-CPP-009]") {
+TEST_CASE("wide/narrow conversion round-trips ASCII on every platform",
+          "[platform][encoding][L3-CPP-009]") {
     const std::string original("C:/logs/flight-01.mie");
     CHECK(plat::from_wide(plat::to_wide(original)) == original);
     CHECK(plat::to_wide(std::string()).empty());
@@ -558,7 +566,8 @@ TEST_CASE("wide/narrow conversion round-trips ASCII on every platform", "[platfo
 }
 
 #if defined(_WIN32)
-TEST_CASE("wide/narrow conversion round-trips non-ASCII UTF-8 on Windows", "[platform][encoding][L3-CPP-009]") {
+TEST_CASE("wide/narrow conversion round-trips non-ASCII UTF-8 on Windows",
+          "[platform][encoding][L3-CPP-009]") {
     // Windows is a shipping target, so a non-ASCII path has to survive the trip
     // through the W entry points rather than being mangled by whatever the
     // active ANSI codepage happens to be. The POSIX backend does not convert at

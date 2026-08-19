@@ -25,7 +25,33 @@ CPPFLAGS += -Iinclude -isystem third_party -D_FILE_OFFSET_BITS=64
 # patterns as it parses, so a later assignment would not reach the rules below.
 SANITIZE ?= 0
 ifeq ($(SANITIZE),1)
+# -Wno-maybe-uninitialized is disabled FOR THIS TIER ONLY.
+#
+# Under -O1 plus instrumentation the diagnostic false-positives deep inside
+# libstdc++: GCC 14 reports it against <regex> internals (_NFA::_M_insert_alt,
+# _M_insert_repeat) reached through Catch2's tag parser -- code this project
+# neither wrote nor includes directly. There is a certain irony in it, since
+# ADR-0001 bans <regex> from project code outright; the ban cannot reach into
+# the test framework.
+#
+# What makes this safe is NOT that the sanitizers cover the same ground -- they
+# do not. ASan finds memory errors and UBSan finds undefined behaviour; reading
+# an uninitialized value is MemorySanitizer's job, and MSan is not run here (it
+# cannot coexist with ASan, and it needs an instrumented libstdc++ to avoid
+# drowning in false positives of its own).
+#
+# What makes it safe is that the warning is only suppressed on THIS TIER. The
+# default -O2 tier and the GCC 4.8.5 fidelity tier both keep
+# -Wmaybe-uninitialized at -Werror over the same sources, so a genuine
+# uninitialized read in project code still fails the build -- twice. The only
+# thing lost is a diagnostic that, at -O1 with instrumentation, fires on
+# libstdc++ rather than on us.
+#
+# Found by CI, not locally: the sanitizer tier runs g++-14 there and g++ 11 on
+# the WSL2 host, and GCC 11 does not emit this. `make verify-ci` now runs this
+# tier in the CI image for exactly that reason.
 CXXFLAGS ?= -std=c++11 -Wall -Wextra -Werror -O1 -g \
+            -Wno-maybe-uninitialized \
             -fsanitize=address,undefined -fno-omit-frame-pointer \
             -fno-sanitize-recover=all
 TIER := asan
@@ -223,14 +249,26 @@ format:
 # formatting with clang-format 14 and having CI check with 18 produces a red
 # build with no code change behind it. Both have already happened here.
 #
-# Not a substitute for the sanitizer, Valgrind or GCC 4.8.5 tiers, which run
-# against the real compilers. This is what to run before pushing a formatting or
-# lint-affecting change.
+# THE COMPILER IS PART OF THAT GAP, not just the analysers. The sanitizer tier
+# runs here too, because the host's g++ 11 and CI's g++-14 do not emit the same
+# warnings: g++-14 reports -Wmaybe-uninitialized against libstdc++'s <regex>
+# internals under -O1 plus instrumentation, and g++ 11 does not. That turned the
+# sanitizer job red on a branch whose local sanitizer run was green -- precisely
+# the failure this target exists to prevent, missed because the target did not
+# cover it.
+#
+# --cap-add=SYS_PTRACE is required for that tier: LeakSanitizer uses ptrace,
+# containers block it by default, and LSan then dies with a fatal error that
+# reads like a test failure. GitHub's runner is not a container and does not
+# need it.
+#
+# Still not a substitute for the Valgrind or GCC 4.8.5 tiers. Run
+# `make check-gcc48` separately -- it is the only thing that enforces C++11.
 CI_BASE_IMAGE ?= docker.io/library/ubuntu:24.04
 
 verify-ci:
 	@echo "Running the divergence-prone gates in $(CI_BASE_IMAGE) via $(CI_ENGINE)..."
-	$(CI_ENGINE) run --rm -v "$(CURDIR)":/cpp -w /cpp $(CI_BASE_IMAGE) bash -c '\
+	$(CI_ENGINE) run --rm --cap-add=SYS_PTRACE -v "$(CURDIR)":/cpp -w /cpp $(CI_BASE_IMAGE) bash -c '\
 	  apt-get update -qq >/dev/null && \
 	  apt-get install -y -qq --no-install-recommends \
 	      g++-14 make clang-format-18 clang-tidy-18 cppcheck bear >/dev/null && \
@@ -248,7 +286,9 @@ verify-ci:
 	  echo "--- cppcheck ---" && \
 	  cppcheck --error-exitcode=1 --enable=warning,style,performance,portability \
 	           --inline-suppr --std=c++11 --language=c++ \
-	           --suppress=missingIncludeSystem -I include src tests'
+	           --suppress=missingIncludeSystem -I include src tests && \
+	  echo "--- sanitizers (CI compiler) ---" && \
+	  make -j$(CI_JOBS) check SANITIZE=1 CXX=g++-14'
 	@echo ""
 	@echo "verify-ci OK. This leaves the build tree built with g++-14;"
 	@echo "your next local 'make check' will rebuild against the host compiler."
