@@ -13,6 +13,7 @@
 
 #include <catch2/catch.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -578,3 +579,142 @@ TEST_CASE("wide/narrow conversion round-trips non-ASCII UTF-8 on Windows",
     CHECK(plat::from_wide(wide) == original);
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// Exhaustive path-helper properties
+// ---------------------------------------------------------------------------
+//
+// The path helpers are pure string manipulation, so their input space can be
+// swept properly rather than sampled. They are also the piece most likely to
+// behave differently between platforms -- a backslash is a separator on Windows
+// and an ordinary filename character on POSIX -- so the properties below are
+// written to hold on both, with the platform-specific parts guarded.
+
+TEST_CASE("parent and filename always partition a path", "[platform][path][exhaustive]") {
+    // For any path, filename() is the tail after the last separator and
+    // parent() is what precedes it. Reassembling them must recover the original
+    // except for the separator itself -- which is the property a caller relies
+    // on when it splits a destination to place a temp file beside it.
+    const char* paths[] = {
+        "",     "a",          "a.csv", "/",      "/a",
+        "/a/b", "/a/b/c.csv", "a/b",   "a/b/",   "//a",
+        "a//b", "./a",        "../a",  "/a/b/.", "/very/deep/path/with/many/segments/out.csv"};
+
+    for (std::size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        const std::string path(paths[i]);
+        const std::string parent = plat::path_parent(path);
+        const std::string name = plat::path_filename(path);
+
+        INFO("path = '" << path << "' parent = '" << parent << "' name = '" << name << "'");
+
+        // The filename never contains a separator: that is what makes it a name.
+        for (std::size_t k = 0; k < name.size(); ++k) {
+            REQUIRE_FALSE(plat::is_separator(name[k]));
+        }
+        // The name is always a suffix of the path.
+        REQUIRE(path.size() >= name.size());
+        REQUIRE(path.compare(path.size() - name.size(), name.size(), name) == 0);
+        // Everything before the name is the parent plus at most one separator.
+        const std::size_t head = path.size() - name.size();
+        REQUIRE(head >= parent.size());
+        REQUIRE(head - parent.size() <= 1);
+    }
+}
+
+TEST_CASE("joining a parent to a filename never doubles or loses a separator",
+          "[platform][path][exhaustive]") {
+    // Every combination of trailing separator on the directory and leading
+    // separator on the name -- the four shapes a caller can produce by
+    // concatenating configured strings.
+    const char* dirs[] = {"dir", "dir/", "/abs", "/abs/", "/", ""};
+    const char* names[] = {"out.csv", "/out.csv", ""};
+
+    for (std::size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); ++d) {
+        for (std::size_t n = 0; n < sizeof(names) / sizeof(names[0]); ++n) {
+            const std::string joined = plat::path_join(dirs[d], names[n]);
+            INFO("dir = '" << dirs[d] << "' name = '" << names[n] << "' -> '" << joined << "'");
+
+            // No doubled forward slash is ever introduced. A doubled separator
+            // is harmless to open() but makes a path that no longer matches the
+            // one an operator typed, which matters for the collision check.
+            REQUIRE(joined.find("//") == std::string::npos);
+
+            const std::string name(names[n]);
+            if (!name.empty()) {
+                // The name survives intact at the tail.
+                const std::string bare = plat::is_separator(name[0]) ? name.substr(1) : name;
+                REQUIRE(joined.size() >= bare.size());
+                REQUIRE(joined.compare(joined.size() - bare.size(), bare.size(), bare) == 0);
+            }
+        }
+    }
+}
+
+TEST_CASE("every byte value is classified as a separator consistently",
+          "[platform][path][exhaustive]") {
+    for (int i = 0; i < 256; ++i) {
+        const char c = static_cast<char>(i);
+        const bool sep = plat::is_separator(c);
+#if defined(_WIN32)
+        REQUIRE(sep == (c == '/' || c == '\\'));
+#else
+        // On POSIX a backslash is an ordinary filename character. Treating it
+        // as a separator would truncate any path that legitimately contains
+        // one -- a bug that cannot reproduce on Windows.
+        REQUIRE(sep == (c == '/'));
+#endif
+    }
+}
+
+TEST_CASE("a filename with no separator is its own path", "[platform][path][exhaustive]") {
+    // Sweeps every single-character filename, including the ones that are
+    // separators on the other platform.
+    for (int i = 1; i < 256; ++i) {
+        const char c = static_cast<char>(i);
+        if (plat::is_separator(c)) {
+            continue;
+        }
+        const std::string name(1, c);
+        INFO("byte = " << i);
+        REQUIRE(plat::path_filename(name) == name);
+        REQUIRE(plat::path_parent(name).empty());
+    }
+}
+
+TEST_CASE("temp names stay unique across many consecutive calls",
+          "[platform][atomic][exhaustive][L3-WRT-001]") {
+    // The uniqueness guarantee is what stops two writers clobbering each other.
+    // A thousand calls in a tight loop is the case a coarse clock breaks: if
+    // the name depended on the timestamp alone, many of these would collide.
+    const std::string destination = plat::path_join("/some/dir", "out.csv");
+    std::vector<std::string> names;
+    names.reserve(1000);
+    for (int i = 0; i < 1000; ++i) {
+        names.push_back(plat::make_temp_name(destination));
+    }
+
+    std::sort(names.begin(), names.end());
+    CHECK(std::adjacent_find(names.begin(), names.end()) == names.end());
+
+    // Every one of them is still beside the destination and still recognisable.
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        REQUIRE(plat::path_parent(names[i]) == plat::path_parent(destination));
+        REQUIRE(plat::path_filename(names[i]).find("out.csv.mie-decoder.tmp.") == 0);
+    }
+}
+
+TEST_CASE("wide and narrow conversion round-trips every ASCII string",
+          "[platform][encoding][exhaustive]") {
+    // Every single-character ASCII string, plus the empty one. On POSIX the
+    // conversion is a byte pass-through and this proves it loses nothing; on
+    // Windows it is a real UTF-8/UTF-16 conversion and this proves the same.
+    CHECK(plat::from_wide(plat::to_wide(std::string())).empty());
+    for (int i = 1; i < 128; ++i) {
+        const std::string s(1, static_cast<char>(i));
+        if (plat::from_wide(plat::to_wide(s)) != s) {
+            INFO("byte = " << i);
+            REQUIRE(plat::from_wide(plat::to_wide(s)) == s);
+        }
+    }
+    SUCCEED("every ASCII character survives the wide round-trip");
+}

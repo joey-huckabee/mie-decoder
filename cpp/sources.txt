@@ -22,3 +22,7 @@
 # scripts/assert-sources-agree.sh checks that both builds resolve the same set.
 
 src/platform_common.cpp
+src/text.cpp
+src/models.cpp
+src/error.cpp
+src/decode.cpp

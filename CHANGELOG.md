@@ -61,6 +61,56 @@ full release workflow.
     Toolchain module was considered and not taken; ADR-0002 explains the
     two-build one-source-list arrangement; ADR-0003 makes Windows a shipping
     target and lists the five behaviours that commits to.
+
+- **C++ decoding core: the model, error and pure-decode layers.** The second
+  phase of the C++ port. Still no `decode` / `count` / `dump` subcommands — this
+  is the computation underneath them, landed on its own so the wire-format work
+  is reviewable before the reader and writer build on it.
+
+  - `mie/models.hpp` — the wire-format types, with the same field names and enum
+    discriminants as the Rust and Python implementations so the three stay
+    readable against each other. `DataWords` is a fixed-capacity inline buffer,
+    not a `std::vector`: the 32-word cap is a property of MIL-STD-1553B, and an
+    inline buffer is what keeps the per-record path allocation-free.
+  - `mie/error.hpp` — one error type with a kind discriminant, mirroring Rust's
+    `MieError` rather than Python's class hierarchy. The classification contract
+    (`is_file_error()` / `is_record_error()`) is pinned by an exhaustive table,
+    with a companion test that fails if a kind is ever added without a row.
+  - `mie/decode.hpp` — Type Word, IRIG and Standard timestamps, Command Word,
+    message-format classification including the mode-code shapes, the structural
+    invariants (L2-SYN-020 through L2-SYN-027), and the L2-DEC-015 timestamp
+    auto-detection probe.
+  - `mie/text.hpp` — locale-free formatting and ASCII classification, the single
+    place L3-CPP-007 has to hold. `fixed6` normalises the decimal separator
+    rather than assuming the C locale, because the decoder can be linked into a
+    host that has already called `setlocale` — verified against a real `de_DE`
+    locale, where raw `snprintf("%.6f")` does emit `1,234500`.
+  - `mie/optional.hpp` — a minimal `std::optional` stand-in, since that type is
+    C++17. Absent and zero are genuinely different in this format: a missing
+    Status Word is not `0x0000`, and an uncomputable DELTA is not `0.0`.
+
+- **Exhaustive cross-implementation verification of the C++ decoders.**
+  `rust/examples/decode_digest.rs` sweeps every one of the 65 536 possible Type
+  Words and Command Words, and every bit position of every IRIG and Standard
+  timestamp field, through the **Rust** decoders and emits an FNV-1a digest.
+  `cpp/tests/test_decode_exhaustive.cpp` recomputes those digests from the C++
+  decoders, so the two are proved identical across the entire input space rather
+  than across a sample. Each digest is paired with a test that feeds a
+  deliberately-wrong decoding through the same hash and asserts it differs — a
+  digest test that cannot fail is worse than no test.
+
+  Alongside it, the formatters are swept against `snprintf` as an independent
+  oracle (every microsecond value from 0 to 999 999, every encodable day, hour,
+  minute and second), the classifiers are swept over all 256 byte values under
+  `tr_TR` and `de_DE`, and the field decoders are checked for bit-partition
+  completeness — reassembling the raw word from the decoded fields must
+  reproduce it exactly, which catches an overlapping mask or a dropped bit that
+  both implementations could in principle share.
+
+  That last check found a real gap in the port's understanding of the format:
+  bit 14 of the IRIG upper word belongs to no decoded field. It is documented as
+  Reserved in `docs/MIE-FORMAT.md`, the decoder was already correct, and the
+  test now carries it explicitly.
   - An `L3-CPP` requirement category in `docs/L3-REQ.md`, and Catch2 tag
     scanning in `scripts/build-trace-matrix.py`. Each implementation now uses
     whatever its own test framework can select on — pytest markers, Rust doc

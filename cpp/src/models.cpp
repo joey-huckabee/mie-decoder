@@ -1,0 +1,397 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#include "mie/models.hpp"
+
+#include <cmath>
+#include <cstring>
+
+#include "mie/text.hpp"
+
+namespace mie {
+
+// --- Enums ----------------------------------------------------------------
+
+const char* bus_name(Bus bus) { return bus == BUS_B ? "B" : "A"; }
+
+bool is_valid_message_type(uint8_t code) {
+    switch (code) {
+        case MESSAGE_TYPE_MODE_COMMAND:
+        case MESSAGE_TYPE_BC_TO_RT:
+        case MESSAGE_TYPE_RT_TO_BC:
+        case MESSAGE_TYPE_RT_TO_RT:
+        case MESSAGE_TYPE_BROADCAST_BC_TO_RT:
+        case MESSAGE_TYPE_BROADCAST_RT_TO_RT:
+        case MESSAGE_TYPE_SPURIOUS_DATA: return true;
+        default: return false;
+    }
+}
+
+const char* message_type_name(uint8_t code) {
+    switch (code) {
+        case MESSAGE_TYPE_MODE_COMMAND: return "MODE_COMMAND";
+        case MESSAGE_TYPE_BC_TO_RT: return "BC_TO_RT";
+        case MESSAGE_TYPE_RT_TO_BC: return "RT_TO_BC";
+        case MESSAGE_TYPE_RT_TO_RT: return "RT_TO_RT";
+        case MESSAGE_TYPE_BROADCAST_BC_TO_RT: return "BROADCAST_BC_TO_RT";
+        case MESSAGE_TYPE_BROADCAST_RT_TO_RT: return "BROADCAST_RT_TO_RT";
+        case MESSAGE_TYPE_SPURIOUS_DATA: return "SPURIOUS_DATA";
+        default: return "";
+    }
+}
+
+bool message_type_from_name(const std::string& name, uint8_t& out_code) {
+    // Linear scan over seven entries, driven by the same table that renders the
+    // names. A second hard-coded list here is a second place for a name to be
+    // spelled differently from what the CLI help advertises.
+    static const uint8_t kCodes[] = {
+        MESSAGE_TYPE_MODE_COMMAND, MESSAGE_TYPE_BC_TO_RT,           MESSAGE_TYPE_RT_TO_BC,
+        MESSAGE_TYPE_RT_TO_RT,     MESSAGE_TYPE_BROADCAST_BC_TO_RT, MESSAGE_TYPE_BROADCAST_RT_TO_RT,
+        MESSAGE_TYPE_SPURIOUS_DATA};
+    for (std::size_t i = 0; i < sizeof(kCodes) / sizeof(kCodes[0]); ++i) {
+        if (text::equals_ignoring_ascii_case(name, message_type_name(kCodes[i]))) {
+            out_code = kCodes[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+bool timestamp_format_from_name(const std::string& name, TimestampFormat& out) {
+    if (text::equals_ignoring_ascii_case(name, "auto")) {
+        out = TIMESTAMP_AUTO;
+        return true;
+    }
+    if (text::equals_ignoring_ascii_case(name, "irig")) {
+        out = TIMESTAMP_IRIG;
+        return true;
+    }
+    if (text::equals_ignoring_ascii_case(name, "standard")) {
+        out = TIMESTAMP_STANDARD;
+        return true;
+    }
+    return false;
+}
+
+uint16_t timestamp_word_count(TimestampFormat fmt) {
+    switch (fmt) {
+        case TIMESTAMP_IRIG: return 3;
+        case TIMESTAMP_STANDARD: return 2;
+        case TIMESTAMP_AUTO:
+        default: return 0;
+    }
+}
+
+bool delta_scope_from_name(const std::string& name, DeltaScope& out) {
+    if (text::equals_ignoring_ascii_case(name, "per-file")) {
+        out = DELTA_SCOPE_PER_FILE;
+        return true;
+    }
+    if (text::equals_ignoring_ascii_case(name, "global")) {
+        out = DELTA_SCOPE_GLOBAL;
+        return true;
+    }
+    return false;
+}
+
+const char* delta_scope_name(DeltaScope scope) {
+    return scope == DELTA_SCOPE_GLOBAL ? "global" : "per-file";
+}
+
+// --- Error codes ----------------------------------------------------------
+
+bool is_known_ddc_error_code(uint16_t code) {
+    return code == ERROR_MANCHESTER_PARITY || code == ERROR_NO_RESPONSE ||
+           code == ERROR_INVERTED_SYNC || code == ERROR_TOO_MANY_WORDS || code == ERROR_UNKNOWN_DDC;
+}
+
+bool is_known_custom_error_code(uint16_t code) {
+    return code == ERROR_SPURIOUS_CONTINUATION || code == ERROR_SPURIOUS_STANDALONE;
+}
+
+bool is_known_error_code(uint16_t code) {
+    return is_known_ddc_error_code(code) || is_known_custom_error_code(code);
+}
+
+const char* ddc_error_description(uint16_t code) {
+    switch (code) {
+        case ERROR_MANCHESTER_PARITY: return "Manchester/Parity Error or Bit Count Error";
+        case ERROR_NO_RESPONSE: return "No Status Response or Too Few Data Words";
+        case ERROR_INVERTED_SYNC: return "Inverted Sync on Data Word";
+        case ERROR_TOO_MANY_WORDS: return "Too Many Data Words";
+        case ERROR_UNKNOWN_DDC: return "Unknown DDC Error";
+        default: return "";
+    }
+}
+
+const char* ddc_error_description_or_unknown(uint16_t code) {
+    const char* desc = ddc_error_description(code);
+    return desc[0] == '\0' ? "unknown DDC error code" : desc;
+}
+
+// --- IrigTimestamp --------------------------------------------------------
+
+IrigTimestamp::IrigTimestamp()
+    : day(0), hour(0), minute(0), second(0), microsecond(0), freerun(false) {}
+
+IrigTimestamp::IrigTimestamp(uint16_t day_in, uint8_t hour_in, uint8_t minute_in, uint8_t second_in,
+                             uint32_t microsecond_in, bool freerun_in)
+    : day(day_in),
+      hour(hour_in),
+      minute(minute_in),
+      second(second_in),
+      microsecond(microsecond_in),
+      freerun(freerun_in) {}
+
+uint64_t IrigTimestamp::to_total_microseconds() const {
+    const uint64_t d = day;
+    const uint64_t h = hour;
+    const uint64_t m = minute;
+    const uint64_t s = second;
+    return (d * 86400u + h * 3600u + m * 60u + s) * 1000000u + microsecond;
+}
+
+std::string IrigTimestamp::format() const {
+    std::string out;
+    out.reserve(24);
+    out += text::decimal(day);
+    out += ':';
+    out += text::decimal_padded(hour, 2);
+    out += ':';
+    out += text::decimal_padded(minute, 2);
+    out += ':';
+    out += text::decimal_padded(second, 2);
+    out += '.';
+    out += text::decimal_padded(microsecond % 1000000u, 6);
+    return out;
+}
+
+bool IrigTimestamp::operator==(const IrigTimestamp& other) const {
+    return day == other.day && hour == other.hour && minute == other.minute &&
+           second == other.second && microsecond == other.microsecond && freerun == other.freerun;
+}
+
+// --- StandardTimestamp ----------------------------------------------------
+
+StandardTimestamp::StandardTimestamp() : raw_value(0), upper_word(0), lower_word(0) {}
+
+StandardTimestamp::StandardTimestamp(uint32_t raw_value_in, uint16_t upper_word_in,
+                                     uint16_t lower_word_in)
+    : raw_value(raw_value_in), upper_word(upper_word_in), lower_word(lower_word_in) {}
+
+bool StandardTimestamp::to_microseconds(double tick_rate_hz, uint64_t& out) const {
+    // Decline rather than produce a number. An uncalibrated rate would yield a
+    // DELTA that looks like real timing and is not, which is worse than an
+    // empty column.
+    if (!std::isfinite(tick_rate_hz) || tick_rate_hz <= 0.0) {
+        return false;
+    }
+    const double micros = static_cast<double>(raw_value) * 1000000.0 / tick_rate_hz;
+    // Half-away-from-zero, matching Python's int(x + 0.5). Ticks are
+    // non-negative so the two agree exactly; std::round has the same tie
+    // behaviour and says so without an added constant.
+    out = static_cast<uint64_t>(std::floor(micros + 0.5));
+    return true;
+}
+
+std::string StandardTimestamp::format() const { return "0x" + text::hex_upper(raw_value, 8); }
+
+bool StandardTimestamp::operator==(const StandardTimestamp& other) const {
+    return raw_value == other.raw_value && upper_word == other.upper_word &&
+           lower_word == other.lower_word;
+}
+
+// --- Timestamp ------------------------------------------------------------
+
+Timestamp::Timestamp() : format_kind(TIMESTAMP_AUTO), irig(), standard() {}
+
+Timestamp Timestamp::from_irig(const IrigTimestamp& value) {
+    Timestamp t;
+    t.format_kind = TIMESTAMP_IRIG;
+    t.irig = value;
+    return t;
+}
+
+Timestamp Timestamp::from_standard(const StandardTimestamp& value) {
+    Timestamp t;
+    t.format_kind = TIMESTAMP_STANDARD;
+    t.standard = value;
+    return t;
+}
+
+bool Timestamp::to_microseconds(const Optional<double>& tick_rate_hz, uint64_t& out) const {
+    if (format_kind == TIMESTAMP_IRIG) {
+        out = irig.to_total_microseconds();
+        return true;
+    }
+    if (format_kind == TIMESTAMP_STANDARD) {
+        if (!tick_rate_hz.has_value()) {
+            return false;
+        }
+        return standard.to_microseconds(tick_rate_hz.value(), out);
+    }
+    return false;
+}
+
+std::string Timestamp::format() const {
+    if (format_kind == TIMESTAMP_IRIG) {
+        return irig.format();
+    }
+    if (format_kind == TIMESTAMP_STANDARD) {
+        return standard.format();
+    }
+    return std::string();
+}
+
+bool Timestamp::operator==(const Timestamp& other) const {
+    if (format_kind != other.format_kind) {
+        return false;
+    }
+    if (format_kind == TIMESTAMP_IRIG) {
+        return irig == other.irig;
+    }
+    if (format_kind == TIMESTAMP_STANDARD) {
+        return standard == other.standard;
+    }
+    return true;
+}
+
+// --- TypeWord / CommandWord -----------------------------------------------
+
+TypeWord::TypeWord() : message_type(0), bus(BUS_A), word_count(0), error(false), raw(0) {}
+
+TypeWord::TypeWord(uint8_t message_type_in, Bus bus_in, uint16_t word_count_in, bool error_in,
+                   uint16_t raw_in)
+    : message_type(message_type_in),
+      bus(bus_in),
+      word_count(word_count_in),
+      error(error_in),
+      raw(raw_in) {}
+
+bool TypeWord::operator==(const TypeWord& other) const {
+    return message_type == other.message_type && bus == other.bus &&
+           word_count == other.word_count && error == other.error && raw == other.raw;
+}
+
+CommandWord::CommandWord()
+    : rt(0), direction(DIRECTION_RECEIVE), subaddress(0), data_word_count(0), raw(0) {}
+
+CommandWord::CommandWord(uint8_t rt_in, Direction direction_in, uint8_t subaddress_in,
+                         uint8_t data_word_count_in, uint16_t raw_in)
+    : rt(rt_in),
+      direction(direction_in),
+      subaddress(subaddress_in),
+      data_word_count(data_word_count_in),
+      raw(raw_in) {}
+
+bool CommandWord::operator==(const CommandWord& other) const {
+    return rt == other.rt && direction == other.direction && subaddress == other.subaddress &&
+           data_word_count == other.data_word_count && raw == other.raw;
+}
+
+// --- DataWords ------------------------------------------------------------
+
+DataWords::DataWords() : len_(0) {
+    // Zeroed on construction so that a comparison or a hex dump of an
+    // over-declared buffer cannot read whatever was previously on the stack.
+    std::memset(buf_, 0, sizeof(buf_));
+}
+
+DataWords DataWords::from_words(const uint16_t* words, std::size_t count) {
+    DataWords out;
+    const std::size_t n = count < MAX_DATA_WORDS ? count : MAX_DATA_WORDS;
+    for (std::size_t i = 0; i < n; ++i) {
+        out.buf_[i] = words[i];
+    }
+    out.len_ = static_cast<uint8_t>(n);
+    return out;
+}
+
+bool DataWords::try_push(uint16_t word) {
+    if (len_ >= MAX_DATA_WORDS) {
+        return false;
+    }
+    buf_[len_] = word;
+    ++len_;
+    return true;
+}
+
+bool DataWords::operator==(const DataWords& other) const {
+    if (len_ != other.len_) {
+        return false;
+    }
+    // Compares only the live prefix. The tail is zeroed, so a memcmp of the
+    // whole buffer would agree today -- but it would start disagreeing the
+    // moment a caller pushes and then clears, which is exactly the kind of
+    // latent difference that shows up as one failing conformance case months
+    // later.
+    for (std::size_t i = 0; i < len_; ++i) {
+        if (buf_[i] != other.buf_[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// --- MieMessage -----------------------------------------------------------
+
+MieMessage::MieMessage()
+    : timestamp(),
+      type_word(),
+      message_format(FORMAT_SPURIOUS_DATA),
+      command_word(),
+      command_word_2(),
+      status_word(),
+      status_word_2(),
+      data_words(),
+      error_word(),
+      delta(),
+      file_offset(0),
+      mux() {}
+
+Optional<uint8_t> MieMessage::rt() const {
+    if (!command_word.has_value()) {
+        return none();
+    }
+    return command_word.value().rt;
+}
+
+Optional<uint8_t> MieMessage::subaddress() const {
+    if (!command_word.has_value()) {
+        return none();
+    }
+    return command_word.value().subaddress;
+}
+
+std::string MieMessage::msg_label() const {
+    if (!command_word.has_value()) {
+        return std::string();
+    }
+    const CommandWord& cw = command_word.value();
+    std::string out = text::decimal(cw.subaddress);
+    out += (cw.direction == DIRECTION_TRANSMIT) ? 'T' : 'R';
+    return out;
+}
+
+std::string MieMessage::delta_key() const {
+    if (!command_word.has_value()) {
+        return std::string();
+    }
+    const CommandWord& cw = command_word.value();
+    std::string out = text::decimal(cw.rt);
+    out += ':';
+    out += text::decimal(cw.subaddress);
+    out += (cw.direction == DIRECTION_TRANSMIT) ? 'T' : 'R';
+    return out;
+}
+
+const char* MieMessage::error_label() const {
+    if (type_word.error) {
+        return "ERROR";
+    }
+    if (is_spurious()) {
+        return "SPURIOUS";
+    }
+    return "";
+}
+
+}  // namespace mie
