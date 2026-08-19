@@ -506,6 +506,27 @@ shows up as a gap rather than silently drifting:
 | `repo-hygiene` | `bash scripts/repo-hygiene.sh` — re-runs the pre-commit hook's file-level checks (final newline, CRLF, merge markers, 1 MB cap, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:`) over the whole tracked tree, so a `--no-verify` commit is still caught, plus the doc-drift checks that have no hook counterpart (this table lists every `ci.yml` job; the config-key set agrees across its three text sources; no TRACE-MATRIX row claims Implemented with no artifact; the declared Rust MSRV agrees across `Cargo.toml`, CI and the docs; `ROADMAP.md` doesn't restate a `TRACE-MATRIX.md` status; the Python exception hierarchy matches its ASCII-tree and UML drawings) | `ubuntu-latest` | Block merge |
 | `diagrams` | Re-renders every `docs/diagrams/*.puml` with the pinned PlantUML version and runs `git diff --exit-code` against the committed `*.svg`. **Currently a no-op** — PlantUML names its output after `@startuml <name>`, so the render lands in untracked files and the tracked `*.svg` are never compared; see the "Diagram rendering" section of `ROADMAP.md` | `ubuntu-latest` | Passes regardless |
 
+The jobs above are `.github/workflows/ci.yml`, which gates the Rust and Python
+implementations. The C++ implementation gates separately in
+`.github/workflows/cpp-ci.yml`, so a Rust change never waits on a Valgrind run
+and a C++ change never waits on the Python matrix. Its jobs:
+
+| Job | What it does | Runner | Gate |
+|-----|--------------|--------|------|
+| `build-test-modern` | `make check` on a pinned modern g++. Fast feedback, and the only Linux tier whose compiler is new enough to host the instrumentation below | `ubuntu-24.04` | Any test failure |
+| `build-test-gcc48` | `make check-gcc48` — builds and runs the **full suite** inside the pinned GCC 4.8.5 mirror image. The tier that proves C++11 conformance on the SLES 12 SP5 system compiler (ADR-0001). Do not reduce it to a compile check | `ubuntu-24.04` (container) | Any test failure |
+| `build-test-msvc` | CMake + MSVC at `/W4 /WX /permissive-`, then `ctest`, then a smoke check that stdout carries no CR. Windows is a shipping target, not a convenience build (ADR-0003) | `windows-2022` | Any test failure, any warning |
+| `sanitizers` | `make check SANITIZE=1` — AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer, all fatal on first finding. Modern toolchain only; GCC 4.8 has partial ASan and no LSan | `ubuntu-24.04` | Any finding |
+| `valgrind` | `make check-valgrind` with `--errors-for-leak-kinds=all`. A still-reachable block at exit is a leak for a short-lived CLI, not a tolerable steady state | `ubuntu-24.04` | Any leak or invalid access |
+| `static-analysis` | `cppcheck` over `cpp/src` and `cpp/tests`. Vendored Catch2 excluded — it is third-party code the project is forbidden to edit | `ubuntu-24.04` | Any finding |
+| `clang-tidy` | `bear` generates a compilation database from the real build, then `make tidy` runs clang-tidy with `--warnings-as-errors`. Without that flag clang-tidy exits 0 on warnings and the gate reports success while printing findings | `ubuntu-24.04` | Any finding |
+| `format` | `make format-check`. Covers **both** platform backends, not just the one this host compiles — the inactive backend is checked by no other tier | `ubuntu-24.04` | Any diff |
+| `invariants` | The three properties that make the portability claim true rather than aspirational: OS headers confined to the platform backends, no locale-sensitive parsing or formatting, and the Makefile and CMake resolving the same source list | `ubuntu-24.04` | Any violation |
+
+Each of the three `invariants` gates has been verified to fail on a planted
+violation as well as to pass on clean code. A check that has only ever been
+seen passing is not known to work.
+
 The Rust and Python deployment targets are Linux. Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.
 
 The `diagrams` job pins PlantUML to `1.2026.5`, which is **not** the version that produced the committed SVGs (`1.2026.7beta11`, from the unpinnable rolling `snapshot` pre-release — read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg`). That mismatch went unnoticed because the job never compares the tracked files at all. Three independent defects and the reproducibility constraint on any replacement are written up under "Diagram rendering" in `ROADMAP.md`.

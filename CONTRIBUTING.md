@@ -506,9 +506,93 @@ These are codified in `CLAUDE.md`; the highlights:
 - **Test fixtures are byte-exact** translations of records cross-
   referenced against vendor CSV. Treat them as oracles; if a test
   fails, suspect the code first.
-- **Both implementations are maintained.** Changes under `rust/src/` and `rust/tests/`
-  apply to Rust; changes under `python/` apply to Python. Preserve shared MIE
-  format semantics and vendor-compatible CSV behavior across both.
+- **All three implementations are maintained.** Changes under `rust/src/` and
+  `rust/tests/` apply to Rust; `python/` to Python; `cpp/` to C++. Preserve
+  shared MIE format semantics and vendor-compatible CSV behavior across all
+  three.
+
+## Working in the C++ tree
+
+The C++ implementation targets **C++11 as accepted by GCC 4.8.5**, the SLES 12
+SP5 system compiler (ADR-0001). The build and CI arrangement is explained in
+`cpp/README.md`; this section covers the two things that will bite you if
+nobody tells you first.
+
+### Two C++14 constructs that MSVC accepts and GCC 4.8.5 rejects
+
+MSVC has no `/std:c++11` — its floor is C++14 — so the Windows build compiles
+C++11-conformant source as C++14. That is valid, but it means MSVC silently
+accepts two things the target compiler refuses. Both produce a build that is
+**green on Windows and red on Linux**, discovered by CI rather than by you:
+
+1. **Aggregate-initializing a class that has a default member initializer.**
+
+   ```cpp
+   struct Options { int records = 8; };
+   Options o{16};   // well-formed C++14, ill-formed C++11
+   ```
+
+   In C++11 the NSDMI makes `Options` a non-aggregate. Rule: a struct either
+   has default member initializers **or** is brace-initialized, never both —
+   give it a constructor if it needs one.
+
+2. **Passing a `const_iterator` to a container mutator.** libstdc++ 4.8 still
+   declares the pre-C++11 `iterator` signatures for `erase` and `insert`; the
+   C++11 signatures landed in GCC 4.9.
+
+Also banned outright: `<regex>` (libstdc++ had no working implementation until
+GCC 4.9), `std::make_unique`, `std::optional`, `std::string_view`,
+`std::filesystem`, `std::is_trivially_copyable`, and `std::put_time` /
+`std::get_time` — all C++14-or-later, or missing from libstdc++ 4.8.
+
+**Run `make check-gcc48` before pushing.** It builds and runs the *full* suite
+inside the pinned GCC 4.8.5 image, which is the only thing that catches the
+above. A compile-only check is not enough and the tier is deliberately not
+reduced to one.
+
+### The platform layer is the only thing that touches the OS
+
+Five concerns live behind `cpp/include/mie/platform.hpp` — mapping the input,
+the atomic temp-file-and-rename output, directory enumeration, binary stdout,
+and path identity. No other file may include `<windows.h>`, `<sys/mman.h>` or
+their neighbours; `scripts/assert-platform-confined.sh` fails the build if one
+does.
+
+If you need a new OS capability, add it to the header and implement it in
+**both** backends. Windows is a shipping target, not a build that happens to
+link (ADR-0003), and a capability implemented on one side only is a runtime
+failure on the other rather than a compile error.
+
+Related: the program must never call `setlocale` and must not use the
+`<cctype>` classification functions — the `DELTA` column is formatted `%.6f`,
+whose decimal separator the locale chooses, so a locale change turns
+`1.234500` into `1,234500` and breaks every conformance oracle.
+`scripts/assert-locale-free.sh` enforces this.
+
+### Adding a source file
+
+Add it to `cpp/sources.txt` — once. Both builds read that file, because the
+GCC 4.8.5 fidelity container ships CMake 2.8 and cannot run a modern
+`CMakeLists.txt`, so the Makefile has to stay authoritative on Linux.
+`scripts/assert-sources-agree.sh` compares what each build actually resolves.
+
+Test files are globbed rather than listed, deliberately: a source file left out
+of the build fails loudly at link time, whereas a **test** file left out simply
+never runs.
+
+### Tagging a test with a requirement
+
+Requirement ids go in the Catch2 tag string, so the trace matrix can find them
+and so the artifact it names is directly runnable:
+
+```cpp
+TEST_CASE("AtomicFile replaces an existing destination", "[atomic][L3-CPP-006]") {
+```
+
+```bash
+./build/<toolchain>/mie_decoder_tests "[L3-CPP-006]"
+python scripts/build-trace-matrix.py --check
+```
 
 ## Reporting issues / proposing changes
 

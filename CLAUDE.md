@@ -4,22 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MIE-Decoder contains actively maintained Rust and Python libraries + CLIs that
-decode proprietary binary recording files produced by Data Device Corporation
-(DDC) MIL-STD-1553 PCI cards. CSV output is column-compatible with DDC's own
-recording software so a decoded file can be diffed against vendor output for
-validation.
+MIE-Decoder contains actively maintained Rust, Python and C++ libraries + CLIs
+that decode proprietary binary recording files produced by Data Device
+Corporation (DDC) MIL-STD-1553 PCI cards. CSV output is column-compatible with
+DDC's own recording software so a decoded file can be diffed against vendor
+output for validation.
 
-Both implementations ship together as a joint cut from a single
+The implementations ship together as a joint cut from a single
 repository tag; future releases may diverge via impl-prefixed tags
-(`rust-vX.Y.Z`, `python-vX.Y.Z`). The Rust
+(`rust-vX.Y.Z`, `python-vX.Y.Z`, `cpp-vX.Y.Z`). The Rust
 implementation lives under `rust/`; the Python
-implementation lives under `python/`. See `CHANGELOG.md` for the release
+implementation lives under `python/`; the C++ implementation lives under
+`cpp/`. See `CHANGELOG.md` for the release
 history and `git tag` for the current version. The Rust implementation was a clean rewrite,
 not a transliteration: its CLI was redesigned, its writer is streaming
 (constant memory), and its data-words container is an inline `[u16; 32]`
 buffer. Maintain each implementation according to its own architecture while
 keeping shared format and CSV behavior aligned.
+
+The C++ implementation exists so **SLES 12 SP5** is a first-class deployment
+target rather than a documented exception: SLES 12 has no Python ≥3.10 package,
+and the Rust build needs an approved toolchain on the build host. It is written
+to C++11 as accepted by **GCC 4.8.5**, the SLES 12 system compiler, and the same
+source ships a Windows binary via MSVC. It is being delivered in phases — the
+platform layer and build/CI apparatus first, then the decoder modules — so check
+`cpp/README.md` for what is actually implemented before assuming parity. The
+three decisions that shape it are recorded as ADRs in `docs/adr/`.
 
 Edition 2024, MSRV 1.88 — the floor is set by the crate's own use of **let-chains** (stabilized 1.88), not by its dependency: edition 2024 floors at 1.85 and `memmap2` declares 1.65. (`is_multiple_of` independently needs 1.87.) The crate has exactly one external dependency: `memmap2`. Argument parsing, CSV writing, TOML config, logging, and error types are all hand-rolled — preserve this property when adding features.
 
@@ -64,6 +74,32 @@ poetry -C python run vulture                   # dead-code scan (CI-gated)
 poetry -C python run bandit -r src/mie_decoder # security scan / SAST (CI-gated)
 poetry -C python run mie-decoder --help
 poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P needs Poetry >= 2.0
+
+# C++ build and test (run from cpp/; the Makefile is authoritative on Linux)
+cd cpp
+make check                # build + full Catch2 suite, -Werror
+make check SANITIZE=1     # ASan + UBSan + LSan, fatal on first finding
+make check-valgrind       # memcheck, fails on any leak
+make check-gcc48          # SLES 12 fidelity tier: FULL suite on GCC 4.8.5, in a container
+make tidy                 # clang-tidy (needs `bear -- make all` first for compile_commands.json)
+make format-check         # clang-format, non-mutating; `make format` applies
+make verify-ci            # the version-sensitive gates, with CI's tool versions, in a container
+make versions             # print resolved toolchain + build directory
+
+# C++ on Windows: VS 2022 -> File -> Open -> Folder -> cpp\  (CMake configures itself)
+# cmake -B build-msvc -S . -G "Visual Studio 17 2022" -A x64
+# cmake --build build-msvc --config Release
+# ctest --test-dir build-msvc -C Release --output-on-failure
+
+# WSL2: run make from a Linux-NATIVE path, not /mnt/c. Rootless podman cannot
+# bind-mount a DrvFs path, so check-gcc48 silently mounts nothing and g++ reports
+# "no input files" as though the source had vanished.
+
+# The three C++ invariant gates (run from the repo root)
+cd ..
+bash scripts/assert-platform-confined.sh   # OS headers only in the platform backends
+bash scripts/assert-locale-free.sh         # no setlocale, no <cctype> classification
+bash scripts/assert-sources-agree.sh       # Makefile and CMake resolve the same sources
 
 # Shared Rust/Python behavior (needs the Rust binary built and an interpreter
 # with mie_decoder installed; `--python-bin` overrides the interpreter)
@@ -120,13 +156,21 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - `docs/MIE-FORMAT.md` — comprehensive MIE binary format reference: file-level framing, the three-section record shape, Type Word / IRIG and Standard timestamp / Command Word / Status Word bit layouts, per-format payload shapes for all 11 transaction types, error-record lifecycle (Type Word bit 14 → truncated payload → Error Word → optional SPURIOUS continuation), the DDC `0x01xx` and decoder-assigned `0x20xx` error code tables, full CSV output reference, three worked hex-to-CSV decodes. The deep reference for reverse-engineering or adding format support.
 - `docs/L1-REQ.md` — Level 1 SHALL statements (system requirements grouped by category, plus the NR-001 out-of-scope note).
 - `docs/L2-REQ.md` — Level 2 architectural derivations (each with a single L1 parent).
-- `docs/L3-REQ.md` — Level 3 implementation obligations (cross-impl `L3-WRT-*`, plus per-impl `L3-PY-*` / `L3-RS-*`; `L3-RS-007` is withdrawn and its ID reserved, from when static-musl support was retired).
-- `docs/TRACE-MATRIX.md` — auto-generated trace matrix produced by `scripts/build-trace-matrix.py`. Forward trace from L1 through L2 and L3 to test artifacts (`@pytest.mark.requirement` markers in `python/tests/` and `/// Requirements:` doc-comments above Rust `#[test]` items). Treat as the single source of truth for live status; the source docs hold spec content only.
+- `docs/L3-REQ.md` — Level 3 implementation obligations (cross-impl `L3-WRT-*`, plus per-impl `L3-PY-*` / `L3-RS-*` / `L3-CPP-*`; `L3-RS-007` is withdrawn and its ID reserved, from when static-musl support was retired).
+- `docs/TRACE-MATRIX.md` — auto-generated trace matrix produced by `scripts/build-trace-matrix.py`. Forward trace from L1 through L2 and L3 to test artifacts (`@pytest.mark.requirement` markers in `python/tests/`, `/// Requirements:` doc-comments above Rust `#[test]` items, and Catch2 tag strings in `cpp/tests/`). Treat as the single source of truth for live status; the source docs hold spec content only.
 - `docs/ROADMAP.md` — forward-looking roadmap: planned work plus pinned "do not drop" commitments (TOML config, CSV byte-compat, sync semantics). Completed work is not tracked here — it lives in `CHANGELOG.md` and the L1/L2/L3 requirements.
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
+- `docs/adr/` — MADR-format architecture decision records. ADR-0001 sets the
+  C++11 / GCC 4.8.5 floor and records why the SLE 12 Toolchain module was not
+  taken; ADR-0002 explains the two-build-one-source-list arrangement; ADR-0003
+  makes Windows a shipping target and lists the five behaviours that commits to.
+  Read these before changing anything about how the C++ tree is built or which
+  language features it uses.
 - `python/` — maintained Python package and CLI with its own source and tests.
+- `cpp/` — maintained C++ implementation; see `cpp/README.md` for build
+  instructions, the WSL2 caveat, and what is implemented so far.
 - `tests/conformance/` — shared hexadecimal fixtures and byte-exact CSV
-  oracles exercised against both implementations.
+  oracles exercised against every implementation.
 
 ## Conventions worth preserving
 
@@ -147,9 +191,34 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - **Shared conformance fixtures are byte-exact.** Treat
   `tests/conformance/` as the cross-implementation oracle; update expected CSV
   only after both implementations agree.
-- **Both implementations are maintained.** Keep Rust-specific design decisions
-  in the Rust crate and Python-specific design decisions in `python/`; align
-  shared format semantics and vendor-compatible CSV behavior.
+- **All three implementations are maintained.** Keep Rust-specific design
+  decisions in the Rust crate, Python-specific ones in `python/`, and
+  C++-specific ones in `cpp/`; align shared format semantics and
+  vendor-compatible CSV behavior.
+- **The C++ tree is C++11 on GCC 4.8.5, and two constructs are banned.** MSVC has
+  no `/std:c++11` — its floor is C++14 — so it silently accepts things the target
+  compiler rejects, producing "green on Windows, red on Linux". Never
+  aggregate-initialize a class that has a default member initializer, and never
+  pass a `const_iterator` to a container mutator. `<regex>` is banned outright
+  (libstdc++ had none until GCC 4.9). The fidelity tier runs the **full suite**
+  on GCC 4.8.5, not a compile check — don't reduce it to `make all`.
+- **Only the C++ platform layer touches the OS.** Five concerns live behind
+  `cpp/include/mie/platform.hpp` — mapping the input, atomic output, directory
+  enumeration, binary stdout, path identity. Nothing else may include
+  `<windows.h>` or `<sys/mman.h>`; `scripts/assert-platform-confined.sh` enforces
+  it. If a new OS capability is needed, add it to the header and implement it in
+  **both** backends — Windows is a shipping target, not a build that happens to
+  link.
+- **The C++ tree is never locale-sensitive.** `DELTA` is `%.6f`, whose decimal
+  separator the locale chooses, so the program never calls `setlocale` and
+  classifies characters with explicit ASCII ranges rather than `<cctype>`.
+  `scripts/assert-locale-free.sh` enforces it. Rust and Python get this by
+  construction; C++ is the only one where it has to be checked.
+- **`cpp/sources.txt` is the one source list.** The Makefile (authoritative on
+  Linux) and CMakeLists (authoritative on Windows) both read it, because the
+  gcc:4.8 fidelity container ships CMake 2.8 and cannot run a modern
+  `CMakeLists.txt`. Don't add a file to one build only —
+  `scripts/assert-sources-agree.sh` compares what each build actually resolves.
 
 ## Git conventions
 
