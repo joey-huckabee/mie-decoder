@@ -236,6 +236,24 @@ bool file_metadata(const std::string& utf8_path, uint64_t& size, bool& is_regula
 
 bool remove_file(const std::string& utf8_path, OsError& err);
 
+/// Capture why the last C-runtime STREAM call (`fwrite`, `fflush`) failed.
+///
+/// Separate from the OS-call errors elsewhere in this header because the code
+/// spaces differ. `fwrite` reports through `errno` on every platform, including
+/// Windows -- but `OsError::code` is documented as `GetLastError()` there, and
+/// that is the space `MieError`'s broken-pipe classification matches against.
+/// The Win32 backend therefore TRANSLATES into the Win32 space rather than
+/// leaking a CRT errno through a field that means something else.
+///
+/// The translation matters for one case in particular. A downstream consumer
+/// closing the pipe -- `mie-decoder decode x.mie | head` -- surfaces on POSIX
+/// as EPIPE, which L2-WRT-018 turns into exit 0. Windows does not report it the
+/// same way: the CRT gives EPIPE through some paths and EINVAL through others,
+/// which is exactly the divergence that once made that command exit 1 on
+/// Windows while exiting 0 on Linux (see the note in
+/// `python/src/mie_decoder/writer.py`, which reached the same conclusion).
+void capture_stream_error(OsError& err);
+
 /// The current process id, as it appears in a temp-file name.
 uint64_t process_id();
 

@@ -120,17 +120,24 @@ class TempPath {
 
     const std::string& str() const { return path_; }
 
-    /// A derived path the code under test creates -- `<dest>.partial`,
-    /// `<dest>_errors.csv` -- registered for removal alongside this one.
+    /// A derived path the code under test creates -- `<dest>.partial` --
+    /// registered for removal alongside this one.
     ///
     /// Returned BY VALUE. Handing back a reference into `siblings_` would be
     /// live only until the next call reallocated the vector, which is a dangling
     /// reference introduced by a helper whose whole purpose is to remove a
     /// footgun.
-    std::string sibling(const std::string& suffix) {
-        const std::string derived = path_ + suffix;
-        siblings_.push_back(derived);
-        return derived;
+    std::string sibling(const std::string& suffix) { return also_remove(path_ + suffix); }
+
+    /// Register an arbitrary path for removal with this one.
+    ///
+    /// Not every derived name is a suffix: the split-output errors file is
+    /// `<stem>_errors<ext>`, an INFIX, and a test that computed it and then
+    /// removed it by hand would reintroduce exactly the leak-on-throw this
+    /// class exists to prevent.
+    std::string also_remove(const std::string& path) {
+        siblings_.push_back(path);
+        return path;
     }
 
   private:

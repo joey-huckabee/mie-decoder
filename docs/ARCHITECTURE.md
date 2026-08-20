@@ -28,7 +28,7 @@ MIE-Decoder ships as a Rust crate (`rust/src/`), a Python package (`python/src/m
 | Sync helpers (validate, find first, recover) | `rust/src/sync.rs` | `python/src/mie_decoder/sync.py` | `cpp/src/sync.cpp` |
 | Domain models + error code constants | `rust/src/models.rs` | `python/src/mie_decoder/models.py` | `cpp/src/models.cpp` |
 | Error types | `rust/src/error.rs` (single enum) | `python/src/mie_decoder/exceptions.py` (class hierarchy) | `cpp/src/error.cpp` (single enum + kind) |
-| CSV writer | `rust/src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (streaming, stdlib `csv`) | `cpp/src/writer.cpp` *(planned)* |
+| CSV writer | `rust/src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (streaming, stdlib `csv`) | `cpp/src/writer.cpp` (streaming) |
 | Logging | `rust/src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) | `cpp/src/log.cpp` (hand-rolled) |
 | Hex dump | `rust/src/dump.rs` | `python/src/mie_decoder/dump.py` | `cpp/src/dump.cpp` *(planned)* |
 

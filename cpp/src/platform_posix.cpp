@@ -405,6 +405,8 @@ bool remove_file(const std::string& utf8_path, OsError& err) {
     return true;
 }
 
+void capture_stream_error(OsError& err) { fill_errno(err, errno); }
+
 uint64_t process_id() { return static_cast<uint64_t>(::getpid()); }
 
 // ---------------------------------------------------------------------------

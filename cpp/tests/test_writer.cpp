@@ -1,0 +1,395 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Whole-file CSV writes: atomic commit, the safety gates, --allow-partial, and
+// split output.
+//
+// Row formatting lives in test_writer_rows.cpp, which needs no filesystem. What
+// is here is the part that touches disk, and the property it all serves is one
+// sentence: THE DESTINATION IS REPLACED ONLY ON SUCCESS. A failed write, a
+// refused clobber and an input/output collision must each leave whatever was
+// there before exactly as it was.
+//
+// Files are read back with <cstdio>, never through the writer's own machinery,
+// so a bug cannot hide itself by being consistently wrong in both directions.
+
+#include "mie/writer.hpp"
+
+#include <catch2/catch.hpp>
+
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#include "mie/error.hpp"
+#include "mie/models.hpp"
+#include "temp_path.hpp"
+#include "writer_fixtures.hpp"
+
+namespace {
+
+using mie_test::errored;
+using mie_test::sample;
+using mie_test::split;
+using mie_test::spurious;
+using mie_test::TempPath;
+
+/// Read a file back with <cstdio>. See the header note on why not AtomicFile.
+std::string read_raw(const std::string& path) {
+    std::FILE* handle = std::fopen(path.c_str(), "rb");
+    REQUIRE(handle != 0);
+    std::string out;
+    char buffer[4096];
+    for (;;) {
+        const std::size_t n = std::fread(buffer, 1, sizeof(buffer), handle);
+        out.append(buffer, n);
+        if (n < sizeof(buffer)) {
+            const bool failed = std::ferror(handle) != 0;
+            (void)std::fclose(handle);
+            REQUIRE_FALSE(failed);
+            return out;
+        }
+    }
+}
+
+bool exists(const std::string& path) {
+    std::FILE* handle = std::fopen(path.c_str(), "rb");
+    if (handle == 0) {
+        return false;
+    }
+    (void)std::fclose(handle);
+    return true;
+}
+
+void write_raw(const std::string& path, const std::string& contents) {
+    std::FILE* handle = std::fopen(path.c_str(), "wb");
+    REQUIRE(handle != 0);
+    if (!contents.empty()) {
+        const std::size_t written = std::fwrite(contents.data(), 1, contents.size(), handle);
+        if (written != contents.size()) {
+            (void)std::fclose(handle);
+            REQUIRE(written == contents.size());
+        }
+    }
+    REQUIRE(std::fclose(handle) == 0);
+}
+
+/// Feeds a fixed list of records, optionally throwing once the list runs out.
+///
+/// The throw is what exercises --allow-partial: the writer has to tell an
+/// unrecoverable sync loss apart from every other failure, and only the former
+/// becomes a committed `.partial`.
+class VectorSource : public mie::MessageSource {
+  public:
+    explicit VectorSource(const std::vector<mie::MieMessage>& messages)
+        : messages_(messages),
+          index_(0),
+          throws_(false),
+          error_(mie::MieError::payload_error(0, "unused")) {}
+
+    void throw_at_end(const mie::MieError& error) {
+        throws_ = true;
+        error_ = error;
+    }
+
+    bool next(mie::MieMessage& out) override {
+        if (index_ < messages_.size()) {
+            out = messages_[index_++];
+            return true;
+        }
+        if (throws_) {
+            // Terminal, exactly as a real source is: a second call ends the
+            // stream rather than throwing again.
+            throws_ = false;
+            throw error_;
+        }
+        return false;
+    }
+
+  private:
+    std::vector<mie::MieMessage> messages_;
+    std::size_t index_;
+    bool throws_;
+    mie::MieError error_;
+};
+
+std::vector<mie::MieMessage> one(const mie::MieMessage& message) {
+    return std::vector<mie::MieMessage>(1, message);
+}
+
+mie::Optional<std::string> to(const TempPath& path) {
+    return mie::Optional<std::string>(path.str());
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Single-file output
+// ---------------------------------------------------------------------------
+
+TEST_CASE("write_csv emits a header and one row per record", "[writer][L2-WRT-001]") {
+    const TempPath out("out.csv");
+    std::vector<mie::MieMessage> messages;
+    messages.push_back(sample(100));
+    messages.push_back(sample(200));
+    VectorSource source(messages);
+
+    const mie::WriteOutcome outcome = mie::write_csv(source, to(out), mie::WriteOptions());
+
+    CHECK(outcome.normal_count == 2);
+    CHECK_FALSE(outcome.partial.has_value());
+
+    const std::vector<std::string> lines = split(read_raw(out.str()), '\n');
+    REQUIRE(lines.size() == 4);  // header + two rows + the trailing empty
+    CHECK(lines[0] + "\n" == std::string(mie::CSV_HEADER));
+    CHECK(lines[3].empty());
+}
+
+TEST_CASE("inline mode keeps errored and spurious rows in the one CSV", "[writer][L2-ERR-011]") {
+    // The default mode, and the one a vendor-CSV diff uses, because the vendor
+    // tool also emits a single file.
+    const TempPath out("inline.csv");
+    std::vector<mie::MieMessage> messages;
+    messages.push_back(sample(100));
+    messages.push_back(errored());
+    messages.push_back(spurious());
+    VectorSource source(messages);
+
+    const mie::WriteOutcome outcome = mie::write_csv(source, to(out), mie::WriteOptions());
+
+    CHECK(outcome.normal_count == 3);
+    const std::string csv = read_raw(out.str());
+    CHECK(csv.find("SPURIOUS") != std::string::npos);
+    CHECK(csv.find("011E") != std::string::npos);
+    CHECK_FALSE(exists(mie::error_path_for(out.str())));
+}
+
+TEST_CASE("an empty stream still writes the header", "[writer][L1-EXIT-010]") {
+    // The empty-recording path: zero records is a valid outcome, and a
+    // header-only CSV is what the operator gets at exit 0.
+    const TempPath out("empty.csv");
+    // A named local, not `VectorSource source(std::vector<...>())`: that is a
+    // function declaration, not an object -- the most vexing parse.
+    const std::vector<mie::MieMessage> nothing;
+    VectorSource source(nothing);
+
+    const mie::WriteOutcome outcome = mie::write_csv(source, to(out), mie::WriteOptions());
+
+    CHECK(outcome.normal_count == 0);
+    CHECK(read_raw(out.str()) == std::string(mie::CSV_HEADER));
+}
+
+TEST_CASE("the destination is replaced only on success", "[writer][L2-WRT-015]") {
+    const TempPath out("replace.csv");
+    write_raw(out.str(), "STALE");
+
+    SECTION("a completed write replaces it") {
+        VectorSource source(one(sample()));
+        mie::write_csv(source, to(out), mie::WriteOptions());
+        CHECK(read_raw(out.str()).find("STALE") == std::string::npos);
+    }
+
+    SECTION("a failing source leaves it byte for byte") {
+        VectorSource source(one(sample()));
+        source.throw_at_end(mie::MieError::payload_error(0x40, "planted"));
+        // allow_partial is off, so this is a failure and not a .partial. The
+        // temp file is unlinked and the destination never renamed over.
+        CHECK_THROWS_AS(mie::write_csv(source, to(out), mie::WriteOptions()), mie::MieError);
+        CHECK(read_raw(out.str()) == "STALE");
+    }
+}
+
+TEST_CASE("no-clobber refuses an existing destination", "[writer][L2-WRT-017]") {
+    const TempPath out("noclobber.csv");
+    write_raw(out.str(), "ORIGINAL");
+
+    mie::WriteOptions options;
+    options.no_clobber = true;
+    VectorSource source(one(sample()));
+
+    CHECK_THROWS_AS(mie::write_csv(source, to(out), options), mie::MieError);
+    // Refused BEFORE anything was opened, so the original survives and no temp
+    // file was left behind to clean up.
+    CHECK(read_raw(out.str()) == "ORIGINAL");
+}
+
+TEST_CASE("writing onto the input is refused", "[writer][L2-WRT-014]") {
+    const TempPath path("collide.mie");
+    write_raw(path.str(), "INPUT");
+
+    // Decoding in place is unsafe under a memory-mapped reader: the writer
+    // would be rewriting the bytes the reader is still walking.
+    mie::WriteOptions options;
+    options.input_path = path.str();
+    VectorSource source(one(sample()));
+
+    CHECK_THROWS_AS(mie::write_csv(source, to(path), options), mie::MieError);
+    CHECK(read_raw(path.str()) == "INPUT");
+}
+
+TEST_CASE("a distinct output path is not a collision", "[writer][L2-WRT-014]") {
+    // The check must not fire on the ordinary case, where the destination does
+    // not exist yet and therefore cannot be canonicalized at all.
+    const TempPath input("in.mie");
+    const TempPath out("out2.csv");
+    write_raw(input.str(), "INPUT");
+
+    mie::WriteOptions options;
+    options.input_path = input.str();
+    VectorSource source(one(sample()));
+
+    CHECK_NOTHROW(mie::write_csv(source, to(out), options));
+    CHECK(exists(out.str()));
+}
+
+// ---------------------------------------------------------------------------
+// --allow-partial
+// ---------------------------------------------------------------------------
+
+TEST_CASE("allow-partial commits what was decoded to a .partial file",
+          "[writer][L1-EXIT-004][L3-WRT-002]") {
+    TempPath out("partial.csv");
+    const std::string partial = out.sibling(".partial");
+
+    mie::WriteOptions options;
+    options.allow_partial = true;
+    VectorSource source(one(sample()));
+    source.throw_at_end(mie::MieError::unrecoverable_sync_loss(0x1234, 3));
+
+    const mie::WriteOutcome outcome = mie::write_csv(source, to(out), options);
+
+    REQUIRE(outcome.partial.has_value());
+    CHECK(outcome.partial.value().main_path == partial);
+    CHECK(outcome.partial.value().offset == 0x1234);
+    CHECK(outcome.partial.value().sync_losses == 3);
+    CHECK(outcome.normal_count == 1);
+
+    // The rows decoded before the corruption are there to inspect...
+    CHECK(read_raw(partial).find("192:15:54:50.000100") != std::string::npos);
+    // ...and the real destination was never created, so a stale previous
+    // decode would still be intact beside it.
+    CHECK_FALSE(exists(out.str()));
+}
+
+TEST_CASE("allow-partial does not swallow other failures", "[writer][L1-EXIT-004]") {
+    // --allow-partial is specifically about an unrecoverable mid-file sync
+    // loss. Widening it into "ignore errors" would silently turn a rejected
+    // file into a short CSV that looks complete.
+    const TempPath out("notpartial.csv");
+    mie::WriteOptions options;
+    options.allow_partial = true;
+    VectorSource source(one(sample()));
+    source.throw_at_end(mie::MieError::unknown_error_code(0x20, 0x0199));
+
+    CHECK_THROWS_AS(mie::write_csv(source, to(out), options), mie::MieError);
+    CHECK_FALSE(exists(out.str()));
+    CHECK_FALSE(exists(out.str() + ".partial"));
+}
+
+// ---------------------------------------------------------------------------
+// Split mode
+// ---------------------------------------------------------------------------
+
+TEST_CASE("error_path_for derives the errors file name", "[writer][L2-ERR-008]") {
+    CHECK(mie::error_path_for("out.csv") == "out_errors.csv");
+    CHECK(mie::error_path_for("out") == "out_errors");
+    CHECK(mie::error_path_for("archive.tar.gz") == "archive.tar_errors.gz");
+    // A dotfile is all stem and no extension, matching Rust's Path::file_stem.
+    CHECK(mie::error_path_for(".mie") == ".mie_errors");
+}
+
+TEST_CASE("split mode routes clean and errored records apart", "[writer][L2-ERR-008]") {
+    TempPath out("split.csv");
+    // Registered rather than removed by hand: the errors name is an INFIX, so
+    // sibling() cannot express it, and a manual remove would leak the file on
+    // any failing assertion below.
+    const std::string errors_path = out.also_remove(mie::error_path_for(out.str()));
+
+    std::vector<mie::MieMessage> messages;
+    messages.push_back(sample(100));
+    messages.push_back(errored());
+    messages.push_back(spurious());
+    messages.push_back(sample(400));
+    VectorSource source(messages);
+
+    const mie::WriteOutcome outcome = mie::write_csv_split(source, out.str(), mie::WriteOptions());
+
+    CHECK(outcome.normal_count == 2);
+    CHECK(outcome.error_count == 2);
+
+    const std::string main_csv = read_raw(out.str());
+    const std::string errors_csv = read_raw(errors_path);
+    CHECK(main_csv.find("SPURIOUS") == std::string::npos);
+    CHECK(main_csv.find("011E") == std::string::npos);
+    CHECK(errors_csv.find("SPURIOUS") != std::string::npos);
+    CHECK(errors_csv.find("011E") != std::string::npos);
+    // Both files carry the same header: an errors CSV is a CSV.
+    CHECK(errors_csv.compare(0, std::string(mie::CSV_HEADER).size(), mie::CSV_HEADER) == 0);
+}
+
+TEST_CASE("a clean recording leaves no errors file behind", "[writer][L2-ERR-008]") {
+    // The errors file is opened LAZILY, on the first error row, so a clean
+    // recording produces neither an empty _errors.csv nor a temp file.
+    TempPath out("clean.csv");
+    const std::string errors_path = out.also_remove(mie::error_path_for(out.str()));
+
+    std::vector<mie::MieMessage> messages;
+    messages.push_back(sample(100));
+    messages.push_back(sample(200));
+    VectorSource source(messages);
+
+    const mie::WriteOutcome outcome = mie::write_csv_split(source, out.str(), mie::WriteOptions());
+
+    CHECK(outcome.normal_count == 2);
+    CHECK(outcome.error_count == 0);
+    CHECK(exists(out.str()));
+    CHECK_FALSE(exists(errors_path));
+}
+
+TEST_CASE("split mode with only errors writes a header-only main CSV", "[writer][L2-ERR-008]") {
+    TempPath out("onlyerrors.csv");
+    const std::string errors_path = out.also_remove(mie::error_path_for(out.str()));
+
+    VectorSource source(one(spurious()));
+    const mie::WriteOutcome outcome = mie::write_csv_split(source, out.str(), mie::WriteOptions());
+
+    CHECK(outcome.normal_count == 0);
+    CHECK(outcome.error_count == 1);
+    CHECK(read_raw(out.str()) == std::string(mie::CSV_HEADER));
+    CHECK(exists(errors_path));
+}
+
+TEST_CASE("split mode leaves neither file behind on failure", "[writer][L2-WRT-019]") {
+    // Main is committed FIRST so a failed errors commit can never leave an
+    // orphan errors file beside no main output. Here nothing commits at all,
+    // which is the stronger version of the same guarantee.
+    TempPath out("splitfail.csv");
+    const std::string errors_path = out.also_remove(mie::error_path_for(out.str()));
+
+    std::vector<mie::MieMessage> messages;
+    messages.push_back(sample(100));
+    messages.push_back(spurious());
+    VectorSource source(messages);
+    source.throw_at_end(mie::MieError::payload_error(0x40, "planted"));
+
+    CHECK_THROWS_AS(mie::write_csv_split(source, out.str(), mie::WriteOptions()), mie::MieError);
+    CHECK_FALSE(exists(out.str()));
+    CHECK_FALSE(exists(errors_path));
+}
+
+TEST_CASE("split mode honours no-clobber on the errors path too",
+          "[writer][L2-WRT-017][L2-ERR-008]") {
+    // The errors path needs its own check: it is derived from the output, so
+    // checking only the output would happily overwrite an existing
+    // _errors.csv.
+    TempPath out("splitclobber.csv");
+    const std::string errors_path = out.also_remove(mie::error_path_for(out.str()));
+    write_raw(errors_path, "PREVIOUS ERRORS");
+
+    mie::WriteOptions options;
+    options.no_clobber = true;
+    VectorSource source(one(spurious()));
+
+    CHECK_THROWS_AS(mie::write_csv_split(source, out.str(), options), mie::MieError);
+    CHECK(read_raw(errors_path) == "PREVIOUS ERRORS");
+    CHECK_FALSE(exists(out.str()));
+}
