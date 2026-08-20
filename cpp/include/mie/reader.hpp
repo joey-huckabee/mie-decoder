@@ -31,12 +31,11 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <memory>
-#include <set>
 #include <string>
 
 #include "mie/decode.hpp"
+#include "mie/delta.hpp"
 #include "mie/error.hpp"
 #include "mie/models.hpp"
 #include "mie/optional.hpp"
@@ -248,9 +247,11 @@ class RecordIter {
                              std::size_t cmd_byte_offset, uint16_t ts_words,
                              const Optional<double>& delta, MieMessage& out);
 
-    /// Current record's DELTA for `key`, updating the tracker. Absent when
-    /// there is no honest gap to report -- see the implementation.
-    Optional<double> delta_for(uint32_t key, const Timestamp& timestamp);
+    /// This record's DELTA, and the WARN that sometimes goes with it.
+    ///
+    /// The arithmetic and the per-key state belong to `DeltaTracker`; what is
+    /// left here is narration, which is the reader's job and nobody else's.
+    Optional<double> delta_for(const CommandWord& cmd, const Timestamp& timestamp);
 
     void advance_after_yield(std::size_t record_bytes);
     void log_complete() const;
@@ -277,25 +278,21 @@ class RecordIter {
     bool strict_;
     TimestampFormat resolved_format_;
     std::size_t lookahead_records_;
-    Optional<double> standard_tick_rate_hz_;
-
     /// Whether the immediately preceding decoded record carried the Type Word
     /// error bit. This is the whole basis for the 0x2000-vs-0x2001 distinction
     /// on a following SPURIOUS_DATA record, and it is why the reader is the
     /// only place that classification can happen.
     bool prev_was_error_;
 
-    /// Last-seen timestamp in microseconds, per RT/MSG key. Ordered map rather
-    /// than a hash: at most a few thousand keys exist (RT x subaddress x
-    /// direction is bounded by the bus standard), the lookup is not the hot
-    /// cost in this loop, and an ordered container removes the question of hash
-    /// quality on a key that is three packed small integers.
-    std::map<uint32_t, uint64_t> delta_tracker_;
-
-    /// Keys that have already produced a non-monotonic-timestamp WARN. One line
-    /// per key per recording: a chronically out-of-order file would otherwise
-    /// emit a warning per record and bury everything else.
-    std::set<uint32_t> warned_ooo_keys_;
+    /// Per-RT/MSG `DELTA` state (L2-RDR-009/010/017/018/019).
+    ///
+    /// Owned by `mie/delta.hpp`, which is what `merge` will use for
+    /// `--delta-scope global` when it lands. Rust and Python reached that
+    /// second caller with a SECOND tracker keyed differently from the reader's,
+    /// and nothing asserted the two agreed on what "the same RT/MSG" meant
+    /// (L3-RDR-001). Landing the shared type before the second caller exists is
+    /// how C++ skips that.
+    DeltaTracker delta_tracker_;
 
     /// PRA-9: whether the one-time IRIG day-of-year advisory has fired.
     bool warned_irig_day_;

@@ -28,4 +28,5 @@ src/models.cpp
 src/error.cpp
 src/decode.cpp
 src/sync.cpp
+src/delta.cpp
 src/reader.cpp

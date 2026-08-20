@@ -15,6 +15,74 @@ full release workflow.
 
 ## [Unreleased]
 
+### Changed
+
+- **`DELTA` tracking extracted to one module per implementation, so the key has
+  one definition.** No behaviour change — every conformance oracle is
+  byte-identical — but a latent correctness risk is now closed by construction
+  rather than by care.
+
+  `DELTA` was computed in more than one place, with the key spelled differently
+  in each. Rust kept a `HashMap<u32, u64>` in `reader.rs`, keyed by a packed
+  `(rt, subaddress, direction)` integer, and a separate `HashMap<String, u64>`
+  in `merge.rs`, keyed by the `"<rt>:<sa><T|R>"` display spelling. Python was
+  worse: its reader called `_compute_delta` twice, once with `msg.delta_key` and
+  once with a hand-built f-string, because on the errored-record path the
+  message does not exist yet — three spellings of one concept. **Nothing
+  anywhere asserted that they agreed on what "the same RT/MSG" means.** They
+  did agree, by care rather than by construction, and a change to any one of
+  them would have made `DELTA` mean one thing in a single-file decode and
+  another in a merged one, silently.
+
+  The arithmetic was duplicated with the key, and had already drifted: the
+  reader warns once per key when a clock steps backwards, and the merge path
+  did the same computation silently.
+
+  - `rust/src/delta.rs`, `python/src/mie_decoder/delta.py` and
+    `cpp/src/delta.cpp` now own the key, the per-key cursor and the gap
+    arithmetic. The Rust module is **private** (`mod delta;`), so the extraction
+    is invisible to the published API — `cargo-semver-checks` reports no
+    required version change.
+  - **The tracker does not log.** `observe()` returns a `DeltaOutcome` and the
+    caller narrates, the same rule `sync` follows and for the same reason: a
+    tracker cannot know whether a backward step deserves a WARN (single-file
+    decode: yes, once per key) or is already reported at file granularity (a
+    merge naming its unsorted inputs, L2-MRG-006). The "have I mentioned this
+    key" bookkeeping does live in the tracker, so the once-per-key promise has
+    one owner instead of a set in each caller.
+  - `observe()` takes the **Command Word**, not a whole message. That is what
+    removes Python's hand-built key: the reader can ask for a `DELTA` before the
+    message it will attach to exists.
+  - `DeltaOutcome` is deliberately richer than the `Option<f64>` the CSV needs.
+    The column cannot distinguish "no gap yet" from "no honest gap" from "no key
+    at all", and the caller has to.
+  - C++ reached this point with `merge` still unwritten, which is why the shared
+    type landed there **before** the second caller: the merge can be built on it
+    instead of reproducing the split and having it extracted back out later.
+  - New requirement **L3-RDR-001** states the property and why it needed
+    stating.
+
+  Each implementation gained a unit test sweeping all 2048 encodable
+  `(rt, subaddress, direction)` triples and asserting that the packed tracking
+  key and the published display key partition that space identically in both
+  directions — the check that could not exist while the two representations
+  lived in different modules.
+
+  Two conformance cases were added, because the existing
+  `merge-delta-scope-global` case carries exactly **one** key (RT 15, 11R)
+  through both inputs, so a key that dropped RT, subaddress or direction
+  entirely would still have produced byte-identical output:
+
+  - `delta-keys-single` — reader path, per-file scope
+  - `delta-keys-global` — merged timeline, `--delta-scope global`
+
+  Their fixtures use keys differing from a reference key in exactly one field
+  each. Both were verified to **fail** against a planted key that drops the
+  direction bit, in all three implementations, then restored — a conformance
+  case that cannot fail is worse than none. The oracles were also checked by
+  hand against a computed table rather than merely accepted from
+  `--update-expected`.
+
 ### Added
 
 - **A third implementation: C++11 under `cpp/`, targeting SLES 12 SP5.** Neither

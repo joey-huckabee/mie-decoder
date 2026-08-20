@@ -25,18 +25,6 @@ std::string hexw(uint64_t value, std::size_t width) { return "0x" + text::hex_up
 
 std::string dec(uint64_t value) { return text::decimal(value); }
 
-/// Pack `(rt, subaddress, direction)` into one key for the DELTA tracker.
-///
-/// A packed integer rather than the `<rt>:<sa><T|R>` string that
-/// `MieMessage::delta_key()` produces for display: this runs once per record,
-/// and the string form would allocate every time to say the same thing. The
-/// three fields are 5, 5 and 1 bits on the wire, so the packing is lossless
-/// with room to spare.
-uint32_t delta_key(uint8_t rt, uint8_t subaddress, bool transmit) {
-    return (static_cast<uint32_t>(rt) << 16) | (static_cast<uint32_t>(subaddress) << 8) |
-           static_cast<uint32_t>(transmit ? 1 : 0);
-}
-
 /// DEBUG-only hex dump of the bytes around a validation failure.
 ///
 /// Guarded on the level before doing any of the work, not just before emitting
@@ -476,10 +464,8 @@ RecordIter::RecordIter(MieFileReader& owner)
       strict_(owner.strict_),
       resolved_format_(TIMESTAMP_IRIG),
       lookahead_records_(owner.lookahead_records_),
-      standard_tick_rate_hz_(owner.standard_tick_rate_hz_),
       prev_was_error_(false),
-      delta_tracker_(),
-      warned_ooo_keys_(),
+      delta_tracker_(owner.standard_tick_rate_hz_),
       warned_irig_day_(false),
       msg_count_(0),
       sync_losses_(0),
@@ -495,10 +481,8 @@ RecordIter::RecordIter(RecordIter&& other) noexcept
       strict_(other.strict_),
       resolved_format_(other.resolved_format_),
       lookahead_records_(other.lookahead_records_),
-      standard_tick_rate_hz_(other.standard_tick_rate_hz_),
       prev_was_error_(other.prev_was_error_),
       delta_tracker_(std::move(other.delta_tracker_)),
-      warned_ooo_keys_(std::move(other.warned_ooo_keys_)),
       warned_irig_day_(other.warned_irig_day_),
       msg_count_(other.msg_count_),
       sync_losses_(other.sync_losses_),
@@ -619,8 +603,7 @@ RecordIter::Step RecordIter::decode_one(MieMessage& out) {
 
     // Errored record: Type Word bit 14.
     if (tw.error) {
-        const uint32_t key = delta_key(cmd.rt, cmd.subaddress, cmd.direction == DIRECTION_TRANSMIT);
-        const Optional<double> delta = delta_for(key, timestamp);
+        const Optional<double> delta = delta_for(cmd, timestamp);
         // A failure inside decode_error_record (a strict-mode UnknownErrorCode,
         // or an Error Word past the end) throws, and `fail` has already latched
         // the walk closed -- terminal, like every other error this iterator
@@ -869,8 +852,7 @@ RecordIter::Step RecordIter::decode_normal_record(const TypeWord& tw, const Comm
         MIE_LOG_WARN("L2-SYN anomaly at " + hex(offset_) + ": " + anomalies[i].detail);
     }
 
-    const uint32_t key = delta_key(cmd.rt, cmd.subaddress, cmd.direction == DIRECTION_TRANSMIT);
-    const Optional<double> delta = delta_for(key, timestamp);
+    const Optional<double> delta = delta_for(cmd, timestamp);
 
     out = MieMessage();
     out.timestamp = timestamp;
@@ -964,36 +946,19 @@ void RecordIter::decode_error_record(const TypeWord& tw, const Timestamp& timest
         dec(payload_words > 0 ? static_cast<uint64_t>(payload_words) : 0) + " payload words");
 }
 
-Optional<double> RecordIter::delta_for(uint32_t key, const Timestamp& timestamp) {
-    uint64_t curr_us = 0;
-    if (!timestamp.to_microseconds(standard_tick_rate_hz_, curr_us)) {
-        // No microsecond basis -- a Standard timestamp with no configured tick
-        // rate. Nothing to compare against, and nothing to record either: an
-        // entry here would give the NEXT record a bogus baseline.
-        return none();
+Optional<double> RecordIter::delta_for(const CommandWord& cmd, const Timestamp& timestamp) {
+    const DeltaOutcome outcome = delta_tracker_.observe(&cmd, timestamp);
+    // The tracker deliberately does not log: it cannot know that a backward
+    // step is worth a line in a single-file decode and merely noise in a merge
+    // that already reports unsorted inputs at file granularity (L2-MRG-006).
+    // Narration is the reader's job and nobody else's.
+    if (outcome.kind == DELTA_BACKWARD && outcome.first_for_key) {
+        MIE_LOG_WARN("non-monotonic timestamp at " + hex(offset_) + " for RT/MSG key " +
+                     hexw(outcome.key, 8) + ": prev_us=" + dec(outcome.prev_us) +
+                     " curr_us=" + dec(outcome.curr_us) +
+                     " (further out-of-order occurrences for this key suppressed)");
     }
-
-    Optional<double> result;
-    const std::map<uint32_t, uint64_t>::iterator found = delta_tracker_.find(key);
-    if (found == delta_tracker_.end()) {
-        // First occurrence of this RT/MSG key: zero, not empty. The vendor CSV
-        // does the same, and an empty first cell would read as "no timestamp".
-        result = 0.0;
-    } else if (curr_us >= found->second) {
-        result = static_cast<double>(curr_us - found->second) / 1000000.0;
-    } else {
-        // Non-monotonic. There is no honest gap to report, so DELTA is absent
-        // rather than negative or clamped to zero.
-        if (warned_ooo_keys_.insert(key).second) {
-            MIE_LOG_WARN("non-monotonic timestamp at " + hex(offset_) + " for RT/MSG key " +
-                         hexw(key, 8) + ": prev_us=" + dec(found->second) +
-                         " curr_us=" + dec(curr_us) +
-                         " (further out-of-order occurrences for this key suppressed)");
-        }
-    }
-
-    delta_tracker_[key] = curr_us;
-    return result;
+    return outcome.value();
 }
 
 void RecordIter::advance_after_yield(std::size_t record_bytes) {

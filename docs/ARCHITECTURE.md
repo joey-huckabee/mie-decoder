@@ -9,26 +9,28 @@ Companion docs: [`MIE-FORMAT.md`](MIE-FORMAT.md) (binary format reference), [`ER
 
 ---
 
-## 1. Two implementations, one architecture
+## 1. Three implementations, one architecture
 
-MIE-Decoder ships as a Rust crate (`rust/src/`) and a Python package (`python/src/mie_decoder/`). They are independent implementations that satisfy the same shared specification and produce byte-identical CSV output (verified by the cross-implementation conformance suite under `tests/conformance/`). The module structure is intentionally aligned so the architecture description fits both.
+MIE-Decoder ships as a Rust crate (`rust/src/`), a Python package (`python/src/mie_decoder/`) and a C++ implementation (`cpp/`). They are independent implementations that satisfy the same shared specification and produce byte-identical CSV output (verified by the cross-implementation conformance suite under `tests/conformance/`). The module structure is intentionally aligned so the architecture description fits all three.
 
-| Concern | Rust module | Python module |
-|---------|-------------|---------------|
-| CLI / argument parsing | `rust/src/cli.rs` | `python/src/mie_decoder/cli.py` |
-| TOML configuration loader | `rust/src/config.rs` | `python/src/mie_decoder/config.py` |
-| Message filtering | `rust/src/filter.rs` | `python/src/mie_decoder/filters.py` |
-| Canonical row order (equal-timestamp ties) | `rust/src/order.rs` | `python/src/mie_decoder/order.py` |
-| Reader pipeline (mmap → records) | `rust/src/reader.rs` | `python/src/mie_decoder/reader.py` |
-| Multi-file time-sorted merge | `rust/src/merge.rs` | `python/src/mie_decoder/merge.py` |
-| Per-RT/MSG `DELTA` tracking | `rust/src/delta.rs` | `python/src/mie_decoder/delta.py` |
-| Pure decode (bit-level field extraction) | `rust/src/decode.rs` | `python/src/mie_decoder/decode.py` |
-| Sync helpers (validate, find first, recover) | `rust/src/sync.rs` | `python/src/mie_decoder/sync.py` |
-| Domain models + error code constants | `rust/src/models.rs` | `python/src/mie_decoder/models.py` |
-| Error types | `rust/src/error.rs` (single enum) | `python/src/mie_decoder/exceptions.py` (class hierarchy) |
-| CSV writer | `rust/src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (streaming, stdlib `csv`) |
-| Logging | `rust/src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) |
-| Hex dump | `rust/src/dump.rs` | `python/src/mie_decoder/dump.py` |
+> **The C++ implementation is mid-port.** Its module column below names where each concern lives or will live; `cpp/README.md` is authoritative on what is actually implemented today, and the prose in the rest of this document is still written against Rust and Python. Do not read a filled-in cell as a shipped feature.
+
+| Concern | Rust module | Python module | C++ module |
+|---------|-------------|---------------|------------|
+| CLI / argument parsing | `rust/src/cli.rs` | `python/src/mie_decoder/cli.py` | `cpp/src/cli.cpp` *(planned)* |
+| TOML configuration loader | `rust/src/config.rs` | `python/src/mie_decoder/config.py` | `cpp/src/config.cpp` *(planned)* |
+| Message filtering | `rust/src/filter.rs` | `python/src/mie_decoder/filters.py` | `cpp/src/filter.cpp` *(planned)* |
+| Canonical row order (equal-timestamp ties) | `rust/src/order.rs` | `python/src/mie_decoder/order.py` | `cpp/src/order.cpp` *(planned)* |
+| Reader pipeline (mmap → records) | `rust/src/reader.rs` | `python/src/mie_decoder/reader.py` | `cpp/src/reader.cpp` |
+| Multi-file time-sorted merge | `rust/src/merge.rs` | `python/src/mie_decoder/merge.py` | `cpp/src/merge.cpp` *(planned)* |
+| Per-RT/MSG `DELTA` tracking | `rust/src/delta.rs` | `python/src/mie_decoder/delta.py` | `cpp/src/delta.cpp` |
+| Pure decode (bit-level field extraction) | `rust/src/decode.rs` | `python/src/mie_decoder/decode.py` | `cpp/src/decode.cpp` |
+| Sync helpers (validate, find first, recover) | `rust/src/sync.rs` | `python/src/mie_decoder/sync.py` | `cpp/src/sync.cpp` |
+| Domain models + error code constants | `rust/src/models.rs` | `python/src/mie_decoder/models.py` | `cpp/src/models.cpp` |
+| Error types | `rust/src/error.rs` (single enum) | `python/src/mie_decoder/exceptions.py` (class hierarchy) | `cpp/src/error.cpp` (single enum + kind) |
+| CSV writer | `rust/src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (streaming, stdlib `csv`) | `cpp/src/writer.cpp` *(planned)* |
+| Logging | `rust/src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) | `cpp/src/log.cpp` (hand-rolled) |
+| Hex dump | `rust/src/dump.rs` | `python/src/mie_decoder/dump.py` | `cpp/src/dump.cpp` *(planned)* |
 
 The sync helpers (`sync.rs` / `sync.py`) are **pure** in both implementations — no logging, no I/O. Everything an operator sees about header detection, sync loss, and recovery is emitted by the reader, which is what keeps the two implementations' log output aligned and stops a helper from narrating an outcome the caller has more context about.
 
