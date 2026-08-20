@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
+from mie_decoder.delta import DeltaKind, DeltaTracker
 from mie_decoder.decode import (
     MIN_RECORD_BYTES_STANDARD,
     DEFAULT_DETECT_RECORDS,
@@ -82,7 +83,6 @@ from mie_decoder.exceptions import (
 )
 from mie_decoder.models import (
     CommandWord,
-    Direction,
     ERROR_SPURIOUS_CONTINUATION,
     ERROR_SPURIOUS_STANDALONE,
     KNOWN_DDC_ERROR_CODES,
@@ -117,8 +117,11 @@ class _DecodeState:
 
     prev_was_error: bool
     warned_irig_day: bool
-    delta_tracker: dict[str, int]
-    warned_ooo_keys: set[str]
+    #: Per-RT/MSG DELTA state (L2-RDR-009/010/017/018/019). Owned by
+    #: :mod:`mie_decoder.delta`, which is also what the merge uses for
+    #: ``--delta-scope global`` -- before that extraction the key was spelled
+    #: three different ways across two modules.
+    delta_tracker: DeltaTracker
     msg_count: int
 
 
@@ -208,8 +211,8 @@ class MieFileReader:
         # (the default) keeps the historical empty-DELTA behavior for
         # Standard records; a finite, strictly-positive value enables
         # tick->microsecond conversion and DELTA participation. The CLI /
-        # config layer validates the value; passed through to
-        # _compute_delta.
+        # config layer validates the value; handed to the DeltaTracker
+        # this reader builds for each iteration.
         self._standard_tick_rate_hz = standard_tick_rate_hz
         # Cumulative sync-recovery count from the most recent __iter__
         # call. Reset to 0 on each iteration so the CLI can read it
@@ -301,8 +304,7 @@ class MieFileReader:
         state = _DecodeState(
             prev_was_error=False,
             warned_irig_day=False,
-            delta_tracker={},
-            warned_ooo_keys=set(),
+            delta_tracker=DeltaTracker(self._standard_tick_rate_hz),
             msg_count=0,
         )
         # Reset the externally-visible flags at the start of each iteration so
@@ -949,14 +951,7 @@ class MieFileReader:
         # the shared contract: the diagnostic value of
         # knowing inter-arrival gaps to a flaky RT/MSG is
         # higher than the cost of including anomaly rows.
-        delta = _compute_delta(
-            state.delta_tracker,
-            state.warned_ooo_keys,
-            msg.delta_key,
-            timestamp,
-            offset,
-            self._standard_tick_rate_hz,
-        )
+        delta = _narrate_delta(state.delta_tracker, cmd, timestamp, offset)
         msg = MieMessage(
             timestamp=msg.timestamp,
             type_word=msg.type_word,
@@ -1079,16 +1074,7 @@ class MieFileReader:
                 anomaly.detail,
             )
 
-        direction_char = "T" if cmd.direction == Direction.TRANSMIT else "R"
-        delta_key = f"{cmd.rt}:{cmd.subaddress}{direction_char}"
-        delta = _compute_delta(
-            state.delta_tracker,
-            state.warned_ooo_keys,
-            delta_key,
-            timestamp,
-            offset,
-            self._standard_tick_rate_hz,
-        )
+        delta = _narrate_delta(state.delta_tracker, cmd, timestamp, offset)
 
         msg = MieMessage(
             timestamp=timestamp,
@@ -1174,47 +1160,43 @@ def _decode_error_record(
     )
 
 
-def _compute_delta(
-    delta_tracker: dict[str, int],
-    warned_ooo_keys: set[str],
-    key: str,
+def _narrate_delta(
+    tracker: DeltaTracker,
+    command_word: CommandWord,
     timestamp: Timestamp,
     offset: int,
-    standard_tick_rate_hz: float | None = None,
 ) -> float | None:
-    """Compute DELTA for ``key`` per the shared contract and update tracker.
+    """Return this record's DELTA, emitting the WARN that sometimes goes with it.
 
-    - ``timestamp.to_microseconds()`` returns ``None`` (Standard with no
-      configured tick rate) → return ``None`` and skip tracker update.
-    - SPURIOUS_DATA passes an empty key → return ``None``.
-    - First occurrence of ``key`` → return ``0.0``, record current us.
-    - Subsequent with non-negative gap → return ``seconds``, record current us.
-    - Subsequent with negative gap (non-monotonic) → return ``None``, record
-      current us, emit a WARN once per ``key`` per recording.
+    The arithmetic and the per-key state belong to
+    :class:`~mie_decoder.delta.DeltaTracker`; what is left here is narration,
+    which is the reader's job and nobody else's. The tracker deliberately does
+    not log: it cannot know that a backward step is worth a line in a
+    single-file decode and merely noise in a merge that already reports
+    unsorted inputs at file granularity (L2-MRG-006).
+
+    Args:
+        tracker: The per-file DELTA state.
+        command_word: The record's Command Word.
+        timestamp: The record's timestamp.
+        offset: Byte offset, for the diagnostic.
+
+    Returns:
+        Seconds since the previous record with the same RT/MSG key, or ``None``
+        where no honest gap exists.
     """
-    if not key:
-        return None
-    curr_us = timestamp.to_microseconds(standard_tick_rate_hz)
-    if curr_us is None:
-        return None
-    prev = delta_tracker.get(key)
-    delta_tracker[key] = curr_us
-    if prev is None:
-        return 0.0
-    if curr_us < prev:
-        if key not in warned_ooo_keys:
-            warned_ooo_keys.add(key)
-            logger.warning(
-                "Non-monotonic timestamp at 0x%X for RT/MSG %s: "
-                "prev_us=%d curr_us=%d (further out-of-order occurrences "
-                "for this key suppressed)",
-                offset,
-                key,
-                prev,
-                curr_us,
-            )
-        return None
-    return (curr_us - prev) / 1_000_000.0
+    outcome = tracker.observe(command_word, timestamp)
+    if outcome.kind is DeltaKind.BACKWARD and outcome.first_for_key:
+        logger.warning(
+            "Non-monotonic timestamp at 0x%X for RT/MSG key 0x%08X: "
+            "prev_us=%d curr_us=%d (further out-of-order occurrences "
+            "for this key suppressed)",
+            offset,
+            outcome.key,
+            outcome.prev_us,
+            outcome.curr_us,
+        )
+    return outcome.value
 
 
 # Payload-extraction result: (command_word_2, status_word, status_word_2, data_words).
