@@ -89,6 +89,29 @@ full release workflow.
     C++17. Absent and zero are genuinely different in this format: a missing
     Status Word is not `0x0000`, and an uncomputable DELTA is not `0.0`.
 
+- **C++ record alignment, validation and sync recovery (`mie/sync.hpp`).** The
+  layer between the raw bytes and the reader: candidate validation with the
+  N-record look-ahead (L2-SYN-005 / L2-SYN-026), IRIG field-range checks
+  (L2-SYN-004 / L2-SYN-019), first-record detection, the homogeneous-payload
+  defence (L2-SYN-018), the L2-RDR-004 truncated-first-record diagnostic, and
+  forward sync recovery.
+
+  Pure functions throughout — no logging and no I/O, the same rule the Rust and
+  Python sync modules follow. `CLAUDE.md` records why: these helpers lack the
+  caller's context, so they narrate outcomes wrongly. Finding no first record is
+  the *expected* result for a valid empty recording, and saying "no valid record
+  found" there contradicts the reader's own correct message.
+
+  The tests target the behaviours hardest to reconstruct from the code, each
+  with its reason stated: the end-of-records terminator is honoured on trusted
+  boundaries and deliberately **not** during recovery (a mis-aligned candidate
+  could otherwise validate off a stray zero data word); an undetermined
+  timestamp format uses the permissive Standard floor rather than the IRIG one;
+  freerun suppresses the day-range check and nothing else; and the look-ahead
+  advances by each record's *declared* length rather than two bytes. The IRIG
+  day, hour, minute and second ranges are swept over their full encoded width
+  rather than sampled — day 0 and 367..511 are encodable and must be rejected.
+
 - **Exhaustive cross-implementation verification of the C++ decoders.**
   `rust/examples/decode_digest.rs` sweeps every one of the 65 536 possible Type
   Words and Command Words, and every bit position of every IRIG and Standard
