@@ -37,6 +37,7 @@
 
 #include <windows.h>
 // <windows.h> must precede these.
+#include <errno.h>
 #include <fcntl.h>
 #include <io.h>
 #include <stdio.h>
@@ -491,6 +492,31 @@ bool remove_file(const std::string& utf8_path, OsError& err) {
         return false;
     }
     return true;
+}
+
+void capture_stream_error(OsError& err) {
+    // Translated INTO the Win32 space, not passed through. OsError::code means
+    // GetLastError() on this platform, and MieError classifies broken pipes
+    // against Win32 codes; handing it a CRT errno would put a number from one
+    // space into a field read as the other -- and 32 is EPIPE in one and
+    // ERROR_SHARING_VIOLATION in the other, so the collision is real.
+    const int captured = errno;
+    if (captured == EPIPE || captured == EINVAL) {
+        // A closed downstream pipe. The CRT reports it as EPIPE through some
+        // paths and EINVAL through others, and neither reaches GetLastError
+        // reliably once the CRT has handled the failure.
+        fill_last_error(err, ERROR_BROKEN_PIPE);
+        return;
+    }
+    const DWORD last = ::GetLastError();
+    if (last != ERROR_SUCCESS) {
+        fill_last_error(err, last);
+        return;
+    }
+    // No Win32 error to report: describe the CRT failure rather than claiming
+    // success on a call that demonstrably failed.
+    err.code = captured;
+    err.message = "stream write failed";
 }
 
 uint64_t process_id() { return static_cast<uint64_t>(::GetCurrentProcessId()); }

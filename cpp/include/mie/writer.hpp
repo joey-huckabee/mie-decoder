@@ -1,0 +1,273 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Streaming CSV output.
+//
+// Mirrors `rust/src/writer.rs` and `python/src/mie_decoder/writer.py`.
+//
+// TWO PROPERTIES DEFINE THIS MODULE, and both are easy to break by accident.
+//
+// 1. THE COLUMN LAYOUT IS THE VENDOR'S, FOR THE FIRST 44. Column N of a decoded
+//    CSV is column N of a DDC-generated CSV, which is what makes a diff against
+//    vendor output a validation rather than an exercise in re-mapping. `ERROR`
+//    and `ERROR_CODE` are decoder additions with no vendor counterpart, so they
+//    go at the TAIL (L1-OUT-001, L2-WRT-001). Through v2.9.0 they sat between
+//    `DELTA` and `IM_GAP`, which shifted the three gap columns two positions off
+//    their vendor indices -- every positional comparison past `DELTA` was wrong
+//    while every column NAME still matched. If you add a column, append it.
+//
+// 2. ROWS STREAM. A row is formatted and handed to the sink as it arrives;
+//    nothing accumulates a container of rows or of messages. That is what makes
+//    the O(1)-in-record-count claim true for a multi-gigabyte recording
+//    (L3-CPP-011), and it is a design point rather than an optimisation --
+//    `AtomicFile` holds one fixed-capacity buffer that is flushed rather than
+//    grown.
+//
+// OUTPUT IS BYTE-EXACT. The sink is opened in binary mode and every line ends
+// `\n` on every host (L2-WRT-012); `DELTA` is formatted through
+// `mie::text::fixed6`, never `snprintf` directly, so the decimal separator
+// cannot follow the host's locale (L3-CPP-007).
+
+#ifndef MIE_WRITER_HPP
+#define MIE_WRITER_HPP
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
+#include "mie/error.hpp"
+#include "mie/models.hpp"
+#include "mie/optional.hpp"
+#include "mie/platform.hpp"
+
+namespace mie {
+
+/// The DDC vendor block: `TIME_STAMP` through `XMT_GAP`.
+extern const std::size_t VENDOR_COLUMN_COUNT;
+
+/// Every column, vendor block plus the two decoder additions.
+extern const std::size_t TOTAL_COLUMN_COUNT;
+
+/// The header row, newline included.
+extern const char* const CSV_HEADER;
+
+// ---------------------------------------------------------------------------
+// Sinks
+// ---------------------------------------------------------------------------
+
+/// Where CSV bytes go.
+///
+/// An interface rather than a template, which is where this departs from the
+/// Rust `CsvWriter<W: Write>`. C++ would have to put the whole writer in a
+/// header to stay generic, and the dispatch cost is one indirect call per
+/// *write*, not per byte -- against formatting a 46-column row it does not
+/// register.
+class CsvSink {
+  public:
+    virtual ~CsvSink();
+
+    /// Append bytes. False on failure, with `err` filled.
+    virtual bool write(const char* bytes, std::size_t length, platform::OsError& err) = 0;
+
+    /// Push buffered bytes to the OS.
+    virtual bool flush(platform::OsError& err) = 0;
+
+    /// Name for diagnostics -- a path, or "stdout".
+    virtual std::string destination() const = 0;
+
+  protected:
+    CsvSink();
+
+  private:
+    CsvSink(const CsvSink&);
+    CsvSink& operator=(const CsvSink&);
+};
+
+/// Standard output, for `-o -`.
+///
+/// Never split (there is only one stdout) and never `.partial` (a truncated
+/// stream is what the consumer would have seen anyway). A closed downstream
+/// pipe surfaces as a broken-pipe MieError, which L2-WRT-018 turns into exit 0
+/// -- `mie-decoder decode x.mie | head` is a normal thing to type.
+class StdoutCsvSink : public CsvSink {
+  public:
+    StdoutCsvSink();
+    bool write(const char* bytes, std::size_t length, platform::OsError& err) override;
+    bool flush(platform::OsError& err) override;
+    std::string destination() const override;
+};
+
+/// A file written through the temp-and-rename strategy (L2-WRT-015).
+///
+/// Thin over `platform::AtomicFile`: the platform layer owns the atomicity, and
+/// this owns the CSV-shaped error reporting around it.
+class AtomicCsvSink : public CsvSink {
+  public:
+    AtomicCsvSink();
+
+    /// Create the temp file beside `path`. Throws MieError on failure.
+    void create(const std::string& path);
+
+    bool write(const char* bytes, std::size_t length, platform::OsError& err) override;
+    bool flush(platform::OsError& err) override;
+    std::string destination() const override;
+
+    /// Rename over the destination. Throws MieError on failure.
+    void commit();
+
+    /// Rename to `<destination>.partial` instead, leaving the destination
+    /// untouched (L3-WRT-002). Returns the path written.
+    std::string commit_partial();
+
+    /// Discard the temp file. Safe after commit, and safe twice.
+    void abort();
+
+    bool is_open() const { return open_; }
+
+  private:
+    platform::AtomicFile file_;
+    std::string path_;
+    bool open_;
+};
+
+// ---------------------------------------------------------------------------
+// Row writer
+// ---------------------------------------------------------------------------
+
+/// Streaming CSV row writer. Emits the header when constructed.
+class CsvWriter {
+  public:
+    /// Writes the header immediately. Throws MieError if that fails.
+    explicit CsvWriter(CsvSink& sink);
+
+    /// Format and emit one row. Throws MieError on a write failure.
+    void write_message(const MieMessage& message);
+
+    /// Flush and report the row count. Throws MieError on a flush failure.
+    ///
+    /// Separate from the destructor deliberately: flushing is fallible and a
+    /// destructor cannot report that. A CsvWriter that is destroyed without
+    /// `finish()` has NOT promised its rows reached the sink.
+    uint64_t finish();
+
+    uint64_t rows_written() const { return rows_written_; }
+
+  private:
+    CsvWriter(const CsvWriter&);
+    CsvWriter& operator=(const CsvWriter&);
+
+    void emit(const char* bytes, std::size_t length);
+    void emit(const std::string& text);
+
+    CsvSink* sink_;
+    uint64_t rows_written_;
+};
+
+/// Write one field with RFC4180 minimal quoting, matching Python's
+/// `csv.QUOTE_MINIMAL`: a value containing a comma, a double quote, CR or LF is
+/// wrapped in quotes with internal quotes doubled; anything else goes verbatim.
+///
+/// Only the MUX cell can carry such a value -- it comes from a file name -- so
+/// this is what keeps MUX output byte-identical across the three
+/// implementations rather than merely similar.
+std::string csv_quote(const std::string& value);
+
+/// The formatted row for `message`, newline included.
+///
+/// Exposed because it is the unit worth testing: every column decision lives
+/// here, and a test that asserts on a string does not need a file.
+std::string format_row(const MieMessage& message);
+
+// ---------------------------------------------------------------------------
+// Message source
+// ---------------------------------------------------------------------------
+
+/// A pull source of decoded records.
+///
+/// The writer takes this rather than a concrete `RecordIter` so that the merge
+/// can feed it too when that lands, and so the tests can drive it without a
+/// file. It is the C++ stand-in for the Rust entry points' `IntoIterator`
+/// bound.
+class MessageSource {
+  public:
+    virtual ~MessageSource();
+
+    /// Fill `out` with the next record; false at end of stream.
+    ///
+    /// May throw MieError. `--allow-partial` turns an UnrecoverableSyncLoss
+    /// thrown from here into a committed `.partial` rather than a failure, so
+    /// this is a load-bearing part of the contract, not just an error path.
+    virtual bool next(MieMessage& out) = 0;
+
+  protected:
+    MessageSource();
+
+  private:
+    MessageSource(const MessageSource&);
+    MessageSource& operator=(const MessageSource&);
+};
+
+// ---------------------------------------------------------------------------
+// Entry points
+// ---------------------------------------------------------------------------
+
+/// Output-side safety checks. Defaults are "no checks", so a library caller
+/// that wants raw behaviour still gets it.
+struct WriteOptions {
+    /// Input path for the L2-WRT-014 same-file collision check. Absent skips
+    /// it -- there is no input to collide with, or the caller already checked.
+    Optional<std::string> input_path;
+    /// L2-WRT-017: refuse to overwrite an existing destination.
+    bool no_clobber;
+    /// L1-EXIT-004 / L2-WRT-016: on an unrecoverable mid-file sync loss, commit
+    /// what was decoded as `<destination>.partial` and call the run successful
+    /// rather than unlinking the temp and failing.
+    bool allow_partial;
+
+    WriteOptions();
+};
+
+/// Where a `--allow-partial` run put its output.
+struct PartialCommit {
+    std::string main_path;
+    /// Set only when split mode produced error rows before the sync loss.
+    Optional<std::string> errors_path;
+    uint64_t offset;
+    uint64_t sync_losses;
+
+    PartialCommit();
+};
+
+/// What a successful write produced.
+struct WriteOutcome {
+    uint64_t normal_count;
+    uint64_t error_count;
+    /// Present only when `allow_partial` converted a sync loss into success.
+    Optional<PartialCommit> partial;
+
+    WriteOutcome();
+};
+
+/// Stream every record to one CSV, errored and spurious rows included with
+/// their `ERROR` / `ERROR_CODE` columns populated. This is INLINE mode, the
+/// default (L2-ERR-011), and the mode a vendor-CSV diff uses.
+///
+/// `output` absent means stdout, which skips the pre-flight checks (it has no
+/// filesystem identity) and ignores `allow_partial`.
+WriteOutcome write_csv(MessageSource& messages, const Optional<std::string>& output,
+                       const WriteOptions& options);
+
+/// Split output (L2-ERR-008): clean records to `output`, errored and spurious
+/// to `<stem>_errors<ext>`.
+///
+/// The errors file is opened LAZILY, on the first error row, so a clean
+/// recording leaves no empty `_errors.csv` behind -- and no temp file either.
+WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
+                             const WriteOptions& options);
+
+/// `<stem>_errors<ext>` beside `output`. Exposed so the CLI can name the file
+/// in a diagnostic without recomputing the rule.
+std::string error_path_for(const std::string& output);
+
+}  // namespace mie
+
+#endif  // MIE_WRITER_HPP

@@ -11,11 +11,11 @@ development convenience (ADR-0003).
 
 > **Status: Phase 1, in progress.** The CLI still implements `--version` and
 > `--help` only, so **use the Rust or Python implementation** for real work. The
-> `decode` / `count` / `dump` subcommands arrive once the writer and CLI land.
+> `decode` / `count` / `dump` subcommands arrive once `config` and `cli` land.
 >
 > Ported and gated: `platform`, `text`, `optional`, `models`, `error`, `decode`,
-> `sync`, `log`, `delta`, `reader`. Outstanding for Phase 1: `filter`, `order`, `writer`,
-> `config`, `cli`, and the N-implementation refactor of
+> `sync`, `log`, `delta`, `reader`, `writer`. Outstanding for Phase 1: `filter`,
+> `order`, `config`, `cli`, and the N-implementation refactor of
 > `../tests/conformance/run.py`. Phase 2 adds `merge`, `dump`, and the remaining
 > flags. See `../CHANGELOG.md` for what each landing covered and `../docs/adr/`
 > for the decisions that shape the tree.

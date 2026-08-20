@@ -180,6 +180,59 @@ full release workflow.
   day, hour, minute and second ranges are swept over their full encoded width
   rather than sampled — day 0 and 367..511 are encodable and must be rejected.
 
+- **The C++ streaming CSV writer (`mie/writer.hpp`).** The stage that turns
+  records into the vendor-compatible CSV: the 44-column vendor block with
+  `ERROR` / `ERROR_CODE` appended, atomic temp-and-rename output, the
+  input/output and no-clobber safety gates, `--allow-partial`, split-error
+  output, and stdout. The `decode` / `count` / `dump` subcommands still need
+  `config` and `cli`.
+
+  Two properties define the module, and both have been broken in this project
+  before:
+
+  - **The column boundary.** Column *N* of a decoded CSV is column *N* of a
+    vendor CSV for all 44, which is what makes a vendor diff a validation
+    rather than a re-mapping exercise. Through v2.9.0 the two decoder-added
+    columns sat between `DELTA` and `IM_GAP`, shifting the three gap columns
+    off their vendor indices while every column *name* still matched. The
+    boundary is therefore asserted **by index as well as by name**, plus a
+    cell-count property that catches a stray comma anywhere in the row.
+  - **Rows stream.** A row is formatted and handed to the sink as it arrives;
+    nothing accumulates a container of rows or of messages. `AtomicFile` holds
+    one fixed-capacity buffer that is flushed rather than grown, which is what
+    makes the O(1)-in-record-count claim true (L3-CPP-011).
+
+  Design notes worth having:
+
+  - `CsvSink` is an interface rather than a template, which is where this
+    departs from the Rust `CsvWriter<W: Write>`. Staying generic in C++ would
+    put the whole writer in a header, and the dispatch cost is one indirect
+    call per *write* rather than per byte.
+  - `MessageSource` is the C++ stand-in for the Rust entry points'
+    `IntoIterator` bound, so the merge can feed the writer when it lands and
+    the tests can drive it without a file.
+  - `format_row` is public because it is the unit worth testing: every column
+    decision lives in it, and a test that asserts on a string needs no
+    filesystem.
+  - The errors file in split mode is opened **lazily**, on the first error row,
+    so a clean recording leaves neither an empty `_errors.csv` nor a temp file.
+  - Main is committed **before** errors (L2-WRT-019): if the errors commit then
+    fails, what is on disk is the primary artifact rather than an orphan errors
+    file beside no main output.
+
+  `platform::capture_stream_error` is new, and it translates rather than
+  passes through. `fwrite` reports failure via `errno` on every platform, but
+  `OsError::code` means `GetLastError()` on Windows and that is the space the
+  broken-pipe classification matches against — 32 is `EPIPE` in one space and
+  `ERROR_SHARING_VIOLATION` in the other, so the collision is real. Getting
+  this wrong is what once made `mie-decoder decode x.mie | head` exit 1 on
+  Windows while exiting 0 on Linux (L2-WRT-018).
+
+  `tests/temp_path.hpp` gained `also_remove`, because the split-output errors
+  file is `<stem>_errors<ext>` — an **infix**, which `sibling()` cannot
+  express. A test that computed the name and removed it by hand would
+  reintroduce exactly the leak-on-throw that helper exists to prevent.
+
 - **The C++ reader and logger (`mie/reader.hpp`, `mie/log.hpp`).** The stage that
   turns a file into records: memory-mapped input, header skip, one-time
   timestamp-format resolution, the decode loop, internal sync recovery, and
