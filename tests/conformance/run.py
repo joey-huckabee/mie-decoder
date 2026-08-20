@@ -318,11 +318,19 @@ def prepare_rust_bin(args: argparse.Namespace) -> None:
         raise RuntimeError("cargo was not found; pass --rust-bin or install Rust")
 
     print("BUILD Rust CLI", flush=True)
+    # 120s was too tight and flaked the windows-latest conformance job on a
+    # cold cache: a from-scratch debug build plus link genuinely exceeds two
+    # minutes on the slowest runner in the matrix.
+    #
+    # The timeout is kept -- it exists to stop a hung build from consuming the
+    # whole job budget, and removing it would trade a visible flake for an
+    # invisible stall. It is raised to a figure that a real build cannot reach
+    # but a hang comfortably will.
     result = subprocess.run(
         ["cargo", "build", "--quiet", "--locked", "--bin", "mie-decoder"],
         cwd=ROOT / "rust",
         check=False,
-        timeout=120,
+        timeout=600,
     )
     if result.returncode != 0 or not args.rust_bin.exists():
         raise RuntimeError("failed to build the Rust CLI")
