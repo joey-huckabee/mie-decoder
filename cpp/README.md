@@ -14,8 +14,9 @@ development convenience (ADR-0003).
 > `decode` / `count` / `dump` subcommands arrive once `config` and `cli` land.
 >
 > Ported and gated: `platform`, `text`, `optional`, `models`, `error`, `decode`,
-> `sync`, `log`, `delta`, `reader`, `writer`. Outstanding for Phase 1: `filter`,
-> `order`, `config`, `cli`, and the N-implementation refactor of
+> `sync`, `log`, `delta`, `reader`, `writer`, `toml`, `config`. Outstanding for
+> Phase 1: `filter` (the pipeline stage; its config data already exists),
+> `order`, `cli`, and the N-implementation refactor of
 > `../tests/conformance/run.py`. Phase 2 adds `merge`, `dump`, and the remaining
 > flags. See `../CHANGELOG.md` for what each landing covered and `../docs/adr/`
 > for the decisions that shape the tree.

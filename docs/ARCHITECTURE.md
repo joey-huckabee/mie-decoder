@@ -18,8 +18,8 @@ MIE-Decoder ships as a Rust crate (`rust/src/`), a Python package (`python/src/m
 | Concern | Rust module | Python module | C++ module |
 |---------|-------------|---------------|------------|
 | CLI / argument parsing | `rust/src/cli.rs` | `python/src/mie_decoder/cli.py` | `cpp/src/cli.cpp` *(planned)* |
-| TOML configuration loader | `rust/src/config.rs` | `python/src/mie_decoder/config.py` | `cpp/src/config.cpp` *(planned)* |
-| Message filtering | `rust/src/filter.rs` | `python/src/mie_decoder/filters.py` | `cpp/src/filter.cpp` *(planned)* |
+| TOML configuration loader | `rust/src/config.rs` | `python/src/mie_decoder/config.py` | `cpp/src/config.cpp` + `cpp/src/toml.cpp` |
+| Message filtering | `rust/src/filter.rs` | `python/src/mie_decoder/filters.py` | `cpp/src/filter.cpp` *(planned; `FilterConfig` data already in `cpp/include/mie/filter.hpp`)* |
 | Canonical row order (equal-timestamp ties) | `rust/src/order.rs` | `python/src/mie_decoder/order.py` | `cpp/src/order.cpp` *(planned)* |
 | Reader pipeline (mmap → records) | `rust/src/reader.rs` | `python/src/mie_decoder/reader.py` | `cpp/src/reader.cpp` |
 | Multi-file time-sorted merge | `rust/src/merge.rs` | `python/src/mie_decoder/merge.py` | `cpp/src/merge.cpp` *(planned)* |

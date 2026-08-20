@@ -180,6 +180,83 @@ full release workflow.
   day, hour, minute and second ranges are swept over their full encoded width
   rather than sampled — day 0 and 367..511 are encodable and must be rejected.
 
+- **The C++ configuration loader, split into a liftable TOML parser and an
+  MIE-specific schema.** `mie/toml.hpp` parses; `mie/config.hpp` decides what
+  the result means.
+
+  The division is the point, and it is deliberate rather than incidental:
+
+  ```
+  toml.hpp    what the file SAYS   -- sections, keys, values, line numbers
+  config.hpp  what it MEANS        -- which keys exist, ranges, enum spellings,
+                                      defaults, precedence
+  ```
+
+  `toml.hpp` / `toml.cpp` contain **no MIE type, include no decoder header, and
+  cannot fail in a way that mentions a recording**. The header states its lift
+  set explicitly — those two files plus `text.hpp` / `text.cpp` plus
+  `test_toml.cpp`, and a namespace rename. `text` is depended on rather than
+  duplicated because it is itself domain-free, and because the parser must not
+  use `<cctype>`: those functions read the locale table, and under `tr_TR` the
+  case mapping of `I` changes.
+
+  Consequences worth naming:
+
+  - Parse failures are `bool` + an out-parameter, not exceptions, matching the
+    platform layer. The component works in a codebase compiled without
+    exceptions, and `config.cpp` translates `toml::ParseError` into
+    `ConfigError` at exactly one line.
+  - The typed accessors (`get_string`, `get_int`, …) live in `config.cpp`, not
+    on `toml::Document`. "This key must be a string" is a schema statement, and
+    the parser has no schema.
+  - `ConfigError` is **not** a `MieError`, mirroring Rust: `MieErrorKind` is an
+    exhaustive table pinned by test and mapped to exit codes, and a malformed
+    config file is not a decode failure.
+
+  **The subset rejects on purpose.** Where full TOML accepts a form the flat
+  schema cannot model — a dotted key, an inline table, a nested table header,
+  an array of tables — the parser refuses rather than storing it somewhere the
+  schema will never look. A silently dropped `output.no_clobber = true` is a
+  safety option that appears to be set and is not.
+
+  **The number grammar is swept exhaustively**, because it is the most
+  divergence-prone rule in the subset: every language's native number parser is
+  more permissive than TOML. `strtod` takes `08`, `1.`, `0x10` and leading
+  whitespace; `tomllib` takes none of them. The sweep covers all 2800 strings
+  of length ≤ 4 over `{0,1,+,-,.,e,_}` and asserts a **property** — an accepted
+  literal is one the C library also consumes completely — rather than a second
+  copy of the productions, because two copies of one mistake agree with each
+  other. It is paired with a corpus generated *from* the productions and a
+  curated table of the forms a native parse accepts and TOML does not.
+
+  **That rigour found a real divergence in this port.** The C++ identifier rule
+  accepted `-`; Rust uses `is_ascii_alphanumeric() || '_'` and Python's
+  `_IDENT_RE` is `^\w+$` under `re.ASCII`. `[with-dash]` would have been a
+  section C++ accepted and the other two refused — a shared config file meaning
+  different things per implementation. The 256-byte identifier sweep is what
+  made it concrete.
+
+  **The parity corpus runs now, at the layer that causes divergence.**
+  `tests/conformance/config_parity.py` drives the CLI, which C++ does not have
+  yet, so joining that harness waits for the CLI module. Its 41 snippets are
+  ported into `test_config.cpp` and run directly against the loader in the
+  meantime — building the loader without them would have meant building it
+  blind to the exact forms the three implementations have had to be aligned on.
+
+  Also landed: `mie/filter.hpp`, the `FilterConfig` data and its `is_active`
+  predicate. The pipeline stage that applies it comes with the filter module;
+  the data exists now because `config` populates it from a `[filter]` section,
+  and a loader that invented its own container would be the second definition
+  of what a filter is.
+
+  `cpp/.clang-tidy` records `misc-no-recursion` as disabled, with the reasoning:
+  `toml::Value` is a recursive type by definition, the check also fires inside
+  libstdc++ where a `NOLINT` cannot reach, and the hand-written recursion it
+  would legitimately catch was removed instead — `parse_value` and `parse_array`
+  were mutually recursive and are now split so the array parser calls a
+  scalar-only parser, making "no nested arrays" structural rather than a check
+  that runs after the fact.
+
 - **The C++ streaming CSV writer (`mie/writer.hpp`).** The stage that turns
   records into the vendor-compatible CSV: the 44-column vendor block with
   `ERROR` / `ERROR_CODE` appended, atomic temp-and-rename output, the

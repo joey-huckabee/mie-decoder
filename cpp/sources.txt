@@ -23,6 +23,7 @@
 
 src/platform_common.cpp
 src/text.cpp
+src/toml.cpp
 src/log.cpp
 src/models.cpp
 src/error.cpp
@@ -31,3 +32,4 @@ src/sync.cpp
 src/delta.cpp
 src/reader.cpp
 src/writer.cpp
+src/config.cpp
