@@ -22,6 +22,10 @@
 pub mod cli;
 pub mod config;
 pub mod decode;
+/// Private: `DeltaTracker` is an internal collaborator of `reader` and
+/// `merge`, not part of the published surface. Keeping it crate-visible
+/// means extracting it costs nothing in SemVer terms.
+mod delta;
 pub mod dump;
 pub mod error;
 pub mod filter;

@@ -29,6 +29,7 @@ All other L3 categories mirror the L2 category they refine (e.g., `L3-WRT-*` dec
 
 | Code      | Title                                       | L2 Coverage   |
 |-----------|---------------------------------------------|---------------|
+| `RDR`     | Reader pipeline and DELTA tracking          | partial       |
 | `WRT`     | CSV output and destination integrity        | partial       |
 | `PY`      | Python implementation technology            | cross-cutting |
 | `RS`      | Rust implementation technology              | cross-cutting |
@@ -57,6 +58,27 @@ The DELTA scope selector SHALL be exposed identically on both implementations as
 
 **L3-WRT-003** · Parent: L2-WRT-022 · Verification: T
 The equal-timestamp run cap SHALL be exposed identically on both implementations as the `[output] max_sort_group` TOML key and the `--max-sort-group <N>` flag on the `decode` subcommand, with the shared bounds named as constants (`MAX_SORT_GROUP_MIN` = 1, `MAX_SORT_GROUP_MAX` = 1048576) and the shared default `4096` (`DEFAULT_MAX_SORT_GROUP`). An out-of-range or non-integer value SHALL be a config error when it comes from TOML and a usage error (exit `4`) when it comes from the CLI, matching how `decode.detect_records` / `--detect-records` already behave. Both implementations SHALL emit the same validation message text so a shared config file fails identically on either.
+
+---
+
+
+## L3-RDR: Reader pipeline and DELTA tracking
+
+**L3-RDR-001** · Parent: L2-RDR-009 · Verification: T
+Each implementation SHALL derive the per-RT/MSG `DELTA` key from
+`(rt, subaddress, direction)` in **exactly one place**, and both the
+single-file reader path and the `--delta-scope global` merge path SHALL use
+that one derivation. An implementation SHALL NOT maintain a second key
+representation for the same concept.
+
+Before this was stated, Rust and Python each tracked `DELTA` twice: the reader
+keyed a map by a packed integer and the merge keyed a separate map by the
+`"<rt>:<sa><T|R>"` display string. The two agreed on what "the same RT/MSG"
+meant, but nothing asserted it, so a change to either would have silently made
+`DELTA` mean one thing in a single-file decode and another in a merged one.
+Where a display spelling is also published (`MieMessage::delta_key`), a test
+SHALL assert that it partitions the `(rt, subaddress, direction)` space
+identically to the tracking key.
 
 ---
 

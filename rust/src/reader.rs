@@ -8,7 +8,6 @@
 //! Sync recovery happens internally — only unrecoverable errors (or strict
 //! mode opt-ins) surface as `Err` items from the iterator.
 
-use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,6 +21,7 @@ use crate::decode::{
     decode_irig_timestamp, decode_standard_timestamp, decode_type_word, is_terminator_type_word,
     mux_from_filename, probe_timestamp_format, read_u16, read_u16_array,
 };
+use crate::delta::{DeltaOutcome, DeltaTracker};
 use crate::error::{MieError, MieResult};
 use crate::models::{
     CommandWord, DataWords, ERROR_SPURIOUS_CONTINUATION, ERROR_SPURIOUS_STANDALONE, MessageFormat,
@@ -529,10 +529,8 @@ impl MieFileReader {
             strict: self.strict,
             resolved_format,
             lookahead_records: self.lookahead_records,
-            standard_tick_rate_hz: self.standard_tick_rate_hz,
             prev_was_error: false,
-            delta_tracker: HashMap::new(),
-            warned_ooo_keys: HashSet::new(),
+            delta_tracker: DeltaTracker::new(self.standard_tick_rate_hz),
             warned_irig_day: false,
             msg_count: 0,
             sync_losses: 0,
@@ -579,21 +577,15 @@ pub struct RecordIter<'a> {
     /// the per-record `validate_record` call inside `next()` and by
     /// the `recover_sync` call on sync-loss recovery.
     lookahead_records: usize,
-    /// L2-DEC-017 Standard-counter tick rate threaded from the reader.
-    /// Passed to `Timestamp::to_microseconds` in `delta_for`; `None`
-    /// keeps Standard records out of DELTA tracking.
-    standard_tick_rate_hz: Option<f64>,
     prev_was_error: bool,
-    /// Per-RT/MSG last-seen timestamp in microseconds. Populated when the
-    /// source timestamp has a microsecond basis: IRIG always, and Standard
-    /// when a tick rate is configured. Uncalibrated Standard timestamps
-    /// yield None from `Timestamp::to_microseconds()` and bypass the
-    /// tracker entirely.
-    delta_tracker: HashMap<u32, u64>,
-    /// RT/MSG keys for which a non-monotonic-timestamp WARN has already
-    /// been emitted. Limits log volume on chronically out-of-order files
-    /// to one line per key per recording.
-    warned_ooo_keys: HashSet<u32>,
+    /// Per-RT/MSG `DELTA` state (L2-RDR-009/010/017/018/019).
+    ///
+    /// Owned by `crate::delta`, which is also what `merge` uses for
+    /// `--delta-scope global`. Before that extraction the two paths kept
+    /// separate trackers keyed differently — a `u32` here and a `String`
+    /// there — with nothing asserting the two agreed on what "the same
+    /// RT/MSG" meant.
+    delta_tracker: DeltaTracker,
     /// Whether the one-time IRIG day-of-year discrepancy advisory has been
     /// emitted for this decode (PRA-9). Fires once on the first
     /// calendar-locked (non-freerun) IRIG record.
@@ -629,13 +621,6 @@ fn log_validation_context(data: &[u8], offset: usize) {
         end,
         hex
     );
-}
-
-/// Encode `(rt, sa, dir)` into a single u32 key for the delta tracker.
-/// Avoids per-record String allocation and HashMap key construction.
-#[inline]
-fn delta_key(rt: u8, subaddress: u8, transmit: bool) -> u32 {
-    (u32::from(rt) << 16) | (u32::from(subaddress) << 8) | u32::from(transmit)
 }
 
 /// Outcome of decoding one record in the loop body (`decode_one`), so the loop
@@ -764,12 +749,7 @@ impl<'a> RecordIter<'a> {
 
         // Errored record (Type Word bit 14 set).
         if tw.error {
-            let key = delta_key(
-                cmd.rt,
-                cmd.subaddress,
-                matches!(cmd.direction, crate::models::Direction::Transmit),
-            );
-            let delta = self.delta_for(key, &timestamp);
+            let delta = self.delta_for(&cmd, &timestamp);
             let msg =
                 self.decode_error_record(&tw, timestamp, &cmd, cmd_byte_offset, ts_words, delta);
             // A failure here (strict-mode `UnknownErrorCode`, or an out-of-bounds
@@ -1088,12 +1068,7 @@ impl<'a> RecordIter<'a> {
             log_warn!("L2-SYN anomaly at 0x{:X}: {}", self.offset, v.detail);
         }
 
-        let key = delta_key(
-            cmd.rt,
-            cmd.subaddress,
-            matches!(cmd.direction, crate::models::Direction::Transmit),
-        );
-        let delta = self.delta_for(key, &timestamp);
+        let delta = self.delta_for(cmd, &timestamp);
 
         let msg = MieMessage {
             timestamp,
@@ -1220,38 +1195,34 @@ impl<'a> RecordIter<'a> {
         })
     }
 
-    /// Compute DELTA for `key` given the current record's `timestamp`,
-    /// and update the tracker accordingly. Implements the shared contract:
+    /// DELTA for this record, and the WARN that sometimes goes with it.
     ///
-    /// - `Timestamp::to_microseconds()` returns `None` (Standard with no
-    ///   configured tick rate) → return `None` and skip tracker update
-    ///   (nothing to compare against).
-    /// - First occurrence of `key` → return `Some(0.0)`, record current us.
-    /// - Subsequent with non-negative gap → return `Some(seconds)`, record current us.
-    /// - Subsequent with negative gap (non-monotonic) → return `None`, record
-    ///   current us, emit a WARN once per key per recording.
-    fn delta_for(&mut self, key: u32, timestamp: &Timestamp) -> Option<f64> {
-        let curr_us = timestamp.to_microseconds(self.standard_tick_rate_hz)?;
-        let result = match self.delta_tracker.get(&key) {
-            None => Some(0.0),
-            Some(&prev) if curr_us >= prev => Some((curr_us - prev) as f64 / 1_000_000.0),
-            Some(&prev) => {
-                if self.warned_ooo_keys.insert(key) {
-                    log_warn!(
-                        "non-monotonic timestamp at 0x{:X} for RT/MSG key 0x{:08X}: \
-                         prev_us={} curr_us={} (further out-of-order occurrences for \
-                         this key suppressed)",
-                        self.offset,
-                        key,
-                        prev,
-                        curr_us
-                    );
-                }
-                None
-            }
-        };
-        self.delta_tracker.insert(key, curr_us);
-        result
+    /// The arithmetic and the per-key state belong to [`DeltaTracker`]; what is
+    /// left here is narration, which is the reader's job and nobody else's. The
+    /// tracker deliberately does not log: it cannot know that a backward step
+    /// is worth a line in a single-file decode and merely noise in a merge that
+    /// already reports unsorted inputs at file granularity (L2-MRG-006).
+    fn delta_for(&mut self, cmd: &CommandWord, timestamp: &Timestamp) -> Option<f64> {
+        let outcome = self.delta_tracker.observe(Some(cmd), timestamp);
+        if let DeltaOutcome::Backward {
+            prev_us,
+            curr_us,
+            first_for_key: true,
+        } = outcome
+        {
+            log_warn!(
+                "non-monotonic timestamp at 0x{:X} for RT/MSG key 0x{:08X}:                  prev_us={} curr_us={} (further out-of-order occurrences for                  this key suppressed)",
+                self.offset,
+                crate::delta::delta_key(
+                    cmd.rt,
+                    cmd.subaddress,
+                    matches!(cmd.direction, crate::models::Direction::Transmit)
+                ),
+                prev_us,
+                curr_us
+            );
+        }
+        outcome.value()
     }
 }
 

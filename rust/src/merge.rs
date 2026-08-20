@@ -18,13 +18,14 @@
 //! and the `--glob` matcher is hand-rolled (L3-RS-014, preserving L3-RS-002).
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
+use crate::delta::DeltaTracker;
 use crate::error::{MieError, MieResult};
 use crate::log_warn;
 use crate::models::{CommandWord, DeltaScope, MieMessage, Timestamp, TypeWord};
@@ -280,7 +281,13 @@ pub struct MergedRecordIter<'a> {
     /// Input paths in resolved order, for naming a file in the L2-MRG-006
     /// non-monotonic WARN / error (the per-file readers are not retained).
     paths: Vec<PathBuf>,
-    delta_tracker: HashMap<String, u64>,
+    /// L2-MRG-005 global-scope `DELTA` state.
+    ///
+    /// The same `DeltaTracker` the reader uses per file, which is the point of
+    /// it: the merged timeline and a single-file decode now answer "the same
+    /// RT/MSG" identically by construction rather than by two implementations
+    /// that happened to agree.
+    delta_tracker: DeltaTracker,
     /// Error to surface on the *next* `next()` call (non-`--allow-partial`
     /// mid-stream failure — fails the batch).
     pending_error: Option<MieError>,
@@ -370,7 +377,7 @@ impl<'a> MergedRecordIter<'a> {
             prev_us,
             warned_backward,
             paths,
-            delta_tracker: HashMap::new(),
+            delta_tracker: DeltaTracker::new(tick),
             pending_error: None,
             pending_terminal,
             dedup: None,
@@ -413,22 +420,16 @@ impl<'a> MergedRecordIter<'a> {
         if self.delta_scope == DeltaScope::PerFile {
             return msg;
         }
-        let key = msg.delta_key();
-        if key.is_empty() {
-            msg.delta = None; // SPURIOUS_DATA — no RT/MSG key
-            return msg;
-        }
-        match msg.timestamp.to_microseconds(self.tick) {
-            None => msg.delta = None,
-            Some(curr) => {
-                let prev = self.delta_tracker.insert(key, curr);
-                msg.delta = match prev {
-                    None => Some(0.0),
-                    Some(p) if curr >= p => Some((curr - p) as f64 / 1_000_000.0),
-                    Some(_) => None,
-                };
-            }
-        }
+        // SPURIOUS_DATA (no Command Word), an uncalibrated Standard counter,
+        // and a backward step all resolve to an empty cell, and the tracker
+        // tells them apart so it can keep the right cursor for each. No WARN
+        // here: a backward step on the merged timeline means an input was not
+        // internally sorted, which `advance` already reports once per file
+        // (L2-MRG-006). Repeating it per record would bury that.
+        msg.delta = self
+            .delta_tracker
+            .observe(msg.command_word.as_ref(), &msg.timestamp)
+            .value();
         msg
     }
 

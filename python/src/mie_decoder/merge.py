@@ -29,6 +29,7 @@ from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
 
+from mie_decoder.delta import DeltaTracker
 from mie_decoder.exceptions import (
     MieDecoderError,
     MieIncompatibleMergeInputsError,
@@ -139,36 +140,27 @@ def _check_mergeable(msg: MieMessage, file_index: int, path: Path) -> None:
         )
 
 
-def _global_delta_value(
-    msg: MieMessage, tick: float | None, tracker: dict[str, int]
-) -> float | None:
-    """Compute the merged-timeline DELTA for ``msg`` and update ``tracker``.
+def _apply_global_delta(msg: MieMessage, tracker: DeltaTracker) -> MieMessage:
+    """Recompute DELTA on the merged global timeline (L2-MRG-005).
 
-    SPURIOUS_DATA (no key) and uncalibrated Standard timestamps yield ``None``;
-    first occurrence of a key yields ``0.0``; a subsequent record yields the
-    non-negative gap in seconds. The stream is timestamp-sorted, so a negative
-    gap is not expected — it also yields ``None`` defensively.
+    SPURIOUS_DATA (no Command Word), an uncalibrated Standard counter, and a
+    backward step all resolve to an empty cell, and the tracker tells them apart
+    so it can keep the right cursor for each.
+
+    No WARN here: a backward step on the merged timeline means an input was not
+    internally sorted, which the merge already reports once per file
+    (L2-MRG-006). Repeating it per record would bury that.
+
+    Args:
+        msg: The record popped from the merge heap.
+        tracker: Global-scope DELTA state, shared in kind with the reader's so
+            the merged timeline and a single-file decode answer "the same
+            RT/MSG" identically by construction.
+
+    Returns:
+        A copy of ``msg`` carrying the recomputed DELTA.
     """
-    key = msg.delta_key
-    if not key:
-        return None  # SPURIOUS_DATA — no key
-    curr = msg.timestamp.to_microseconds(tick)
-    if curr is None:
-        return None
-    prev = tracker.get(key)
-    tracker[key] = curr
-    if prev is None:
-        return 0.0
-    if curr >= prev:
-        return (curr - prev) / 1_000_000.0
-    return None
-
-
-def _apply_global_delta(msg: MieMessage, tick: float | None, tracker: dict[str, int]) -> MieMessage:
-    """Recompute DELTA on the merged global timeline (L2-MRG-005) and return a
-    copy of ``msg`` carrying it."""
-    delta = _global_delta_value(msg, tick, tracker)
-    return msg.with_delta(delta)
+    return msg.with_delta(tracker.observe(msg.command_word, msg.timestamp).value)
 
 
 def _dedup_key(msg: MieMessage) -> tuple[object, ...]:
@@ -319,8 +311,7 @@ def _resolve_emission(
     idx: int,
     dedup: _DedupWindow | None,
     delta_scope: DeltaScope,
-    tick: float | None,
-    tracker: dict[str, int],
+    tracker: DeltaTracker,
 ) -> MieMessage | None:
     """The record to emit for this heap pop, or ``None`` if it is a collapsed
     cross-recorder duplicate.
@@ -334,7 +325,7 @@ def _resolve_emission(
     if dedup is not None and dedup.is_duplicate(us, idx, msg):
         return None
     if delta_scope == DeltaScope.GLOBAL:
-        return _apply_global_delta(msg, tick, tracker)
+        return _apply_global_delta(msg, tracker)
     return msg
 
 
@@ -395,11 +386,11 @@ def _merge_drain(
     ``pending_terminal`` carries a priming-time --allow-partial failure (set in
     ``merge_readers``); a mid-file failure may overwrite it. Either is raised
     after the heap drains so the writer commits a `.partial` (L2-MRG-004)."""
-    tracker: dict[str, int] = {}
+    tracker = DeltaTracker(tick)
     collapsed = 0
     while heap:
         us, idx, _, _, msg = heapq.heappop(heap)
-        emitted = _resolve_emission(msg, us, idx, dedup, delta_scope, tick, tracker)
+        emitted = _resolve_emission(msg, us, idx, dedup, delta_scope, tracker)
         if emitted is None:
             collapsed += 1
         else:
