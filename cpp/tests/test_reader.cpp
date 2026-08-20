@@ -36,6 +36,7 @@
 #include "log_capture.hpp"
 #include "mie/log.hpp"
 #include "mie/platform.hpp"
+#include "temp_path.hpp"
 
 namespace {
 
@@ -229,65 +230,6 @@ std::vector<uint16_t>& operator+=(std::vector<uint16_t>& a, const std::vector<ui
 // On-disk fixtures
 // ---------------------------------------------------------------------------
 
-std::string temp_root() {
-    const char* candidates[] = {"TMPDIR", "TEMP", "TMP"};
-    for (std::size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
-        const char* value = std::getenv(candidates[i]);
-        if (value != 0 && value[0] != '\0') {
-            return std::string(value);
-        }
-    }
-#if defined(_WIN32)
-    return std::string("C:\\Windows\\Temp");
-#else
-    return std::string("/tmp");
-#endif
-}
-
-/// A file that removes itself.
-///
-/// The reader maps its input, so these fixtures have to exist on disk -- there
-/// is no in-memory entry point, and adding one purely for the tests would mean
-/// testing a path the CLI never takes.
-class TempFile {
-  public:
-    TempFile(const std::string& name, const std::vector<uint8_t>& bytes) {
-        static int counter = 0;
-        char suffix[32];
-        const int written = std::snprintf(suffix, sizeof(suffix), "-%d-%d",
-                                          static_cast<int>(mie::platform::process_id()), counter++);
-        REQUIRE(written > 0);
-        REQUIRE(static_cast<std::size_t>(written) < sizeof(suffix));
-        // The counter goes BEFORE the name so a caller controlling the file
-        // name (the MUX tests do) still gets a unique path without having its
-        // dot-separated field layout disturbed.
-        path_ = mie::platform::path_join(temp_root(), std::string("mie-rd") + suffix + "." + name);
-
-        std::FILE* handle = std::fopen(path_.c_str(), "wb");
-        REQUIRE(handle != 0);
-        if (!bytes.empty()) {
-            REQUIRE(std::fwrite(&bytes[0], 1, bytes.size(), handle) == bytes.size());
-        }
-        // Asserted, not ignored: a buffered write reports failure at close, and
-        // a fixture that never reached the disk would fail the test it feeds
-        // for entirely the wrong reason.
-        REQUIRE(std::fclose(handle) == 0);
-    }
-
-    // Discarded explicitly: teardown cannot act on a failure to unlink, and a
-    // leftover file in the temp directory is not worth failing a passing test
-    // over.
-    ~TempFile() { (void)std::remove(path_.c_str()); }
-
-    const std::string& path() const { return path_; }
-
-  private:
-    TempFile(const TempFile&);
-    TempFile& operator=(const TempFile&);
-
-    std::string path_;
-};
-
 /// Everything one walk produced: the messages, and how it ended.
 struct Walk {
     std::vector<mie::MieMessage> messages;
@@ -334,8 +276,8 @@ Walk walk_file(const std::string& path, const mie::ReaderOptions& options) {
 
 Walk walk_words(const std::vector<uint16_t>& words, const mie::ReaderOptions& options,
                 const std::string& name = "a.b.c.d.MUX0.mie") {
-    const TempFile fixture(name, le_bytes(words));
-    return walk_file(fixture.path(), options);
+    const mie_test::TempFile fixture(name, le_bytes(words));
+    return walk_file(fixture.str(), options);
 }
 
 Walk walk_words(const std::vector<uint16_t>& words) {
@@ -375,15 +317,15 @@ mie::MieErrorKind open_error_kind(const std::string& path, const mie::ReaderOpti
 // ---------------------------------------------------------------------------
 
 TEST_CASE("a missing path is FileNotFound", "[reader][L2-RDR-005]") {
-    const std::string missing = mie::platform::path_join(temp_root(), "mie-does-not-exist.mie");
+    const std::string missing = mie_test::TempPath("does-not-exist.mie").str();
     mie::MieFileReader reader;
     REQUIRE_THROWS_AS(reader.open(missing, mie::ReaderOptions()), mie::MieError);
     CHECK(open_error_kind(missing, mie::ReaderOptions()) == mie::KIND_FILE_NOT_FOUND);
 }
 
 TEST_CASE("a zero-byte file is FileEmpty, not a decode failure", "[reader][L2-RDR-006]") {
-    const TempFile fixture("empty.mie", std::vector<uint8_t>());
-    CHECK(open_error_kind(fixture.path(), mie::ReaderOptions()) == mie::KIND_FILE_EMPTY);
+    const mie_test::TempFile fixture("empty.mie", std::vector<uint8_t>());
+    CHECK(open_error_kind(fixture.str(), mie::ReaderOptions()) == mie::KIND_FILE_EMPTY);
 }
 
 TEST_CASE("a directory reports I/O, not FileEmpty", "[reader][L2-RDR-006]") {
@@ -391,18 +333,18 @@ TEST_CASE("a directory reports I/O, not FileEmpty", "[reader][L2-RDR-006]") {
     // call, so a size-first check would call it an empty RECORDING and send the
     // operator looking for a capture problem instead of a typo. On POSIX the
     // mapping fails for its own reasons and lands in the same place.
-    const mie::MieErrorKind kind = open_error_kind(temp_root(), mie::ReaderOptions());
+    const mie::MieErrorKind kind = open_error_kind(mie_test::temp_root(), mie::ReaderOptions());
     CHECK(kind == mie::KIND_FILE_IO);
     CHECK(kind != mie::KIND_FILE_EMPTY);
 }
 
 TEST_CASE("an opened reader reports its path and size", "[reader]") {
     const std::vector<uint16_t> words = bc_to_rt(3, 5, 2);
-    const TempFile fixture("sized.mie", le_bytes(words));
+    const mie_test::TempFile fixture("sized.mie", le_bytes(words));
 
     mie::MieFileReader reader;
-    reader.open(fixture.path(), mie::ReaderOptions());
-    CHECK(reader.path() == fixture.path());
+    reader.open(fixture.str(), mie::ReaderOptions());
+    CHECK(reader.path() == fixture.str());
     CHECK(reader.file_size() == words.size() * 2);
     CHECK(reader.sync_losses() == 0);
     CHECK_FALSE(reader.empty_recording());
@@ -469,9 +411,9 @@ TEST_CASE("a file with no MIE records at all is rejected", "[reader][L1-EXIT-002
         bytes.push_back(static_cast<uint8_t>(0x99));
         bytes.push_back(static_cast<uint8_t>(0x77));
     }
-    const TempFile fixture("wrong.jpg", bytes);
+    const mie_test::TempFile fixture("wrong.jpg", bytes);
 
-    const Walk walk = walk_file(fixture.path(), mie::ReaderOptions());
+    const Walk walk = walk_file(fixture.str(), mie::ReaderOptions());
     CHECK(walk.threw);
     CHECK(walk.kind == mie::KIND_NO_VALID_RECORDS);
     CHECK_FALSE(walk.empty_recording);
@@ -487,9 +429,9 @@ TEST_CASE("the construction-time rejection closes the walk after one throw",
         bytes.push_back(static_cast<uint8_t>(0x99));
         bytes.push_back(static_cast<uint8_t>(0x77));
     }
-    const TempFile fixture("wrong.bin", bytes);
+    const mie_test::TempFile fixture("wrong.bin", bytes);
 
-    const Walk walk = walk_file(fixture.path(), mie::ReaderOptions());
+    const Walk walk = walk_file(fixture.str(), mie::ReaderOptions());
     REQUIRE(walk.threw);
     CHECK(walk.closed_after_throw);
 }
@@ -525,10 +467,10 @@ TEST_CASE("a single-byte fill pattern is rejected as a homogeneous payload",
     // SPURIOUS_DATA Type Word, and look-ahead alone admits the whole stream
     // happily, because every "record" is as valid as the one before it.
     const std::vector<uint8_t> bytes(1024, 0x20);
-    const TempFile fixture("pad.mie", bytes);
+    const mie_test::TempFile fixture("pad.mie", bytes);
 
     const LogCapture capture(mie::log::LEVEL_ERROR);
-    const Walk walk = walk_file(fixture.path(), mie::ReaderOptions());
+    const Walk walk = walk_file(fixture.str(), mie::ReaderOptions());
     CHECK(walk.threw);
     CHECK(walk.kind == mie::KIND_HOMOGENEOUS_PAYLOAD);
     CHECK(capture.contains("homogeneous-payload"));
@@ -1413,9 +1355,9 @@ TEST_CASE("sync losses are reported per walk and reset between walks", "[reader]
     words += bc_to_rt(3, 5, 2, 200);
     words += bc_to_rt(3, 5, 2, 300);
 
-    const TempFile fixture("twice.mie", le_bytes(words));
+    const mie_test::TempFile fixture("twice.mie", le_bytes(words));
     mie::MieFileReader reader;
-    reader.open(fixture.path(), mie::ReaderOptions());
+    reader.open(fixture.str(), mie::ReaderOptions());
 
     mie::MieMessage message;
     std::size_t first_count = 0;
@@ -1455,11 +1397,11 @@ TEST_CASE("MUX is taken from the configured field of the file name", "[reader][L
     const Walk walk = walk_words(words, mie::ReaderOptions(), "one.two.three.four.BUS7.mie");
     REQUIRE(walk.messages.size() == 2);
     REQUIRE(walk.messages[0].mux);
-    // Field 4 of the DOT-separated name. The fixture prefixes a unique token as
-    // field 0, so "one" is field 1 and the default field index of 4 selects
-    // "four" -- which is the point: the index is counted over the whole name,
-    // not over some notion of the "interesting" part of it.
-    CHECK(*walk.messages[0].mux == "four");
+    // Field 4 of the DOT-separated name. The fixture helper prefixes "mie-", so
+    // "one" and field 0 merge into "mie-one" and the default index of 4 lands on
+    // "BUS7" -- which is the point: the index is counted over the whole file
+    // name, not over some notion of the "interesting" part of it.
+    CHECK(*walk.messages[0].mux == "BUS7");
     // One string per file, shared by pointer onto every record: carrying MUX
     // stays O(1) in resident memory however many records the file holds.
     CHECK(walk.messages[0].mux.get() == walk.messages[1].mux.get());
@@ -1480,12 +1422,16 @@ TEST_CASE("a negative MUX field counts from the end of the name", "[reader][L2-W
     std::vector<uint16_t> words = bc_to_rt(3, 5, 2);
     words += bc_to_rt(3, 5, 2, 100);
 
+    // -2, not -1: the fixture helper appends a pid-and-counter token, so the
+    // LAST dotted field is unique per run and nothing deterministic can be
+    // asserted about it. -2 still proves the thing that matters -- that a
+    // negative index counts from the end rather than the start.
     mie::ReaderOptions options;
-    options.mux_field = -1;
+    options.mux_field = -2;
     const Walk walk = walk_words(words, options, "one.two.mie");
     REQUIRE(walk.messages.size() == 2);
     REQUIRE(walk.messages[0].mux);
-    CHECK(*walk.messages[0].mux == "mie");
+    CHECK(*walk.messages[0].mux == "two");
 }
 
 TEST_CASE("an out-of-range MUX field leaves the column empty", "[reader][L2-WRT-020]") {
@@ -1588,9 +1534,9 @@ TEST_CASE("a walk reports its own message count and resolved format", "[reader][
         words += bc_to_rt(3, 5, 2, i * 100);
     }
 
-    const TempFile fixture("counts.mie", le_bytes(words));
+    const mie_test::TempFile fixture("counts.mie", le_bytes(words));
     mie::MieFileReader reader;
-    reader.open(fixture.path(), mie::ReaderOptions());
+    reader.open(fixture.str(), mie::ReaderOptions());
 
     mie::RecordIter it = reader.iter();
     CHECK(it.resolved_format() == mie::TIMESTAMP_IRIG);
@@ -1606,9 +1552,9 @@ TEST_CASE("next() keeps answering false after the stream ends", "[reader][L3-CPP
     std::vector<uint16_t> words = bc_to_rt(3, 5, 2, 0);
     words += bc_to_rt(3, 5, 2, 100);
 
-    const TempFile fixture("exhausted.mie", le_bytes(words));
+    const mie_test::TempFile fixture("exhausted.mie", le_bytes(words));
     mie::MieFileReader reader;
-    reader.open(fixture.path(), mie::ReaderOptions());
+    reader.open(fixture.str(), mie::ReaderOptions());
 
     mie::RecordIter it = reader.iter();
     mie::MieMessage message;

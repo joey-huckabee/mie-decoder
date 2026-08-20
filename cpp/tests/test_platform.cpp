@@ -10,6 +10,7 @@
 // both directions.
 
 #include "mie/platform.hpp"
+#include "temp_path.hpp"
 
 #include <catch2/catch.hpp>
 
@@ -23,37 +24,6 @@
 namespace {
 
 namespace plat = mie::platform;
-
-/// A directory the OS will let us write to, without using the layer under test.
-std::string temp_root() {
-    const char* candidates[] = {"TMPDIR", "TEMP", "TMP"};
-    for (std::size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
-        const char* value = std::getenv(candidates[i]);
-        if (value != 0 && value[0] != '\0') {
-            return std::string(value);
-        }
-    }
-#if defined(_WIN32)
-    return std::string("C:\\Windows\\Temp");
-#else
-    return std::string("/tmp");
-#endif
-}
-
-/// A unique path under the temp directory. Counter-based rather than random so
-/// a failing run names a file you can actually go and look at.
-std::string temp_path(const std::string& leaf) {
-    static int counter = 0;
-    char suffix[32];
-    // snprintf, not sprintf, and the result is checked. A test helper that can
-    // silently truncate produces two fixtures with the same path, and the
-    // resulting failure looks like a bug in the code under test.
-    const int written = std::snprintf(suffix, sizeof(suffix), "-%d-%d",
-                                      static_cast<int>(plat::process_id()), counter++);
-    REQUIRE(written > 0);
-    REQUIRE(static_cast<std::size_t>(written) < sizeof(suffix));
-    return plat::path_join(temp_root(), std::string("mie-cpp-test-") + leaf + suffix);
-}
 
 void write_raw(const std::string& path, const std::string& contents) {
     std::FILE* f = std::fopen(path.c_str(), "wb");
@@ -127,11 +97,6 @@ bool raw_exists(const std::string& path) {
     (void)std::fclose(f);
     return true;
 }
-
-/// Removes a path if present, ignoring failure. Used in teardown, where a
-/// missing file is the expected case as often as not -- several tests assert
-/// that a file was NOT created and then clean up unconditionally.
-void discard(const std::string& path) { (void)std::remove(path.c_str()); }
 
 }  // namespace
 
@@ -219,13 +184,13 @@ TEST_CASE("make_temp_name handles a destination with no directory",
 // ---------------------------------------------------------------------------
 
 TEST_CASE("MappedFile exposes the file as a flat byte range", "[platform][mmap][L3-CPP-004]") {
-    const std::string path = temp_path("map");
+    const mie_test::TempPath path("map");
     const std::string contents("\x02\x24\x00\x00MIE", 7);
-    write_raw(path, contents);
+    write_raw(path.str(), contents);
 
     plat::MappedFile mapped;
     plat::OsError err;
-    REQUIRE(mapped.open(path, err));
+    REQUIRE(mapped.open(path.str(), err));
     CHECK(err.ok());
     REQUIRE(mapped.is_open());
     REQUIRE(mapped.size() == contents.size());
@@ -233,13 +198,12 @@ TEST_CASE("MappedFile exposes the file as a flat byte range", "[platform][mmap][
 
     mapped.close();
     CHECK_FALSE(mapped.is_open());
-    discard(path);
 }
 
 TEST_CASE("MappedFile reports a missing path as an error", "[platform][mmap][L3-CPP-004]") {
     plat::MappedFile mapped;
     plat::OsError err;
-    CHECK_FALSE(mapped.open(temp_path("absent"), err));
+    CHECK_FALSE(mapped.open(mie_test::TempPath("absent").str(), err));
     CHECK_FALSE(err.ok());
     CHECK_FALSE(err.message.empty());
 }
@@ -250,14 +214,13 @@ TEST_CASE("MappedFile rejects an empty file rather than mapping zero bytes",
     // mmap of a zero-length range fails with EINVAL and CreateFileMapping
     // refuses outright, so without it the operator sees a confusing I/O error
     // instead of "the file is empty".
-    const std::string path = temp_path("empty");
-    write_raw(path, std::string());
+    const mie_test::TempPath path("empty");
+    write_raw(path.str(), std::string());
 
     plat::MappedFile mapped;
     plat::OsError err;
-    CHECK_FALSE(mapped.open(path, err));
+    CHECK_FALSE(mapped.open(path.str(), err));
     CHECK_FALSE(err.ok());
-    discard(path);
 }
 
 TEST_CASE("MappedFile rejects a directory", "[platform][mmap][L3-CPP-004]") {
@@ -266,17 +229,17 @@ TEST_CASE("MappedFile rejects a directory", "[platform][mmap][L3-CPP-004]") {
     // "empty" -- the distinction docs/ERROR-CATALOG.md pins for MieFileIoError.
     plat::MappedFile mapped;
     plat::OsError err;
-    CHECK_FALSE(mapped.open(temp_root(), err));
+    CHECK_FALSE(mapped.open(mie_test::temp_root(), err));
     CHECK_FALSE(err.ok());
 }
 
 TEST_CASE("a moved-from MappedFile releases its mapping", "[platform][mmap][L3-CPP-004]") {
-    const std::string path = temp_path("move");
-    write_raw(path, std::string("payload"));
+    const mie_test::TempPath path("move");
+    write_raw(path.str(), std::string("payload"));
 
     plat::MappedFile source;
     plat::OsError err;
-    REQUIRE(source.open(path, err));
+    REQUIRE(source.open(path.str(), err));
     const uint8_t* original = source.data();
 
     const plat::MappedFile moved(static_cast<plat::MappedFile&&>(source));
@@ -289,8 +252,6 @@ TEST_CASE("a moved-from MappedFile releases its mapping", "[platform][mmap][L3-C
     // catches only if something first makes the moved-from state observable.
     // NOLINTNEXTLINE(clang-analyzer-cplusplus.Move)
     CHECK_FALSE(source.is_open());
-
-    discard(path);
 }
 
 // ---------------------------------------------------------------------------
@@ -298,23 +259,22 @@ TEST_CASE("a moved-from MappedFile releases its mapping", "[platform][mmap][L3-C
 // ---------------------------------------------------------------------------
 
 TEST_CASE("AtomicFile commits through a temp file", "[platform][atomic][L2-WRT-015][L3-CPP-006]") {
-    const std::string destination = temp_path("commit.csv");
+    const mie_test::TempPath destination("commit.csv");
 
     plat::AtomicFile file;
     plat::OsError err;
-    REQUIRE(file.create(destination, err));
+    REQUIRE(file.create(destination.str(), err));
 
     const std::string temp = file.temp_path();
     CHECK(raw_exists(temp));
-    CHECK_FALSE(raw_exists(destination));
+    CHECK_FALSE(raw_exists(destination.str()));
 
     const std::string row("TIME_STAMP,RT,MSG\n");
     REQUIRE(file.write(row.data(), row.size(), err));
     REQUIRE(file.commit(err));
 
-    CHECK(read_raw(destination) == row);
+    CHECK(read_raw(destination.str()) == row);
     CHECK_FALSE(raw_exists(temp));
-    discard(destination);
 }
 
 TEST_CASE("AtomicFile replaces an existing destination",
@@ -324,59 +284,57 @@ TEST_CASE("AtomicFile replaces an existing destination",
     // destination exists. Rust's std::fs::rename uses MoveFileEx internally, so
     // a port written with plain rename() passes on Linux and is broken on the
     // shipped Windows binary. This test is what catches that.
-    const std::string destination = temp_path("replace.csv");
-    write_raw(destination, std::string("STALE"));
+    const mie_test::TempPath destination("replace.csv");
+    write_raw(destination.str(), std::string("STALE"));
 
     plat::AtomicFile file;
     plat::OsError err;
-    REQUIRE(file.create(destination, err));
+    REQUIRE(file.create(destination.str(), err));
     const std::string fresh("FRESH");
     REQUIRE(file.write(fresh.data(), fresh.size(), err));
     REQUIRE(file.commit(err));
 
-    CHECK(read_raw(destination) == fresh);
-    discard(destination);
+    CHECK(read_raw(destination.str()) == fresh);
 }
 
 TEST_CASE("AtomicFile leaves the destination untouched when aborted",
           "[platform][atomic][L2-WRT-015][L3-CPP-006]") {
-    const std::string destination = temp_path("abort.csv");
-    write_raw(destination, std::string("ORIGINAL"));
+    const mie_test::TempPath destination("abort.csv");
+    write_raw(destination.str(), std::string("ORIGINAL"));
 
     std::string temp;
     {
         plat::AtomicFile file;
         plat::OsError err;
-        REQUIRE(file.create(destination, err));
+        REQUIRE(file.create(destination.str(), err));
         temp = file.temp_path();
         const std::string partial("half a row");
         REQUIRE(file.write(partial.data(), partial.size(), err));
         // No commit: the destructor must clean up. This is the sync-loss path
-        // without --allow-partial, where the destination must not be modified.
+        // without --allow-partial, where the destination.str() must not be modified.
     }
 
-    CHECK(read_raw(destination) == "ORIGINAL");
+    CHECK(read_raw(destination.str()) == "ORIGINAL");
     CHECK_FALSE(raw_exists(temp));
-    discard(destination);
 }
 
 TEST_CASE("commit_with_suffix writes the .partial file and spares the destination",
           "[platform][atomic][L3-WRT-002][L3-CPP-006]") {
-    const std::string destination = temp_path("partial.csv");
-    write_raw(destination, std::string("PREVIOUS"));
+    // Not const: registering the .partial sibling for removal MUTATES the
+    // guard. Saying so beats a `mutable` member that quietly pretends
+    // otherwise -- the object really is being changed.
+    mie_test::TempPath destination("partial.csv");
+    write_raw(destination.str(), std::string("PREVIOUS"));
 
     plat::AtomicFile file;
     plat::OsError err;
-    REQUIRE(file.create(destination, err));
+    REQUIRE(file.create(destination.str(), err));
     const std::string rows("partial rows\n");
     REQUIRE(file.write(rows.data(), rows.size(), err));
     REQUIRE(file.commit_with_suffix(".partial", err));
 
-    CHECK(read_raw(destination + ".partial") == rows);
-    CHECK(read_raw(destination) == "PREVIOUS");
-
-    discard(destination);
-    discard(destination + ".partial");
+    CHECK(read_raw(destination.sibling(".partial")) == rows);
+    CHECK(read_raw(destination.str()) == "PREVIOUS");
 }
 
 TEST_CASE("AtomicFile writes bytes verbatim, with no newline translation",
@@ -384,20 +342,19 @@ TEST_CASE("AtomicFile writes bytes verbatim, with no newline translation",
     // On Windows the CRT rewrites a newline into CRLF unless the handle is
     // opened in binary mode, which would break every byte-exact CSV oracle on
     // that platform alone while Linux stayed green.
-    const std::string destination = temp_path("newline.csv");
+    const mie_test::TempPath destination("newline.csv");
 
     plat::AtomicFile file;
     plat::OsError err;
-    REQUIRE(file.create(destination, err));
+    REQUIRE(file.create(destination.str(), err));
     const std::string payload("a\nb\n");
     REQUIRE(file.write(payload.data(), payload.size(), err));
     REQUIRE(file.commit(err));
 
-    const std::string round_tripped = read_raw(destination);
+    const std::string round_tripped = read_raw(destination.str());
     CHECK(round_tripped.size() == 4);
     CHECK(round_tripped == payload);
     CHECK(round_tripped.find('\r') == std::string::npos);
-    discard(destination);
 }
 
 TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary",
@@ -405,11 +362,11 @@ TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary",
     // Three shapes that each take a different branch: comfortably inside the
     // buffer, exactly at it, and a single write larger than it (which bypasses
     // buffering entirely).
-    const std::string destination = temp_path("buffered.csv");
+    const mie_test::TempPath destination("buffered.csv");
 
     plat::AtomicFile file;
     plat::OsError err;
-    REQUIRE(file.create(destination, err));
+    REQUIRE(file.create(destination.str(), err));
 
     std::string expected;
     const std::string small(100, 'a');
@@ -424,9 +381,8 @@ TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary",
     expected += oversized;
     REQUIRE(file.commit(err));
 
-    CHECK(read_raw(destination).size() == expected.size());
-    CHECK(read_raw(destination) == expected);
-    discard(destination);
+    CHECK(read_raw(destination.str()).size() == expected.size());
+    CHECK(read_raw(destination.str()) == expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -435,12 +391,12 @@ TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary",
 
 TEST_CASE("list_directory returns entry names without the dot entries",
           "[platform][glob][L3-CPP-004]") {
-    const std::string marker = temp_path("listed.mie");
-    write_raw(marker, std::string("x"));
+    const mie_test::TempPath marker("listed.mie");
+    write_raw(marker.str(), std::string("x"));
 
     std::vector<std::string> names;
     plat::OsError err;
-    REQUIRE(plat::list_directory(temp_root(), names, err));
+    REQUIRE(plat::list_directory(mie_test::temp_root(), names, err));
 
     // Findings are accumulated and asserted once, rather than asserted inside
     // the loop. The shared temp directory holds an unpredictable number of
@@ -458,21 +414,20 @@ TEST_CASE("list_directory returns entry names without the dot entries",
         if (plat::path_filename(names[i]) != names[i]) {
             every_entry_is_a_bare_name = false;
         }
-        if (names[i] == plat::path_filename(marker)) {
+        if (names[i] == plat::path_filename(marker.str())) {
             found_marker = true;
         }
     }
     CHECK_FALSE(saw_dot_entry);
     CHECK(every_entry_is_a_bare_name);
     CHECK(found_marker);
-    discard(marker);
 }
 
 TEST_CASE("list_directory reports a missing directory as an error",
           "[platform][glob][L3-CPP-004]") {
     std::vector<std::string> names;
     plat::OsError err;
-    CHECK_FALSE(plat::list_directory(temp_path("no-such-dir"), names, err));
+    CHECK_FALSE(plat::list_directory(mie_test::TempPath("no-such-dir").str(), names, err));
     CHECK_FALSE(err.ok());
 }
 
@@ -482,47 +437,40 @@ TEST_CASE("list_directory reports a missing directory as an error",
 
 TEST_CASE("paths_same_file detects an output aimed at its own input",
           "[platform][identity][L2-WRT-014][L3-CPP-008]") {
-    const std::string path = temp_path("collide.mie");
-    write_raw(path, std::string("data"));
+    const mie_test::TempPath path("collide.mie");
+    write_raw(path.str(), std::string("data"));
 
     bool same = false;
     plat::OsError err;
-    REQUIRE(plat::paths_same_file(path, path, same, err));
+    REQUIRE(plat::paths_same_file(path.str(), path.str(), same, err));
     CHECK(same);
-
-    discard(path);
 }
 
 TEST_CASE("paths_same_file says no for two distinct files",
           "[platform][identity][L2-WRT-014][L3-CPP-008]") {
-    const std::string input = temp_path("in.mie");
-    const std::string output = temp_path("out.csv");
-    write_raw(input, std::string("data"));
-    write_raw(output, std::string("other"));
+    const mie_test::TempPath input("in.mie");
+    const mie_test::TempPath output("out.csv");
+    write_raw(input.str(), std::string("data"));
+    write_raw(output.str(), std::string("other"));
 
     bool same = true;
     plat::OsError err;
-    REQUIRE(plat::paths_same_file(input, output, same, err));
+    REQUIRE(plat::paths_same_file(input.str(), output.str(), same, err));
     CHECK_FALSE(same);
-
-    discard(input);
-    discard(output);
 }
 
 TEST_CASE("paths_same_file tolerates an output that does not exist yet",
           "[platform][identity][L2-WRT-014][L3-CPP-008]") {
     // The normal case: the destination is about to be created. That must not be
     // an error, and it must not be reported as a collision.
-    const std::string input = temp_path("in2.mie");
-    const std::string output = temp_path("not-created-yet.csv");
-    write_raw(input, std::string("data"));
+    const mie_test::TempPath input("in2.mie");
+    const mie_test::TempPath output("not-created-yet.csv");
+    write_raw(input.str(), std::string("data"));
 
     bool same = true;
     plat::OsError err;
-    REQUIRE(plat::paths_same_file(input, output, same, err));
+    REQUIRE(plat::paths_same_file(input.str(), output.str(), same, err));
     CHECK_FALSE(same);
-
-    discard(input);
 }
 
 TEST_CASE("paths_same_file fails when the input cannot be resolved",
@@ -531,21 +479,20 @@ TEST_CASE("paths_same_file fails when the input cannot be resolved",
     // be opened -- where failing to resolve the output is routine.
     bool same = false;
     plat::OsError err;
-    CHECK_FALSE(plat::paths_same_file(temp_path("absent.mie"), temp_path("out.csv"), same, err));
+    CHECK_FALSE(plat::paths_same_file(mie_test::TempPath("absent.mie").str(),
+                                      mie_test::TempPath("out.csv").str(), same, err));
     CHECK_FALSE(err.ok());
 }
 
 TEST_CASE("canonical_path resolves an existing file", "[platform][identity][L3-CPP-008]") {
-    const std::string path = temp_path("canon.mie");
-    write_raw(path, std::string("data"));
+    const mie_test::TempPath path("canon.mie");
+    write_raw(path.str(), std::string("data"));
 
     std::string canonical;
     plat::OsError err;
-    REQUIRE(plat::canonical_path(path, canonical, err));
+    REQUIRE(plat::canonical_path(path.str(), canonical, err));
     CHECK_FALSE(canonical.empty());
-    CHECK(plat::path_filename(canonical) == plat::path_filename(path));
-
-    discard(path);
+    CHECK(plat::path_filename(canonical) == plat::path_filename(path.str()));
 }
 
 // ---------------------------------------------------------------------------
@@ -554,40 +501,37 @@ TEST_CASE("canonical_path resolves an existing file", "[platform][identity][L3-C
 
 TEST_CASE("file_metadata reports size and regular-file status",
           "[platform][metadata][L3-CPP-004]") {
-    const std::string path = temp_path("meta.mie");
-    write_raw(path, std::string("1234567890"));
+    const mie_test::TempPath path("meta.mie");
+    write_raw(path.str(), std::string("1234567890"));
 
     uint64_t size = 0;
     bool is_regular = false;
     plat::OsError err;
-    REQUIRE(plat::file_metadata(path, size, is_regular, err));
+    REQUIRE(plat::file_metadata(path.str(), size, is_regular, err));
     CHECK(size == 10);
     CHECK(is_regular);
 
     SECTION("a directory is not a regular file") {
-        REQUIRE(plat::file_metadata(temp_root(), size, is_regular, err));
+        REQUIRE(plat::file_metadata(mie_test::temp_root(), size, is_regular, err));
         CHECK_FALSE(is_regular);
     }
-
-    discard(path);
 }
 
 TEST_CASE("path_exists answers without reporting an error", "[platform][metadata][L3-CPP-004]") {
-    const std::string path = temp_path("exists.mie");
-    CHECK_FALSE(plat::path_exists(path));
-    write_raw(path, std::string("x"));
-    CHECK(plat::path_exists(path));
-    discard(path);
+    const mie_test::TempPath path("exists.mie");
+    CHECK_FALSE(plat::path_exists(path.str()));
+    write_raw(path.str(), std::string("x"));
+    CHECK(plat::path_exists(path.str()));
 }
 
 TEST_CASE("remove_file deletes and then reports the absence", "[platform][metadata][L3-CPP-004]") {
-    const std::string path = temp_path("remove.mie");
-    write_raw(path, std::string("x"));
+    const mie_test::TempPath path("remove.mie");
+    write_raw(path.str(), std::string("x"));
 
     plat::OsError err;
-    REQUIRE(plat::remove_file(path, err));
-    CHECK_FALSE(raw_exists(path));
-    CHECK_FALSE(plat::remove_file(path, err));
+    REQUIRE(plat::remove_file(path.str(), err));
+    CHECK_FALSE(raw_exists(path.str()));
+    CHECK_FALSE(plat::remove_file(path.str(), err));
     CHECK_FALSE(err.ok());
 }
 
