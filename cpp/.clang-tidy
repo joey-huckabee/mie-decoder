@@ -71,11 +71,17 @@ Checks: >
 #
 # VERSION DRIFT WARNING
 #   The list above enables whole families (bugprone-*, cert-*, misc-*,
-#   performance-*), and CI runs a pinned clang-tidy from the toolchain image.
-#   Bumping that image therefore adds checks silently. When a bump turns the
-#   gate red with no code change behind it, judge the new check on merit and
-#   either fix the code or add it here with a reason. Do not respond by
-#   weakening the gate.
+#   performance-*), so a newer clang-tidy adds checks silently. CI pins the
+#   major version in .github/workflows/cpp-ci.yml, and cpp/Makefile's
+#   LLVM_VERSION pins the same number for `make verify-ci`; the two must move
+#   together. When a bump turns the gate red with no code change behind it,
+#   judge the new check on merit and either fix the code or add it here with a
+#   reason. Do not respond by weakening the gate.
+#
+#   The 18 -> 20 bump is the worked example: it added clang-analyzer's
+#   unix.Stream checks, which found a real fread-past-EOF loop in the platform
+#   tests -- a `while (n > 0)` read loop calls fread once more with the stream
+#   already in EOF state. Fixed, not suppressed.
 
 WarningsAsErrors: ''
 # Project headers only. Vendored Catch2 arrives via -isystem precisely so it is
