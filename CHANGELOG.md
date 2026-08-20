@@ -112,6 +112,56 @@ full release workflow.
   day, hour, minute and second ranges are swept over their full encoded width
   rather than sampled — day 0 and 367..511 are encodable and must be rejected.
 
+- **The C++ reader and logger (`mie/reader.hpp`, `mie/log.hpp`).** The stage that
+  turns a file into records: memory-mapped input, header skip, one-time
+  timestamp-format resolution, the decode loop, internal sync recovery, and
+  DELTA tracking. Still no `decode` / `count` / `dump` subcommands — the writer
+  and CLI follow.
+
+  `sync` and `decode` are pure by rule, so the reader is the module that
+  **talks**: every operator-facing WARN about a freerun timestamp, a backwards
+  clock, a skipped record or a recovered sync loss is emitted here, because only
+  here is the caller's context available. The same call cannot know whether
+  "no first record" means a valid empty recording or the wrong file entirely;
+  the reader decides, and says so.
+
+  Behaviours worth naming, because each is a decision rather than an arithmetic
+  result:
+
+  - Mid-stream validation runs at look-ahead depth **1**, while first-record
+    detection and recovery keep the configured depth (L2-SYN-026). Using the
+    configured depth mid-stream discards the last good record before every
+    corrupt region — N-1 records per corruption site at depth N — because a
+    record was rejected on account of its *successor*.
+  - The `0x2000` / `0x2001` spurious classification depends on whether the
+    **previous** record errored, which is why it cannot live in `sync` or
+    `decode`. The flag is consumed by the record that uses it, so a second
+    consecutive SPURIOUS_DATA record continues nothing.
+  - DELTA is **absent**, not zero, wherever no honest gap exists: a backwards
+    clock (L2-RDR-017, warned once per RT/MSG key rather than once per record),
+    an uncalibrated Standard counter (L2-RDR-019), and SPURIOUS_DATA, which has
+    no key at all (L2-RDR-018).
+  - Errors are thrown and are **terminal**. The walk latches closed before the
+    throw, so a caller that catches and resumes gets a clean end of stream
+    rather than a second attempt at the record that just failed — matching the
+    Python generator, which dies when it raises.
+  - A directory is reported as an I/O failure, never as an empty recording. It
+    stats as zero bytes on Windows, and calling that an empty *capture* would
+    send an operator looking for a recorder problem instead of a typo.
+
+  The logger is ~120 lines with no dependency, mirroring `rust/src/log.rs`:
+  one global level and four macros. They are macros so the message argument is
+  not evaluated when the level filters it out — the per-record DEBUG lines in
+  the reader would otherwise allocate on every record at the default level, and
+  no assertion about visible output can detect that, so the suite asserts it
+  directly with a side effect. Messages are assembled from `mie/text.hpp`'s
+  formatters rather than an `ostringstream`, which formats through its imbued
+  locale and would put L3-CPP-007 back in play.
+
+  A `set_sink` hook exists for the tests. That is worth stating plainly: the
+  reader's log output is part of its contract, and the alternative was to assert
+  it by reading the process's own stderr.
+
 - **Exhaustive cross-implementation verification of the C++ decoders.**
   `rust/examples/decode_digest.rs` sweeps every one of the 65 536 possible Type
   Words and Command Words, and every bit position of every IRIG and Standard
