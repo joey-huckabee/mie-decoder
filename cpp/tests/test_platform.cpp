@@ -69,31 +69,54 @@ void write_raw(const std::string& path, const std::string& contents) {
 
 /// Read a file back as raw bytes. Binary mode matters: the whole point of
 /// several tests below is that no newline translation happened.
+///
+/// Every outcome the C library can produce is named, mirroring the discipline
+/// of AtomicFile::raw_write on the other side of this file. That is not
+/// pedantry. `fread` reports fewer bytes than asked for at end-of-file AND on
+/// an I/O error, and the two are not interchangeable: collapsing them lets a
+/// failed read return a TRUNCATED string, which the caller compares against the
+/// expected content and reports as "AtomicFile lost bytes". The test would then
+/// accuse the code under test of a bug it does not have, and the real fault --
+/// a read that failed -- would not appear anywhere in the output.
+///
+/// A one-shot fseek/ftell/rewind/read was the alternative. It is fewer lines
+/// and MORE error paths, each of which would need this same treatment, so the
+/// loop wins.
 std::string read_raw(const std::string& path) {
     std::FILE* f = std::fopen(path.c_str(), "rb");
-    if (f == 0) {
-        return std::string();
-    }
+    // Every caller reads a file it has just written. A missing one is a bug in
+    // the test, and saying so here beats returning an empty string that fails a
+    // content comparison three lines later with a misleading message.
+    REQUIRE(f != 0);
+
     std::string out;
     char buffer[4096];
-    // Stop on the first SHORT read rather than on a zero one. A read that hits
-    // the end of the file returns a positive count AND sets the EOF flag, so a
-    // `while (n > 0)` loop calls fread once more with the stream already in EOF
-    // state -- undefined-ish behaviour that clang-analyzer's unix.Stream check
-    // reports, and it is right to. Stopping short also stops on a read error,
-    // after which the stream position is indeterminate and there is nothing
-    // trustworthy left to read.
     for (;;) {
         const std::size_t n = std::fread(buffer, 1, sizeof(buffer), f);
         out.append(buffer, n);
-        if (n < sizeof(buffer)) {
-            break;
+        if (n == sizeof(buffer)) {
+            // A full buffer says nothing about what follows -- fread had no
+            // reason to look past what was asked for, so the EOF flag is not
+            // set and reading again is well-defined. This is also why the loop
+            // stops on a SHORT read rather than a zero one: at end-of-file
+            // fread returns a positive count and sets EOF in the same call, so
+            // `while (n > 0)` would go round once more with the stream already
+            // in EOF state. clang-analyzer's unix.Stream check reports that,
+            // and it is right to.
+            continue;
         }
+
+        // Short read: end-of-file or error, and which one decides everything.
+        // Both flags are read before closing, and the close happens before the
+        // assertions, because REQUIRE throws -- asserting first would leak the
+        // handle on exactly the path that matters.
+        const bool failed = std::ferror(f) != 0;
+        const bool at_eof = std::feof(f) != 0;
+        (void)std::fclose(f);
+        REQUIRE_FALSE(failed);
+        REQUIRE(at_eof);
+        return out;
     }
-    // Read-only: a close failure here cannot have lost data, so it is discarded
-    // explicitly rather than asserted.
-    (void)std::fclose(f);
-    return out;
 }
 
 bool raw_exists(const std::string& path) {
