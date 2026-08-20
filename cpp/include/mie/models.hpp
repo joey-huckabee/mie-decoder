@@ -39,6 +39,11 @@ const char* bus_name(Bus bus);
 /// same trick (L2-WRT-021); do not renumber.
 enum Direction { DIRECTION_RECEIVE = 0, DIRECTION_TRANSMIT = 1 };
 
+/// "Receive" / "Transmit", as the Rust implementation's Debug output spells
+/// them. Diagnostic text only -- the CSV uses the single letters R and T, which
+/// `MieMessage::msg_label` produces.
+const char* direction_name(Direction direction);
+
 /// DDC MIE Type Word message type code (bits 0-6).
 enum MessageType {
     MESSAGE_TYPE_MODE_COMMAND = 0x01,
@@ -79,8 +84,17 @@ enum MessageFormat {
     FORMAT_SPURIOUS_DATA = 11
 };
 
+/// CamelCase name, matching the Rust variant spelling ("RtToRt",
+/// "ModeCodeBcastNoData"). Diagnostic text; empty for an unrecognised value.
+const char* message_format_name(MessageFormat format);
+
 /// Timestamp encoding used in the MIE binary file.
 enum TimestampFormat { TIMESTAMP_AUTO = 0, TIMESTAMP_IRIG = 1, TIMESTAMP_STANDARD = 2 };
+
+/// "Auto" / "Irig" / "Standard", matching the Rust Debug spelling. Note the
+/// asymmetry with `timestamp_format_from_name`, which accepts the lowercase CLI
+/// spellings: this one is for log lines, that one is for input.
+const char* timestamp_format_name(TimestampFormat fmt);
 
 /// Parse `auto` / `irig` / `standard` case-insensitively.
 ///

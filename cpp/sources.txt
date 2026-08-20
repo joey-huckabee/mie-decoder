@@ -23,7 +23,9 @@
 
 src/platform_common.cpp
 src/text.cpp
+src/log.cpp
 src/models.cpp
 src/error.cpp
 src/decode.cpp
 src/sync.cpp
+src/reader.cpp

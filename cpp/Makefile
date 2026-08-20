@@ -215,7 +215,7 @@ TIDY_SRC := $(LIB_SRC) src/main.cpp $(TEST_SRC)
 # the Windows tier either (which runs no clang-format), so it drifts silently
 # until someone opens it.
 FORMAT_SRC := $(sort $(TIDY_SRC) src/platform_posix.cpp src/platform_win32.cpp) \
-              $(wildcard include/mie/*.hpp)
+              $(wildcard include/mie/*.hpp) $(wildcard tests/*.hpp)
 
 # --warnings-as-errors='*' lives HERE, not in .clang-tidy's WarningsAsErrors.
 #
