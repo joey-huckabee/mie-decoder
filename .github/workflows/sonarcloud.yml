@@ -199,6 +199,10 @@ jobs:
           # green and only turned the main branch red afterwards. The gate is
           # now enforced before merge, where it can still be acted on.
           SONAR_QG_WAIT: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) }}
+          # Used below to decide whether this run must label itself as a
+          # non-default branch. Read from the repository rather than hard-coded
+          # so renaming the default branch does not silently break the guard.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           args=(
             "-Dsonar.projectKey=${SONAR_PROJECT_KEY}"
@@ -280,6 +284,30 @@ jobs:
             "-Dsonar.issue.ignore.multicriteria.readerAgenticPathInjection.ruleKey=pythonsecurity:S8707"
             "-Dsonar.issue.ignore.multicriteria.readerAgenticPathInjection.resourceKey=python/src/mie_decoder/reader.py"
           )
+
+          # A manual or scheduled run on a NON-default ref must be labelled as
+          # its own branch, or SonarCloud files it under the main branch and the
+          # dashboard then reports an unmerged commit as main.
+          #
+          # That is not hypothetical: dispatching this workflow on
+          # fix/sonar-reader-path-findings recorded revision 7478721 under
+          # `branch=main`, so main showed the analysis of code that was not on
+          # main until the merge landed. Harmless once the next push to main
+          # re-analyses, but misleading in the window between, and exactly the
+          # kind of thing someone checks the dashboard to rule out.
+          #
+          # Deliberately NOT set for pull_request events: those use the
+          # sonar.pullrequest.* parameters the SonarSource action supplies, and
+          # passing a branch name alongside them is a configuration error.
+          #
+          # If branch analysis is unavailable on this plan the scanner now fails
+          # with a clear message instead of silently overwriting main -- which is
+          # the better failure of the two.
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ] \
+             && [ "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]; then
+            echo "${GITHUB_EVENT_NAME} on non-default ref ${GITHUB_REF_NAME} - labelling as its own branch"
+            args+=("-Dsonar.branch.name=${GITHUB_REF_NAME}")
+          fi
 
           if [ "$SONAR_QG_WAIT" = "true" ]; then
             echo "${GITHUB_EVENT_NAME} on ${GITHUB_REF_NAME} - waiting for Quality Gate..."

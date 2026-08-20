@@ -144,6 +144,14 @@ full release workflow.
   first `S2083` suppression here, taken as its own change rather than as a step
   in a release, which is what the ROADMAP entry asked for.
 
+- **A manual or scheduled SonarCloud run on a non-default branch no longer
+  files itself as `main`.** The workflow never passed `sonar.branch.name`, so a
+  `workflow_dispatch` on a feature branch was recorded under `branch=main` and
+  the dashboard reported an unmerged commit as main until the next push
+  re-analysed. Found by doing exactly that while verifying the suppression
+  above. Non-default refs now label themselves; pull requests are untouched,
+  since those use the `sonar.pullrequest.*` parameters instead.
+
 - `scripts/repo-hygiene.sh`'s CI-job check read only `ci.yml`. Adding a second
   gating workflow left its jobs invisible to the check, which would have gone on
   reporting success while an entire implementation's CI ran undocumented. It now
