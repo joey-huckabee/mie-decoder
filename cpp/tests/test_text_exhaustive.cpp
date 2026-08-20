@@ -220,6 +220,7 @@ TEST_CASE("fixed6 is byte-for-byte identical under a comma-separator locale",
     const std::size_t count = sizeof(samples) / sizeof(samples[0]);
 
     std::vector<std::string> baseline;
+    baseline.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
         baseline.push_back(txt::fixed6(samples[i]));
     }

@@ -76,9 +76,19 @@ std::string read_raw(const std::string& path) {
     }
     std::string out;
     char buffer[4096];
-    std::size_t n = 0;
-    while ((n = std::fread(buffer, 1, sizeof(buffer), f)) > 0) {
+    // Stop on the first SHORT read rather than on a zero one. A read that hits
+    // the end of the file returns a positive count AND sets the EOF flag, so a
+    // `while (n > 0)` loop calls fread once more with the stream already in EOF
+    // state -- undefined-ish behaviour that clang-analyzer's unix.Stream check
+    // reports, and it is right to. Stopping short also stops on a read error,
+    // after which the stream position is indeterminate and there is nothing
+    // trustworthy left to read.
+    for (;;) {
+        const std::size_t n = std::fread(buffer, 1, sizeof(buffer), f);
         out.append(buffer, n);
+        if (n < sizeof(buffer)) {
+            break;
+        }
     }
     // Read-only: a close failure here cannot have lost data, so it is discarded
     // explicitly rather than asserted.
