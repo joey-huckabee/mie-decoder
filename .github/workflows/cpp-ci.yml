@@ -38,6 +38,13 @@ name: C++ CI
 # a shared image means a change made for one repository silently changes what
 # the other's gates check.
 #
+# What the image DID buy background-file-mover is a current analyser: it runs
+# clang-tidy 20, and Ubuntu 24.04 packages 18 as its newest. The analyser
+# version is worth matching -- 20 found a real fread-past-EOF loop here that 18
+# passed -- but it does not require an image. The clang-tidy and clang-format
+# jobs add the LLVM project's own apt repository instead, which costs one step
+# and keeps the no-image decision intact.
+#
 # The GCC 4.8.5 mirror IS reused, because it is an immutable pin of a 2015
 # compiler rather than a moving toolchain.
 
@@ -240,29 +247,53 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install toolchain
+      # LLVM 20 from the project's own apt repository, not Ubuntu's clang 18.
+      # Noble packages 18 as its newest, and 20 finds things 18 does not: its
+      # clang-analyzer unix.Stream checks caught a real fread-past-EOF loop in
+      # the platform tests that 18 waved through. background-file-mover reached
+      # the same conclusion and solved it with a toolchain image; this repo has
+      # no image (see the note at the top of this file), so the repository goes
+      # in directly. cpp/Makefile's LLVM_VERSION pins the SAME number for
+      # `make verify-ci` -- they must move together or that target stops
+      # predicting this job.
+      - name: Add the LLVM 20 apt repository
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends g++-14 clang-tidy-18 bear
+      - name: Install toolchain
+        run: sudo apt-get install -y -qq --no-install-recommends g++-14 clang-tidy-20 bear
       # bear intercepts the real build to produce compile_commands.json, so
       # clang-tidy analyses the translation units as they are actually compiled
       # -- same flags, same defines -- rather than a reconstruction of them.
       - name: Generate the compilation database
         run: bear -- make -C cpp -j"$(nproc)" all
       - name: clang-tidy
-        run: make -C cpp tidy TIDY=clang-tidy-18
+        run: make -C cpp tidy TIDY=clang-tidy-20
 
   format:
     name: clang-format
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang-format
+      # LLVM 20 from the project's own apt repository, not Ubuntu's clang 18.
+      # Noble packages 18 as its newest, and 20 finds things 18 does not: its
+      # clang-analyzer unix.Stream checks caught a real fread-past-EOF loop in
+      # the platform tests that 18 waved through. background-file-mover reached
+      # the same conclusion and solved it with a toolchain image; this repo has
+      # no image (see the note at the top of this file), so the repository goes
+      # in directly. cpp/Makefile's LLVM_VERSION pins the SAME number for
+      # `make verify-ci` -- they must move together or that target stops
+      # predicting this job.
+      - name: Add the LLVM 20 apt repository
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends clang-format-18
+      - name: Install clang-format
+        run: sudo apt-get install -y -qq --no-install-recommends clang-format-20
       - name: format-check
-        run: make -C cpp format-check FORMAT=clang-format-18
+        run: make -C cpp format-check FORMAT=clang-format-20
 
   # The three invariants that make the portability argument true rather than
   # aspirational. Cheap enough to share one job.

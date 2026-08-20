@@ -9,10 +9,16 @@ binary, and needs no interpreter or toolchain on the host (ADR-0001).
 The same source builds with MSVC and Windows is a **shipping target**, not a
 development convenience (ADR-0003).
 
-> **Status: Phase 0.** The platform layer and both build descriptions are
-> complete and gated; the CLI implements `--version` and `--help` only. The
-> `decode` / `count` / `dump` subcommands land in Phases 1 and 2 as the decoder
-> modules are ported. Use the Rust or Python implementation in the meantime.
+> **Status: Phase 1, in progress.** The CLI still implements `--version` and
+> `--help` only, so **use the Rust or Python implementation** for real work. The
+> `decode` / `count` / `dump` subcommands arrive once the writer and CLI land.
+>
+> Ported and gated: `platform`, `text`, `optional`, `models`, `error`, `decode`,
+> `sync`, `log`, `reader`. Outstanding for Phase 1: `filter`, `order`, `writer`,
+> `config`, `cli`, and the N-implementation refactor of
+> `../tests/conformance/run.py`. Phase 2 adds `merge`, `dump`, and the remaining
+> flags. See `../CHANGELOG.md` for what each landing covered and `../docs/adr/`
+> for the decisions that shape the tree.
 
 ## Build & test
 

@@ -13,6 +13,36 @@ namespace mie {
 
 const char* bus_name(Bus bus) { return bus == BUS_B ? "B" : "A"; }
 
+const char* direction_name(Direction direction) {
+    return direction == DIRECTION_TRANSMIT ? "Transmit" : "Receive";
+}
+
+const char* message_format_name(MessageFormat format) {
+    switch (format) {
+        case FORMAT_RECEIVE: return "Receive";
+        case FORMAT_TRANSMIT: return "Transmit";
+        case FORMAT_RT_TO_RT: return "RtToRt";
+        case FORMAT_RECEIVE_BROADCAST: return "ReceiveBroadcast";
+        case FORMAT_RT_TO_RT_BROADCAST: return "RtToRtBroadcast";
+        case FORMAT_MODE_CODE_TX_DATA: return "ModeCodeTxData";
+        case FORMAT_MODE_CODE_RX_DATA: return "ModeCodeRxData";
+        case FORMAT_MODE_CODE_NO_DATA: return "ModeCodeNoData";
+        case FORMAT_MODE_CODE_BCAST_NO_DATA: return "ModeCodeBcastNoData";
+        case FORMAT_MODE_CODE_BCAST_DATA: return "ModeCodeBcastData";
+        case FORMAT_SPURIOUS_DATA: return "SpuriousData";
+    }
+    return "";
+}
+
+const char* timestamp_format_name(TimestampFormat fmt) {
+    switch (fmt) {
+        case TIMESTAMP_IRIG: return "Irig";
+        case TIMESTAMP_STANDARD: return "Standard";
+        case TIMESTAMP_AUTO: return "Auto";
+    }
+    return "Auto";
+}
+
 bool is_valid_message_type(uint8_t code) {
     switch (code) {
         case MESSAGE_TYPE_MODE_COMMAND:

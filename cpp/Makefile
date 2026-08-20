@@ -215,7 +215,7 @@ TIDY_SRC := $(LIB_SRC) src/main.cpp $(TEST_SRC)
 # the Windows tier either (which runs no clang-format), so it drifts silently
 # until someone opens it.
 FORMAT_SRC := $(sort $(TIDY_SRC) src/platform_posix.cpp src/platform_win32.cpp) \
-              $(wildcard include/mie/*.hpp)
+              $(wildcard include/mie/*.hpp) $(wildcard tests/*.hpp)
 
 # --warnings-as-errors='*' lives HERE, not in .clang-tidy's WarningsAsErrors.
 #
@@ -281,14 +281,23 @@ format:
 # Every analysis tool a developer runs here is older than the one CI runs. On
 # the WSL2 development host (Ubuntu 22.04) against the CI runner (Ubuntu 24.04):
 #
-#     clang-format   14  vs  18
-#     clang-tidy     14  vs  18
+#     clang-format   14  vs  20
+#     clang-tidy     14  vs  20
 #     cppcheck      2.7  vs  2.13
 #
 # That matters because a passing local run can mean "my tool does not know about
 # this check" rather than "this code is fine" -- and in the other direction,
-# formatting with clang-format 14 and having CI check with 18 produces a red
+# formatting with clang-format 14 and having CI check with 20 produces a red
 # build with no code change behind it. Both have already happened here.
+#
+# THE ANALYSERS COME FROM apt.llvm.org, NOT FROM UBUNTU. Ubuntu 24.04 packages
+# clang 18 as its newest, and 20 finds things 18 does not -- clang-analyzer's
+# unix.Stream checks caught a real fread-past-EOF loop in the platform tests
+# that 18 waved through. The LLVM project's own apt repository is the only way
+# to get 20 without maintaining a toolchain image, which this repository has
+# decided not to do (see the note at the top of .github/workflows/cpp-ci.yml).
+# Keep this recipe and that workflow on the SAME major version: the whole point
+# of this target is that a green run here means a green run there.
 #
 # THE COMPILER IS PART OF THAT GAP, not just the analysers. The sanitizer tier
 # runs here too, because the host's g++ 11 and CI's g++-14 do not emit the same
@@ -307,23 +316,34 @@ format:
 # `make check-gcc48` separately -- it is the only thing that enforces C++11.
 CI_BASE_IMAGE ?= docker.io/library/ubuntu:24.04
 
+# The analyser major version, in ONE place. `.github/workflows/cpp-ci.yml` pins
+# the same number in its clang-tidy and clang-format jobs; the two have to move
+# together or this target stops predicting CI, which is its only job.
+LLVM_VERSION ?= 20
+
 verify-ci:
 	@echo "Running the divergence-prone gates in $(CI_BASE_IMAGE) via $(CI_ENGINE)..."
 	$(CI_ENGINE) run --rm --cap-add=SYS_PTRACE -v "$(CURDIR)":/cpp -w /cpp $(CI_BASE_IMAGE) bash -c '\
 	  apt-get update -qq >/dev/null && \
 	  apt-get install -y -qq --no-install-recommends \
-	      g++-14 make clang-format-18 clang-tidy-18 cppcheck bear >/dev/null && \
+	      g++-14 make cppcheck bear ca-certificates gnupg wget >/dev/null && \
+	  wget -qO /tmp/llvm.key https://apt.llvm.org/llvm-snapshot.gpg.key && \
+	  gpg --dearmor -o /usr/share/keyrings/llvm.gpg /tmp/llvm.key && \
+	  echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-$(LLVM_VERSION) main" > /etc/apt/sources.list.d/llvm.list && \
+	  apt-get update -qq >/dev/null && \
+	  apt-get install -y -qq --no-install-recommends \
+	      clang-format-$(LLVM_VERSION) clang-tidy-$(LLVM_VERSION) >/dev/null && \
 	  echo "--- versions ---" && \
 	  g++-14 --version | head -1 && \
-	  clang-format-18 --version && \
-	  clang-tidy-18 --version | grep -i version | head -1 && \
+	  clang-format-$(LLVM_VERSION) --version && \
+	  clang-tidy-$(LLVM_VERSION) --version | grep -i version | head -1 && \
 	  cppcheck --version && \
 	  echo "--- format ---" && \
-	  make format-check FORMAT=clang-format-18 && \
+	  make format-check FORMAT=clang-format-$(LLVM_VERSION) && \
 	  echo "--- build (CI compiler) ---" && \
 	  make clean CXX=g++-14 && bear -- make -j$(CI_JOBS) all CXX=g++-14 && \
 	  echo "--- clang-tidy ---" && \
-	  make tidy TIDY=clang-tidy-18 CXX=g++-14 && \
+	  make tidy TIDY=clang-tidy-$(LLVM_VERSION) CXX=g++-14 && \
 	  echo "--- cppcheck ---" && \
 	  make cppcheck && \
 	  echo "--- sanitizers (CI compiler) ---" && \

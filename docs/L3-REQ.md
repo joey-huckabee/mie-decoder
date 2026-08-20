@@ -200,3 +200,6 @@ C++ decode memory usage SHALL be O(1) in the record count. Rows SHALL be streame
 
 **L3-CPP-012** · Parent: L2-CLI-011 · Verification: T
 C++ errors SHALL be represented by a single error type carrying a kind discriminant, mirroring the Rust `MieError`/`MieErrorKind` shape rather than the Python class hierarchy, with `is_record_error()` and `is_file_error()` predicates classifying exactly the same variants as their Rust counterparts. The CLI entry point SHALL map them to the exit codes pinned by L2-CLI-011 without leaking diagnostic text intended for developers.
+
+**L3-CPP-013** · Parent: L2-CLI-011 · Verification: T
+A failure raised from the C++ record stream SHALL be **thrown** and SHALL be **terminal**: the iterator SHALL latch itself closed *before* the throw, so that a caller which catches the exception and calls `next()` again receives a clean end of stream rather than a second attempt at the record that failed. This mirrors the Python generator, which is dead once it raises, and the Rust iterator, which sets `done` before yielding an `Err`. A whole-file rejection detected while the iterator is being built SHALL be raised by the first `next()` call rather than swallowed, so that an unreadable input cannot present as an empty but successful decode.
