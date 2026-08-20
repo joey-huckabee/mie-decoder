@@ -199,6 +199,10 @@ jobs:
           # green and only turned the main branch red afterwards. The gate is
           # now enforced before merge, where it can still be acted on.
           SONAR_QG_WAIT: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) }}
+          # Used below to decide whether this run must label itself as a
+          # non-default branch. Read from the repository rather than hard-coded
+          # so renaming the default branch does not silently break the guard.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           args=(
             "-Dsonar.projectKey=${SONAR_PROJECT_KEY}"
@@ -230,10 +234,80 @@ jobs:
             #
             # The operator-facing statement of the same decision lives in
             # docs/CONFIG-REFERENCE.md "Trust boundary". Keep the two in step.
-            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection"
+            # ----------------------------------------------------------------
+            # reader.py: the manifest-contents taint flow (S2083 + S8707)
+            # ----------------------------------------------------------------
+            #
+            # Both fire on the `open(self._path, "rb")` in reader.py. The
+            # ROADMAP entry that deferred these described them as the CLI input
+            # path being operator-supplied; the actual taint flow SonarCloud
+            # reports says otherwise, and the difference matters:
+            #
+            #   merge.py:58    Source: the CONTENTS of a --manifest file
+            #   merge.py:60-61 -> line -> trimmed
+            #   cli.py:637     -> paths
+            #   cli.py:1131    -> input_paths
+            #   reader.py:240  -> open()
+            #
+            # So the tainted value is not the argument the operator typed. It is
+            # each line of the manifest file the operator pointed at. The
+            # justification is therefore NOT the config.py one ("the path is the
+            # interface") but a narrower claim: a manifest's contents are exactly
+            # as trusted as the operator who chose that manifest. Reading the
+            # files it lists is the documented purpose of --manifest
+            # (L2-MRG-001), the process holds precisely the permissions of the
+            # user who ran it, and the decoder only reads those files and writes
+            # the CSV that same user asked for. There is no privilege boundary
+            # being crossed and no sandbox to escape; S8707's premise of an agent
+            # escaping filesystem restrictions presumes a confinement this tool
+            # does not have and does not claim.
+            #
+            # Someone who can write the manifest can already run the decoder with
+            # any argument they like, so the flow adds no capability.
+            #
+            # PRECEDENT. S8707 on this SAME flow is already resolved Won't Fix at
+            # merge.py:58 (the source itself), dump.py:70 and dump.py:119. These
+            # two are the same judgement on the same flow, recorded in the
+            # repository rather than only in SonarCloud so it survives for
+            # someone reading the source.
+            #
+            # This is the first S2083 suppression in this repository, taken
+            # deliberately rather than as a step in a release -- which is what
+            # docs/ROADMAP.md asked for. Both entries stay scoped to one rule in
+            # one file: any other finding in reader.py, and either rule anywhere
+            # else, still fails the build.
+            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection"
             "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.ruleKey=pythonsecurity:S8707"
             "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.resourceKey=python/src/mie_decoder/config.py"
+            "-Dsonar.issue.ignore.multicriteria.readerPathInjection.ruleKey=pythonsecurity:S2083"
+            "-Dsonar.issue.ignore.multicriteria.readerPathInjection.resourceKey=python/src/mie_decoder/reader.py"
+            "-Dsonar.issue.ignore.multicriteria.readerAgenticPathInjection.ruleKey=pythonsecurity:S8707"
+            "-Dsonar.issue.ignore.multicriteria.readerAgenticPathInjection.resourceKey=python/src/mie_decoder/reader.py"
           )
+
+          # A manual or scheduled run on a NON-default ref must be labelled as
+          # its own branch, or SonarCloud files it under the main branch and the
+          # dashboard then reports an unmerged commit as main.
+          #
+          # That is not hypothetical: dispatching this workflow on
+          # fix/sonar-reader-path-findings recorded revision 7478721 under
+          # `branch=main`, so main showed the analysis of code that was not on
+          # main until the merge landed. Harmless once the next push to main
+          # re-analyses, but misleading in the window between, and exactly the
+          # kind of thing someone checks the dashboard to rule out.
+          #
+          # Deliberately NOT set for pull_request events: those use the
+          # sonar.pullrequest.* parameters the SonarSource action supplies, and
+          # passing a branch name alongside them is a configuration error.
+          #
+          # If branch analysis is unavailable on this plan the scanner now fails
+          # with a clear message instead of silently overwriting main -- which is
+          # the better failure of the two.
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ] \
+             && [ "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]; then
+            echo "${GITHUB_EVENT_NAME} on non-default ref ${GITHUB_REF_NAME} - labelling as its own branch"
+            args+=("-Dsonar.branch.name=${GITHUB_REF_NAME}")
+          fi
 
           if [ "$SONAR_QG_WAIT" = "true" ]; then
             echo "${GITHUB_EVENT_NAME} on ${GITHUB_REF_NAME} - waiting for Quality Gate..."
