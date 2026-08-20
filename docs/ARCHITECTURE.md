@@ -21,6 +21,7 @@ MIE-Decoder ships as a Rust crate (`rust/src/`) and a Python package (`python/sr
 | Canonical row order (equal-timestamp ties) | `rust/src/order.rs` | `python/src/mie_decoder/order.py` |
 | Reader pipeline (mmap → records) | `rust/src/reader.rs` | `python/src/mie_decoder/reader.py` |
 | Multi-file time-sorted merge | `rust/src/merge.rs` | `python/src/mie_decoder/merge.py` |
+| Per-RT/MSG `DELTA` tracking | `rust/src/delta.rs` | `python/src/mie_decoder/delta.py` |
 | Pure decode (bit-level field extraction) | `rust/src/decode.rs` | `python/src/mie_decoder/decode.py` |
 | Sync helpers (validate, find first, recover) | `rust/src/sync.rs` | `python/src/mie_decoder/sync.py` |
 | Domain models + error code constants | `rust/src/models.rs` | `python/src/mie_decoder/models.py` |
@@ -89,12 +90,13 @@ The `MUX` column value (L2-WRT-020) is resolved **once per input file** from its
   └───────┬───────┘ │ is_homogeneous_payload │
           │         └────────────────────────┘
           ▼
-  ┌───────────────────────────────┐
-  │          models.rs            │
-  │  Enums, structs, DataWords,   │
-  │  DDC + decoder error consts   │
-  └───────────────┬───────────────┘
-                  │
+  ┌───────────────────────────────┐    ┌────────────────────┐
+  │          models.rs            │    │     delta.rs       │
+  │  Enums, structs, DataWords,   │    │ DeltaTracker       │
+  │  DDC + decoder error consts   │    │ ONE key definition │
+  └───────────────┬───────────────┘    │ shared by reader.rs│
+                  │                    │ and merge.rs       │
+                  │                    └────────────────────┘
   ┌───────────────┴───────────────┐
   │          error.rs             │    ┌───────────┐
   │  MieError enum + Display      │    │  dump.rs  │

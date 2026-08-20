@@ -598,6 +598,26 @@
         "global"
       ],
       "expected": "expected/merge-delta-scope-global.csv"
+    },
+    {
+      "name": "delta-keys-single",
+      "inputs": [
+        "inputs/delta-keys-a.hex"
+      ],
+      "args": [],
+      "expected": "expected/delta-keys-single.csv"
+    },
+    {
+      "name": "delta-keys-global",
+      "inputs": [
+        "inputs/delta-keys-a.hex",
+        "inputs/delta-keys-b.hex"
+      ],
+      "args": [
+        "--delta-scope",
+        "global"
+      ],
+      "expected": "expected/delta-keys-global.csv"
     }
   ]
 }

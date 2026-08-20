@@ -1,0 +1,4 @@
+# DELTA key discrimination, file B. Records at 200us, 400us, 600us.
+# Keys: 15/12R (differs only by subaddress), 20/11R (differs only by RT),
+# 15/11T (the second sighting of file A's transmit key).
+02080f1820dbc800827911112222007802080f1820db900162a11111222200a004080f1820db5802627d007811112222
