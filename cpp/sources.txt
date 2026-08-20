@@ -26,3 +26,4 @@ src/text.cpp
 src/models.cpp
 src/error.cpp
 src/decode.cpp
+src/sync.cpp
