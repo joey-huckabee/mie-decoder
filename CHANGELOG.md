@@ -119,6 +119,31 @@ full release workflow.
 
 ### Fixed
 
+- **The SonarCloud quality gate on `main` is green again.** It had failed since
+  the v2.12.0 cut on `new_security_rating` (5 against a required 1), driven by
+  two vulnerabilities on the input-file `open()` in `reader.py`:
+  `pythonsecurity:S2083` (blocker) and `pythonsecurity:S8707` (major). Every
+  other gate condition passed throughout.
+
+  Both are now suppressed for `reader.py`, scoped to those rules in that one
+  file. The reasoning is recorded next to the exclusion and in
+  `docs/CONFIG-REFERENCE.md`'s "Trust boundary" section.
+
+  **The recorded analysis was wrong about where the taint came from**, and
+  correcting it changed the argument. `docs/ROADMAP.md` described the finding as
+  the CLI input path being operator-supplied; the flow SonarCloud reports starts
+  at the *contents of a `--manifest` file*, whose lines become input paths
+  (`merge.py` → `cli.py` → `reader.py`). So the justification is not the
+  `config.py` one ("the path is the interface") but a narrower claim: a
+  manifest's contents are as trusted as the operator who chose that manifest,
+  and anyone who can write it can already invoke the decoder with any argument.
+
+  `S8707` on this same flow was already resolved Won't Fix at `merge.py:58`,
+  `dump.py:70` and `dump.py:119` — but only in SonarCloud, where the source does
+  not show it. These two are recorded in the repository instead. This is the
+  first `S2083` suppression here, taken as its own change rather than as a step
+  in a release, which is what the ROADMAP entry asked for.
+
 - `scripts/repo-hygiene.sh`'s CI-job check read only `ci.yml`. Adding a second
   gating workflow left its jobs invisible to the check, which would have gone on
   reporting success while an entire implementation's CI ran undocumented. It now

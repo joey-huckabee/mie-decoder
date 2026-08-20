@@ -124,55 +124,78 @@ so the request isn't folded into the time-merge contract without separate design
     a spec'd requirement with byte-exact conformance fixtures so output
     matches vendor CSV. Until then the advisory WARN stays.
 
-## SonarCloud security findings on the input path (deferred, gate is red)
+## SonarCloud security findings on the input path (resolved)
 
-**`main` currently fails the SonarCloud quality gate**, knowingly, as of the
-v2.12.0 cut. `new_security_rating` is 5 where the gate requires 1. Every other
-condition passes (reliability 1, maintainability 1, coverage 94.7%, duplication
-0.0%, hotspots reviewed 100%), and all 51 non-Sonar CI checks pass.
-
-Two findings, both on the `open(self._path, "rb")` in
-`python/src/mie_decoder/reader.py` that landed with the `MieFileIoError`
-conversion:
+**Resolved.** `main` failed the SonarCloud quality gate from the v2.12.0 cut
+until this was taken. One condition was failing — `new_security_rating` 5 where
+the gate requires 1 — driven by exactly two vulnerabilities, both on the
+`open(self._path, "rb")` in `python/src/mie_decoder/reader.py`:
 
 - **`pythonsecurity:S2083`** (blocker) — "Change this code to not construct the
   path from user-controlled data."
-- **`pythonsecurity:S8707`** (major) — the agentic path-injection rule, the same
-  one already excluded for `config.py`.
+- **`pythonsecurity:S8707`** (major) — the agentic path-injection rule.
 
-**Why this was not simply excluded at the cut.** The exclusion in
-`.github/workflows/sonarcloud.yml` is scoped to one rule in one file, and its
-comment says that was deliberate: *"any other finding there, and this rule
-anywhere else, still fails the build."* The gate caught a new occurrence in a
-new file exactly as designed. Widening it silently would spend that design, and
-`S2083` has never been suppressed anywhere in this repository — a first blocker
-suppression is a decision to take deliberately, not as a step in a release.
+Every other condition passed throughout (reliability 1, maintainability 1,
+coverage 94.2%, duplication 0.0%, hotspots reviewed 100%).
 
-**Note the cost being carried.** v2.11.1 was cut *specifically* to stop releases
-merging against a failing gate: before it, `sonar.qualitygate.wait` was set only
-for pushes to the default branch, so four PRs merged green while `main` was red.
-That fix works — the gate is blocking, and this entry exists because it blocked.
-Merging anyway restores the very state v2.11.1 removed, and it stays until one
-of the options below is taken. Anyone reading a red `main` should find this
-section rather than assume the gate is broken again.
+**Correction to what this entry previously said.** It described the findings as
+the *CLI input path* being operator-supplied, and reasoned from there. The taint
+flow SonarCloud actually reports says otherwise:
 
-**The two real options:**
+```
+merge.py:58     Source: the CONTENTS of a --manifest file
+merge.py:60-61  -> line -> trimmed
+cli.py:637      -> paths
+cli.py:1131     -> input_paths
+reader.py:240   -> open()
+```
 
-1. **Extend the exclusion to `reader.py` for both rules.** The false-positive
-   argument is identical to the documented `config.py` one: mie-decoder is an
-   operator-run CLI, the input path *is* the interface, and the process holds
-   exactly the permissions of the user who typed the command — there is no
-   sandbox to escape and no privilege boundary to cross. Cheapest, and
-   consistent with reasoning already written down. Requires accepting the first
-   `S2083` suppression, and `CONFIG-REFERENCE.md`'s "Trust boundary" section
-   should be extended to cover the input file so the two stay in step.
-2. **Harden rather than suppress.** Mirror what `config.py` already does and
-   require a *regular file* before opening, so a directory or a character device
-   is rejected up front rather than at the `OSError`. This is the repo's own
-   established answer to this rule class and is a genuine improvement, but it
-   needs Rust parity, tests on both sides, and a conformance case — and it may
-   not clear the `S2083` taint path regardless, since the path still flows from
-   an argument to an open.
+The tainted value is not the argument the operator typed. It is each **line of a
+manifest file**. That matters because it makes the `config.py` justification —
+"the path *is* the interface" — the wrong argument to reach for, and the entry's
+two proposed options were both framed around it.
+
+**What was done, and why.** Both rules are now suppressed for `reader.py` in
+`.github/workflows/sonarcloud.yml`, scoped to those rules in that one file, with
+the flow and the reasoning written out next to the exclusion.
+
+The justification is narrower than the `config.py` one: a manifest's contents are
+exactly as trusted as the operator who chose that manifest. Reading the files it
+lists is the documented purpose of `--manifest` (`L2-MRG-001`); the process holds
+precisely the permissions of the user who ran it; and anyone able to write the
+manifest can already invoke the decoder with any argument they like, so the flow
+confers no capability that was not already there.
+
+**Precedent.** `S8707` on this *same flow* was already resolved Won't Fix at
+`merge.py:58` (the source itself), `dump.py:70` and `dump.py:119`. Those
+judgements live only in SonarCloud; these two are recorded in the repository so
+they survive for someone reading the source.
+
+This is the **first `S2083` suppression** in this repository. The previous
+version of this entry asked that it be taken deliberately rather than as a step
+in a release, and it was: as its own change, with the decision put to the
+maintainer and the alternatives (hardening the manifest reader, or resolving in
+the SonarCloud UI) considered and declined.
+
+**Why not harden instead.** Validating manifest lines would be a behaviour change
+to what a manifest may contain, would need matching Rust work and a conformance
+case, and would not reliably clear the finding: Sonar recognises specific
+sanitiser shapes, and a file-type or existence check is not one of them.
+`config.py`'s `is_file()` guard is worth having on its own merits — and is kept —
+but the record shows its `S8707` cleared as `FIXED` only alongside the exclusion,
+so it is not evidence that hardening alone satisfies the rule.
+
+**The cost that was being carried, now discharged.** v2.11.1 was cut
+*specifically* to stop releases merging against a failing gate: before it,
+`sonar.qualitygate.wait` was set only for pushes to the default branch, so four
+PRs merged green while `main` was red. That fix works — the gate is blocking, and
+the previous version of this entry existed because it blocked. `main` merging red
+restored the very state v2.11.1 removed; it no longer does.
+
+**If either rule fires again elsewhere, it still fails the build.** The exclusions
+are per-rule and per-file by design. `docs/CONFIG-REFERENCE.md`'s "Trust boundary"
+section carries the operator-facing statement of the same decision — keep the two
+in step.
 
 ## Diagram rendering: make the SVG guard real (deferred)
 
