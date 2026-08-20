@@ -210,16 +210,24 @@ class RecordIter {
 
     // Movable so `iter()` can return one by value; non-copyable because two
     // copies walking one reader would double-count into its sync-loss total.
-    RecordIter(RecordIter&& other);
+    //
+    // noexcept is not decoration. A move constructor that can throw is one a
+    // standard container will refuse to use, falling back to copying -- which
+    // this type does not permit, so the fallback would be a compile error
+    // rather than a slow path. The body moves scalars, two shared_ptrs and two
+    // node-based containers, none of which allocates.
+    RecordIter(RecordIter&& other) noexcept;
 
   private:
     friend class MieFileReader;
 
     explicit RecordIter(MieFileReader& owner);
 
+    // Copying is suppressed by the move constructor above -- a user-declared
+    // move constructor deletes both copy operations, and the move ASSIGNMENT
+    // operator is never implicitly declared at all. These say so out loud.
     RecordIter(const RecordIter&);
     RecordIter& operator=(const RecordIter&);
-    RecordIter& operator=(RecordIter&&);
 
     /// What the decode loop should do next. The three cases are the loop's
     /// `continue`, `return the message`, and `stop` -- named so the work can

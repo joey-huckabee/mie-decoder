@@ -274,7 +274,10 @@ class TempFile {
         REQUIRE(std::fclose(handle) == 0);
     }
 
-    ~TempFile() { std::remove(path_.c_str()); }
+    // Discarded explicitly: teardown cannot act on a failure to unlink, and a
+    // leftover file in the temp directory is not worth failing a passing test
+    // over.
+    ~TempFile() { (void)std::remove(path_.c_str()); }
 
     const std::string& path() const { return path_; }
 

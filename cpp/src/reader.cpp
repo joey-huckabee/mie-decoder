@@ -5,6 +5,7 @@
 #include "mie/reader.hpp"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 #include "mie/log.hpp"
@@ -484,31 +485,29 @@ RecordIter::RecordIter(MieFileReader& owner)
       sync_losses_(0),
       mux_(owner.mux_) {}
 
-RecordIter::RecordIter(RecordIter&& other)
+RecordIter::RecordIter(RecordIter&& other) noexcept
     : owner_(other.owner_),
       data_(other.data_),
       file_len_(other.file_len_),
       offset_(other.offset_),
       done_(other.done_),
-      pending_error_(other.pending_error_),
+      pending_error_(std::move(other.pending_error_)),
       strict_(other.strict_),
       resolved_format_(other.resolved_format_),
       lookahead_records_(other.lookahead_records_),
       standard_tick_rate_hz_(other.standard_tick_rate_hz_),
       prev_was_error_(other.prev_was_error_),
-      delta_tracker_(),
-      warned_ooo_keys_(),
+      delta_tracker_(std::move(other.delta_tracker_)),
+      warned_ooo_keys_(std::move(other.warned_ooo_keys_)),
       warned_irig_day_(other.warned_irig_day_),
       msg_count_(other.msg_count_),
       sync_losses_(other.sync_losses_),
-      mux_(other.mux_) {
-    delta_tracker_.swap(other.delta_tracker_);
-    warned_ooo_keys_.swap(other.warned_ooo_keys_);
+      mux_(std::move(other.mux_)) {
     // The moved-from iterator must not also walk the stream: `iter()` returns
     // by value, and a source left live would keep a second view onto the same
-    // reader.
+    // reader. The pending error needs no separate reset -- a moved-from
+    // shared_ptr is already null.
     other.done_ = true;
-    other.pending_error_.reset();
 }
 
 MIE_NORETURN void RecordIter::fail(const MieError& error) {
