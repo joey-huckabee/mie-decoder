@@ -507,7 +507,14 @@ jobs:
         # run.py already handles the .exe suffix on Windows when
         # locating rust/target/debug/mie-decoder, so the same invocation
         # works on both runners.
-        run: python tests/conformance/run.py
+        #
+        # `--skip cpp` is explicit rather than implied: the runner defaults to
+        # every registered implementation and fails if one is missing, so a job
+        # that opts out has to say so. The alternative -- silently running
+        # whichever binaries happen to exist -- would let this job report a full
+        # pass after a build step had quietly failed. The C++ side is gated by
+        # the conformance jobs in cpp-ci.yml, which build it first.
+        run: python tests/conformance/run.py --skip cpp
 
   repo-hygiene:
     name: Repo hygiene (pre-commit backstop)

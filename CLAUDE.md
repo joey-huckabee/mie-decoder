@@ -101,10 +101,13 @@ bash scripts/assert-platform-confined.sh   # OS headers only in the platform bac
 bash scripts/assert-locale-free.sh         # no setlocale, no <cctype> classification
 bash scripts/assert-sources-agree.sh       # Makefile and CMake resolve the same sources
 
-# Shared Rust/Python behavior (needs the Rust binary built and an interpreter
-# with mie_decoder installed; `--python-bin` overrides the interpreter)
-(cd rust && cargo build)
+# Shared cross-implementation behavior. The runner defaults to EVERY registered
+# implementation and fails if one is missing, so opting out is explicit --
+# a run that silently tested fewer could report a full pass after a build failed.
+(cd rust && cargo build) && (cd cpp && make all)
 poetry -C python run python ../tests/conformance/run.py
+poetry -C python run python ../tests/conformance/run.py --skip cpp   # no C++ build
+poetry -C python run python ../tests/conformance/run.py --only cpp   # C++ vs the oracles
 ```
 
 ## Architecture

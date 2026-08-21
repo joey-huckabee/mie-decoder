@@ -9,16 +9,25 @@ binary, and needs no interpreter or toolchain on the host (ADR-0001).
 The same source builds with MSVC and Windows is a **shipping target**, not a
 development convenience (ADR-0003).
 
-> **Status: Phase 1, in progress.** The CLI still implements `--version` and
-> `--help` only, so **use the Rust or Python implementation** for real work. The
-> `decode` / `count` / `dump` subcommands arrive once `config` and `cli` land.
+> **Status: Phase 1 complete.** `decode` and `count` work on a single input,
+> and the binary is held to the **same byte-exact CSV oracles** as the Rust and
+> Python implementations — every shared conformance case that does not need the
+> unported merge.
+>
+> **Not yet ported:** the multi-file merge (`--manifest`, `--glob`, several
+> positional inputs, `--delta-scope`, `--collapse-duplicates`,
+> `--collapse-window-us`) and `dump`. Those flags are **refused with a message
+> saying the module is missing**, not reported as unknown flags, and the
+> conformance runner skips their cases by name. Use the Rust or Python
+> implementation for a merge.
 >
 > Ported and gated: `platform`, `text`, `optional`, `models`, `error`, `decode`,
 > `sync`, `log`, `delta`, `reader`, `writer`, `toml`, `config`, `filter`,
-> `order`. Outstanding for Phase 1: `cli`, and the N-implementation refactor
-> of `../tests/conformance/run.py`. Phase 2 adds `merge`, `dump`, and the remaining
-> flags. See `../CHANGELOG.md` for what each landing covered and `../docs/adr/`
-> for the decisions that shape the tree.
+> `order`, `cli`. Phase 2 adds `merge`, `dump`, and the remaining flags — and
+> with them the CLI-surface-parity gate, which this build is deliberately
+> excluded from while its flag set is a subset. See `../CHANGELOG.md` for what
+> each landing covered and `../docs/adr/` for the decisions that shape the
+> tree.
 
 ## Build & test
 

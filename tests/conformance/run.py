@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -141,28 +142,46 @@ def parse_args() -> argparse.Namespace:
         "not itself launched from an interpreter that has mie_decoder.",
     )
     parser.add_argument(
+        "--cpp-bin",
+        type=Path,
+        help="Use this C++ binary instead of asking cpp/Makefile where it put "
+        "one (`make -s print-decoder-bin`). The build directory name encodes "
+        "the toolchain, so the Makefile is asked rather than re-derived here.",
+    )
+    parser.add_argument(
         "--update-expected",
         action="store_true",
-        help="Update CSV oracles, but only when Rust and Python outputs match.",
+        help="Update CSV oracles, but only when every implementation agrees.",
     )
     impl_group = parser.add_mutually_exclusive_group()
     impl_group.add_argument(
+        "--only",
+        metavar="IMPLS",
+        help=(
+            "Comma-separated implementations to run, e.g. `--only cpp` or "
+            "`--only rust,python`. Validates just those against the committed "
+            "expected/ oracles, so a host missing a toolchain can still check "
+            "its own side."
+        ),
+    )
+    impl_group.add_argument(
+        "--skip",
+        metavar="IMPLS",
+        help=(
+            "Comma-separated implementations to leave out; the rest run. "
+            "`--skip cpp` is the Rust/Python pairing this suite ran before the "
+            "C++ implementation existed."
+        ),
+    )
+    impl_group.add_argument(
         "--python-only",
         action="store_true",
-        help=(
-            "Validate only the Python implementation against the committed "
-            "expected/ oracles. Skips the Rust build/cross-check, so no cargo "
-            "toolchain is required (e.g. a Python-only air-gapped host)."
-        ),
+        help="Deprecated alias for `--only python`.",
     )
     impl_group.add_argument(
         "--rust-only",
         action="store_true",
-        help=(
-            "Validate only the Rust implementation against the committed "
-            "expected/ oracles. Skips the Python package probe/cross-check, so "
-            "the mie_decoder package need not be installed."
-        ),
+        help="Deprecated alias for `--only rust`.",
     )
     parser.add_argument(
         "--temp-root",
@@ -170,6 +189,44 @@ def parse_args() -> argparse.Namespace:
         help="Create temporary files under this directory.",
     )
     return parser.parse_args()
+
+
+def select_impls(args: argparse.Namespace) -> list["ImplSpec"]:
+    """Resolve which implementations this run covers.
+
+    The default is EVERY registered implementation, and opting out is
+    explicit. The alternative -- quietly running whichever binaries happen to
+    be present -- would let a job whose build step silently failed still report
+    a full pass, which is the failure mode where a green gate proves nothing.
+    """
+    known = list(IMPLS)
+    if args.rust_only:
+        args.only = "rust"
+    if args.python_only:
+        args.only = "python"
+
+    def parse_list(value: str, flag: str) -> list[str]:
+        names = [piece.strip() for piece in value.split(",") if piece.strip()]
+        if not names:
+            raise ValueError(f"{flag} needs at least one implementation name")
+        for name in names:
+            if name not in IMPLS:
+                raise ValueError(
+                    f"{flag}: unknown implementation {name!r}; "
+                    f"known implementations are {', '.join(known)}"
+                )
+        return names
+
+    if args.only:
+        chosen = parse_list(args.only, "--only")
+    elif args.skip:
+        skipped = parse_list(args.skip, "--skip")
+        chosen = [name for name in known if name not in skipped]
+        if not chosen:
+            raise ValueError("--skip left no implementations to run")
+    else:
+        chosen = known
+    return [IMPLS[name] for name in chosen]
 
 
 def read_hex(path: Path) -> bytes:
@@ -244,40 +301,6 @@ def run_command(
     if not read_target.exists():
         raise RuntimeError(f"{case_name}: {implementation} did not create {read_target}")
     return read_target.read_bytes(), result.stderr
-
-
-def rust_command(
-    args: argparse.Namespace,
-    case: dict[str, Any],
-    sources: list[Path],
-    output: Path | None,
-) -> list[str]:
-    """Build the Rust CLI invocation for a case.
-
-    ``output`` is the per-case scratch CSV path for ``mode == "decode"``
-    cases, or ``None`` for ``mode == "count"`` (stdout-comparison mode,
-    no -o flag).
-    """
-    command = [str(args.rust_bin)]
-    return _build_command(command, case, sources, output)
-
-
-def python_command(
-    args: argparse.Namespace,
-    case: dict[str, Any],
-    sources: list[Path],
-    output: Path | None,
-) -> list[str]:
-    """Build the Python CLI invocation for a case.
-
-    The Python and Rust CLIs share one argument surface — global
-    ``--config`` before the subcommand, a ``count`` subcommand, and an
-    identical decode flag set — so this differs from ``rust_command``
-    only in the interpreter/entrypoint prefix. The per-case ``args`` are
-    passed verbatim to both.
-    """
-    command = [str(args.python_bin), "-m", "mie_decoder"]
-    return _build_command(command, case, sources, output)
 
 
 def _build_command(
@@ -373,6 +396,157 @@ def prepare_python_bin(args: argparse.Namespace) -> None:
         )
 
 
+def prepare_cpp_bin(args: argparse.Namespace) -> None:
+    """Resolve the C++ decoder binary.
+
+    The Makefile is ASKED where the binary is rather than the path being
+    re-derived here, because the build directory name encodes the target
+    triple, the compiler version and the sanitizer tier -- a runner that
+    guessed it would silently test yesterday's binary whenever any of those
+    changed. On Windows, where the build is CMake/MSVC and there may be no
+    make, the usual layouts are searched instead.
+
+    The binary is never built here. Unlike `cargo build`, a C++ build needs a
+    toolchain choice (make vs MSVC, which sanitizer tier), and guessing wrong
+    would produce a confusing failure inside a build the caller did not ask
+    for.
+    """
+    if args.cpp_bin:
+        args.cpp_bin = args.cpp_bin.resolve()
+        if not args.cpp_bin.exists():
+            raise RuntimeError(f"--cpp-bin does not exist: {args.cpp_bin}")
+        return
+
+    cpp_dir = ROOT / "cpp"
+    candidate: Path | None = None
+    if shutil.which("make"):
+        probe = subprocess.run(
+            ["make", "-s", "print-decoder-bin"],
+            cwd=cpp_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+        reported = probe.stdout.strip()
+        if probe.returncode == 0 and reported:
+            candidate = (cpp_dir / reported).resolve()
+
+    if candidate is None or not candidate.exists():
+        suffix = ".exe" if sys.platform == "win32" else ""
+        found = sorted(cpp_dir.glob(f"build*/**/mie-decoder{suffix}"))
+        candidate = found[-1].resolve() if found else candidate
+
+    if candidate is None or not candidate.exists():
+        raise RuntimeError(
+            "the C++ decoder binary was not found. Build it first "
+            "(`cd cpp && make all`, or the CMake/MSVC build on Windows) or "
+            "pass --cpp-bin. To run this suite without the C++ "
+            "implementation, pass `--skip cpp`."
+        )
+    args.cpp_bin = candidate
+
+
+class ImplSpec:
+    """One implementation, and everything the runner needs to drive it.
+
+    A registry entry rather than a hard-wired pair of code paths: the suite ran
+    against exactly two implementations for its whole life, and every
+    comparison, skip and oracle check was written as `rust`/`python` variables
+    side by side. Adding a third that way would have meant tripling roughly two
+    hundred lines and getting each one right; adding it here means one entry.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        label: str,
+        prepare: Callable[[argparse.Namespace], None],
+        prefix: Callable[[argparse.Namespace], list[str]],
+        unsupported: Callable[[dict[str, Any]], str | None] | None = None,
+        full_cli_surface: bool = True,
+    ) -> None:
+        self.name = name
+        self.label = label
+        self.prepare = prepare
+        self.prefix = prefix
+        self._unsupported = unsupported
+        # Whether this implementation takes part in the all-pairs flag-surface
+        # comparison. An implementation still being delivered in phases has a
+        # deliberately smaller surface, and comparing it would fail by design.
+        self.full_cli_surface = full_cli_surface
+
+    def command(
+        self,
+        args: argparse.Namespace,
+        case: dict[str, Any],
+        sources: list[Path],
+        output: Path | None,
+    ) -> list[str]:
+        return _build_command(self.prefix(args), case, sources, output)
+
+    def unsupported(self, case: dict[str, Any]) -> str | None:
+        """Why this implementation cannot run `case`, or None if it can.
+
+        The phase limitation belongs to the IMPLEMENTATION, not to the case: a
+        merge case is a perfectly good case, it is the C++ build that has no
+        merge yet. Marking it on the case would mean editing the manifest twice
+        -- once to exclude, once to put back -- and in between, the manifest
+        would misdescribe the contract.
+        """
+        return self._unsupported(case) if self._unsupported else None
+
+
+# Flags and shapes the C++ build does not implement yet. Delete entries as the
+# corresponding module lands; when this list empties, drop `unsupported` and
+# set `full_cli_surface=True` on the entry below.
+_CPP_DEFERRED_FLAGS = (
+    "--manifest",
+    "--glob",
+    "--delta-scope",
+    "--collapse-duplicates",
+    "--collapse-window-us",
+)
+
+
+def cpp_unsupported(case: dict[str, Any]) -> str | None:
+    if case.get("inputs"):
+        return "multi-file merge is not ported yet"
+    for argument in case.get("args", []):
+        flag = argument.split("=", 1)[0]
+        if flag in _CPP_DEFERRED_FLAGS:
+            return f"{flag} is not ported yet"
+    return None
+
+
+IMPLS: dict[str, ImplSpec] = {
+    "rust": ImplSpec(
+        name="rust",
+        label="Rust",
+        prepare=prepare_rust_bin,
+        prefix=lambda args: [str(args.rust_bin)],
+    ),
+    "python": ImplSpec(
+        name="python",
+        label="Python",
+        prepare=prepare_python_bin,
+        # The Python and Rust CLIs share one argument surface -- global
+        # --config before the subcommand, a count subcommand, and an identical
+        # decode flag set -- so this differs only in the entrypoint prefix. The
+        # per-case `args` are passed verbatim to every implementation.
+        prefix=lambda args: [str(args.python_bin), "-m", "mie_decoder"],
+    ),
+    "cpp": ImplSpec(
+        name="cpp",
+        label="C++",
+        prepare=prepare_cpp_bin,
+        prefix=lambda args: [str(args.cpp_bin)],
+        unsupported=cpp_unsupported,
+        full_cli_surface=False,
+    ),
+}
+
+
 def _errors_path(main_output: Path) -> Path:
     """Derive the split-mode errors path for a given main output path.
 
@@ -438,66 +612,78 @@ def _help_flags(base_command: list[str]) -> set[str]:
     return flags
 
 
-def check_cli_surface(args: argparse.Namespace) -> None:
-    """Assert the Rust and Python CLIs expose an identical long-flag set across
+def check_cli_surface(args: argparse.Namespace, impls: list[ImplSpec]) -> None:
+    """Assert the CLIs expose an identical long-flag set across
     ``decode`` / ``count`` / ``dump`` (plus global options).
 
-    The two CLIs are kept to one identical argument surface (L1-CLI-001 only
-    *requires* matching capabilities, but parity is maintained in practice). A
-    flag added to one implementation but not the other — or a help text that
-    stops advertising a flag the parser still accepts — fails here, guarding the
-    cross-implementation parity against silent drift."""
-    rust_flags = _help_flags([str(args.rust_bin)])
-    python_flags = _help_flags([str(args.python_bin), "-m", "mie_decoder"])
-    if rust_flags != python_flags:
-        only_rust = sorted(rust_flags - python_flags) or ["(none)"]
-        only_python = sorted(python_flags - rust_flags) or ["(none)"]
+    The implementations are kept to one identical argument surface (L1-CLI-001
+    only *requires* matching capabilities, but parity is maintained in
+    practice). A flag added to one but not the others -- or a help text that
+    stops advertising a flag the parser still accepts -- fails here, guarding
+    cross-implementation parity against silent drift.
+
+    Implementations still being delivered in phases are excluded by their
+    registry entry: their surface is deliberately smaller, so comparing it
+    would fail by design rather than on a regression. They are named in the
+    output, so the exclusion cannot pass unnoticed.
+    """
+    excluded = [impl.label for impl in impls if not impl.full_cli_surface]
+    comparable = [impl for impl in impls if impl.full_cli_surface]
+    if len(comparable) < 2:
+        print(
+            "SKIP cli-surface-parity "
+            f"(needs two full-surface implementations; have {len(comparable)})"
+        )
+        return
+
+    surfaces = {impl.label: _help_flags(impl.prefix(args)) for impl in comparable}
+    reference_label, reference = next(iter(surfaces.items()))
+    for label, flags in surfaces.items():
+        if flags == reference:
+            continue
+        only_reference = sorted(reference - flags) or ["(none)"]
+        only_other = sorted(flags - reference) or ["(none)"]
         raise AssertionError(
             "CLI flag surface diverged between implementations:\n"
-            f"  only in Rust  : {', '.join(only_rust)}\n"
-            f"  only in Python: {', '.join(only_python)}"
+            f"  only in {reference_label}: {', '.join(only_reference)}\n"
+            f"  only in {label}: {', '.join(only_other)}"
         )
-    print(f"PASS cli-surface-parity ({len(rust_flags)} flags)")
+    note = f" (not compared: {', '.join(excluded)})" if excluded else ""
+    print(
+        f"PASS cli-surface-parity ({len(reference)} flags across "
+        f"{', '.join(surfaces)}){note}"
+    )
 
 
 def main() -> int:
     args = parse_args()
 
-    # Load + validate the manifest BEFORE prepare_rust_bin /
-    # prepare_python_bin so a malformed manifest fails fast with a
-    # schema error instead of getting masked behind a slow Rust
-    # build or a Python interpreter probe failure.
+    # Load + validate the manifest BEFORE preparing any toolchain so a
+    # malformed manifest fails fast with a schema error instead of getting
+    # masked behind a slow Rust build or an interpreter probe failure.
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     for index, case in enumerate(manifest["cases"]):
         validate_case_schema(case, index)
 
-    run_rust = not args.python_only
-    run_python = not args.rust_only
+    impls = select_impls(args)
 
-    if args.update_expected and not (run_rust and run_python):
+    if args.update_expected and len(impls) != len(IMPLS):
         raise RuntimeError(
-            "--update-expected regenerates the oracles from the Rust output only "
-            "after confirming Rust and Python agree, so it needs both "
-            "implementations; drop --python-only / --rust-only."
+            "--update-expected rewrites the oracles only after confirming every "
+            "implementation agrees, so it needs all of them; drop --only / --skip."
         )
 
-    # Only prepare the toolchain(s) we will actually run — this is what lets a
-    # single-implementation host (no cargo, or no installed mie_decoder) still
-    # validate its side against the committed oracles.
-    if run_rust:
-        prepare_rust_bin(args)
-    if run_python:
-        prepare_python_bin(args)
+    # Only prepare the toolchains we will actually run -- this is what lets a
+    # single-implementation host (no cargo, no installed mie_decoder, no C++
+    # build) still validate its side against the committed oracles.
+    for impl in impls:
+        impl.prepare(args)
+    print(f"IMPLS {', '.join(impl.label for impl in impls)}")
 
-    # Cross-impl CLI flag-surface parity needs both CLIs; skip it (with a note)
-    # when only one implementation is under test.
-    if run_rust and run_python:
-        check_cli_surface(args)
-    else:
-        only = "Python" if run_python else "Rust"
-        print(f"SKIP cli-surface-parity (single-implementation run: {only} only)")
+    check_cli_surface(args, impls)
 
     passed = 0
+    skipped = 0
     if args.temp_root:
         args.temp_root.mkdir(parents=True, exist_ok=True)
 
@@ -507,9 +693,13 @@ def main() -> int:
     ) as temp_dir:
         temp = Path(temp_dir)
 
-        # Differential config-parser parity: needs both CLIs (it compares their
-        # accept/reject behavior), so skip in single-implementation mode.
-        if run_rust and run_python:
+        # Differential config-parser parity. Still Rust-vs-Python: these compare
+        # two parsers' accept/reject behavior against each other, and widening
+        # them to N parsers is its own piece of work. The C++ TOML and config
+        # parsers are held to the same grammar by cpp/tests/test_toml.cpp and
+        # cpp/tests/test_config.cpp until then.
+        names = {impl.name for impl in impls}
+        if {"rust", "python"} <= names:
             parity_input = temp / "config-parity-in.mie"
             parity_input.write_bytes(read_hex(SUITE / "inputs" / "count-one.hex"))
             check_config_parser_parity(
@@ -523,13 +713,32 @@ def main() -> int:
                 args.rust_bin, args.python_bin, ROOT, parity_input, temp
             )
         else:
-            print("SKIP config-parser-parity / -fuzz / -path (single-implementation run)")
+            print(
+                "SKIP config-parser-parity / -fuzz / -path "
+                "(needs both the Rust and Python implementations)"
+            )
 
         for case in manifest["cases"]:
             name = case["name"]
+
+            # Which implementations can run THIS case. An implementation still
+            # being delivered in phases sits out the cases needing a module it
+            # does not have; the reason is printed so the gap stays visible
+            # rather than looking like coverage.
+            running = []
+            for impl in impls:
+                reason = impl.unsupported(case)
+                if reason is None:
+                    running.append(impl)
+                else:
+                    print(f"SKIP {name} [{impl.label}] {reason}")
+            if not running:
+                skipped += 1
+                continue
+
             # One 'input' or several 'inputs' (multi-file merge). Each hex
             # fixture is materialized to its own temp .mie and passed as a
-            # positional to both CLIs.
+            # positional to every CLI.
             input_specs = case.get("inputs") or [case["input"]]
             # L2-WRT-020: a case may override the materialized file name(s) so a
             # filename-derived feature (the MUX column) can be exercised. Names
@@ -547,154 +756,134 @@ def main() -> int:
             expected_exit = int(case.get("expected_exit", 0))
             mode = case.get("mode", "decode")
 
-            # ``count`` mode compares stdout (the integer count) rather
-            # than a CSV file, so the per-impl output paths are unused.
-            if mode == "count":
-                rust_output = None
-                python_output = None
-            else:
-                rust_output = temp / f"{name}-rust.csv"
-                python_output = temp / f"{name}-python.csv"
+            # ``count`` mode compares stdout (the integer count) rather than a
+            # CSV file, so the per-impl output paths are unused.
+            outputs: dict[str, Path | None] = {}
+            for impl in running:
+                outputs[impl.name] = (
+                    None if mode == "count" else temp / f"{name}-{impl.name}.csv"
+                )
 
             # An --allow-partial case commits to ``<output>.partial``; read that
             # artifact for the comparison and oracle against ``expected_partial``.
             partial_oracle = case.get("expected_partial")
-            rust_read = Path(f"{rust_output}.partial") if partial_oracle and rust_output else None
-            python_read = (
-                Path(f"{python_output}.partial") if partial_oracle and python_output else None
-            )
 
-            rust: bytes | None = None
-            python: bytes | None = None
-            rust_stderr = ""
-            python_stderr = ""
-            if run_rust:
-                rust, rust_stderr = run_command(
-                    rust_command(args, case, sources, rust_output),
-                    rust_output,
-                    name,
-                    "Rust",
-                    expected_exit=expected_exit,
-                    read_path=rust_read,
+            produced: dict[str, bytes | None] = {}
+            captured_stderr: dict[str, str] = {}
+            for impl in running:
+                output = outputs[impl.name]
+                read_path = (
+                    Path(f"{output}.partial") if partial_oracle and output else None
                 )
-            if run_python:
-                python, python_stderr = run_command(
-                    python_command(args, case, sources, python_output),
-                    python_output,
+                produced[impl.name], captured_stderr[impl.name] = run_command(
+                    impl.command(args, case, sources, output),
+                    output,
                     name,
-                    "Python",
+                    impl.label,
                     expected_exit=expected_exit,
-                    read_path=python_read,
+                    read_path=read_path,
                 )
 
             if expected_exit != 0:
-                # Negative case — exit code alone is the assertion.
-                # No CSV oracle is required (and the "expected" key may
-                # be omitted from the manifest entry).
+                # Negative case -- exit code alone is the assertion. No CSV
+                # oracle is required (and the "expected" key may be omitted
+                # from the manifest entry).
                 passed += 1
                 print(f"PASS {name} (expected_exit={expected_exit})")
                 continue
 
-            # Cross-implementation agreement is only asserted when both ran; in
-            # single-impl mode each side is validated against the oracle below,
-            # which is itself the byte-exact cross-impl contract.
-            if run_rust and run_python:
-                require_equal(rust, python, f"{name} Rust output", f"{name} Python output")
+            # Cross-implementation agreement, every pair, against the first that
+            # ran. Each is also checked against the committed oracle below, which
+            # is itself the byte-exact cross-impl contract -- but comparing them
+            # to each other first gives a diff between two actual outputs, which
+            # is the more useful failure message.
+            reference = running[0]
+            for impl in running[1:]:
+                require_equal(
+                    produced[reference.name],
+                    produced[impl.name],
+                    f"{name} {reference.label} output",
+                    f"{name} {impl.label} output",
+                )
 
-            # Optional stderr substring assertion. Used by ``count`` mode
-            # to pin the "counted N messages in <path>" human-readable
-            # status line in both implementations without requiring a
-            # byte-exact comparison (the path basename varies with the
-            # temp directory and so can't be oracled directly).
+            # Optional stderr substring assertion. Used by ``count`` mode to pin
+            # the "counted N messages in <path>" human-readable status line in
+            # every implementation without requiring a byte-exact comparison
+            # (the path basename varies with the temp directory).
             stderr_needle = case.get("expected_stderr_contains")
             if stderr_needle:
-                captures = []
-                if run_rust:
-                    captures.append(("Rust", rust_stderr))
-                if run_python:
-                    captures.append(("Python", python_stderr))
-                for impl, captured in captures:
+                for impl in running:
+                    captured = captured_stderr[impl.name]
                     if stderr_needle not in captured:
                         raise AssertionError(
-                            f"{name}: {impl} stderr does not contain "
+                            f"{name}: {impl.label} stderr does not contain "
                             f"{stderr_needle!r}\n--- stderr ---\n{captured}"
                         )
 
             expected_path = SUITE / (case.get("expected_partial") or case["expected"])
             if args.update_expected:
                 expected_path.parent.mkdir(parents=True, exist_ok=True)
-                expected_path.write_bytes(rust)
+                expected_path.write_bytes(produced[reference.name])
                 print(f"UPDATED {expected_path.relative_to(ROOT)}")
 
             if not expected_path.exists():
-                raise RuntimeError(
-                    f"{name}: expected output is missing: {expected_path}"
-                )
+                raise RuntimeError(f"{name}: expected output is missing: {expected_path}")
             expected = expected_path.read_bytes()
-            if run_rust:
-                require_equal(expected, rust, str(expected_path), f"{name} Rust output")
-            if run_python:
-                require_equal(expected, python, str(expected_path), f"{name} Python output")
+            for impl in running:
+                require_equal(
+                    expected,
+                    produced[impl.name],
+                    str(expected_path),
+                    f"{name} {impl.label} output",
+                )
 
-            # Split-output cases (separate error mode) compare an
-            # additional <output_stem>_errors.csv against the
-            # expected_errors oracle. Both implementations derive the
-            # errors path the same way (see L2-ERR-008 stem/suffix
-            # definition), so we can reuse the canonical naming here.
+            # Split-output cases (separate error mode) compare an additional
+            # <output_stem>_errors.csv against the expected_errors oracle. Every
+            # implementation derives the errors path the same way (see the
+            # L2-ERR-008 stem/suffix definition), so the canonical naming is
+            # reused here.
             expected_errors_rel = case.get("expected_errors")
             if expected_errors_rel:
-                rust_errors: bytes | None = None
-                python_errors: bytes | None = None
-                if run_rust:
-                    rust_errors_path = _errors_path(rust_output)
-                    if not rust_errors_path.exists():
+                error_outputs: dict[str, bytes] = {}
+                for impl in running:
+                    errors_path = _errors_path(outputs[impl.name])
+                    if not errors_path.exists():
                         raise RuntimeError(
-                            f"{name}: Rust did not create errors file {rust_errors_path}"
+                            f"{name}: {impl.label} did not create errors file {errors_path}"
                         )
-                    rust_errors = rust_errors_path.read_bytes()
-                if run_python:
-                    python_errors_path = _errors_path(python_output)
-                    if not python_errors_path.exists():
-                        raise RuntimeError(
-                            f"{name}: Python did not create errors file {python_errors_path}"
-                        )
-                    python_errors = python_errors_path.read_bytes()
-                if run_rust and run_python:
+                    error_outputs[impl.name] = errors_path.read_bytes()
+                for impl in running[1:]:
                     require_equal(
-                        rust_errors,
-                        python_errors,
-                        f"{name} Rust errors output",
-                        f"{name} Python errors output",
+                        error_outputs[reference.name],
+                        error_outputs[impl.name],
+                        f"{name} {reference.label} errors output",
+                        f"{name} {impl.label} errors output",
                     )
                 expected_errors_path = SUITE / expected_errors_rel
                 if args.update_expected:
                     expected_errors_path.parent.mkdir(parents=True, exist_ok=True)
-                    expected_errors_path.write_bytes(rust_errors)
+                    expected_errors_path.write_bytes(error_outputs[reference.name])
                     print(f"UPDATED {expected_errors_path.relative_to(ROOT)}")
                 if not expected_errors_path.exists():
                     raise RuntimeError(
                         f"{name}: expected_errors oracle is missing: {expected_errors_path}"
                     )
                 expected_errors = expected_errors_path.read_bytes()
-                if run_rust:
+                for impl in running:
                     require_equal(
                         expected_errors,
-                        rust_errors,
+                        error_outputs[impl.name],
                         str(expected_errors_path),
-                        f"{name} Rust errors output",
-                    )
-                if run_python:
-                    require_equal(
-                        expected_errors,
-                        python_errors,
-                        str(expected_errors_path),
-                        f"{name} Python errors output",
+                        f"{name} {impl.label} errors output",
                     )
 
             passed += 1
             print(f"PASS {name}")
 
-    print(f"{passed} conformance cases passed")
+    summary = f"{passed} conformance cases passed"
+    if skipped:
+        summary += f", {skipped} skipped (no implementation under test supports them)"
+    print(summary)
     return 0
 
 

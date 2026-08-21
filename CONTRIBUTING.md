@@ -210,11 +210,17 @@ poetry -C python run mie-decoder --help
 poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P needs Poetry >= 2.0
 ```
 
-Shared Rust/Python conformance:
+Shared cross-implementation conformance:
 
 ```bash
 poetry -C python run python ../tests/conformance/run.py
 ```
+
+The runner defaults to **every** registered implementation and fails if one is
+missing, so leaving one out is explicit — `--skip cpp` when you have no C++
+build, `--only cpp` to check just that one. The alternative, running whichever
+binaries happen to be present, would let the suite report a full pass after a
+build step had quietly failed.
 
 Run it **through Poetry**. The runner drives the Python CLI with
 `sys.executable` — the interpreter it is itself running under — so a bare
@@ -224,13 +230,19 @@ own virtualenv). It fails fast and tells you so, but the Poetry form is the
 one that works. CI runs the bare form only because it does
 `pip install -e ./python` into the runner's system interpreter first.
 
-`--rust-only` is the exception: it never touches the Python side, so plain
-`python tests/conformance/run.py --rust-only` is fine.
+`--only rust` is the exception: it never touches the Python side, so plain
+`python tests/conformance/run.py --only rust` is fine. (`--rust-only` and
+`--python-only` still work as deprecated aliases.)
 
 The conformance runner materializes text-based hexadecimal fixtures, invokes
-both CLIs, and compares their CSV output byte-for-byte against checked-in
+each CLI, and compares their CSV output byte-for-byte against checked-in
 oracles. Use `--update-expected` only for intentional shared-output changes;
-the runner updates an oracle only after Rust and Python already agree.
+the runner updates an oracle only after **every** implementation already
+agrees, so no single one can ratify a change to the shared contract.
+
+An implementation still being delivered in phases declares which cases it
+cannot run, and the runner **names each one it skips**. That is deliberate: a
+skip that printed nothing would read as coverage.
 
 When both CLIs are present, the same runner also cross-checks the two **config
 parsers** — a curated corpus (`tests/conformance/config_parity.py`) plus a

@@ -117,9 +117,8 @@ jobs:
         run: make -C cpp -j"$(nproc)" all
       - name: Test
         run: make -C cpp -j"$(nproc)" check
-      # A smoke check that the linked binary actually runs and that its output
-      # is byte-identical to the other implementations -- LF, no CRLF, no
-      # trailing spaces. The full conformance comparison arrives in Phase 1.
+      # A smoke check that the linked binary actually runs. The byte-exact
+      # comparison against the shared oracles is the `conformance` job below.
       - name: CLI smoke
         run: |
           BIN=$(make -C cpp -s print-decoder-bin)
@@ -294,6 +293,61 @@ jobs:
         run: sudo apt-get install -y -qq --no-install-recommends clang-format-20
       - name: format-check
         run: make -C cpp format-check FORMAT=clang-format-20
+
+  # The C++ binary against the SHARED oracles in tests/conformance/ -- the same
+  # byte-exact expected CSVs the Rust and Python implementations are held to.
+  # This is what makes "a third implementation" a claim about output rather than
+  # about a build succeeding.
+  #
+  # `--only cpp` compares against the committed oracles rather than against the
+  # other two CLIs, so this job needs no cargo and no installed mie_decoder. The
+  # cases that need the unported merge are skipped BY NAME in the log, so the
+  # gap stays visible instead of looking like coverage.
+  #
+  # Both operating systems, because the platform layer is the part most likely
+  # to diverge: the Windows binary opens files, maps them and writes stdout
+  # through an entirely different backend.
+  cpp-conformance:
+    name: Conformance vs shared oracles (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      # The oracles are LF. Letting git rewrite them on Windows checkout would
+      # fail every case for a reason that has nothing to do with the decoder.
+      - name: Normalize git line endings on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends g++-14 make
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: make -C cpp -j"$(nproc)" all
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -B cpp/build-msvc -S cpp -G "Visual Studio 17 2022" -A x64
+          cmake --build cpp/build-msvc --config Release
+      # Linux lets run.py ask the Makefile where the binary went; the MSVC
+      # layout is fixed by the generator, so it is named directly.
+      - name: Run conformance (Linux)
+        if: runner.os == 'Linux'
+        run: python tests/conformance/run.py --only cpp
+      - name: Run conformance (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/conformance/run.py --only cpp --cpp-bin cpp/build-msvc/Release/mie-decoder.exe
 
   # The three invariants that make the portability argument true rather than
   # aspirational. Cheap enough to share one job.

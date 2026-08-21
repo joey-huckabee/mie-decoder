@@ -52,14 +52,16 @@ MieError writer_failure(const std::string& destination, const platform::OsError&
 CsvSink::CsvSink() {}
 CsvSink::~CsvSink() {}
 
-StdoutCsvSink::StdoutCsvSink() {}
+StdoutCsvSink::StdoutCsvSink() : stream_(stdout) {}
+
+StdoutCsvSink::StdoutCsvSink(std::FILE* stream) : stream_(stream) {}
 
 bool StdoutCsvSink::write(const char* bytes, std::size_t length, platform::OsError& err) {
     err.clear();
     if (length == 0) {
         return true;
     }
-    if (std::fwrite(bytes, 1, length, stdout) != length) {
+    if (std::fwrite(bytes, 1, length, stream_) != length) {
         // A short write on stdout is a closed downstream pipe far more often
         // than a full disk. errno carries which, and MieError::writer_error
         // classifies it -- L2-WRT-018 turns a broken pipe into exit 0.
@@ -71,7 +73,7 @@ bool StdoutCsvSink::write(const char* bytes, std::size_t length, platform::OsErr
 
 bool StdoutCsvSink::flush(platform::OsError& err) {
     err.clear();
-    if (std::fflush(stdout) != 0) {
+    if (std::fflush(stream_) != 0) {
         platform::capture_stream_error(err);
         return false;
     }
@@ -267,7 +269,8 @@ uint64_t CsvWriter::finish() {
 // Entry points
 // ---------------------------------------------------------------------------
 
-WriteOptions::WriteOptions() : input_path(), no_clobber(false), allow_partial(false) {}
+WriteOptions::WriteOptions()
+    : input_path(), no_clobber(false), allow_partial(false), stdout_stream(stdout) {}
 
 PartialCommit::PartialCommit() : main_path(), errors_path(), offset(0), sync_losses(0) {}
 
@@ -350,7 +353,7 @@ WriteOutcome write_csv(MessageSource& messages, const Optional<std::string>& out
     WriteOutcome outcome;
 
     if (!output.has_value()) {
-        StdoutCsvSink sink;
+        StdoutCsvSink sink(options.stdout_stream);
         CsvWriter writer(sink);
         MieMessage message;
         // allow_partial is ignored here, deliberately: a truncated stdout
