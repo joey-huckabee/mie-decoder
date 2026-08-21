@@ -8,6 +8,7 @@
 #include <cstdlib>
 
 #include "mie/config.hpp"
+#include "mie/dump.hpp"
 #include "mie/error.hpp"
 #include "mie/filter.hpp"
 #include "mie/log.hpp"
@@ -34,6 +35,7 @@ const char* const kHelp =
     "COMMANDS:\n"
     "    decode <FILE>...  Decode a recording to CSV; 2+ inputs are merged\n"
     "    count <FILE>      Count decodable records\n"
+    "    dump <FILE>       Hex dump: raw bytes or a record-aware view\n"
     "\n"
     "GLOBAL OPTIONS:\n"
     "    --config <PATH>   TOML configuration file\n"
@@ -73,6 +75,12 @@ const char* const kHelp =
     "    --collapse-window-us <N>     Timestamp tolerance for collapsing (default 0)\n"
     "\n"
     "  Positional inputs, --manifest and --glob are mutually exclusive.\n"
+    "\n"
+    "DUMP OPTIONS:\n"
+    "    --raw                        Raw hex+ASCII instead of the record view\n"
+    "    --offset <N>                 Start at this byte offset\n"
+    "    --length <N>                 Bytes to show (--raw only)\n"
+    "    --records <N>                Stop after this many records\n"
     "\n"
     "EXIT CODES:\n"
     "    0 success   1 runtime   2 no records   3 sync loss\n"
@@ -282,6 +290,20 @@ Bus parse_bus_flag(const std::string& text, const char* flag) {
     }
 }
 
+/// A flag value that must be a non-negative integer.
+///
+/// Unbounded above: a byte offset into a recording and a record count are both
+/// as large as the file allows, so there is no ceiling to impose that would not
+/// be arbitrary.
+int64_t parse_non_negative(const std::string& text_value, const char* flag) {
+    const int64_t value = parse_integer(text_value, flag);
+    if (value < 0) {
+        throw usage_error(std::string(flag) + " must be non-negative, got " +
+                          text::decimal_signed(value));
+    }
+    return value;
+}
+
 /// A filter list element that must be a 0-31 wire field.
 uint8_t parse_small(const std::string& text, const char* flag) {
     const int64_t value = parse_integer(text, flag);
@@ -462,6 +484,52 @@ DecodeArgs parse_decode(ArgReader& reader) {
     }
     if (methods == 0) {
         throw usage_error("decode requires an input file");
+    }
+    return args;
+}
+
+/// Everything after `dump`.
+struct DumpArgs {
+    std::string input;
+    bool raw;
+    std::size_t offset;
+    Optional<std::size_t> length;
+    Optional<uint64_t> records;
+
+    DumpArgs() : input(), raw(false), offset(0), length(), records() {}
+};
+
+DumpArgs parse_dump(ArgReader& reader) {
+    DumpArgs args;
+    bool input_seen = false;
+    std::string value;
+
+    while (!reader.at_end()) {
+        const std::string token = reader.peek();
+        if (reader.take_flag("--raw")) {
+            args.raw = true;
+        } else if (reader.take_value("--offset", value)) {
+            args.offset = static_cast<std::size_t>(parse_non_negative(value, "--offset"));
+        } else if (reader.take_value("--length", value)) {
+            args.length = static_cast<std::size_t>(parse_non_negative(value, "--length"));
+        } else if (reader.take_value("--records", value)) {
+            args.records = static_cast<uint64_t>(parse_non_negative(value, "--records"));
+        } else if (!token.empty() && token[0] == '-' && token != "-") {
+            throw usage_error("unknown dump option: " + token);
+        } else if (input_seen) {
+            // dump reads ONE file. It is a diagnostic view of a specific byte
+            // range, and there is no sensible way to show two at once -- so a
+            // second path is a mistake, not an invitation to merge.
+            throw usage_error("unexpected positional argument: " + token);
+        } else {
+            args.input = token;
+            input_seen = true;
+            reader.advance();
+        }
+    }
+
+    if (!input_seen) {
+        throw usage_error("dump requires an input file");
     }
     return args;
 }
@@ -850,6 +918,29 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     return classify_decode_exit(outcome, total_sync_losses(readers), all_empty_recordings(readers));
 }
 
+int run_dump(const Streams& streams, const GlobalArgs& globals, const DumpArgs& args) {
+    // dump takes only the log level from configuration -- a hex view has no use
+    // for a timestamp format, filters or an error mode. The config is still
+    // LOADED so that a malformed one fails here exactly as it would for the
+    // other subcommands, rather than being the one command that ignores it.
+    (void)resolve_config(globals);
+
+    try {
+        if (args.raw) {
+            dump::hex_dump_raw(args.input, args.offset, args.length, streams.out);
+        } else {
+            dump::hex_dump_records(args.input, args.records, args.offset, streams.out);
+        }
+    } catch (const MieError& error) {
+        if (error.is_broken_pipe()) {
+            // `dump x.mie | head` is a normal thing to type (L2-WRT-018).
+            return EXIT_OK;
+        }
+        throw CliError(exit_code_for(error), error.message());
+    }
+    return EXIT_OK;
+}
+
 int run_count(const Streams& streams, const GlobalArgs& globals, const std::string& input) {
     const DecoderConfig config = resolve_config(globals);
 
@@ -952,7 +1043,7 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
         }
 
         if (reader.at_end()) {
-            throw usage_error("no command given; expected decode or count");
+            throw usage_error("no command given; expected decode, count or dump");
         }
         const std::string command = reader.peek();
         reader.advance();
@@ -975,11 +1066,9 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
             return run_count(streams, globals, parse_count(reader));
         }
         if (command == "dump") {
-            throw usage_error(
-                "dump is not available in this build: the hex-dump module is not ported yet. "
-                "Use the Rust or Python implementation for it.");
+            return run_dump(streams, globals, parse_dump(reader));
         }
-        throw usage_error("unknown command \"" + command + "\"; expected decode or count");
+        throw usage_error("unknown command \"" + command + "\"; expected decode, count or dump");
     } catch (const CliError& error) {
         MIE_LOG_ERROR(error.message);
         (void)write_out(streams.err, "Error: " + error.message + "\n");

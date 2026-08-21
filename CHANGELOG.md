@@ -106,6 +106,32 @@ full release workflow.
 
 ### Added
 
+- **The C++ `dump` subcommand — Phase 2 is complete, and all three
+  implementations now expose an identical CLI surface.** `dump` was the last
+  unported command and the last reason the C++ build sat out the
+  `cli-surface-parity` gate. That gate now compares **three** implementations
+  and passes: 35 flags, identical across Rust, Python and C++.
+
+  Both views are ported. The record-aware view annotates each record with its
+  decoded Type Word, message format, timestamp and Command Word — plus, for an
+  errored record, the Error Word and its DDC description, which is what makes
+  the reason legible without a separate trip to the error catalogue. The raw
+  view parses nothing at all, which is the point: it is what an operator reaches
+  for once the decoder has already refused the file.
+
+  The output was diffed against the Rust implementation across twelve fixtures
+  and ten flag combinations — 120 invocations, byte-identical including exit
+  codes. That comparison caught a real defect on the way: the report's format
+  name must be the SCREAMING_SNAKE spelling (`RECEIVE`), while
+  `models::message_format_name` returns the CamelCase spelling (`Receive`) used
+  elsewhere. Two different strings for the same value, and reusing the wrong one
+  compiled cleanly and broke the diff on every classified record.
+
+  Bounds are clamped rather than validated. An offset past end of file, a zero
+  length, or a length that would overflow each produce a well-formed empty or
+  truncated range instead of an argument error — the operator is exploring, and
+  the empty output already says what a rejection would.
+
 - **The C++ implementation gained the multi-file merge, and now passes the
   entire shared conformance manifest.** Every case the Rust and Python
   implementations are held to — including all fifteen that need the k-way merge

@@ -519,10 +519,6 @@ IMPLS: dict[str, ImplSpec] = {
         label="C++",
         prepare=prepare_cpp_bin,
         prefix=lambda args: [str(args.cpp_bin)],
-        # No `unsupported` entry: the C++ build runs every case in the manifest.
-        # `full_cli_surface` stays False until `dump` lands, which is the last
-        # thing keeping its flag set a subset of the other two.
-        full_cli_surface=False,
     ),
 }
 
