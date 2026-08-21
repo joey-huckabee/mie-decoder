@@ -106,6 +106,48 @@ full release workflow.
 
 ### Added
 
+- **The C++ implementation gained the multi-file merge, and now passes the
+  entire shared conformance manifest.** Every case the Rust and Python
+  implementations are held to — including all fifteen that need the k-way merge
+  — now runs against the C++ binary and compares byte-for-byte against the same
+  committed oracles. The conformance runner's C++ entry no longer declares any
+  case unsupported.
+
+  `decode` accepts several positional inputs, `--manifest` or `--glob`, and the
+  three are mutually exclusive: each names the input set completely, so
+  combining two would leave the ORDER of the result undefined, which is the one
+  thing a time-sorted merge exists to establish. `--delta-scope`,
+  `--collapse-duplicates` and `--collapse-window-us` land with it.
+
+  The merge holds one record per open input in a `std::priority_queue`, so
+  resident memory is O(number of files) rather than O(records) — the same
+  constant-memory property the single-file path has. It is a `MessageSource`,
+  which means the filter, canonical-order and writer stages downstream are the
+  *same code* operating on the same contract; the only thing a merge changes is
+  which source sits at the head of the pipeline.
+
+  Two details worth naming because they are easy to get wrong and silent when
+  wrong. The glob's `?` consumes one whole **UTF-8 character**, not one byte:
+  Rust and Python match over Unicode scalar values, and a byte-wise `?` would
+  have disagreed with them on any non-ASCII filename while passing every ASCII
+  test. And the duplicate-collapsing window compares **absolute** time distance,
+  because a lenient non-monotonic input can step backward and a one-sided
+  subtraction would wrap to an enormous unsigned value that reads as "outside
+  the window" only by luck.
+
+  `dump` remains unported. It is now the only thing keeping the C++ flag surface
+  a subset of the other two, and therefore the last reason its registry entry
+  sits out the CLI-surface-parity gate.
+
+- **Shared test fixtures for records on the wire (`cpp/tests/record_fixtures.hpp`).**
+  The Type Word layout, the IRIG triple and the Command Word encoding had been
+  copied into four test files. That is the drift `writer_fixtures.hpp` already
+  exists to prevent: two suites encoding the format slightly differently
+  disagree for reasons unrelated to the code under test, and the copy that is
+  *wrong* is the one that keeps passing. `test_cli.cpp` and the new
+  `test_merge.cpp` share one definition; `test_reader.cpp`, `test_sync.cpp` and
+  `test_decode.cpp` still carry theirs and are noted for migration.
+
 - **The C++ implementation reached Phase 1: `decode` and `count` work, and are
   gated by the same byte-exact CSV oracles as Rust and Python.** Every shared
   conformance case that does not need the unported multi-file merge now runs

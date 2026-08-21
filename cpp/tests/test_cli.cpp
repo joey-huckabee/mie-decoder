@@ -20,6 +20,9 @@
 
 #include "log_capture.hpp"
 #include "mie/log.hpp"
+#include "mie/merge.hpp"
+#include "mie/text.hpp"
+#include "record_fixtures.hpp"
 #include "temp_path.hpp"
 
 namespace {
@@ -45,69 +48,17 @@ Args args(const std::string& a0, const std::string& a1 = std::string(),
     return out;
 }
 
-std::vector<uint8_t> le_bytes(const std::vector<uint16_t>& words) {
-    std::vector<uint8_t> out;
-    out.reserve(words.size() * 2);
-    for (std::size_t i = 0; i < words.size(); ++i) {
-        out.push_back(static_cast<uint8_t>(words[i] & 0xFF));
-        out.push_back(static_cast<uint8_t>((words[i] >> 8) & 0xFF));
-    }
-    return out;
-}
-
-/// Type Word: type in bits 0-6, bus in 7, word count in 8-13, error in 14.
-///
-/// The word count is the count for the WHOLE record -- type word, timestamp,
-/// command, payload and status -- not the payload alone. Writing the payload
-/// count here produces a file whose first record ends four words early, and the
-/// reader then reads the command word as the next type word and reports a sync
-/// loss that has nothing to do with what is being tested.
-uint16_t type_word(uint8_t message_type, uint16_t word_count) {
-    return static_cast<uint16_t>((message_type & 0x7F) | ((word_count & 0x3F) << 8));
-}
-
-/// Command Word: RT in 11-15, direction in 10, subaddress in 5-9, data word
-/// count in 0-4.
-uint16_t command_word(uint8_t rt, uint8_t subaddress, uint8_t data_word_count) {
-    return static_cast<uint16_t>(((rt & 0x1F) << 11) | ((subaddress & 0x1F) << 5) |
-                                 (data_word_count & 0x1F));
-}
-
-void push_irig(std::vector<uint16_t>& words, uint32_t microsecond) {
-    REQUIRE(microsecond < 1000000u);
-    const uint16_t upper = static_cast<uint16_t>(15 | (10 << 5));
-    uint16_t middle = static_cast<uint16_t>((microsecond >> 16) & 0xF);
-    middle = static_cast<uint16_t>(middle | (50 << 4));
-    middle = static_cast<uint16_t>(middle | (54 << 10));
-    words.push_back(upper);
-    words.push_back(middle);
-    words.push_back(static_cast<uint16_t>(microsecond & 0xFFFF));
-}
-
 /// A minimal well-formed recording: two BC-to-RT records and the terminator.
 ///
 /// Two, not one: entry validation confirms a candidate by looking ahead, so a
 /// single-record file exercises a different path than the one these tests are
-/// about. The payload varies with the record's time because L2-SYN-018 rejects
-/// an input whose leading records are byte-identical outside the timestamp.
+/// about.
 std::vector<uint8_t> valid_recording() {
-    const uint8_t kRt = 15;
-    const uint8_t kSubaddress = 11;
-    const uint8_t kDataWords = 2;
     std::vector<uint16_t> words;
     for (uint32_t i = 0; i < 2; ++i) {
-        const uint32_t microsecond = 100 + i * 100;
-        // BC-to-RT layout: Type, IRIG, Command, payload, Status.
-        words.push_back(type_word(0x01, static_cast<uint16_t>(6 + kDataWords)));
-        push_irig(words, microsecond);
-        words.push_back(command_word(kRt, kSubaddress, kDataWords));
-        for (uint8_t w = 0; w < kDataWords; ++w) {
-            words.push_back(static_cast<uint16_t>(0x1100 + (microsecond & 0xFF) + w));
-        }
-        words.push_back(static_cast<uint16_t>((kRt & 0x1F) << 11));  // status word
+        mie_test::append(words, mie_test::bc_to_rt(15, 11, 2, 100 + i * 100));
     }
-    words.push_back(0x0000);  // end-of-records terminator
-    return le_bytes(words);
+    return mie_test::finish(words);
 }
 
 /// Run the CLI with its reporting streams pointed at temporary files, and
@@ -379,25 +330,61 @@ TEST_CASE("an invalid --log-level is refused rather than ignored", "[cli][L3-CPP
     mie::log::set_level(mie::log::LEVEL_OFF);
 }
 
-TEST_CASE("unported flags say what is missing, not that the flag is unknown", "[cli][L3-CPP-015]") {
-    // An operator porting a working Rust invocation should learn that the merge
-    // is not built yet, rather than doubting that they spelled the flag right.
-    const char* deferred[] = {"--manifest", "--glob", "--delta-scope", "--collapse-duplicates",
-                              "--collapse-window-us"};
-    for (std::size_t i = 0; i < sizeof(deferred) / sizeof(deferred[0]); ++i) {
-        INFO(deferred[i]);
-        REQUIRE(mie::cli::run(args("decode", "in.mie", deferred[i])) == mie::cli::EXIT_USAGE);
-        // The `--flag=value` spelling must be caught too, or half of them slip
-        // through and are reported as an unknown option.
-        REQUIRE(mie::cli::run(args("decode", "in.mie", std::string(deferred[i]) + "=x")) ==
-                mie::cli::EXIT_USAGE);
-    }
+TEST_CASE("dump still says what is missing, not that the command is unknown", "[cli][L3-CPP-015]") {
+    // `dump` is the last unported subcommand. An operator moving a working
+    // invocation across from Rust needs to tell "this build does not have that
+    // yet" from "you have mistyped this" -- the remedies are nothing alike.
+    REQUIRE(mie::cli::run(args("dump", "in.mie")) == mie::cli::EXIT_USAGE);
+    REQUIRE(mie::cli::run(args("dump")) == mie::cli::EXIT_USAGE);
+    // count takes one input; the merge is a decode-only capability.
+    REQUIRE(mie::cli::run(args("count", "a.mie", "b.mie")) == mie::cli::EXIT_USAGE);
+}
 
-    SECTION("dump and multi-input decode say the same") {
-        REQUIRE(mie::cli::run(args("dump", "in.mie")) == mie::cli::EXIT_USAGE);
-        REQUIRE(mie::cli::run(args("decode", "a.mie", "b.mie")) == mie::cli::EXIT_USAGE);
-        REQUIRE(mie::cli::run(args("count", "a.mie", "b.mie")) == mie::cli::EXIT_USAGE);
+TEST_CASE("the three input methods are mutually exclusive", "[cli][L3-CPP-024]") {
+    // L2-MRG-001. Each names the input set completely, so combining two leaves
+    // the ORDER of the result undefined -- and order is the whole point of a
+    // time-sorted merge.
+    REQUIRE(mie::cli::run(args("decode", "a.mie", "--manifest", "m.txt")) == mie::cli::EXIT_USAGE);
+    REQUIRE(mie::cli::run(args("decode", "a.mie", "--glob", "*.mie")) == mie::cli::EXIT_USAGE);
+    REQUIRE(mie::cli::run(args("decode", "--manifest", "m.txt", "--glob", "*.mie")) ==
+            mie::cli::EXIT_USAGE);
+}
+
+TEST_CASE("an input set that resolves to nothing names which method was empty",
+          "[cli][L3-CPP-024]") {
+    // "the manifest was empty", "the glob matched nothing" and "you gave me no
+    // arguments" are three different mistakes, and an operator debugging a
+    // batch script needs to know which one they made.
+    const TempFile empty_manifest("mie-cli-empty-manifest.txt",
+                                  std::string("# nothing but a comment\n"));
+    std::string out;
+    std::string err;
+
+    REQUIRE(run_capturing(args("decode", "--manifest", empty_manifest.str()), out, err) ==
+            mie::cli::EXIT_USAGE);
+    REQUIRE(err.find("contains no input paths") != std::string::npos);
+
+    const TempPath anchor("cli-glob-none");
+    REQUIRE(run_capturing(args("decode", "--glob", anchor.str() + "-*.mie"), out, err) ==
+            mie::cli::EXIT_USAGE);
+    REQUIRE(err.find("matched no files") != std::string::npos);
+}
+
+TEST_CASE("more inputs than the cap is refused up front", "[cli][L3-CPP-024]") {
+    // Refused before anything is opened. The cap exists to keep resource use
+    // predictable, so discovering it at file 257 would already have consumed
+    // the descriptors it is meant to bound.
+    std::string manifest_body;
+    for (std::size_t i = 0; i <= mie::merge::MAX_MERGE_FILES; ++i) {
+        manifest_body += "f" + mie::text::decimal(i) + ".mie\n";
     }
+    const TempFile manifest("mie-cli-over-cap.txt", manifest_body);
+
+    std::string out;
+    std::string err;
+    REQUIRE(run_capturing(args("decode", "--manifest", manifest.str()), out, err) ==
+            mie::cli::EXIT_USAGE);
+    REQUIRE(err.find("too many input files") != std::string::npos);
 }
 
 TEST_CASE("exit codes classify the failure", "[cli][L3-CPP-016]") {
