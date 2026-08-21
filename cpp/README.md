@@ -9,20 +9,22 @@ binary, and needs no interpreter or toolchain on the host (ADR-0001).
 The same source builds with MSVC and Windows is a **shipping target**, not a
 development convenience (ADR-0003).
 
-> **Status: Phase 2, `dump` outstanding.** `decode` (single file and
-> multi-file merge) and `count` work, and the binary passes the **whole** shared
+> **Status: Phase 2 complete.** `decode` (single file and multi-file merge),
+> `count` and `dump` all work. The binary passes the **whole** shared
 > conformance manifest — every case the Rust and Python implementations are held
-> to, byte for byte, on Linux and Windows.
->
-> **Not yet ported:** the `dump` subcommand. It is refused with a message saying
-> so rather than reported as an unknown command, and it is the only thing
-> keeping the C++ flag surface a subset of the other two — which is why this
-> build still sits out the CLI-surface-parity gate.
+> to, byte for byte, on Linux and Windows — and its CLI exposes an **identical**
+> long-flag surface to the other two, enforced by the `cli-surface-parity` gate.
 >
 > Ported and gated: `platform`, `text`, `optional`, `models`, `error`, `decode`,
 > `sync`, `log`, `delta`, `reader`, `writer`, `toml`, `config`, `filter`,
-> `order`, `cli`, `merge`. See `../CHANGELOG.md` for what each landing covered
-> and `../docs/adr/` for the decisions that shape the tree.
+> `order`, `cli`, `merge`, `dump`. See `../CHANGELOG.md` for what each landing
+> covered and `../docs/adr/` for the decisions that shape the tree.
+>
+> Remaining cross-implementation work is not C++-specific: the differential
+> config-parser checks (`config_parity.py`, `config_fuzz.py`,
+> `config_path_parity.py`) still compare Rust against Python only, and there is
+> no conformance gate on `dump` output because the Rust and Python reports
+> currently differ in their rule and arrow characters.
 
 ## Build & test
 

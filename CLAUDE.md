@@ -29,9 +29,9 @@ to C++11 as accepted by **GCC 4.8.5**, the SLES 12 system compiler, and the same
 source ships a Windows binary via MSVC. It is being delivered in phases — the
 platform layer and build/CI apparatus first, then the decoder modules — so check
 `cpp/README.md` for what is actually implemented before assuming parity. As of
-the merge landing it passes the **whole** shared conformance manifest on both
-Linux and Windows; `dump` is the one unported subcommand, and the only reason
-its CLI surface is still a subset. The
+the `dump` landing it passes the **whole** shared conformance manifest on both
+Linux and Windows, and its CLI exposes an identical flag surface to the other
+two — the `cli-surface-parity` gate now compares all three. The
 three decisions that shape it are recorded as ADRs in `docs/adr/`.
 
 Edition 2024, MSRV 1.88 — the floor is set by the crate's own use of **let-chains** (stabilized 1.88), not by its dependency: edition 2024 floors at 1.85 and `memmap2` declares 1.65. (`is_multiple_of` independently needs 1.87.) The crate has exactly one external dependency: `memmap2`. Argument parsing, CSV writing, TOML config, logging, and error types are all hand-rolled — preserve this property when adding features.

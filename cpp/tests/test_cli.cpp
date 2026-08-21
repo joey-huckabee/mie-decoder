@@ -36,11 +36,15 @@ typedef std::vector<std::string> Args;
 /// reads badly at every call site once there are six of them.
 Args args(const std::string& a0, const std::string& a1 = std::string(),
           const std::string& a2 = std::string(), const std::string& a3 = std::string(),
-          const std::string& a4 = std::string(), const std::string& a5 = std::string()) {
+          const std::string& a4 = std::string(), const std::string& a5 = std::string(),
+          const std::string& a6 = std::string(), const std::string& a7 = std::string()) {
     Args out;
     out.push_back(a0);
-    const std::string rest[5] = {a1, a2, a3, a4, a5};
-    for (std::size_t i = 0; i < 5; ++i) {
+    // An empty trailing argument is treated as absent. That is fine for a
+    // command line -- no flag or path here is the empty string -- and a case
+    // that genuinely needs one builds its vector directly.
+    const std::string rest[7] = {a1, a2, a3, a4, a5, a6, a7};
+    for (std::size_t i = 0; i < 7; ++i) {
         if (!rest[i].empty()) {
             out.push_back(rest[i]);
         }
@@ -330,13 +334,45 @@ TEST_CASE("an invalid --log-level is refused rather than ignored", "[cli][L3-CPP
     mie::log::set_level(mie::log::LEVEL_OFF);
 }
 
-TEST_CASE("dump still says what is missing, not that the command is unknown", "[cli][L3-CPP-015]") {
-    // `dump` is the last unported subcommand. An operator moving a working
-    // invocation across from Rust needs to tell "this build does not have that
-    // yet" from "you have mistyped this" -- the remedies are nothing alike.
-    REQUIRE(mie::cli::run(args("dump", "in.mie")) == mie::cli::EXIT_USAGE);
-    REQUIRE(mie::cli::run(args("dump")) == mie::cli::EXIT_USAGE);
-    // count takes one input; the merge is a decode-only capability.
+TEST_CASE("dump parses its own flag set", "[cli][L3-CPP-028]") {
+    const TempFile input("mie-cli-dump.mie", valid_recording());
+
+    SECTION("both views run") {
+        REQUIRE(mie::cli::run(args("dump", input.str())) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--raw")) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--records", "1")) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--raw", "--offset", "4", "--length",
+                                   "8")) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--offset=2")) == mie::cli::EXIT_OK);
+    }
+
+    SECTION("a missing input is a runtime error, not a usage one") {
+        // The command line was fine; the file was not. Collapsing the two would
+        // send an operator looking for a typo that is not there.
+        const TempPath absent("mie-cli-dump-absent.mie");
+        REQUIRE(mie::cli::run(args("dump", absent.str())) == mie::cli::EXIT_RUNTIME);
+    }
+
+    SECTION("bad flags and arguments are usage errors") {
+        REQUIRE(mie::cli::run(args("dump")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("dump", "--frobnicate", input.str())) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--offset")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--offset", "-1")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--records", "abc")) ==
+                mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--length", "4x")) == mie::cli::EXIT_USAGE);
+    }
+
+    SECTION("a second input is refused rather than merged") {
+        // dump is a view of ONE byte range. There is no sensible way to show
+        // two files at once, so a second path is a mistake -- not, as it is for
+        // decode, an invitation to merge.
+        REQUIRE(mie::cli::run(args("dump", input.str(), input.str())) == mie::cli::EXIT_USAGE);
+    }
+}
+
+TEST_CASE("count still takes exactly one input", "[cli][L3-CPP-015]") {
+    // The merge is a decode-only capability.
     REQUIRE(mie::cli::run(args("count", "a.mie", "b.mie")) == mie::cli::EXIT_USAGE);
 }
 

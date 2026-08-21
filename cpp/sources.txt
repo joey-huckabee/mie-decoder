@@ -37,4 +37,5 @@ src/order.cpp
 src/writer.cpp
 src/config.cpp
 src/merge.cpp
+src/dump.cpp
 src/cli.cpp
