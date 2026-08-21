@@ -38,6 +38,7 @@
 #include "mie/models.hpp"
 #include "mie/optional.hpp"
 #include "mie/platform.hpp"
+#include "mie/source.hpp"
 
 namespace mie {
 
@@ -176,35 +177,6 @@ std::string csv_quote(const std::string& value);
 /// Exposed because it is the unit worth testing: every column decision lives
 /// here, and a test that asserts on a string does not need a file.
 std::string format_row(const MieMessage& message);
-
-// ---------------------------------------------------------------------------
-// Message source
-// ---------------------------------------------------------------------------
-
-/// A pull source of decoded records.
-///
-/// The writer takes this rather than a concrete `RecordIter` so that the merge
-/// can feed it too when that lands, and so the tests can drive it without a
-/// file. It is the C++ stand-in for the Rust entry points' `IntoIterator`
-/// bound.
-class MessageSource {
-  public:
-    virtual ~MessageSource();
-
-    /// Fill `out` with the next record; false at end of stream.
-    ///
-    /// May throw MieError. `--allow-partial` turns an UnrecoverableSyncLoss
-    /// thrown from here into a committed `.partial` rather than a failure, so
-    /// this is a load-bearing part of the contract, not just an error path.
-    virtual bool next(MieMessage& out) = 0;
-
-  protected:
-    MessageSource();
-
-  private:
-    MessageSource(const MessageSource&);
-    MessageSource& operator=(const MessageSource&);
-};
 
 // ---------------------------------------------------------------------------
 // Entry points

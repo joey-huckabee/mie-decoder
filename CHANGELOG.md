@@ -180,6 +180,68 @@ full release workflow.
   day, hour, minute and second ranges are swept over their full encoded width
   rather than sampled — day 0 and 367..511 are encodable and must be rejected.
 
+- **The C++ filter and canonical-order stages, and the pipeline contract they
+  share.** `mie/filter.hpp` and `mie/order.hpp`, plus `mie/source.hpp`.
+
+  **`MessageSource` moved out of `writer.hpp`.** It lived there when the writer
+  was its only consumer; it moved when the second one arrived, because `filter`
+  depending on `writer` to borrow a type would have been a dependency edge that
+  describes nothing real. Every stage between the reader and the writer now both
+  consumes one and *is* one, so the pipeline is assembled by nesting rather than
+  by a fixed sequence:
+
+  ```
+  RecordIter -> FilteredSource -> OrderedSource -> write_csv
+  ```
+
+  That is the same shape as the Rust iterator-adapter chain
+  (`reader.iter().filter_messages(f).order_rows(n)`), expressed with the tool
+  C++ has for it. The value is not the pattern name but the consequence: stages
+  can be added, reordered or omitted without any of them knowing what the others
+  are, and the writer needs no knowledge of whether filtering happened.
+
+  **Filter: exclude and include are not opposites**, and the asymmetry is the
+  semantics. An empty include set is *no constraint*, never "include nothing" —
+  reading it the other way would make a config that sets only `exclude_rts` drop
+  every record in the file. And a record with no Command Word cannot *satisfy*
+  an RT or subaddress include filter, so an active one drops it, while the same
+  record is untouched by an RT or subaddress *exclude* filter, which can only
+  match a value it does not have. Those two rules pull in opposite directions on
+  the same record, so each has its own test rather than being covered
+  incidentally.
+
+  The passed/excluded tally is emitted from the **destructor**, matching Rust's
+  `Drop`: a consumer can stop early — a broken pipe, `| head` — and an
+  end-of-stream hook would simply never run, losing the tally exactly when the
+  operator most wants to know how much was dropped. The destructor swallows any
+  exception from building that message, because a throwing destructor during
+  unwinding is `std::terminate` and a courtesy line must never turn a decode
+  failure into a crash.
+
+  **Order: pinning is the subtle part.** A record with no Command Word has no
+  sort key, and its position is defined *relative to its predecessor* — the card
+  writes the leftover words of an errored transaction as a SPURIOUS record
+  immediately after it, and `0x2000` means "continues the record before me". So
+  a pin travels with the record it followed, by being sorted as part of that
+  record's *chunk*. Holding a pin at a preserved index while sorting looks
+  equivalent and is not: it leaves the pin trailing whichever record the sort
+  moved into that slot, breaking exactly the adjacency the `0x2000` code
+  depends on. `a pin travels with the record it followed` is the test that tells
+  a correct implementation from an index-preserving one.
+
+  Two more decisions carried across: the sort key is the **decoded fields**, not
+  the rendered `MSG` string (`"11R"` sorts before `"2R"` lexicographically,
+  which is not the required order), and timestamp grouping compares the
+  **variant** as well as the value, so an IRIG microsecond count can never be
+  mistaken for an equal Standard tick count.
+
+  A throw from the inner source is **deferred until the buffered run has been
+  emitted**. Under `--allow-partial` the rows the stage is holding must reach the
+  committed `.partial`; letting the throw through first would drop a whole
+  equal-timestamp group from the operator's only record of what decoded. C++
+  does this with `std::exception_ptr` rather than by catching one error type, so
+  the guarantee does not depend on which exception arrives.
+
 - **The C++ configuration loader, split into a liftable TOML parser and an
   MIE-specific schema.** `mie/toml.hpp` parses; `mie/config.hpp` decides what
   the result means.
