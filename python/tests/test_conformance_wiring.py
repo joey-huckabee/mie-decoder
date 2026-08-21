@@ -14,7 +14,10 @@ test; these meta-tests guarantee the runner stays wired up.
 
 from __future__ import annotations
 
+import argparse
+import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -30,16 +33,74 @@ def test_conformance_runner_exists() -> None:
     assert runner.is_file(), f"conformance runner missing at {runner}"
 
 
+def _load_runner():
+    """Import `tests/conformance/run.py` as a module.
+
+    Imported rather than read as text. This test used to assert that three
+    literal call expressions appeared in the source, which pinned the runner's
+    *spelling* rather than its behaviour: it passed for any file containing
+    those characters, and failed the moment the same behaviour was expressed
+    differently — which is exactly what happened when the runner grew from a
+    hard-wired Rust/Python pair into an implementation registry.
+    """
+    sys.path.insert(0, str(_CONFORMANCE_DIR))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "mie_conformance_run", _CONFORMANCE_DIR / "run.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(_CONFORMANCE_DIR))
+
+
 @pytest.mark.requirement("L2-CONF-002")
-def test_conformance_runner_invokes_both_clis_and_compares_outputs() -> None:
-    """The runner SHALL execute both implementations and compare them."""
-    body = (_CONFORMANCE_DIR / "run.py").read_text(encoding="utf-8")
-    for required in [
-        "rust_command(args, case, sources, rust_output)",
-        "python_command(args, case, sources, python_output)",
-        "require_equal(rust, python",
-    ]:
-        assert required in body, f"conformance runner missing {required!r}"
+def test_conformance_runner_registers_both_clis() -> None:
+    """The runner SHALL be able to execute both implementations.
+
+    Asserted through the registry the runner actually dispatches on, so this
+    cannot pass while the runner has lost the ability to drive one of them.
+    """
+    runner = _load_runner()
+    for name in ("rust", "python"):
+        assert name in runner.IMPLS, f"conformance runner does not register {name!r}"
+
+    args = argparse.Namespace(
+        rust_bin=Path("rust-cli"), python_bin=Path("py"), cpp_bin=Path("cpp-cli")
+    )
+    case = {"name": "meta", "input": "inputs/meta.hex", "expected": "expected/meta.csv"}
+    sources = [Path("meta.mie")]
+
+    for name in ("rust", "python"):
+        command = runner.IMPLS[name].command(args, case, sources, Path("out.csv"))
+        # The decode invocation carries the input and the destination. A
+        # registry entry that built a command missing either would run, exit 0
+        # and compare nothing.
+        assert "decode" in command, f"{name} decode command lacks the subcommand: {command}"
+        assert str(sources[0]) in command, f"{name} decode command lacks the input: {command}"
+        assert "-o" in command, f"{name} decode command lacks an output flag: {command}"
+
+        counting = runner.IMPLS[name].command(
+            args, {"name": "meta", "mode": "count", "input": "inputs/meta.hex"}, sources, None
+        )
+        assert "count" in counting, f"{name} count command lacks the subcommand: {counting}"
+
+
+@pytest.mark.requirement("L2-CONF-002")
+def test_conformance_runner_comparison_rejects_a_difference() -> None:
+    """The runner's byte comparison SHALL fail on differing output.
+
+    The registry above proves the runner can drive each implementation; this
+    proves the thing it does with their output actually distinguishes them. A
+    comparison helper that silently accepted everything would leave every
+    conformance case passing vacuously.
+    """
+    runner = _load_runner()
+    runner.require_equal(b"same\n", b"same\n", "expected", "actual")
+    with pytest.raises(AssertionError):
+        runner.require_equal(b"expected\n", b"actual\n", "expected", "actual")
 
 
 @pytest.mark.requirement("L2-CONF-003")

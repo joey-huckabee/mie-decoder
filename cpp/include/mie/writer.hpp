@@ -32,6 +32,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 #include "mie/error.hpp"
@@ -91,10 +92,22 @@ class CsvSink {
 /// -- `mie-decoder decode x.mie | head` is a normal thing to type.
 class StdoutCsvSink : public CsvSink {
   public:
+    /// Writes to the process's own stdout.
     StdoutCsvSink();
+    /// Writes to `stream` instead.
+    ///
+    /// The stream is a parameter so this sink is reachable from a test. It
+    /// otherwise writes to a global, and the only ways to observe that are to
+    /// redirect a file descriptor -- `dup2` / `_dup2`, OS surface this tree
+    /// confines to the platform backends -- or to spawn a subprocess, which the
+    /// GCC 4.8.5 and sanitizer tiers cannot do per case.
+    explicit StdoutCsvSink(std::FILE* stream);
     bool write(const char* bytes, std::size_t length, platform::OsError& err) override;
     bool flush(platform::OsError& err) override;
     std::string destination() const override;
+
+  private:
+    std::FILE* stream_;
 };
 
 /// A file written through the temp-and-rename strategy (L2-WRT-015).
@@ -194,6 +207,9 @@ struct WriteOptions {
     /// what was decoded as `<destination>.partial` and call the run successful
     /// rather than unlinking the temp and failing.
     bool allow_partial;
+    /// Where a destination-less write goes. Defaults to the process's stdout;
+    /// ignored when a destination path is given.
+    std::FILE* stdout_stream;
 
     WriteOptions();
 };

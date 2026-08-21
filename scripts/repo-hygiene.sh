@@ -171,6 +171,18 @@ mapfile -t yml_jobs < <(
     awk 'FNR==1{inj=0} /^jobs:/{inj=1;next} inj && /^  [a-z0-9-]+:/{gsub(/[ :]/,"");print}' \
         .github/workflows/ci.yml .github/workflows/cpp-ci.yml
 )
+# A job name reused across the two workflows would satisfy this check with ONE
+# guide row, leaving the other job undocumented while the gate reported success.
+# That is not hypothetical: the C++ conformance job was first written as
+# `conformance`, which is also ci.yml's Rust/Python job, and it passed here
+# having never been described. Names are the key this check looks things up by,
+# so they have to be unique across every workflow it scans.
+dupe_jobs=$(printf '%s\n' "${yml_jobs[@]}" | sort | uniq -d)
+if [ -n "$dupe_jobs" ]; then
+    list $dupe_jobs
+    bad "CI job name(s) used in more than one workflow; one guide row cannot describe two jobs"
+fi
+
 missing_rows=()
 for job in "${yml_jobs[@]}"; do
     grep -qF "| \`$job\` |" docs/MAINTAINER-GUIDE.md || missing_rows+=("$job")

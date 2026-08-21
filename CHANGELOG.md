@@ -17,6 +17,27 @@ full release workflow.
 
 ### Changed
 
+- **The conformance runner takes a registry of implementations instead of a
+  hard-wired Rust/Python pair.** The suite spent its whole life comparing
+  exactly two implementations, with every skip, comparison and oracle check
+  written as `rust`/`python` variables side by side. Adding a third that way
+  meant tripling roughly two hundred lines and getting each one right; it is now
+  one `ImplSpec` entry.
+
+  `--rust-only` / `--python-only` become `--only rust,cpp` / `--skip cpp`, with
+  the old flags kept as deprecated aliases. The default is **every** registered
+  implementation, and opting out is explicit — the alternative, running whatever
+  binaries happen to be present, would let a job whose build step quietly failed
+  still report a full pass. `tests/conformance/run.py --skip cpp` is what the
+  existing Rust/Python CI job now says.
+
+  An implementation still being delivered in phases declares what it cannot run,
+  and those cases are **skipped by name in the log** rather than dropped
+  silently, so the gap reads as a gap. The phase limitation lives on the
+  implementation, not on the case: a merge case is a perfectly good case, it is
+  the C++ build that has no merge yet. The CLI-surface-parity check became
+  all-pairs and names any implementation it left out.
+
 - **`DELTA` tracking extracted to one module per implementation, so the key has
   one definition.** No behaviour change — every conformance oracle is
   byte-identical — but a latent correctness risk is now closed by construction
@@ -84,6 +105,40 @@ full release workflow.
   `--update-expected`.
 
 ### Added
+
+- **The C++ implementation reached Phase 1: `decode` and `count` work, and are
+  gated by the same byte-exact CSV oracles as Rust and Python.** Every shared
+  conformance case that does not need the unported multi-file merge now runs
+  against the C++ binary, on Linux and on Windows, comparing against the very
+  same `tests/conformance/expected/` files the other two are held to. Up to this
+  point the C++ tree was a library with a `--version` flag; it is now a decoder
+  whose output is proved identical rather than asserted to be.
+
+  The argument parser handles `--flag value` and `--flag=value` through **one**
+  cursor rather than spelling both out at each of the twenty-odd valued flags,
+  which is twenty-odd chances for one spelling to drift from the other. Numeric
+  flags reject values that are not wholly numeric — `strtoll` stops at the first
+  non-digit and reports success, so `--detect-records 4x` would otherwise have
+  silently become 4 — and bounded flags reject the same out-of-range values
+  their config-file counterparts reject, so a number is refused identically
+  whichever way it was supplied.
+
+  Flags belonging to the unported merge (`--manifest`, `--glob`,
+  `--delta-scope`, `--collapse-duplicates`, `--collapse-window-us`) and the
+  `dump` subcommand are refused with a message naming **the missing module**
+  rather than reported as unknown. An operator moving a working invocation
+  across from Rust needs to tell "this build does not have that yet" from "you
+  have mistyped this", because the remedies are nothing alike.
+
+  Two failures found while building it, both of which would have reached an
+  operator. A bad `--exclude-types` value threw the config layer's `ConfigError`
+  through every handler in `run()` and **aborted the process** — a caller cannot
+  distinguish an abort from a signal, and what should have been exit 4 was a
+  crash. And the CLI's own reporting streams were the process globals, so
+  nothing about `count`'s "the integer, and only the integer, on stdout"
+  contract was testable in-process; the streams are now injected, which is the
+  same seam `log::set_sink` and the abstract `CsvSink` already established.
+  A catch-all backstop now guarantees every failure leaves as an exit code.
 
 - **A third implementation: C++11 under `cpp/`, targeting SLES 12 SP5.** Neither
   existing implementation can be deployed there — SLES 12 has no Python ≥3.10

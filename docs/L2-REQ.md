@@ -990,7 +990,7 @@ A single-input decode SHALL be unaffected by the setting: with one file the two 
 **Statement**: Expected CSV oracles SHALL be updated only after both implementations agree.
 **Rationale**: Updating the oracle to match one implementation while the other still differs would silently de-couple them. Both must agree before the oracle moves.
 **Verification Method**: Inspection (I)
-**Evidence**: `tests/conformance/run.py` — every fixture is decoded by **both** implementations and byte-compared against the one shared oracle, so an oracle moved to match a single implementation fails on the other; the conformance job in `.github/workflows/ci.yml` runs it on Linux and Windows and blocks the merge. The requirement is a process rule, but the process cannot be violated silently: the enforcement is that no single implementation can ratify an oracle change on its own.
+**Evidence**: `tests/conformance/run.py` — every fixture is decoded by **every** implementation under test and byte-compared against the one shared oracle, so an oracle moved to match a single implementation fails on the others; `--update-expected` refuses to run unless all of them are present. The `conformance` job in `.github/workflows/ci.yml` runs Rust and Python on Linux and Windows, and `cpp-conformance` in `.github/workflows/cpp-ci.yml` runs the C++ binary against the same oracles on both; all of them block the merge. The requirement is a process rule, but the process cannot be violated silently: the enforcement is that no single implementation can ratify an oracle change on its own.
 
 #### L2-CONF-005
 

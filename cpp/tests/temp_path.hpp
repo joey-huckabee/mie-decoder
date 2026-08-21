@@ -106,6 +106,37 @@ inline std::string unique_temp_path(const std::string& leaf) {
 /// did *not* create it, and a helper that created it would make those
 /// unwritable. Removing a path that never existed is a no-op, which is what
 /// lets one type serve both cases.
+/// Read a whole file into `out`. False when it could not be opened.
+///
+/// Binary mode on purpose: a test comparing two CSVs byte-for-byte must not
+/// have the Windows CRT rewrite line endings underneath it.
+inline bool read_file(const std::string& path, std::string& out) {
+    std::FILE* handle = std::fopen(path.c_str(), "rb");
+    if (handle == NULL) {
+        return false;
+    }
+    out.clear();
+    char buffer[4096];
+    bool ok = true;
+    for (;;) {
+        const std::size_t got = std::fread(buffer, 1, sizeof(buffer), handle);
+        out.append(buffer, got);
+        if (got < sizeof(buffer)) {
+            // A short read is either the end of the file or a real error, and
+            // fread alone does not say which -- so ask, and stop. Looping to
+            // call fread again would be a read in the EOF state, and after a
+            // FAILED read the stream position is indeterminate, so a retry
+            // could silently duplicate or skip bytes.
+            ok = std::ferror(handle) == 0;
+            break;
+        }
+    }
+    if (std::fclose(handle) != 0) {
+        ok = false;
+    }
+    return ok;
+}
+
 class TempPath {
   public:
     /// A unique path built from `leaf`.
