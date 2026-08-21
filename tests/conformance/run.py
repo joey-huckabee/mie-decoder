@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare shared Rust and Python MIE decoding behavior."""
+"""Compare shared MIE decoding behavior across every implementation."""
 
 from __future__ import annotations
 
