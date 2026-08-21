@@ -9,25 +9,20 @@ binary, and needs no interpreter or toolchain on the host (ADR-0001).
 The same source builds with MSVC and Windows is a **shipping target**, not a
 development convenience (ADR-0003).
 
-> **Status: Phase 1 complete.** `decode` and `count` work on a single input,
-> and the binary is held to the **same byte-exact CSV oracles** as the Rust and
-> Python implementations — every shared conformance case that does not need the
-> unported merge.
+> **Status: Phase 2, `dump` outstanding.** `decode` (single file and
+> multi-file merge) and `count` work, and the binary passes the **whole** shared
+> conformance manifest — every case the Rust and Python implementations are held
+> to, byte for byte, on Linux and Windows.
 >
-> **Not yet ported:** the multi-file merge (`--manifest`, `--glob`, several
-> positional inputs, `--delta-scope`, `--collapse-duplicates`,
-> `--collapse-window-us`) and `dump`. Those flags are **refused with a message
-> saying the module is missing**, not reported as unknown flags, and the
-> conformance runner skips their cases by name. Use the Rust or Python
-> implementation for a merge.
+> **Not yet ported:** the `dump` subcommand. It is refused with a message saying
+> so rather than reported as an unknown command, and it is the only thing
+> keeping the C++ flag surface a subset of the other two — which is why this
+> build still sits out the CLI-surface-parity gate.
 >
 > Ported and gated: `platform`, `text`, `optional`, `models`, `error`, `decode`,
 > `sync`, `log`, `delta`, `reader`, `writer`, `toml`, `config`, `filter`,
-> `order`, `cli`. Phase 2 adds `merge`, `dump`, and the remaining flags — and
-> with them the CLI-surface-parity gate, which this build is deliberately
-> excluded from while its flag set is a subset. See `../CHANGELOG.md` for what
-> each landing covered and `../docs/adr/` for the decisions that shape the
-> tree.
+> `order`, `cli`, `merge`. See `../CHANGELOG.md` for what each landing covered
+> and `../docs/adr/` for the decisions that shape the tree.
 
 ## Build & test
 

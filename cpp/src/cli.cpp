@@ -11,6 +11,7 @@
 #include "mie/error.hpp"
 #include "mie/filter.hpp"
 #include "mie/log.hpp"
+#include "mie/merge.hpp"
 #include "mie/order.hpp"
 #include "mie/platform.hpp"
 #include "mie/reader.hpp"
@@ -31,7 +32,7 @@ const char* const kHelp =
     "    mie-decoder [GLOBAL] <COMMAND> [OPTIONS]\n"
     "\n"
     "COMMANDS:\n"
-    "    decode <FILE>     Decode a recording to CSV\n"
+    "    decode <FILE>...  Decode a recording to CSV; 2+ inputs are merged\n"
     "    count <FILE>      Count decodable records\n"
     "\n"
     "GLOBAL OPTIONS:\n"
@@ -64,16 +65,18 @@ const char* const kHelp =
     "    --include-buses <LIST>       Keep only these buses\n"
     "    --include-subaddresses <L>   Keep only these subaddresses\n"
     "\n"
+    "MERGE OPTIONS (two or more inputs):\n"
+    "    --manifest <PATH>            Read input paths from a file, one per line\n"
+    "    --glob <PATTERN>             Expand a single-directory *|? filename glob\n"
+    "    --delta-scope <S>            per-file (default) or global\n"
+    "    --collapse-duplicates        Drop a record another recorder already saw\n"
+    "    --collapse-window-us <N>     Timestamp tolerance for collapsing (default 0)\n"
+    "\n"
+    "  Positional inputs, --manifest and --glob are mutually exclusive.\n"
+    "\n"
     "EXIT CODES:\n"
     "    0 success   1 runtime   2 no records   3 sync loss\n"
     "    4 usage     5 config    6 merge-incompatible\n";
-
-/// Flags this build parses but cannot serve yet. Named individually so the
-/// message can say WHICH part is missing -- an operator copying a working Rust
-/// invocation should learn that the merge is unported, not doubt the flag name.
-const char* const kDeferredFlags[] = {
-    "--manifest", "--glob", "--delta-scope", "--collapse-duplicates", "--collapse-window-us",
-};
 
 /// A failure carrying the exit code it maps to, so a config problem (5) is not
 /// flattened into a generic runtime error (1).
@@ -301,23 +304,17 @@ struct GlobalArgs {
 };
 
 struct DecodeArgs {
+    /// Positional inputs. Mutually exclusive with `manifest` and `glob`
+    /// (L2-MRG-001): each is a complete way of naming the input set, and
+    /// combining two would leave the ORDER of the result undefined.
     std::vector<std::string> inputs;
+    Optional<std::string> manifest;
+    Optional<std::string> glob;
     Optional<std::string> output;
     ConfigOverrides overrides;
 
-    DecodeArgs() : inputs(), output(), overrides() {}
+    DecodeArgs() : inputs(), manifest(), glob(), output(), overrides() {}
 };
-
-void reject_deferred(const std::string& token) {
-    for (std::size_t i = 0; i < sizeof(kDeferredFlags) / sizeof(kDeferredFlags[0]); ++i) {
-        const std::string flag = kDeferredFlags[i];
-        if (token == flag || token.compare(0, flag.size() + 1, flag + std::string("=")) == 0) {
-            throw usage_error(token +
-                              " is not available in this build: the multi-file merge is not "
-                              "ported yet. Use the Rust or Python implementation for it.");
-        }
-    }
-}
 
 /// Parse everything after `decode`.
 DecodeArgs parse_decode(ArgReader& reader) {
@@ -326,7 +323,6 @@ DecodeArgs parse_decode(ArgReader& reader) {
 
     while (!reader.at_end()) {
         const std::string token = reader.peek();
-        reject_deferred(token);
 
         if (reader.take_value("-o", "--output", value)) {
             args.output = value;
@@ -342,6 +338,28 @@ DecodeArgs parse_decode(ArgReader& reader) {
             args.overrides.strict = true;
         } else if (reader.take_flag("--no-mux")) {
             args.overrides.mux_enabled = false;
+        } else if (reader.take_value("--manifest", value)) {
+            args.manifest = value;
+        } else if (reader.take_value("--glob", value)) {
+            args.glob = value;
+        } else if (reader.take_flag("--collapse-duplicates")) {
+            args.overrides.collapse_duplicates = true;
+        } else if (reader.take_value("--collapse-window-us", value)) {
+            // Unbounded above: the tolerance is a physical property of how far
+            // apart two recorders' clocks can be, not a resource limit.
+            const int64_t window = parse_integer(value, "--collapse-window-us");
+            if (window < 0) {
+                throw usage_error("--collapse-window-us must be non-negative, got " +
+                                  text::decimal_signed(window));
+            }
+            args.overrides.collapse_window_us = static_cast<uint64_t>(window);
+        } else if (reader.take_value("--delta-scope", value)) {
+            DeltaScope scope = DELTA_SCOPE_PER_FILE;
+            if (!delta_scope_from_name(value, scope)) {
+                throw usage_error("--delta-scope must be per-file or global, got \"" + value +
+                                  "\"");
+            }
+            args.overrides.delta_scope = scope;
         } else if (reader.take_value("--time-format", value)) {
             TimestampFormat format = TIMESTAMP_AUTO;
             if (!timestamp_format_from_name(value, format)) {
@@ -425,13 +443,25 @@ DecodeArgs parse_decode(ArgReader& reader) {
         }
     }
 
-    if (args.inputs.empty()) {
-        throw usage_error("decode requires an input file");
+    // Exactly one input method. Checked here rather than at resolution so the
+    // message names the combination the operator actually typed.
+    int methods = 0;
+    if (!args.inputs.empty()) {
+        methods += 1;
     }
-    if (args.inputs.size() > 1) {
+    if (args.manifest.has_value()) {
+        methods += 1;
+    }
+    if (args.glob.has_value()) {
+        methods += 1;
+    }
+    if (methods > 1) {
         throw usage_error(
-            "decoding more than one input requires the multi-file merge, which is not "
-            "ported yet. Use the Rust or Python implementation for it.");
+            "positional inputs, --manifest and --glob are mutually exclusive; "
+            "use exactly one to name the input set");
+    }
+    if (methods == 0) {
+        throw usage_error("decode requires an input file");
     }
     return args;
 }
@@ -440,7 +470,6 @@ std::string parse_count(ArgReader& reader) {
     std::vector<std::string> inputs;
     while (!reader.at_end()) {
         const std::string token = reader.peek();
-        reject_deferred(token);
         if (!token.empty() && token[0] == '-' && token != "-") {
             throw usage_error("unknown option " + token);
         }
@@ -499,6 +528,111 @@ ReaderOptions reader_options(const DecoderConfig& config) {
     options.mux_field = config.mux_field;
     return options;
 }
+
+/// Sync recoveries across every input.
+///
+/// Summed, not taken from the first: a merge that recovered in file three is
+/// just as `partial-recovered` as one that recovered in file one, and reporting
+/// only the first reader's count would call it clean.
+uint64_t total_sync_losses(const std::vector<MieFileReader*>& readers) {
+    uint64_t total = 0;
+    for (std::size_t i = 0; i < readers.size(); ++i) {
+        total += readers[i]->sync_losses();
+    }
+    return total;
+}
+
+/// True when EVERY input was a valid but empty recording.
+///
+/// All of them, not any: a merge of one empty file and one full file produced
+/// records, and calling that an empty recording would report exit class
+/// `empty-recording` over a CSV with rows in it.
+bool all_empty_recordings(const std::vector<MieFileReader*>& readers) {
+    if (readers.empty()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < readers.size(); ++i) {
+        if (!readers[i]->empty_recording()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Resolve the input set from whichever method was given (L2-MRG-001).
+std::vector<std::string> resolve_inputs(const DecodeArgs& args) {
+    std::vector<std::string> paths;
+    platform::OsError err;
+
+    if (args.manifest.has_value()) {
+        if (!merge::read_manifest(args.manifest.value(), paths, err)) {
+            throw runtime_error_("failed to read manifest " + args.manifest.value() + ": " +
+                                 err.message);
+        }
+    } else if (args.glob.has_value()) {
+        if (!merge::expand_glob(args.glob.value(), paths, err)) {
+            throw runtime_error_("failed to expand --glob \"" + args.glob.value() +
+                                 "\": " + err.message);
+        }
+    } else {
+        paths = args.inputs;
+    }
+
+    if (paths.empty()) {
+        // Named separately: "the manifest was empty" and "the glob matched
+        // nothing" are different mistakes from "you gave me no arguments", and
+        // an operator debugging a batch script needs to know which.
+        if (args.manifest.has_value()) {
+            throw usage_error("manifest " + args.manifest.value() + " contains no input paths");
+        }
+        if (args.glob.has_value()) {
+            throw usage_error("--glob \"" + args.glob.value() + "\" matched no files");
+        }
+        throw usage_error("decode requires at least one input file");
+    }
+    if (paths.size() > merge::MAX_MERGE_FILES) {
+        // Refused up front rather than discovered as an open failure partway
+        // through: the cap exists to keep resource use predictable, and finding
+        // out at file 257 would already have consumed the descriptors.
+        throw usage_error("too many input files: " + text::decimal(paths.size()) + " (maximum is " +
+                          text::decimal(merge::MAX_MERGE_FILES) +
+                          "); split the set into smaller batches");
+    }
+    return paths;
+}
+
+/// Yields everything from `inner`, then raises a terminal failure.
+///
+/// An input dropped at OPEN time (L2-MRG-004) contributed no records at all, so
+/// there is no mid-stream failure for the writer to notice -- yet the run IS
+/// partial, and emitting a clean CSV would silently claim a recording that was
+/// never read. Appending the failure after the last good row is what makes the
+/// writer commit a `.partial` instead.
+///
+/// This sits AFTER the ordering stage deliberately: that stage buffers a run of
+/// equal-timestamp records, so placing the tail before it would hold those rows
+/// behind an error that has to stay last.
+class TerminalTailSource : public MessageSource {
+  public:
+    TerminalTailSource(MessageSource& inner, const MieError& error)
+        : inner_(&inner), error_(error), raised_(false) {}
+
+    bool next(MieMessage& out) override {
+        if (inner_->next(out)) {
+            return true;
+        }
+        if (!raised_) {
+            raised_ = true;
+            throw error_;
+        }
+        return false;
+    }
+
+  private:
+    MessageSource* inner_;
+    MieError error_;
+    bool raised_;
+};
 
 /// Adapts a RecordIter to the pipeline's MessageSource contract.
 ///
@@ -578,16 +712,43 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
                              "\" is not supported (only csv)");
     }
 
-    const std::string& input = args.inputs[0];
+    const std::vector<std::string> inputs = resolve_inputs(args);
+    const bool merging = inputs.size() > 1;
 
-    MieFileReader file_reader;
-    try {
-        file_reader.open(input, reader_options(config));
-    } catch (const MieError& error) {
-        throw CliError(exit_code_for(error), error.message());
+    // shared_ptr because MieFileReader owns a mapping and is deliberately
+    // non-copyable, so it cannot live in a vector directly. The readers must
+    // outlive every iterator the merge holds, which is what owning them here
+    // -- one scope above the pipeline -- guarantees.
+    std::vector<std::shared_ptr<MieFileReader>> owned;
+    std::vector<MieFileReader*> readers;
+    bool open_dropped = false;
+    owned.reserve(inputs.size());
+    readers.reserve(inputs.size());
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+        const std::shared_ptr<MieFileReader> reader(new MieFileReader());
+        try {
+            reader->open(inputs[i], reader_options(config));
+        } catch (const MieError& error) {
+            if (merging && config.allow_partial) {
+                // L2-MRG-004: one unreadable input must not cost the operator
+                // the other twenty.
+                MIE_LOG_WARN("merge: input " + inputs[i] +
+                             " could not be opened; truncating it from the merge "
+                             "(--allow-partial): " +
+                             error.message());
+                open_dropped = true;
+                continue;
+            }
+            throw CliError(exit_code_for(error), error.message());
+        }
+        MIE_LOG_INFO("opened " + reader->path() + " (" + text::decimal(reader->file_size()) +
+                     " bytes)");
+        readers.push_back(reader.get());
+        owned.push_back(reader);
     }
-    MIE_LOG_INFO("opened " + file_reader.path() + " (" + text::decimal(file_reader.file_size()) +
-                 " bytes)");
+    if (readers.empty()) {
+        throw CliError(EXIT_NO_RECORDS, "no input file could be opened");
+    }
 
     // `-` means stdout, which has no filesystem identity: no collision check,
     // no clobber guard, and `--allow-partial` cannot name a `.partial` beside
@@ -603,16 +764,14 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     write_options.allow_partial = config.allow_partial;
     // So `-o -` lands on the same stream everything else reports on.
     write_options.stdout_stream = streams.out;
-    if (destination.has_value()) {
-        write_options.input_path = input;
+    // The same-file collision guard takes ONE input, so it is applied to the
+    // single-input case only -- matching the other two implementations, whose
+    // merge path also passes no input path. A merge that writes over one of its
+    // own inputs is therefore unguarded in all three; changing that is a
+    // cross-implementation decision, not a C++ one.
+    if (destination.has_value() && !merging) {
+        write_options.input_path = inputs[0];
     }
-
-    // The pipeline, assembled. Each stage wraps the one before it, so the
-    // writer never learns whether filtering or ordering happened.
-    RecordIter iter = file_reader.iter();
-    ReaderSource from_reader(iter);
-    FilteredSource filtered(from_reader, config.filters);
-    OrderedSource ordered(filtered, config.max_sort_group);
 
     if (!destination.has_value() && config.error_mode == ERROR_MODE_SEPARATE) {
         // L3-RS-009: separate mode needs a file path to derive the errors name
@@ -622,20 +781,73 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
         MIE_LOG_WARN("stdout output forces inline error mode");
     }
 
+    merge::MergeOptions merge_options;
+    merge_options.standard_tick_rate_hz = config.standard_tick_rate_hz;
+    merge_options.allow_partial = config.allow_partial;
+    merge_options.strict = config.strict;
+    merge_options.collapse_duplicates = config.collapse_duplicates;
+    merge_options.collapse_window_us = config.collapse_window_us;
+    merge_options.delta_scope = config.delta_scope;
+
+    // The pipeline, assembled. The only difference a merge makes is which source
+    // sits at the HEAD of it: filter, canonical order and the writer downstream
+    // are the same code operating on the same contract.
+    //
+    // Held by pointer, not by value, for two reasons. MergedSource primes
+    // itself in its constructor and that priming can throw (L2-MRG-003), so it
+    // must be built only on the merge path. And `iter()` may be called on a
+    // reader at most once at a time -- constructing a single-file walk that the
+    // merge path then ignored would reset the very counters the merge is
+    // reporting into.
+    std::shared_ptr<RecordIter> single;
+    std::shared_ptr<ReaderSource> from_reader;
+    std::shared_ptr<merge::MergedSource> merged;
+    MessageSource* head = NULL;
+
+    if (merging) {
+        try {
+            merged.reset(new merge::MergedSource(readers, merge_options));
+        } catch (const MieError& error) {
+            // Incompatible inputs (L2-MRG-003) and priming failures surface
+            // here, before any output exists -- through the same classifier
+            // that handles a mid-stream failure, so the exit codes agree.
+            return report_decode_failure(streams, error, 0);
+        }
+        head = merged.get();
+    } else {
+        single.reset(new RecordIter(readers[0]->iter()));
+        from_reader.reset(new ReaderSource(*single));
+        head = from_reader.get();
+    }
+
+    FilteredSource filtered(*head, config.filters);
+    OrderedSource ordered(filtered, config.max_sort_group);
+
+    // L2-MRG-004. Placed after the ordering stage so the buffered run is not
+    // held behind a failure that has to arrive last.
+    TerminalTailSource open_tail(ordered, MieError::unrecoverable_sync_loss(0, 0));
+    MessageSource* pipeline = open_dropped ? static_cast<MessageSource*>(&open_tail)
+                                           : static_cast<MessageSource*>(&ordered);
+
     WriteOutcome outcome;
     try {
         if (!destination.has_value()) {
-            outcome = write_csv(ordered, Optional<std::string>(), write_options);
+            outcome = write_csv(*pipeline, Optional<std::string>(), write_options);
         } else if (config.error_mode == ERROR_MODE_SEPARATE) {
-            outcome = write_csv_split(ordered, destination.value(), write_options);
+            outcome = write_csv_split(*pipeline, destination.value(), write_options);
         } else {
-            outcome = write_csv(ordered, destination, write_options);
+            outcome = write_csv(*pipeline, destination, write_options);
         }
     } catch (const MieError& error) {
-        return report_decode_failure(streams, error, file_reader.sync_losses());
+        return report_decode_failure(streams, error, total_sync_losses(readers));
     }
 
-    return classify_decode_exit(outcome, file_reader.sync_losses(), file_reader.empty_recording());
+    if (merged.get() != NULL && merged->collapsed() > 0) {
+        MIE_LOG_INFO("merge: collapsed " + text::decimal(merged->collapsed()) +
+                     " duplicate message(s) across recorders");
+    }
+
+    return classify_decode_exit(outcome, total_sync_losses(readers), all_empty_recordings(readers));
 }
 
 int run_count(const Streams& streams, const GlobalArgs& globals, const std::string& input) {

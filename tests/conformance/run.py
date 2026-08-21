@@ -497,28 +497,6 @@ class ImplSpec:
         return self._unsupported(case) if self._unsupported else None
 
 
-# Flags and shapes the C++ build does not implement yet. Delete entries as the
-# corresponding module lands; when this list empties, drop `unsupported` and
-# set `full_cli_surface=True` on the entry below.
-_CPP_DEFERRED_FLAGS = (
-    "--manifest",
-    "--glob",
-    "--delta-scope",
-    "--collapse-duplicates",
-    "--collapse-window-us",
-)
-
-
-def cpp_unsupported(case: dict[str, Any]) -> str | None:
-    if case.get("inputs"):
-        return "multi-file merge is not ported yet"
-    for argument in case.get("args", []):
-        flag = argument.split("=", 1)[0]
-        if flag in _CPP_DEFERRED_FLAGS:
-            return f"{flag} is not ported yet"
-    return None
-
-
 IMPLS: dict[str, ImplSpec] = {
     "rust": ImplSpec(
         name="rust",
@@ -541,7 +519,9 @@ IMPLS: dict[str, ImplSpec] = {
         label="C++",
         prepare=prepare_cpp_bin,
         prefix=lambda args: [str(args.cpp_bin)],
-        unsupported=cpp_unsupported,
+        # No `unsupported` entry: the C++ build runs every case in the manifest.
+        # `full_cli_surface` stays False until `dump` lands, which is the last
+        # thing keeping its flag set a subset of the other two.
         full_cli_surface=False,
     ),
 }
