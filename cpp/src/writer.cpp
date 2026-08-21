@@ -267,9 +267,6 @@ uint64_t CsvWriter::finish() {
 // Entry points
 // ---------------------------------------------------------------------------
 
-MessageSource::MessageSource() {}
-MessageSource::~MessageSource() {}
-
 WriteOptions::WriteOptions() : input_path(), no_clobber(false), allow_partial(false) {}
 
 PartialCommit::PartialCommit() : main_path(), errors_path(), offset(0), sync_losses(0) {}

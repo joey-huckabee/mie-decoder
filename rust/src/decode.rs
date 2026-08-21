@@ -50,8 +50,13 @@ pub fn read_u16_array(data: &[u8], offset: usize, count: usize, out: &mut [u16])
     let Some(slice) = data.get(offset..offset + needed) else {
         return false;
     };
-    for (i, chunk) in slice.chunks_exact(2).enumerate() {
-        out[i] = u16::from_le_bytes([chunk[0], chunk[1]]);
+    // `as_chunks` rather than `chunks_exact(2)`: the chunk type is `[u8; 2]`,
+    // so its length is proved by the type instead of by indexing a slice, and
+    // `from_le_bytes` takes it directly. `needed` is always even, so the
+    // remainder is empty by construction.
+    let (chunks, _remainder) = slice.as_chunks::<2>();
+    for (i, chunk) in chunks.iter().enumerate() {
+        out[i] = u16::from_le_bytes(*chunk);
     }
     true
 }

@@ -31,5 +31,8 @@ src/decode.cpp
 src/sync.cpp
 src/delta.cpp
 src/reader.cpp
+src/source.cpp
+src/filter.cpp
+src/order.cpp
 src/writer.cpp
 src/config.cpp
