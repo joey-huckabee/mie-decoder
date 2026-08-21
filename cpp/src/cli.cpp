@@ -669,6 +669,31 @@ std::vector<std::string> resolve_inputs(const DecodeArgs& args) {
     return paths;
 }
 
+/// Refuse a merge whose output resolves to one of its own inputs (L2-WRT-014
+/// across the input set).
+///
+/// The writer has its own input/output guard, but it takes a single path and is
+/// deliberately given none on the merge path -- it is handed one stream and
+/// cannot know how many files fed it. So for a merge this is the ONLY guard,
+/// and without it `decode a.mie b.mie -o a.mie` would truncate an input while
+/// still reading it.
+///
+/// Gated on whether a merge was REQUESTED, not on how many readers survived.
+/// `--allow-partial` can drop a multi-input merge to a single open reader, and
+/// the writer's guard is off for the whole run either way -- so keying off the
+/// surviving count would leave exactly that case unguarded.
+void check_merge_output_collision(const std::string& output,
+                                  const std::vector<std::string>& inputs) {
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+        bool same = false;
+        platform::OsError err;
+        if (platform::paths_same_file(inputs[i], output, same, err) && same) {
+            throw runtime_error_("output path " + output + " resolves to merge input " + inputs[i] +
+                                 "; choose a different output path");
+        }
+    }
+}
+
 /// Yields everything from `inner`, then raises a terminal failure.
 ///
 /// An input dropped at OPEN time (L2-MRG-004) contributed no records at all, so
@@ -832,13 +857,14 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     write_options.allow_partial = config.allow_partial;
     // So `-o -` lands on the same stream everything else reports on.
     write_options.stdout_stream = streams.out;
-    // The same-file collision guard takes ONE input, so it is applied to the
-    // single-input case only -- matching the other two implementations, whose
-    // merge path also passes no input path. A merge that writes over one of its
-    // own inputs is therefore unguarded in all three; changing that is a
-    // cross-implementation decision, not a C++ one.
+    // The writer's own guard takes ONE input path, so it covers the single-input
+    // case. A merge needs the whole set checked instead, which `run_decode` does
+    // below -- the writer cannot, because it is handed one stream and never
+    // learns how many files fed it.
     if (destination.has_value() && !merging) {
         write_options.input_path = inputs[0];
+    } else if (destination.has_value()) {
+        check_merge_output_collision(destination.value(), inputs);
     }
 
     if (!destination.has_value() && config.error_mode == ERROR_MODE_SEPARATE) {

@@ -17,6 +17,26 @@ full release workflow.
 
 ### Changed
 
+- **Fixed: a C++ merge would write over one of its own inputs.** `decode a.mie
+  b.mie -o a.mie` truncated `a.mie` while the merge was still reading it. Rust
+  and Python both guard this; the C++ merge shipped without the check, and a
+  comment in `cli.cpp` asserted — wrongly — that the other two did not guard it
+  either.
+
+  The confusion was real rather than careless: the *writer's* guard takes a
+  single input path, and all three implementations correctly pass it none on the
+  merge path, because the writer receives one stream and cannot know how many
+  files fed it. Rust and Python compensate with a separate CLI-level check
+  across the whole input set (`check_output_collision` /
+  `_check_merge_output_collision`); C++ had only the half that does not apply.
+
+  The check is gated on whether a merge was **requested**, not on how many
+  readers survived — `--allow-partial` can drop a multi-input merge to a single
+  open reader, and the writer's guard is off for the whole run either way, so
+  keying off the surviving count would leave exactly that case unguarded. The
+  regression test was confirmed to fail against the shipped behaviour before the
+  fix went in.
+
 - **The conformance runner takes a registry of implementations instead of a
   hard-wired Rust/Python pair.** The suite spent its whole life comparing
   exactly two implementations, with every skip, comparison and oracle check

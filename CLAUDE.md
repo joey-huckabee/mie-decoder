@@ -165,6 +165,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - `docs/L2-REQ.md` — Level 2 architectural derivations (each with a single L1 parent).
 - `docs/L3-REQ.md` — Level 3 implementation obligations (cross-impl `L3-WRT-*`, plus per-impl `L3-PY-*` / `L3-RS-*` / `L3-CPP-*`; `L3-RS-007` is withdrawn and its ID reserved, from when static-musl support was retired).
 - `docs/TRACE-MATRIX.md` — auto-generated trace matrix produced by `scripts/build-trace-matrix.py`. Forward trace from L1 through L2 and L3 to test artifacts (`@pytest.mark.requirement` markers in `python/tests/`, `/// Requirements:` doc-comments above Rust `#[test]` items, and Catch2 tag strings in `cpp/tests/`). Treat as the single source of truth for live status; the source docs hold spec content only.
+- `docs/OPEN-DECISIONS.md` — questions that need a maintainer's call before the work they gate can land, each with the evidence, what the options cost, and what happens next once decided. Distinct from `ROADMAP.md`, which holds work that is merely queued: an entry here is blocked on a judgement, not on effort.
 - `docs/ROADMAP.md` — forward-looking roadmap: planned work plus pinned "do not drop" commitments (TOML config, CSV byte-compat, sync semantics). Completed work is not tracked here — it lives in `CHANGELOG.md` and the L1/L2/L3 requirements.
 - `config/default.toml` — fully commented reference configuration; preserved across the port.
 - `docs/adr/` — MADR-format architecture decision records. ADR-0001 sets the

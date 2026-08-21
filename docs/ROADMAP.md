@@ -31,6 +31,9 @@ checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 
 ## `dump` report characters diverge between Rust and Python (open decision)
 
+> Summarised with the other pending calls in [`OPEN-DECISIONS.md`](OPEN-DECISIONS.md);
+> the mechanics of re-adding the gate are below.
+
 The three implementations' `dump` reports are **not** byte-identical, and
 nothing gates them. Found while adding a `dump` mode to the conformance runner
 during the C++ port; the mode was backed out again because there is no agreed
