@@ -103,7 +103,7 @@ def expand_glob(pattern: str) -> list[Path]:
     """
     p = Path(pattern)
     name_pat = p.name
-    directory = p.parent if str(p.parent) else Path(".")
+    directory = p.parent if str(p.parent) else Path()
     out: list[Path] = []
     with os.scandir(directory) as it:
         for entry in it:
@@ -368,7 +368,7 @@ def _merge_drain(
     readers: list[MieFileReader],
     iters: list[Iterator[MieMessage]],
     seqs: list[int],
-    counter: "itertools.count[int]",
+    counter: itertools.count[int],
     heap: list[tuple[int, int, int, int, MieMessage]],
     tick: float | None,
     allow_partial: bool,

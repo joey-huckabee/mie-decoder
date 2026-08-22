@@ -40,32 +40,32 @@ from __future__ import annotations
 import logging
 import mmap
 import os
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator
 
-from mie_decoder.delta import DeltaKind, DeltaTracker
 from mie_decoder.decode import (
-    MIN_RECORD_BYTES_STANDARD,
     DEFAULT_DETECT_RECORDS,
     DEFAULT_MUX_DELIMITER,
     DEFAULT_MUX_ENABLED,
     DEFAULT_MUX_FIELD,
+    MIN_RECORD_BYTES_STANDARD,
     DetectionConfidence,
     classify_message_format,
-    mux_from_filename,
     decode_command_word,
     decode_irig_timestamp,
     decode_standard_timestamp,
     decode_type_word,
     detect_record_anomalies,
     is_terminator_type_word,
+    mux_from_filename,
     probe_timestamp_format,
     read_u16,
     read_u16_array,
     validate_post_extract_invariants,
     validate_structural_invariants,
 )
+from mie_decoder.delta import DeltaKind, DeltaTracker
 from mie_decoder.exceptions import (
     MieFileEmptyError,
     MieFileIoError,
@@ -82,16 +82,16 @@ from mie_decoder.exceptions import (
     MieUnrecoverableSyncLossError,
 )
 from mie_decoder.models import (
-    CommandWord,
     ERROR_SPURIOUS_CONTINUATION,
     ERROR_SPURIOUS_STANDALONE,
     KNOWN_DDC_ERROR_CODES,
+    TIMESTAMP_WORD_COUNTS,
+    CommandWord,
     MessageFormat,
     MessageType,
     MieMessage,
     Timestamp,
     TimestampFormat,
-    TIMESTAMP_WORD_COUNTS,
     TypeWord,
 )
 from mie_decoder.sync import (
@@ -1097,9 +1097,9 @@ class MieFileReader:
 def _decode_error_record(
     mm: mmap.mmap,
     offset: int,
-    tw: "TypeWord",
-    timestamp: "Timestamp",
-    cmd: "CommandWord",
+    tw: TypeWord,
+    timestamp: Timestamp,
+    cmd: CommandWord,
     cmd_byte_offset: int,
     ts_words: int,
     strict: bool,

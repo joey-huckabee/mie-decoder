@@ -51,6 +51,41 @@ full release workflow.
   `reason` naming the invariant that holds them. One fix introduced a cast of
   its own (`u64::MAX as f64`, which rounds *up* and would have admitted a value
   the conversion could not take) and is now an exact `2^64` constant.
+- **Ruff was running almost nothing, and now runs a curated rule set.**
+  `pyproject.toml` set only `line-length` and `target-version` — no `select` —
+  so the gate ran ruff's default `E4`, `E7`, `E9`, `F` and reported "All checks
+  passed" against a small slice of the ~800 rules it ships. The same shape as
+  the clippy gap that let SonarCloud report five Rust findings the local gate
+  called clean: **a tool is only as strict as the rules you asked it for.**
+
+  Twenty-one families are selected. `ALL` is deliberately not the target — it
+  includes 1003 `S101` hits for `assert` in a suite where assert is the point.
+  Every exclusion is a judgement recorded next to itself, not a silent omission:
+
+  - `PTH123` / `PTH105` — `open()` and `os.replace()` are correct and
+    deliberate. `os.replace` **is** the atomic-rename primitive `L2-WRT-015`
+    needs, and `open()` in `reader.py` sits on the input path SonarCloud has a
+    documented scoped suppression for; rewriting it to satisfy a style rule
+    would disturb a taint flow that was analysed on purpose.
+  - `PERF203` — a `try`/`except` inside the record loop is the per-record error
+    contract, not an oversight.
+  - `T201` in `cli.py` only — printing to stdout is that module's whole job;
+    the rule stays live everywhere else, which is where a stray debugging
+    `print` would be a real defect.
+  - `SIM115` in `reader.py` / `writer.py` — those files outlive the opening
+    scope by design; a `with` block would close them at exactly the wrong
+    moment.
+  - `ARG002` in `tests/**` — a pytest fixture is often requested for its side
+    effect (`capsys` starts capturing), so an unused parameter is the idiom.
+
+  The confusable-character rules stay **on**, with `–`, `—` and `×` allowed:
+  those are prose punctuation used consistently across all three
+  implementations, and keeping the rule live still catches a genuinely
+  deceptive homoglyph.
+
+  **One real test defect fell out.** Three `pytest.raises(match=...)` patterns
+  contained unescaped `.` metacharacters — `match="output.format"` also matches
+  `outputXformat`, so those assertions were weaker than they read. Now escaped.
 
 - **The six open SonarCloud findings are fixed, and the reason the Rust ones
   were invisible to `cargo clippy` is now closed.** Four `rust:S1612`

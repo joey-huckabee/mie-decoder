@@ -458,9 +458,9 @@ class TestDetectTimestampFormat:
     @pytest.mark.requirement("L2-DEC-015")
     def test_detects_irig_from_known_data(self) -> None:
         """Known IRIG record should detect as IRIG."""
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.decode import probe_timestamp_format
         from mie_decoder.models import TimestampFormat
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         outcome = probe_timestamp_format(RECORD_RT15_SA11_RCV, 0, 1)
         assert outcome.format == TimestampFormat.IRIG
@@ -469,9 +469,9 @@ class TestDetectTimestampFormat:
     @pytest.mark.requirement("L2-DEC-015")
     def test_detects_irig_from_transmit(self) -> None:
         """Known IRIG transmit record should detect as IRIG."""
-        from tests.conftest import RECORD_RT15_SA22_XMT
         from mie_decoder.decode import probe_timestamp_format
         from mie_decoder.models import TimestampFormat
+        from tests.conftest import RECORD_RT15_SA22_XMT
 
         outcome = probe_timestamp_format(RECORD_RT15_SA22_XMT, 0, 1)
         assert outcome.format == TimestampFormat.IRIG
@@ -479,8 +479,8 @@ class TestDetectTimestampFormat:
     @pytest.mark.requirement("L2-DEC-013")
     def test_forced_irig(self, tmp_mie_file: Path) -> None:
         """Forcing IRIG should still decode correctly."""
-        from mie_decoder.reader import MieFileReader
         from mie_decoder.models import TimestampFormat
+        from mie_decoder.reader import MieFileReader
 
         reader = MieFileReader(tmp_mie_file, time_format=TimestampFormat.IRIG)
         messages = list(reader)
@@ -506,8 +506,8 @@ class TestScoreSingleRecord:
 
     @pytest.mark.requirement("L2-DEC-015")
     def test_irig_receive_record_scores_irig_max(self) -> None:
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.decode import _score_single_record, decode_type_word, read_u16
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         tw = decode_type_word(read_u16(RECORD_RT15_SA11_RCV, 0))
         irig, std = _score_single_record(RECORD_RT15_SA11_RCV, 0, tw)
@@ -517,8 +517,8 @@ class TestScoreSingleRecord:
 
     @pytest.mark.requirement("L2-DEC-015")
     def test_irig_transmit_record_scores_irig_max(self) -> None:
-        from tests.conftest import RECORD_RT15_SA22_XMT
         from mie_decoder.decode import _score_single_record, decode_type_word, read_u16
+        from tests.conftest import RECORD_RT15_SA22_XMT
 
         tw = decode_type_word(read_u16(RECORD_RT15_SA22_XMT, 0))
         irig, std = _score_single_record(RECORD_RT15_SA22_XMT, 0, tw)
@@ -528,8 +528,8 @@ class TestScoreSingleRecord:
 
     @pytest.mark.requirement("L2-DEC-015")
     def test_returns_pair_of_ints(self) -> None:
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.decode import _score_single_record, decode_type_word, read_u16
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         tw = decode_type_word(read_u16(RECORD_RT15_SA11_RCV, 0))
         result = _score_single_record(RECORD_RT15_SA11_RCV, 0, tw)
@@ -904,9 +904,9 @@ class TestProbeTimestampFormat:
 
     @pytest.mark.requirement("L2-DEC-015")
     def test_single_irig_record_picks_irig(self) -> None:
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.decode import probe_timestamp_format
         from mie_decoder.models import TimestampFormat
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         outcome = probe_timestamp_format(RECORD_RT15_SA11_RCV, 0, 8)
         assert outcome.format == TimestampFormat.IRIG
@@ -915,12 +915,12 @@ class TestProbeTimestampFormat:
 
     @pytest.mark.requirement("L2-DEC-015")
     def test_eight_irig_records_aggregates_decisively(self) -> None:
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.decode import (
             DetectionConfidence,
             probe_timestamp_format,
         )
         from mie_decoder.models import TimestampFormat
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         data = RECORD_RT15_SA11_RCV * 8
         outcome = probe_timestamp_format(data, 0, 8)
@@ -948,8 +948,8 @@ class TestProbeTimestampFormat:
 
     @pytest.mark.requirement("L2-DEC-015")
     def test_max_records_zero_clamps_to_one(self) -> None:
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.decode import probe_timestamp_format
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         out_zero = probe_timestamp_format(RECORD_RT15_SA11_RCV, 0, 0)
         out_one = probe_timestamp_format(RECORD_RT15_SA11_RCV, 0, 1)

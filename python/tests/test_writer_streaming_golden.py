@@ -33,7 +33,6 @@ import pytest
 
 from mie_decoder.reader import MieFileReader
 from mie_decoder.writer import write_csv, write_csv_split
-
 from tests.conftest import (
     errored_record_rt15_sa11_us,
     normal_record_rt15_sa11_us,

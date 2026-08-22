@@ -106,9 +106,10 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Iterable, TextIO
+from typing import Final, TextIO
 
 from mie_decoder.exceptions import (
     MieClobberRefusedError,
@@ -185,7 +186,7 @@ def paths_refer_to_same_file(input_path: Path, output_path: Path) -> bool:
         pass
     # Output doesn't exist; resolve its parent and join the filename.
     op = Path(output_path)
-    parent = op.parent if str(op.parent) else Path(".")
+    parent = op.parent if str(op.parent) else Path()
     try:
         parent_resolved = parent.resolve(strict=True)
     except (OSError, RuntimeError):

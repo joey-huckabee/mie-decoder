@@ -25,7 +25,6 @@ import pytest
 from mie_decoder.models import MieMessage
 from mie_decoder.reader import MieFileReader
 from mie_decoder.writer import write_csv
-
 from tests.conftest import RECORD_RT15_SA11_RCV
 
 

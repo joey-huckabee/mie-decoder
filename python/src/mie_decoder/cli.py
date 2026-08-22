@@ -28,6 +28,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import math
 import os
@@ -1344,12 +1345,10 @@ def _force_utf8_streams() -> None:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue
-        try:
+        # Detached buffer, or a stream that refuses reconfiguration — the dump
+        # and log output are best-effort in that case, not a hard error.
+        with contextlib.suppress(ValueError, OSError):
             reconfigure(encoding="utf-8", newline="\n")
-        except (ValueError, OSError):
-            # Detached buffer or a stream that refuses reconfiguration — the
-            # dump / log output is best-effort in that case, not a hard error.
-            pass
 
 
 def _normalize_version_flag(argv: list[str]) -> list[str]:

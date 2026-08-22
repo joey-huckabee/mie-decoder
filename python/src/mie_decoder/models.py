@@ -559,7 +559,7 @@ class MieMessage:
         if len(self.data_words) > MAX_DATA_WORDS:
             object.__setattr__(self, "data_words", self.data_words[:MAX_DATA_WORDS])
 
-    def with_delta(self, delta: float | None) -> "MieMessage":
+    def with_delta(self, delta: float | None) -> MieMessage:
         """Return a copy of this message carrying a new DELTA.
 
         ``MieMessage`` is frozen, so callers that recompute DELTA on a merged

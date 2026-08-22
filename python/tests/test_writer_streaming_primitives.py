@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from mie_decoder.exceptions import MieWriterError
+from mie_decoder.reader import MieFileReader
 from mie_decoder.writer import (
     CSV_HEADER,
     _AtomicCsvFile,
@@ -24,9 +25,7 @@ from mie_decoder.writer import (
     is_broken_pipe,
     write_csv,
 )
-
 from tests.conftest import normal_record_rt15_sa11_us
-from mie_decoder.reader import MieFileReader
 
 
 def _leftover_temps(dest: Path) -> list[Path]:

@@ -28,7 +28,8 @@ The release history lives in ``CHANGELOG.md``; the installed version is
 available as ``mie_decoder.__version__``.
 """
 
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 # Public package-root API (L3-PY-007). The decoder entry point —
 # ``MieFileReader``, a typed callable: ``MieFileReader(path)`` constructs a

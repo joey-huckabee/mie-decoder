@@ -388,8 +388,8 @@ class TestRecoverSync:
         self, tmp_path: Path, single_receive_record: bytes
     ) -> None:
         """Strict mode should raise on sync loss."""
-        from mie_decoder.reader import MieFileReader
         from mie_decoder.exceptions import MieUnknownTypeWordError
+        from mie_decoder.reader import MieFileReader
 
         good = single_receive_record * 2
         corruption = b"\x03\x00" * 5  # invalid type 0x03
@@ -418,9 +418,11 @@ class TestRecoverSync:
 
         fpath = tmp_path / "strict_corrupt.mie"
         fpath.write_bytes(single_receive_record * 2 + b"\x03\x00" * 5)
-        with caplog.at_level(logging.DEBUG, logger="mie_decoder.reader"):
-            with pytest.raises(MieUnknownTypeWordError):
-                list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+        with (
+            caplog.at_level(logging.DEBUG, logger="mie_decoder.reader"),
+            pytest.raises(MieUnknownTypeWordError),
+        ):
+            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
 
         context = [
             record.getMessage()

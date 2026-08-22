@@ -15,7 +15,6 @@ from mie_decoder.exceptions import (
     MieIncompatibleMergeInputsError,
     MieNonMonotonicInputError,
 )
-from mie_decoder.models import DeltaScope, MieMessage
 from mie_decoder.merge import (
     MAX_MERGE_FILES,
     expand_glob,
@@ -23,7 +22,7 @@ from mie_decoder.merge import (
     merge_readers,
     read_manifest,
 )
-from mie_decoder.models import TimestampFormat
+from mie_decoder.models import DeltaScope, MieMessage, TimestampFormat
 from mie_decoder.reader import MieFileReader
 from tests.conftest import RECORD_RT15_SA11_RCV
 

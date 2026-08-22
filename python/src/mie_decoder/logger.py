@@ -42,7 +42,6 @@ from __future__ import annotations
 import logging
 import sys
 
-
 #: Name of the root logger for the MIE-Decoder package.
 LOGGER_NAME: str = "mie_decoder"
 

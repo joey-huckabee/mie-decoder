@@ -20,7 +20,7 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Iterator
+from collections.abc import Iterable, Iterator
 
 from mie_decoder.config import FilterConfig
 from mie_decoder.models import MieMessage

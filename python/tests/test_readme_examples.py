@@ -34,4 +34,4 @@ def test_python_readme_examples_execute(tmp_mie_file: Path) -> None:
         # Point the example at a real fixture instead of the placeholder path.
         runnable = block.replace('"recording.mie"', repr(str(tmp_mie_file)))
         namespace: dict[str, object] = {}
-        exec(compile(runnable, str(PYTHON_README), "exec"), namespace)  # noqa: S102
+        exec(compile(runnable, str(PYTHON_README), "exec"), namespace)

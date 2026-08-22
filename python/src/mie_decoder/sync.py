@@ -99,7 +99,7 @@ from mie_decoder.decode import (
     is_valid_message_type,
     read_u16,
 )
-from mie_decoder.models import ByteSource, TimestampFormat, TIMESTAMP_WORD_COUNTS
+from mie_decoder.models import TIMESTAMP_WORD_COUNTS, ByteSource, TimestampFormat
 
 #: Maximum number of bytes to scan when searching for sync.
 #: 64 KB covers any reasonable header or corruption gap.
