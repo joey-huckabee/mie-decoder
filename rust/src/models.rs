@@ -337,7 +337,29 @@ impl StandardTimestamp {
             return None;
         }
         let micros = f64::from(self.raw_value) * 1_000_000.0 / standard_tick_rate_hz;
-        Some(micros.round() as u64)
+        // The function already answers with an Option, so a value that cannot
+        // be a microsecond count answers "no value" rather than saturating.
+        // `as` would clamp an absurd result -- a vanishingly small tick rate
+        // makes `micros` enormous -- to u64::MAX, which would then read as a
+        // real timestamp downstream. This is the one cast in this file where
+        // the out-of-range case is reachable from operator input.
+        // 2^64 exactly, which f64 represents without rounding -- so this bound
+        // needs no cast of its own. Comparing against `u64::MAX as f64` would
+        // have introduced the very kind of lossy cast this guard exists to
+        // avoid (u64::MAX is not representable in f64 and rounds UP, so the
+        // comparison would have admitted a value that then saturates).
+        const TWO_POW_64: f64 = 18_446_744_073_709_551_616.0;
+        let rounded = micros.round();
+        if !rounded.is_finite() || !(0.0..TWO_POW_64).contains(&rounded) {
+            return None;
+        }
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "guarded immediately above: finite, non-negative, below 2^64"
+        )]
+        let micros = rounded as u64;
+        Some(micros)
     }
 
     /// Format as `0xNNNNNNNN`.
@@ -448,7 +470,17 @@ impl DataWords {
         let n = slice.len().min(MAX_DATA_WORDS);
         let mut buf = [0u16; MAX_DATA_WORDS];
         buf[..n].copy_from_slice(&slice[..n]);
-        Self { buf, len: n as u8 }
+        // `n` is `slice.len().min(MAX_DATA_WORDS)` and MAX_DATA_WORDS is 32, so
+        // this cannot truncate. Stated as an allow rather than a `try_from`
+        // with an invented fallback: there is no sensible value to fall back
+        // TO, and inventing one would hide a broken invariant instead of
+        // documenting a held one.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "n is clamped to MAX_DATA_WORDS (32) immediately above"
+        )]
+        let len = n as u8;
+        Self { buf, len }
     }
 
     /// Build from an iterator of `u16`. Stops at `MAX_DATA_WORDS`.
@@ -725,10 +757,41 @@ mod tests {
         assert!(empty.is_empty());
     }
 
+    /// A tick rate that is valid but produces an unrepresentable result is
+    /// declined rather than saturated.
+    ///
+    /// Reachable from ordinary input: `--standard-tick-rate-hz 1e-300` is
+    /// finite and positive and passes the rate guard. `as u64` SATURATES, so
+    /// the answer used to be `u64::MAX` — a fabricated timestamp that reads as
+    /// real downstream. C++ had the same shape and it was undefined behaviour
+    /// there; Python returned an integer neither of the others can hold. All
+    /// three now decline.
+    ///
+    /// Requirements: L2-DEC-017
+    #[test]
+    fn standard_declines_unrepresentable_result() {
+        let ts = StandardTimestamp {
+            raw_value: 1_000_000,
+            upper_word: 0x000F,
+            lower_word: 0x4240,
+        };
+        assert_eq!(ts.to_microseconds(1e-300), None);
+        assert_eq!(ts.to_microseconds(f64::MIN_POSITIVE), None);
+
+        // The RATE predicate is unchanged: still "> 0", not "not near zero".
+        // A tiny rate with nothing to scale still converts.
+        let zero = StandardTimestamp {
+            raw_value: 0,
+            upper_word: 0,
+            lower_word: 0,
+        };
+        assert_eq!(zero.to_microseconds(f64::MIN_POSITIVE), Some(0));
+    }
+
     /// Requirements: L3-RS-005
     #[test]
     fn data_words_max_capacity() {
-        let words: Vec<u16> = (0..MAX_DATA_WORDS as u16).collect();
+        let words: Vec<u16> = (0..u16::try_from(MAX_DATA_WORDS).expect("fits")).collect();
         let dw = DataWords::from_slice(&words);
         assert_eq!(dw.len(), MAX_DATA_WORDS);
     }
@@ -738,7 +801,7 @@ mod tests {
     /// Requirements: L3-RS-005, L1-ROB-001
     #[test]
     fn data_words_overflow_truncates() {
-        let words: Vec<u16> = (0..(MAX_DATA_WORDS as u16 + 8)).collect();
+        let words: Vec<u16> = (0..(u16::try_from(MAX_DATA_WORDS).expect("fits") + 8)).collect();
         let dw = DataWords::from_slice(&words);
         assert_eq!(dw.len(), MAX_DATA_WORDS);
         assert_eq!(dw.as_slice(), &words[..MAX_DATA_WORDS]);

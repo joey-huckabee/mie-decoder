@@ -17,6 +17,40 @@ full release workflow.
 
 ### Changed
 
+- **Fixed, in all three implementations: a valid tick rate could produce a
+  timestamp that was fabricated, undefined, or a crash.** Found by turning on
+  clippy's cast lints, which are `pedantic` and so had never run.
+
+  `--standard-tick-rate-hz 1e-300` is finite and positive. It passes every
+  existing guard, and the conversion then overflows. Each implementation failed
+  differently:
+
+  - **Rust** — `as u64` **saturates**, so the answer was `u64::MAX`: a
+    fabricated timestamp, indistinguishable downstream from a real one.
+  - **C++** — `static_cast<uint64_t>` from an out-of-range `double` is
+    **undefined behaviour**, not a clamp. An existing test asserted this call
+    *succeeded*, so the suite was pinning UB and passing because it happened to
+    produce a number.
+  - **Python** — the division overflows to `inf` and `math.floor` raised an
+    uncaught **`OverflowError`** out of a decode.
+
+  All three now decline, which is the answer the uncalibrated case already
+  gets and for the same reason: a number that cannot be a timestamp must not be
+  presented as one. `L2-DEC-017` states the rule, each implementation has a
+  test, and a conformance case pins the three together on an input that
+  previously produced three different failures.
+
+- **The clippy cast lints are enabled and the crate is clean under them.**
+  `cast_possible_truncation`, `cast_sign_loss`, `cast_possible_wrap`,
+  `cast_precision_loss` and `cast_lossless` are `deny` in `[lints.clippy]`.
+
+  Every other site turned out to be safe — but the safety lived in a comment
+  above a guard, which is a guarantee the compiler cannot check and a later edit
+  can separate from its cast. Most are now `try_from`, so the range check and
+  the conversion are one expression; the few that remain are `#[allow]` with a
+  `reason` naming the invariant that holds them. One fix introduced a cast of
+  its own (`u64::MAX as f64`, which rounds *up* and would have admitted a value
+  the conversion could not take) and is now an exact `2^64` constant.
 - **Ruff was running almost nothing, and now runs a curated rule set.**
   `pyproject.toml` set only `line-length` and `target-version` — no `select` —
   so the gate ran ruff's default `E4`, `E7`, `E9`, `F` and reported "All checks

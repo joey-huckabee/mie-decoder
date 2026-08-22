@@ -144,7 +144,15 @@ impl DeltaTracker {
         let outcome = match self.last_us.get(&key) {
             None => DeltaOutcome::First,
             Some(&prev_us) if curr_us >= prev_us => {
-                DeltaOutcome::Elapsed((curr_us - prev_us) as f64 / 1_000_000.0)
+                // f64 loses precision above 2^53 microseconds, which is
+                // roughly 285 years of elapsed time between two records
+                // sharing one RT/MSG key. DELTA is a gap within a recording.
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "a gap over 2^53 us is ~285 years; DELTA is intra-recording"
+                )]
+                let seconds = (curr_us - prev_us) as f64 / 1_000_000.0;
+                DeltaOutcome::Elapsed(seconds)
             }
             Some(&prev_us) => DeltaOutcome::Backward {
                 prev_us,
@@ -199,8 +207,8 @@ mod tests {
             day: 10,
             hour: 0,
             minute: 0,
-            second: (micros / 1_000_000) as u8,
-            microsecond: (micros % 1_000_000) as u32,
+            second: u8::try_from(micros / 1_000_000).unwrap_or(0),
+            microsecond: u32::try_from(micros % 1_000_000).unwrap_or(0),
             freerun: false,
         })
     }

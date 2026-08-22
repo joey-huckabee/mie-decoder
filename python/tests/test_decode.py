@@ -402,6 +402,29 @@ class TestDecodeStandardTimestamp:
         assert ts.to_microseconds(float("inf")) is None
 
     @pytest.mark.requirement("L2-DEC-017")
+    def test_to_microseconds_declines_unrepresentable_result(self) -> None:
+        """A valid rate whose result no implementation can hold is declined.
+
+        Reachable from ordinary input: ``--standard-tick-rate-hz 1e-300`` is
+        finite and positive and passes the rate guard. Python integers do not
+        overflow, so this implementation *could* return the enormous value —
+        and that is the problem. Rust saturated it to ``u64::MAX``, a fabricated
+        timestamp that reads as real downstream, and the C++ ``static_cast``
+        from an out-of-range double was undefined behaviour. All three now
+        decline, which is what keeps them byte-identical.
+        """
+        from mie_decoder.decode import decode_standard_timestamp
+
+        ts = decode_standard_timestamp(0x0001, 0x86A0)  # 100000 ticks
+        assert ts.to_microseconds(1e-300) is None
+        assert ts.to_microseconds(5e-324) is None
+
+        # The RATE predicate is unchanged: still "> 0", not "not near zero".
+        # A tiny rate with nothing to scale still converts.
+        zero = decode_standard_timestamp(0x0000, 0x0000)
+        assert zero.to_microseconds(5e-324) == 0
+
+    @pytest.mark.requirement("L2-DEC-017")
     def test_to_microseconds_calibrated(self) -> None:
         from mie_decoder.decode import decode_standard_timestamp
 

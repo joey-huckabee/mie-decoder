@@ -219,7 +219,25 @@ bool StandardTimestamp::to_microseconds(double tick_rate_hz, uint64_t& out) cons
     // Half-away-from-zero, matching Python's int(x + 0.5). Ticks are
     // non-negative so the two agree exactly; std::round has the same tie
     // behaviour and says so without an added constant.
-    out = static_cast<uint64_t>(std::floor(micros + 0.5));
+    const double rounded = std::floor(micros + 0.5);
+
+    // Decline a result that cannot be a microsecond count. This is reachable
+    // from ordinary operator input: `--standard-tick-rate-hz 1e-300` is finite
+    // and positive, passes the guard above, and drives `micros` far past what a
+    // uint64_t holds. Converting an out-of-range double with static_cast is
+    // UNDEFINED BEHAVIOUR in C++ -- not a saturating clamp -- so the check has
+    // to happen before the conversion, not be inferred from it.
+    //
+    // 2^64 exactly, which a double represents without rounding. Comparing
+    // against UINT64_MAX converted to double would be wrong: that value is not
+    // representable and rounds UP, admitting a double the cast cannot take.
+    const double kTwoPow64 = 18446744073709551616.0;
+    if (!(rounded >= 0.0) || rounded >= kTwoPow64) {
+        // Written `!(rounded >= 0.0)` so a NaN -- which compares false against
+        // everything -- is rejected here rather than reaching the cast.
+        return false;
+    }
+    out = static_cast<uint64_t>(rounded);
     return true;
 }
 

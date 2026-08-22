@@ -320,10 +320,32 @@ TEST_CASE("Standard conversion declines every unusable tick rate",
     }
 
     SECTION("the smallest positive rate is accepted, not treated as zero") {
-        // Denormal-adjacent but strictly positive: the predicate is "> 0", not
-        // "not close to 0", and a decoder that rounded it away would silently
-        // drop a legitimate if eccentric calibration.
-        CHECK(ts.to_microseconds(std::numeric_limits<double>::min(), out));
+        // Denormal-adjacent but strictly positive: the RATE predicate is "> 0",
+        // not "not close to 0", and a decoder that rounded it away would
+        // silently drop a legitimate if eccentric calibration.
+        //
+        // Checked against a zero tick count, so the question asked is purely
+        // "is this rate usable" -- the answer for a NON-zero count is the
+        // separate section below, and conflating the two is what let this case
+        // assert undefined behaviour.
+        const mie::StandardTimestamp zero_ticks(0, 0, 0);
+        CHECK(zero_ticks.to_microseconds(std::numeric_limits<double>::min(), out));
+        CHECK(out == 0u);
+    }
+
+    SECTION("a result too large to represent is declined, not truncated") {
+        // Reachable from ordinary input: `--standard-tick-rate-hz 1e-300` is
+        // finite and positive, passes the rate guard, and drives the result far
+        // past what a uint64_t holds. Converting an out-of-range double with
+        // static_cast is UNDEFINED BEHAVIOUR in C++ -- so before this check
+        // existed, this suite asserted the success of an operation the standard
+        // gives no meaning to, and passed because the UB happened to produce a
+        // number.
+        //
+        // Rust saturated (defined, but a fabricated timestamp) and Python
+        // returned an integer the other two cannot hold. All three now decline.
+        CHECK_FALSE(ts.to_microseconds(1e-300, out));
+        CHECK_FALSE(ts.to_microseconds(std::numeric_limits<double>::min(), out));
     }
 }
 
