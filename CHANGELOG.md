@@ -17,6 +17,71 @@ full release workflow.
 
 ### Changed
 
+- **`clippy::pedantic` is now denied as a group, not lint by lint.** Enabling
+  lints by name only ever catches the ones already known about; the group also
+  catches the ones nobody thought to look for. 76 distinct sites — deduped by
+  `(lint, file, line)`, because the `--all-targets` counts quoted during the
+  earlier slices were inflated 2–20× by compiling the lib once per test binary.
+  51 fixed, 25 rejected with the reason recorded beside the exception.
+
+  Most fixes are cosmetic and `cargo clippy --fix` applied them. Two are not:
+  the hex-dump loop no longer allocates a `String` per byte, and `DataWords`
+  gained `IntoIterator` so `for w in &words` works.
+
+  **The rejections carry the content.** Six lints are allowed wholesale because
+  every site is deliberate — most clearly `match_same_arms`, where
+  `ModeCodeTxData => 2, // status + data` sits beside
+  `ModeCodeRxData => 2, // data + status`. The bodies coincide; the reasons do
+  not, and merging arms by equal value would delete the specification the table
+  exists to be. `struct_excessive_bools` is the same argument: `DecodeArgs`
+  mirrors the CLI surface 1:1 and `DecoderConfig` mirrors the TOML keys 1:1, and
+  that correspondence is the point. `decimal_bitwise_operands` is rejected at
+  four test helpers where the literals are field values rather than masks —
+  `192` is the day-of-year and `15` the hour of "day 192, 15:54:50" — and where
+  the lint is itself inconsistent, flagging the hour but not the minute or
+  second in the same expression because those sit inside shifts.
+
+  **Consequence, stated in `rust/Cargo.toml` and `CONTRIBUTING.md`:** a clippy
+  release can now turn the build red on code nobody touched, because it can add
+  pedantic lints. That is the intended trade — it surfaces on a PR rather than
+  in a release — but the fix is sometimes a documented exception rather than a
+  code change.
+
+- **Two silent gates found while doing the above, both worse than the lint work
+  they interrupted.**
+
+  `scripts/build-trace-matrix.py` was **dropping requirement links without
+  saying so**. A multi-line attribute between a `/// Requirements:` marker and
+  its `fn` fell through the collector's reset, so the marker stayed in the
+  source while the artifact vanished from the matrix — which reads as an
+  *untested requirement*. The collector now tracks attribute depth. Proven by
+  planting a multi-line attribute and confirming `--check` stays clean where it
+  previously lost the row.
+
+  A local toolchain that lags CI runs a **weaker gate while reporting clean** —
+  not a differently-configured one. This is not hypothetical: this change passed
+  a clean local `cargo clippy -- -D warnings` on 1.93 and failed CI on 1.98,
+  where `map_unwrap_or` had grown to cover `Result` as well as `Option`, and
+  again on `decimal_bitwise_operands`, which 1.98 added outright. The same shape
+  applies to C++: `misc-const-correctness` does not exist before LLVM 15, so a
+  clean `make tidy` on Ubuntu 22.04's clang-tidy 14 says nothing about the check
+  CI runs at LLVM 20 — and 14 emits `bugprone-throw-keyword-missing` false
+  positives that 20 does not, inviting "fixes" to code CI is happy with.
+
+  `make tidy` now prints a loud advisory when its clang-tidy does not match
+  `LLVM_VERSION`, naming both versions and the two ways to get a real answer
+  (`TIDY=clang-tidy-20`, or `make verify-ci` for CI's versions in a container).
+  Advisory rather than fatal: an approximate local run is still useful, it just
+  must not be mistaken for the gate. `CONTRIBUTING.md` carries the Rust half.
+
+- **Cross-implementation review found one real divergence.** C++ `DataWords`
+  exposed `data()`/`size()` but no `begin()`/`end()`, so range-for did not work
+  there while Python's `data_words` tuple and Rust's new `IntoIterator` both
+  allow it — the one place the three implementations disagreed on how a payload
+  is traversed. Added with a test. Python's hexspeak test seed picked up the
+  same digit grouping as the Rust fixtures; **C++11 has no digit separator**
+  (`'` is C++14), so that half deliberately cannot be ported.
+
 - **`missing_errors_doc` cleared and denied — 34 public fallible functions now
   document when they fail.** Unlike the previous two pedantic slices this one is
   not mechanical: "returns an error if it fails", written 34 times, would be
