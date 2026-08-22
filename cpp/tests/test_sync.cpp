@@ -19,25 +19,26 @@
 #include <vector>
 
 #include "mie/decode.hpp"
+#include "record_fixtures.hpp"
 
 namespace {
 
 namespace sy = mie::sync;
 
-std::vector<uint8_t> le_bytes(const std::vector<uint16_t>& words) {
-    std::vector<uint8_t> out;
-    out.reserve(words.size() * 2);
-    for (std::size_t i = 0; i < words.size(); ++i) {
-        out.push_back(static_cast<uint8_t>(words[i] & 0xFF));
-        out.push_back(static_cast<uint8_t>((words[i] >> 8) & 0xFF));
-    }
-    return out;
-}
+// The wire-format primitives are shared with the other suites that build
+// records; the helpers below are the ones only this suite needs.
+using mie_test::le_bytes;
+using mie_test::type_word;
 
-/// A Type Word with the given type code and word count, bus A, no error.
-uint16_t type_word(uint8_t message_type, uint16_t word_count) {
-    return static_cast<uint16_t>((word_count << 8) | message_type);
-}
+/// A type code that is not one of the known ones.
+///
+/// 0x7F, not 0x99. Both are unknown codes, but 0x99 has BIT 7 set -- and bit 7
+/// of a Type Word is the BUS, not part of the type. The local builder this
+/// suite used to carry masked nothing, so 0x99 quietly produced "unknown type,
+/// bus B" while the test said only "unknown type". The shared builder takes the
+/// bus as its own argument and masks the type to seven bits, which is correct
+/// and which is why the value had to change with it.
+const uint8_t kUnknownMessageType = 0x7F;
 
 /// The three IRIG timestamp words for a valid in-range time.
 void push_valid_irig(std::vector<uint16_t>& words) {
@@ -99,7 +100,7 @@ TEST_CASE("an unreadable Type Word is reported as such", "[sync]") {
 
 TEST_CASE("an unknown message type is rejected before anything else", "[sync][L2-SYN-001]") {
     std::vector<uint16_t> words = irig_record(8);
-    words[0] = type_word(0x99, 8);
+    words[0] = type_word(kUnknownMessageType, 8);
     const std::vector<uint8_t> data = le_bytes(words);
     CHECK(sy::validate_record_detailed(&data[0], data.size(), 0, data.size(), irig_fmt(), 1) ==
           sy::VALIDATION_UNKNOWN_MESSAGE_TYPE);
@@ -320,7 +321,7 @@ TEST_CASE("IRIG range checks are skipped when the words are not all readable", "
 TEST_CASE("look-ahead rejects a candidate whose follower is malformed", "[sync][L2-SYN-005]") {
     const std::vector<uint16_t> good = irig_record(8);
     std::vector<uint16_t> bad = irig_record(8);
-    bad[0] = type_word(0x99, 8);  // unknown type
+    bad[0] = type_word(kUnknownMessageType, 8);  // unknown type
     const std::vector<uint8_t> data = le_bytes(concat(good, bad));
 
     // Depth 1 checks only the candidate, so it passes.

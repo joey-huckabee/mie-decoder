@@ -17,6 +17,36 @@ full release workflow.
 
 ### Changed
 
+- **Every C++ test suite now builds records from one set of wire-format
+  helpers.** The Type Word layout, the IRIG triple and the Command Word
+  encoding had been copied into four test files. That is the drift
+  `writer_fixtures.hpp` already exists to prevent, and where the copy that is
+  *wrong* is the one that keeps passing.
+
+  The migration was checked rather than assumed: each shared helper was diffed
+  against the copy it replaced before the copy was deleted. Eight of nine were
+  identical; `command_word` differed only in returning its final expression
+  instead of assigning and returning, which produces the same bits.
+
+  The ninth found a real trap. `test_sync.cpp`'s local `type_word` masked
+  nothing, so its "unknown message type" fixture used `0x99` — a value whose
+  **bit 7 is set**, and bit 7 of a Type Word is the *bus*, not part of the type.
+  The fixture therefore meant "unknown type, bus B" while the test said only
+  "unknown type". The shared builder takes the bus as its own argument and masks
+  the type to seven bits, so the value became `0x7F`: still an unknown code, and
+  now unable to smuggle a second field in through the first.
+
+  `test_decode.cpp`'s `irig_record` hand-packed the same fields at the same
+  offsets, including an unmasked Type Word. It now builds from the shared
+  helpers — whose `push_irig` defaults turned out to be exactly the time the
+  fixture had been spelling out — which is also why the suite gained three
+  assertions: `push_irig` carries a microsecond range guard the hand-rolled
+  version did not.
+
+  What stays local to a suite is a fixture with one caller. A fixture with one
+  caller is not shared code, it is that suite's own setup, and hoisting it would
+  make the shared header a junk drawer rather than a statement of the format.
+
 - **The differential config checks now cover every implementation, not a fixed
   pair — and found two real defects on their first run.** `config_parity`,
   `config_fuzz` and `config_path_parity` compared Rust against Python and

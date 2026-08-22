@@ -69,15 +69,7 @@ not because it is believed wrong.
 
 ---
 
-## 3. ~~Differential config-parser checks are Rust-vs-Python only~~ — DECIDED
-
-**Resolved: all-pairs.** Shipped; see `tests/conformance/differential.py` for the
-comparison and the reasoning against majority and reference-implementation
-rules. The first three-way run found two real C++ defects (non-ASCII paths
-unopenable on Windows; three config-path failures collapsed into one
-diagnostic), both now fixed. Kept here only until the next round; delete then.
-
-## 4. Coverage and fuzz gates for the C++ tree
+## 3. Coverage and fuzz gates for the C++ tree
 
 **Status:** unbuilt; needs a threshold, not a design.
 
@@ -96,7 +88,7 @@ raised once the number is known rather than chosen in advance.
 
 ---
 
-## 5. SonarCloud: `main` is red, and C++ analysis is still deferred
+## 4. SonarCloud: `main` is red, and C++ analysis is still deferred
 
 **Status:** pre-existing; deferred deliberately.
 
@@ -115,7 +107,7 @@ lower than the cost of a gate nobody can read.
 
 ---
 
-## 6. Phase 3: release artifacts and the versioning scheme
+## 5. Phase 3: release artifacts and the versioning scheme
 
 **Status:** not started; needs direction before any of it is built.
 
@@ -135,12 +127,3 @@ lower than the cost of a gate nobody can read.
   C++11 conformance, not deployability. Who does that check, and against what?
 
 ---
-
-## 7. Remaining test-fixture duplication (cheap, no judgement needed)
-
-`cpp/tests/record_fixtures.hpp` now holds the on-the-wire record builders, and
-`test_cli.cpp` and `test_merge.cpp` use it. `test_reader.cpp`, `test_sync.cpp`
-and `test_decode.cpp` still carry their own copies plus the specialised builders
-their cases need.
-
-Listed here only so it is not forgotten; it needs no decision, just a quiet PR.
