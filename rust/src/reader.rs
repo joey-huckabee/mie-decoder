@@ -126,10 +126,23 @@ impl Default for ReaderOptions {
 }
 
 impl MieFileReader {
+    /// # Errors
+    ///
+    /// As [`MieFileReader::with_options`], with the default options.
     pub fn new(path: impl AsRef<Path>) -> MieResult<Self> {
         Self::with_options(path, ReaderOptions::default())
     }
 
+    /// # Errors
+    ///
+    /// Returns [`MieError::FileNotFound`] if the path does not exist,
+    /// [`MieError::FileEmpty`] for a zero-byte file (checked before mapping,
+    /// which also avoids the Windows refusal to map one), or
+    /// [`MieError::FileIo`] for anything else the OS reported.
+    ///
+    /// A file that opens but contains no valid records is **not** an error
+    /// here: that surfaces from the first `next()` on the returned iterator, so
+    /// "unreadable" and "readable but not a recording" stay distinguishable.
     pub fn with_options(path: impl AsRef<Path>, opts: ReaderOptions) -> MieResult<Self> {
         let path = path.as_ref().to_path_buf();
         if !path.exists() {

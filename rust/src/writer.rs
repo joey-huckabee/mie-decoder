@@ -33,6 +33,12 @@ use crate::{log_info, log_warn};
 ///
 /// This is intentionally symlink-safe (via `fs::canonicalize`) so that
 /// `/tmp/in.mie` aliasing `/var/foo/in.mie` is detected.
+///
+/// # Errors
+///
+/// Returns the [`io::Error`] from canonicalizing the **input**, which must
+/// exist. A destination that cannot be canonicalized is not an error — it
+/// cannot collide, so the answer is `Ok(false)`.
 pub fn paths_refer_to_same_file(input: &Path, output: &Path) -> io::Result<bool> {
     let input_canon = std::fs::canonicalize(input)?;
 
@@ -84,6 +90,11 @@ pub struct AtomicCsvFile {
 }
 
 impl AtomicCsvFile {
+    /// # Errors
+    ///
+    /// Returns [`MieError::WriterError`] if the temp file beside the
+    /// destination cannot be created — no write permission on the directory, or
+    /// every candidate temp name already taken.
     pub fn create(final_path: PathBuf) -> MieResult<Self> {
         let (temp_path, file) = create_exclusive_temp(&final_path, || make_temp_path(&final_path))
             .map_err(|(path, source)| MieError::WriterError {
@@ -101,6 +112,11 @@ impl AtomicCsvFile {
     /// Flush, close the temp file, and atomically rename it over the
     /// final destination. After a successful commit the temp file no
     /// longer exists so Drop's cleanup becomes a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MieError::WriterError`] if the final flush fails, the rename
+    /// over the destination fails, or `commit` is called twice.
     pub fn commit(mut self) -> MieResult<()> {
         let Some(writer) = self.writer.take() else {
             return Err(MieError::WriterError {
@@ -133,6 +149,11 @@ impl AtomicCsvFile {
     /// destination (if it existed) remains untouched, and the operator
     /// gets the decoded-so-far rows in the .partial file. Returns the
     /// path written so callers can log it.
+    ///
+    /// # Errors
+    ///
+    /// As [`AtomicCsvFile::commit`], but the rename targets
+    /// `<destination>.partial`; the destination itself is left untouched.
     pub fn commit_partial(mut self) -> MieResult<PathBuf> {
         let Some(writer) = self.writer.take() else {
             return Err(MieError::WriterError {
@@ -308,6 +329,10 @@ pub struct CsvWriter<W: Write> {
 
 impl<W: Write> CsvWriter<W> {
     /// Create a writer and emit the header row immediately.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MieError::WriterError`] if the header row cannot be written.
     pub fn new(out: W, destination: impl Into<String>) -> MieResult<Self> {
         let mut w = Self {
             out,
@@ -318,6 +343,11 @@ impl<W: Write> CsvWriter<W> {
         Ok(w)
     }
 
+    /// # Errors
+    ///
+    /// Returns [`MieError::WriterError`] if the row cannot be written. A closed
+    /// downstream pipe arrives here with its kind preserved, so the CLI can
+    /// treat it as a clean exit (L2-WRT-018).
     pub fn write_message(&mut self, msg: &MieMessage) -> MieResult<()> {
         write_row(&mut self.out, msg).map_err(|source| MieError::WriterError {
             destination: self.destination.clone(),
@@ -327,6 +357,11 @@ impl<W: Write> CsvWriter<W> {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Returns [`MieError::WriterError`] if the final flush fails. Flushing is
+    /// part of the contract, not a courtesy: rows buffered and never written
+    /// would otherwise be reported as a successful decode.
     pub fn finish(mut self) -> MieResult<u64> {
         self.out.flush().map_err(|source| MieError::WriterError {
             destination: self.destination.clone(),
@@ -517,6 +552,17 @@ fn preflight_output(output: &Path, opts: &WriteOptions) -> MieResult<()> {
 /// pre-flight checks because it has no filesystem identity and ignores
 /// `allow_partial` (a partial stdout stream is what the consumer
 /// would have seen anyway).
+/// # Errors
+///
+/// Returns [`MieError::InputOutputCollision`] if the destination resolves to
+/// the input, [`MieError::ClobberRefused`] under `no_clobber` when it already
+/// exists, [`MieError::WriterError`] for any write or rename failure, and
+/// whatever the message stream itself raised — a strict-mode rejection or an
+/// unrecoverable sync loss.
+///
+/// Under `allow_partial` an [`MieError::UnrecoverableSyncLoss`] from the stream
+/// is **not** returned: the rows decoded so far are committed as
+/// `<destination>.partial` and the call succeeds (L2-WRT-016).
 pub fn write_csv<I>(
     messages: I,
     output: Option<&Path>,
@@ -608,6 +654,12 @@ where
 /// When `opts.allow_partial` and the iterator yields
 /// `UnrecoverableSyncLoss`, both files (if any) are committed as
 /// `.partial` and the function returns Ok with `PartialCommit` info.
+/// # Errors
+///
+/// The same set as [`write_csv`], plus [`MieError::ClobberRefused`] for the
+/// derived `<stem>_errors<suffix>` path, which gets its own check. The main CSV
+/// is committed **before** the errors file (L2-WRT-019), so a failure writing
+/// the latter leaves the former in place.
 pub fn write_csv_split<I>(messages: I, output: &Path, opts: WriteOptions) -> MieResult<WriteOutcome>
 where
     I: IntoIterator<Item = MieResult<MieMessage>>,

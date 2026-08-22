@@ -17,6 +17,41 @@ full release workflow.
 
 ### Changed
 
+- **`missing_errors_doc` cleared and denied — 34 public fallible functions now
+  document when they fail.** Unlike the previous two pedantic slices this one is
+  not mechanical: "returns an error if it fails", written 34 times, would be
+  worse than nothing. Each section names the actual variants and conditions.
+
+  Writing them surfaced several contracts worth stating precisely, because they
+  are the opposite of what a reader would assume:
+
+  - `expand_glob` matching nothing and `read_manifest` finding no usable lines
+    are **not** errors — both return an empty list, which is what lets the CLI
+    distinguish "matched no files" from "could not read the directory".
+  - Under `--allow-partial`, `write_csv` does **not** return an unrecoverable
+    sync loss: it commits the rows decoded so far as `<destination>.partial` and
+    succeeds (`L2-WRT-016`).
+  - `MieFileReader::with_options` fails only on an unusable *file*. A file that
+    opens but holds no valid records surfaces from the first `next()`, so
+    "unreadable" and "readable but not a recording" stay distinguishable.
+  - `paths_refer_to_same_file` errors only on the **input**; a destination that
+    cannot be canonicalized cannot collide, so that is `Ok(false)`.
+
+  Verified with `RUSTDOCFLAGS="-D warnings" cargo doc` — the new intra-doc links
+  all resolve — and with `cargo-semver-checks` (194/194) before pushing.
+
+- **The Python analogue is real but scoped separately.** Ruff's pydoclint family
+  reports 58 `DOC501` (missing `Raises:`) and 111 `DOC201` in `src`. Two reasons
+  it is not in this change: the family is **preview**, so enabling it in a gate
+  ties us to rules that can shift between ruff versions; and 169 docstring
+  sections is its own piece of work, not a rider on a Rust lint.
+
+  Its `DOC502` findings (5) were checked and are **false positives here**: they
+  flag docstrings documenting exceptions that *propagate* from called helpers
+  rather than being `raise`d directly — which is precisely what a caller needs
+  to know. C++ documents throws in its public headers by convention already,
+  with no lint available to enforce it.
+
 - **`doc_markdown` and `must_use_candidate` cleared and denied.** Both were
   `pedantic`, so `-D warnings` had never seen either.
 

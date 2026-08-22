@@ -86,6 +86,15 @@ doc_markdown = "deny"
 # code: dropping it makes the process exit 0 whatever happened.
 must_use_candidate = "deny"
 
+# A public fallible function documents WHEN it fails. Unlike the two above this
+# one is not mechanical -- each of the 34 sections names the actual variants and
+# conditions, because "returns an error if it fails" written 34 times would be
+# worse than nothing. Several turned out to be worth stating precisely: an empty
+# glob match and an empty manifest are NOT errors, and `--allow-partial` turns
+# an unrecoverable sync loss into a successful `.partial` commit rather than a
+# returned error.
+missing_errors_doc = "deny"
+
 # THE CAST LINTS. Pedantic, so `-D warnings` never saw them either -- and unlike
 # most of pedantic these are semantic: every one asks whether a narrowing or
 # sign-changing conversion can actually lose information here.
