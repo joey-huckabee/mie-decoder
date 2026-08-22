@@ -1532,6 +1532,10 @@ fn xmt_record_at(rt: u8, sa: u8, micro: u32) -> Vec<u8> {
 /// Overwrite the IRIG timestamp triple (bytes 2..8) with day 192, 15:54:50 and
 /// the given microsecond, so records built by different helpers can be placed
 /// at the same instant.
+#[allow(
+    clippy::decimal_bitwise_operands,
+    reason = "packs wire fields whose values are semantic, not masks: `192` is the day-of-year, `15` the hour of 15:54:50, `30` the documented data-word count. Hex would obscure them, and the lint is inconsistent here anyway -- it flags the hour but not the minute and second in the same expression, because those sit inside shifts."
+)]
 fn patch_irig_micro(rec: &mut [u8], micro: u32) {
     let upper: u16 = ((192u16 & 0x1FF) << 5) | 15;
     let middle: u16 = (54u16 << 10) | (50u16 << 4) | ((micro >> 16) as u16 & 0xF);
@@ -1543,6 +1547,10 @@ fn patch_irig_micro(rec: &mut [u8], micro: u32) {
 
 /// Overwrite the Command Word (bytes 8..10), keeping the fixture's 30-data-word
 /// count: `RT<<11 | dir<<10 | SA<<5 | 30`.
+#[allow(
+    clippy::decimal_bitwise_operands,
+    reason = "packs wire fields whose values are semantic, not masks: `192` is the day-of-year, `15` the hour of 15:54:50, `30` the documented data-word count. Hex would obscure them, and the lint is inconsistent here anyway -- it flags the hour but not the minute and second in the same expression, because those sit inside shifts."
+)]
 fn patch_cmd(rec: &mut [u8], rt: u8, sa: u8, transmit: bool) {
     let cmd: u16 = (u16::from(rt & 0x1F) << 11)
         | (u16::from(transmit) << 10)
