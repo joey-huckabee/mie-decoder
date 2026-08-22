@@ -20,6 +20,8 @@ import random
 import subprocess
 from pathlib import Path
 
+from differential import classify, describe_divergence
+
 _DEFAULT_SEED = 20260711  # fixed → reproducible CI runs
 # Each iteration spawns both CLIs, so keep the default modest for CI wall-clock;
 # a fixed seed makes it a deterministic generated corpus. Bump MIE_CONFIG_FUZZ_ITERS
@@ -147,27 +149,26 @@ def _make_document(rng: random.Random) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _class(returncode: int) -> str:
-    return "accept" if returncode == 0 else "reject"
-
-
 def check_config_parser_fuzz(
-    rust_bin: Path, python_bin: Path, root: Path, input_mie: Path, temp: Path
+    invocations: dict[str, list[str]], root: Path, input_mie: Path, temp: Path
 ) -> None:
-    """Fuzz the two config parsers; raise on the first batch of divergences."""
+    """Fuzz every implementation's config parser; raise on the first batch of
+    divergences.
+
+    ``invocations`` maps an implementation name to its CLI prefix, so a third
+    parser joins the sweep without changing the comparison -- which is
+    all-pairs: any two disagreeing is a finding, regardless of which is right.
+    """
     seed = int(os.environ.get("MIE_CONFIG_FUZZ_SEED", _DEFAULT_SEED))
     iters = int(os.environ.get("MIE_CONFIG_FUZZ_ITERS", _DEFAULT_ITERS))
     rng = random.Random(seed)
-    invocations = {
-        "Rust": [str(rust_bin)],
-        "Python": [str(python_bin), "-m", "mie_decoder"],
-    }
     divergences: list[str] = []
     for i in range(iters):
         doc = _make_document(rng)
         cfg = temp / f"fuzz-{i}.toml"
         cfg.write_text(doc, encoding="utf-8")
         classes: dict[str, str] = {}
+        codes: dict[str, int] = {}
         for impl, prefix in invocations.items():
             out = temp / f"fuzz-{i}-{impl}.csv"
             result = subprocess.run(
@@ -178,10 +179,16 @@ def check_config_parser_fuzz(
                 check=False,
                 timeout=30,
             )
-            classes[impl] = _class(result.returncode)
-        if classes["Rust"] != classes["Python"]:
+            codes[impl] = result.returncode
+            classes[impl] = classify(result.returncode)
+        divergence = describe_divergence(classes, codes)
+        if divergence is not None:
+            # The generating document is reproduced verbatim and indented: a
+            # fuzz finding is only actionable if it can be pasted straight into
+            # a file, and the seed alone does not survive a change to the
+            # generator.
             divergences.append(
-                f"Rust={classes['Rust']} Python={classes['Python']} for config:\n"
+                divergence + " for config:\n"
                 + "    " + doc.replace("\n", "\n    ")
             )
             if len(divergences) >= 10:

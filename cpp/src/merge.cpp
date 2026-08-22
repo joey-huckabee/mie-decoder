@@ -100,36 +100,13 @@ uint64_t abs_diff(uint64_t a, uint64_t b) { return a > b ? a - b : b - a; }
 bool read_manifest(const std::string& path, std::vector<std::string>& out, platform::OsError& err) {
     err.clear();
     out.clear();
-    std::FILE* handle = std::fopen(path.c_str(), "rb");
-    if (handle == NULL) {
-        platform::capture_stream_error(err);
+    // Through the platform layer: a manifest may sit at a non-ASCII path, and
+    // std::fopen would fail to find it on Windows.
+    std::vector<uint8_t> raw;
+    if (!platform::read_file(path, raw, err)) {
         return false;
     }
-
-    std::string body;
-    char buffer[4096];
-    bool ok = true;
-    for (;;) {
-        const std::size_t got = std::fread(buffer, 1, sizeof(buffer), handle);
-        body.append(buffer, got);
-        if (got < sizeof(buffer)) {
-            // A short read is the end of the file or a real error, and fread
-            // alone does not say which. Asking again would be a read in the EOF
-            // state, and after a FAILED read the position is indeterminate.
-            if (std::ferror(handle) != 0) {
-                platform::capture_stream_error(err);
-                ok = false;
-            }
-            break;
-        }
-    }
-    if (std::fclose(handle) != 0 && ok) {
-        platform::capture_stream_error(err);
-        ok = false;
-    }
-    if (!ok) {
-        return false;
-    }
+    const std::string body(raw.begin(), raw.end());
 
     std::string line;
     for (std::size_t i = 0; i <= body.size(); ++i) {

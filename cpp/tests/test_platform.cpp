@@ -695,3 +695,68 @@ TEST_CASE("wide and narrow conversion round-trips every ASCII string",
     }
     SUCCEED("every ASCII character survives the wide round-trip");
 }
+
+TEST_CASE("paths are UTF-8 end to end, including non-ASCII ones", "[platform][L3-CPP-030]") {
+    // The defect this pins: on Windows the C runtime interprets a narrow path
+    // in the process ANSI codepage, so a UTF-8 path with any non-ASCII byte
+    // named a different file -- usually one that did not exist. The C++ build
+    // could not open ANY file at such a path, while every Linux test passed,
+    // because on POSIX a path is just bytes and `fopen` is already correct.
+    //
+    // Written and read through the platform layer, which is the whole point:
+    // the same test using std::fopen would fail on Windows for the very reason
+    // this exists to prevent.
+    const mie_test::TempPath path("plat-Ã¼nÃ¯code-éç½®.bin");
+    const std::string payload = "bytes at a non-ASCII path";
+
+    mie::platform::OsError err;
+    {
+        mie::platform::AtomicFile file;
+        REQUIRE(file.create(path.str(), err));
+        REQUIRE(file.write(payload.data(), payload.size(), err));
+        REQUIRE(file.commit(err));
+    }
+
+    REQUIRE(mie::platform::path_exists(path.str()));
+
+    std::vector<uint8_t> read_back;
+    REQUIRE(mie::platform::read_file(path.str(), read_back, err));
+    REQUIRE(std::string(read_back.begin(), read_back.end()) == payload);
+}
+
+TEST_CASE("read_file distinguishes end of file from a read failure", "[platform][L3-CPP-030]") {
+    SECTION("a missing path fails rather than reporting empty") {
+        // An empty result and a failed read are not the same answer, and a
+        // caller that cannot tell them apart reports a missing file as an empty
+        // one.
+        const mie_test::TempPath absent("plat-absent.bin");
+        std::vector<uint8_t> bytes;
+        mie::platform::OsError err;
+        CHECK_FALSE(mie::platform::read_file(absent.str(), bytes, err));
+        CHECK_FALSE(err.ok());
+    }
+
+    SECTION("a genuinely empty file reads as empty and succeeds") {
+        const mie_test::TempFile empty("plat-empty.bin", std::string());
+        std::vector<uint8_t> bytes;
+        mie::platform::OsError err;
+        CHECK(mie::platform::read_file(empty.str(), bytes, err));
+        CHECK(bytes.empty());
+        CHECK(err.ok());
+    }
+
+    SECTION("a file larger than the read buffer round-trips exactly") {
+        // The loop reads in 8 KiB chunks, so a payload spanning several of them
+        // is what catches an off-by-one in the append.
+        std::string payload;
+        for (std::size_t i = 0; i < 20000; ++i) {
+            payload += static_cast<char>('a' + (i % 26));
+        }
+        const mie_test::TempFile big("plat-big.bin", payload);
+        std::vector<uint8_t> bytes;
+        mie::platform::OsError err;
+        REQUIRE(mie::platform::read_file(big.str(), bytes, err));
+        REQUIRE(bytes.size() == payload.size());
+        REQUIRE(std::string(bytes.begin(), bytes.end()) == payload);
+    }
+}

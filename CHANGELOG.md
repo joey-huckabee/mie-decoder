@@ -17,6 +17,44 @@ full release workflow.
 
 ### Changed
 
+- **The differential config checks now cover every implementation, not a fixed
+  pair — and found two real defects on their first run.** `config_parity`,
+  `config_fuzz` and `config_path_parity` compared Rust against Python and
+  nothing else; the C++ parsers were held only by their own unit tests, which
+  pin an implementation against its own reading of the grammar — exactly the
+  thing in question when two readings differ.
+
+  The comparison is **all-pairs**: every implementation must agree with every
+  other, and a disagreement names the split (`accept: Rust, Python | reject:
+  C++`) without nominating a winner. A majority rule would let two
+  implementations sharing a bug outvote the correct one; nominating a reference
+  would make that reference's quirks normative. Both alternatives are recorded
+  in `tests/conformance/differential.py` with the reasoning.
+
+  **Fixed: the C++ build could not open any file at a non-ASCII path on
+  Windows** — config, input recording, or output. Two independent causes, both
+  invisible to every existing gate. `main(argc, argv)` receives arguments in the
+  process ANSI codepage, so a path containing an unrepresentable character
+  arrived as `?` before a single line ran; and `std::fopen` interprets a narrow
+  path in that same codepage, so even a correct UTF-8 path would not have
+  opened. Arguments now come from the platform layer (which re-reads the real
+  UTF-16 command line on Windows) and files are opened through it too.
+  `scripts/assert-platform-confined.sh` cannot catch either — it bans OS
+  *headers*, and neither `argv` nor `std::fopen` needs one.
+
+  **Fixed: the C++ config loader collapsed three distinct path failures into one
+  message.** Absent, not-a-regular-file, and unreadable have three different
+  remedies; Rust and Python name which, and C++ said only "Cannot open config
+  file". The not-a-regular-file case is now rejected before any read, because
+  reading a directory fails opaquely and reading a character device can block
+  indefinitely.
+
+  A new `cross-impl-differential` CI job runs all three together. It had to
+  exist: `conformance` passes `--skip cpp`, `cpp-conformance` passes
+  `--only cpp`, and a differential check with one implementation selected skips
+  itself — so the three-way contract was checked by nothing while every gate
+  stayed green.
+
 - **Fixed: a C++ merge would write over one of its own inputs.** `decode a.mie
   b.mie -o a.mie` truncated `a.mie` while the merge was still reading it. Rust
   and Python both guard this; the C++ merge shipped without the check, and a
