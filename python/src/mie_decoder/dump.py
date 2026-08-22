@@ -59,6 +59,11 @@ def hex_dump_raw(
         start_offset: Byte offset to begin the dump.
         length: Number of bytes to dump. None means dump to end of file.
         stream: Output stream. Defaults to sys.stdout.
+
+    Raises:
+        MieFileNotFoundError: if ``path`` does not exist.
+        MieFileEmptyError: if the file exists but holds no bytes.
+        MieFileIoError: if the file exists but cannot be read.
     """
     fpath = Path(path)
     if not fpath.exists():
@@ -116,6 +121,11 @@ def hex_dump_records(
         max_records: Maximum number of records to dump. None for all.
         start_offset: Byte offset to begin scanning for records.
         stream: Output stream. Defaults to sys.stdout.
+
+    Raises:
+        MieFileNotFoundError: if ``path`` does not exist.
+        MieFileEmptyError: if the file exists but holds no bytes.
+        MieFileIoError: if the file exists but cannot be read.
     """
     fpath = Path(path)
     if not fpath.exists():
@@ -174,7 +184,13 @@ def hex_dump_records(
 def _dump_record_extent(tw: TypeWord, offset: int, file_len: int, out: TextIO) -> int | None:
     """Validate the record at ``offset`` for the dump scan. Returns ``record_end``
     to proceed, or ``None`` to stop scanning — writing the inline anomaly note to
-    ``out`` and logging it (L2-CLI-013) on each stop path."""
+    ``out`` and logging it (L2-CLI-013) on each stop path.
+
+    Returns:
+        The offset one past the validated record, or ``None`` to stop the scan.
+        Every ``None`` path has already written its reason to ``out``, so the
+        caller just breaks.
+    """
     if tw.word_count < MIN_RECORD_WORDS:
         print(
             f"  !! Invalid word_count={tw.word_count} at 0x{offset:08X}, stopping",

@@ -157,6 +157,9 @@ def parse_timestamp_format(name: str) -> TimestampFormat:
     Raises:
         ValueError: if ``name`` is not one of the recognized formats. The message
             lists the valid set.
+
+    Returns:
+        The matching :class:`TimestampFormat` member.
     """
     fmt = _TIMESTAMP_FORMAT_BY_NAME.get(name.lower())
     if fmt is None:
@@ -202,6 +205,9 @@ def parse_delta_scope(name: str) -> DeltaScope:
     Raises:
         ValueError: if ``name`` is not a recognized scope; the message lists the
             valid set and matches the Rust wording.
+
+    Returns:
+        The matching :class:`DeltaScope` member.
     """
     scope = _DELTA_SCOPE_BY_NAME.get(name.strip().lower())
     if scope is None:
@@ -309,7 +315,12 @@ class IrigTimestamp:
     freerun: bool
 
     def to_total_microseconds(self) -> int:
-        """Convert to absolute microseconds from start of year."""
+        """Convert to absolute microseconds from start of year.
+
+        Returns:
+            Microseconds elapsed since the start of the year, treating ``day``
+            as a one-based day-of-year.
+        """
         return (
             self.day * 86_400 + self.hour * 3_600 + self.minute * 60 + self.second
         ) * 1_000_000 + self.microsecond
@@ -323,6 +334,11 @@ class IrigTimestamp:
         type check; the tick-rate argument is accepted and ignored here
         (hence the leading underscore) because IRIG already has an absolute
         microsecond basis.
+
+        Returns:
+            Absolute microseconds since the start of the year. Never ``None``
+            for IRIG -- the optional return type exists only so this shares a
+            signature with :meth:`StandardTimestamp.to_microseconds`.
         """
         return self.to_total_microseconds()
 
@@ -335,6 +351,10 @@ class IrigTimestamp:
         the modulo here is a defensive belt-and-suspenders: a caller
         constructing an :class:`IrigTimestamp` directly with an out-of-
         range microsecond still gets a well-formed string.
+
+        Returns:
+            ``DAY:HH:MM:SS.uuuuuu``, with the microsecond field always exactly
+            six digits.
         """
         micro = self.microsecond % 1_000_000
         return f"{self.day}:{self.hour:02d}:{self.minute:02d}:{self.second:02d}.{micro:06d}"
@@ -364,6 +384,9 @@ class StandardTimestamp:
 
         The tick rate is card-dependent and not encoded in the file, so
         callers cannot convert this to seconds without external calibration.
+
+        Returns:
+            The raw counter value, in card-dependent ticks -- not a duration.
         """
         return self.raw_value
 
@@ -385,6 +408,12 @@ class StandardTimestamp:
         up to the wrong integer — e.g. ``x = 0.49999999999999994`` yields ``0``
         here and in Rust but ``1`` via ``int(x + 0.5)`` (Python evaluates
         ``x + 0.5 == 1.0``), which would silently diverge from Rust by 1 us.
+
+        Returns:
+            The tick count converted to whole microseconds, or ``None`` when the
+            rate is not finite and strictly positive, or when the result falls
+            outside the representable range. ``None`` means "uncalibrated", and
+            is never a timestamp of zero.
         """
         if (
             standard_tick_rate_hz is None
@@ -410,7 +439,11 @@ class StandardTimestamp:
         return floor_us + 1 if micros - floor_us >= 0.5 else floor_us
 
     def format(self) -> str:
-        """Format as ``0xNNNNNNNN`` hexadecimal string."""
+        """Format as ``0xNNNNNNNN`` hexadecimal string.
+
+        Returns:
+            The raw counter as ``0x`` followed by eight uppercase hex digits.
+        """
         return f"0x{self.raw_value:08X}"
 
 
@@ -567,6 +600,10 @@ class MieMessage:
         mutating in place. Rebuilt field-by-field rather than via
         ``dataclasses.replace`` so every type checker infers the concrete
         ``MieMessage`` return type; only ``delta`` changes.
+
+        Returns:
+            A new :class:`MieMessage` identical to this one except for
+            ``delta``. This instance is unchanged.
         """
         return MieMessage(
             timestamp=self.timestamp,

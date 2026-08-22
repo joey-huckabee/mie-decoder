@@ -300,6 +300,12 @@ class MieFileReader:
 
         Yields:
             Decoded MieMessage instances, one per binary record.
+
+        Raises:
+            MieFileIoError: if the file cannot be memory-mapped or read.
+            MieRecordError: any per-record failure the decode loop escalates --
+                in strict mode these abort the walk, in lenient mode most are
+                logged and skipped. See :meth:`_decode_one`.
         """
         state = _DecodeState(
             prev_was_error=False,
@@ -380,6 +386,11 @@ class MieFileReader:
         stream is legitimately empty or (in lenient mode) ends before the
         first record — the caller yields zero records. Raises the appropriate
         ``Mie*`` error for wrong-file / strict-mode conditions.
+
+        Returns:
+            ``(start_offset, resolved_format)`` to begin iteration, or ``None``
+            when the record stream is legitimately empty or (in lenient mode)
+            ends before the first record -- the caller then yields zero records.
         """
         # ── Find first record (header detection) ───────
         start_offset = find_first_record(
@@ -420,6 +431,12 @@ class MieFileReader:
         Returns normally when the caller should yield zero records (an empty
         recording, or lenient-mode first-record truncation); raises otherwise
         (wrong file, or strict-mode truncation).
+
+        Raises:
+            MieNoValidRecordsError: if no record was found in the scanned span,
+                which means this is not an MIE recording.
+            MieFirstRecordTruncatedError: in strict mode, if a record starts but
+                is cut off by EOF. Lenient mode returns normally instead.
         """
         # L1-EXIT-010 / L2-RDR-021: a valid but *empty* recording opens
         # directly on the end-of-records terminator (a null Type Word). The
@@ -495,6 +512,11 @@ class MieFileReader:
         SPURIOUS_DATA frame). The candidate's Type Word tells us the record
         size; we compare the next N candidate-sized chunks for byte identity
         in non-timestamp positions.
+
+        Raises:
+            MieHomogeneousPayloadError: if the sampled chunks are byte-identical
+                outside the timestamp triple, which means the input is padding
+                rather than a recording.
         """
         from mie_decoder.sync import (
             HOMOGENEITY_SAMPLE_RECORDS,
@@ -528,6 +550,10 @@ class MieFileReader:
 
         Auto-detects when unset (L2-DEC-015); otherwise sanity-checks the
         forced format against the probe (L2-DEC-013) and returns it unchanged.
+
+        Returns:
+            The format every record will be decoded with. Final for the file --
+            there is no per-record re-detection (L2-DEC-011).
         """
         if resolved_format is None:
             return self._auto_detect_timestamp_format(mm, start_offset)
@@ -542,6 +568,13 @@ class MieFileReader:
         """L2-DEC-015: multi-record probe to disambiguate IRIG vs Standard
         BEFORE iteration begins. The chosen format is final per L2-DEC-011 —
         no per-record re-detection.
+
+        Returns:
+            The detected :class:`TimestampFormat`.
+
+        Raises:
+            MieTimestampFormatMismatchError: if the probe cannot tell the two
+                formats apart well enough to choose.
         """
         outcome = probe_timestamp_format(
             mm,
@@ -619,6 +652,11 @@ class MieFileReader:
         file. Marginal/Ambiguous probes are NOT flagged — those are exactly
         the cases where forcing is the legitimate override. resolved_format
         stays the forced format.
+
+        Raises:
+            MieTimestampFormatMismatchError: only when the probe is *Decisive*
+                about the OTHER format. Marginal and Ambiguous probes pass,
+                because those are exactly the cases forcing exists for.
         """
         outcome = probe_timestamp_format(
             mm,
@@ -677,6 +715,11 @@ class MieFileReader:
         Reads and validates the Type Word, recovers from sync loss, then
         dispatches to the SPURIOUS / error / normal builder. Returns a
         :class:`_Step`; the ``yield`` itself stays in ``__iter__``.
+
+        Returns:
+            A :class:`_Step` saying what to emit and where to go next: a
+            message plus the following offset, a recovery hop with no message,
+            or a stop.
         """
         # ── Read and validate Type Word ────────────
         type_raw = read_u16(mm, offset)
@@ -766,6 +809,18 @@ class MieFileReader:
 
         Returns a recovering :class:`_Step` (no message) on success, a stopping
         step on lenient-mode EOF truncation, or raises on strict/corruption.
+
+        Returns:
+            A recovering :class:`_Step` (no message) pointing at the resynced
+            offset, or a stopping step on lenient-mode EOF truncation.
+
+        Raises:
+            MieInvalidTypeWordError: strict mode, Type Word fields impossible.
+            MieRecordTruncatedError: strict mode, record runs past EOF.
+            MieUnknownTypeWordError: strict mode, unrecognised message type.
+            MiePayloadError: strict mode, any other validation failure.
+            MieUnrecoverableSyncLossError: recovery scanned its budget without
+                finding a valid record. This one fires in lenient mode too.
         """
         # ── Sync loss — attempt recovery ───────
         self._sync_losses += 1
@@ -845,7 +900,12 @@ class MieFileReader:
         state: _DecodeState,
     ) -> Timestamp:
         """Decode the record timestamp and emit the freerun / IRIG day-of-year
-        advisories (the latter one-time per decode)."""
+        advisories (the latter one-time per decode).
+
+        Returns:
+            The decoded :class:`IrigTimestamp` or :class:`StandardTimestamp`,
+            per the format resolved for the file.
+        """
         if fmt == TimestampFormat.IRIG:
             # decode_irig_timestamp always returns a concrete IrigTimestamp, so
             # the freerun / day-of-year fields are read directly (no isinstance
@@ -888,7 +948,13 @@ class MieFileReader:
         state: _DecodeState,
     ) -> _Step:
         """Build a SPURIOUS_DATA message (no Command Word). Classified as a
-        continuation of a preceding error or a standalone frame."""
+        continuation of a preceding error or a standalone frame.
+
+        Returns:
+            A :class:`_Step` carrying the SPURIOUS_DATA message, with
+            ``error_word`` set to ``0x2000`` when it continues a preceding
+            errored record and ``0x2001`` when it stands alone.
+        """
         raw_word_count = tw.word_count - 1 - ts_words
         data_words: tuple[int, ...] = ()
         if raw_word_count > 0:
@@ -936,7 +1002,11 @@ class MieFileReader:
         record_bytes: int,
         state: _DecodeState,
     ) -> _Step:
-        """Build an errored record (Type Word bit 14 set), with DELTA tracking."""
+        """Build an errored record (Type Word bit 14 set), with DELTA tracking.
+
+        Returns:
+            A :class:`_Step` carrying the errored message and the next offset.
+        """
         msg = _decode_error_record(
             mm,
             offset,
@@ -985,6 +1055,15 @@ class MieFileReader:
 
         Applies the L2-SYN structural invariants (strict aborts, lenient skips)
         around the payload extraction, then emits anomaly warnings and DELTA.
+
+        Returns:
+            A :class:`_Step` carrying the decoded message, or a skipping step
+            with no message when lenient mode drops a record that violated a
+            structural invariant.
+
+        Raises:
+            MiePayloadError: in strict mode, if a L2-SYN structural invariant
+                fails either before or after payload extraction.
         """
         skip = _Step(message=None, next_offset=offset + record_bytes, stop=False)
         try:
@@ -1108,6 +1187,13 @@ def _decode_error_record(
 
     Error Word is the last word of the record. Payload between
     Command Word and Error Word = truncated data words.
+
+    Returns:
+        The decoded message, with ``error_word`` carrying the DDC code.
+
+    Raises:
+        MieUnknownErrorCodeError: in strict mode, if the Error Word is not a
+            known DDC code. Lenient mode keeps the record and logs a WARN.
     """
     error_word_offset = offset + (tw.word_count - 1) * 2
     error_code = read_u16(mm, error_word_offset)
@@ -1241,6 +1327,12 @@ def _extract_payload(
 
     Dispatch is split by family (RT-to-RT, mode-code, direct) so each
     per-format block stays flat and independently testable.
+
+    Returns:
+        ``(command_word_2, status_word, status_word_2, data_words)`` for the
+        format. Any field the format does not carry is ``None``, and an
+        out-of-bounds read yields ``None`` or an empty tuple rather than
+        raising.
     """
 
     def _r16(off: int) -> int | None:
@@ -1267,7 +1359,16 @@ def _extract_direct(
     r16: _R16,
     read_n: _ReadN,
 ) -> _PayloadResult:
-    """RT-addressed BC↔RT transfers whose data-word count comes from Cmd1."""
+    """RT-addressed BC↔RT transfers whose data-word count comes from Cmd1.
+
+    Returns:
+        ``(None, status_word, None, data_words)`` -- these formats carry no
+        second Command Word and no second Status Word.
+
+    Raises:
+        ValueError: if ``fmt`` is not one of the direct formats. Unreachable
+            via the dispatcher, which routes by family.
+    """
     if fmt == MessageFormat.RECEIVE:
         n = cmd.data_word_count
         data_words = read_n(p, n)
@@ -1298,6 +1399,10 @@ def _extract_rt_to_rt(
 
     The broadcast variant has no receiving-RT Status Word (and so does not
     read one past the data words).
+
+    Returns:
+        ``(cmd2, tx_status, rx_status, data_words)``. ``rx_status`` is ``None``
+        for the broadcast variant, which has no receiving-RT Status Word.
     """
     cmd2 = decode_command_word(r16(p) or 0)
     tx_status = r16(p + 2)
@@ -1314,7 +1419,12 @@ def _extract_mode_code(
     fmt: MessageFormat,
     r16: _R16,
 ) -> _PayloadResult:
-    """Mode-code commands: a Status Word and at most a single data word."""
+    """Mode-code commands: a Status Word and at most a single data word.
+
+    Returns:
+        ``(None, status_word, None, data_words)`` with at most one data word.
+        Broadcast mode codes carry no Status Word, so it is ``None`` there.
+    """
     if fmt == MessageFormat.MODE_CODE_TX_DATA:
         status = r16(p)
         w = r16(p + 2)

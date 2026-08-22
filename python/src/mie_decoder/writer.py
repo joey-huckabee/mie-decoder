@@ -146,6 +146,10 @@ def is_broken_pipe(exc: BaseException) -> bool:
     The extra ``errno`` matching is deliberately scoped to Windows: on POSIX,
     ``EINVAL`` from a write is a genuine failure and must stay one, so widening
     the match there would silently turn real write errors into clean exits.
+
+    Returns:
+        ``True`` if the consumer closed the pipe, which callers treat as a
+        clean stop rather than a failure.
     """
     if isinstance(exc, BrokenPipeError):
         return True
@@ -173,6 +177,11 @@ def paths_refer_to_same_file(input_path: Path, output_path: Path) -> bool:
     Handles the common case where ``output_path`` does not yet exist by
     resolving the parent directory and comparing against the prospective
     full path. Symlink-safe via ``Path.resolve``.
+
+    Returns:
+        ``True`` if both paths name the same file. ``False`` when they differ,
+        and also when either path cannot be resolved -- a destination that
+        cannot be resolved cannot collide.
     """
     try:
         input_resolved = Path(input_path).resolve(strict=True)
@@ -264,6 +273,12 @@ def _preflight_output(output: Path, opts: WriteOptions) -> None:
 
     Runs before any output file is opened so existing destinations are
     never partially overwritten on a rejected configuration.
+
+    Raises:
+        MieInputOutputCollisionError: if the destination is also an input
+            (L2-WRT-014).
+        MieClobberRefusedError: if the destination exists and ``no_clobber`` is
+            set (L2-WRT-017).
     """
     if opts.input_path is not None and paths_refer_to_same_file(opts.input_path, output):
         raise MieInputOutputCollisionError(str(output))
@@ -292,6 +307,10 @@ def _unique_temp_path(final_path: Path) -> Path:
     wall-clock nanoseconds make each call unique (and unpredictable), so two
     writers targeting the same destination cannot derive the same name. The
     caller still creates it with exclusive-create (``O_EXCL``) as the guarantee.
+
+    Returns:
+        The candidate temp path. It is only a NAME -- the caller still has to
+        create it exclusively.
     """
     salt = f"{os.getpid()}.{next(_temp_counter)}.{time.time_ns()}"
     return final_path.with_name(f"{final_path.name}.mie-decoder.tmp.{salt}")
@@ -437,7 +456,12 @@ class _AtomicCsvFile:
         return self._stream
 
     def commit(self) -> None:
-        """Flush, close, and atomically rename the temp over the destination."""
+        """Flush, close, and atomically rename the temp over the destination.
+
+        Raises:
+            MieWriterError: if the flush, close or rename fails. The temp file
+                is removed first, so a failure leaves nothing behind.
+        """
         self._close_stream()
         try:
             os.replace(self._temp, self._final)
@@ -449,7 +473,14 @@ class _AtomicCsvFile:
     def commit_partial(self) -> Path:
         """Rename the temp to ``<destination>.partial`` instead of over the
         destination (L2-WRT-016 ``--allow-partial`` branch). The original
-        destination, if any, is left untouched. Returns the path written."""
+        destination, if any, is left untouched.
+
+        Returns:
+            The ``.partial`` path actually written.
+
+        Raises:
+            MieWriterError: if the rename fails.
+        """
         self._close_stream()
         partial = self._final.with_name(f"{self._final.name}.partial")
         try:
@@ -525,6 +556,11 @@ class _StreamingCsvRowWriter:
         Matching on :func:`is_broken_pipe` rather than the ``BrokenPipeError``
         type is what makes this correct on Windows, where the pipe-closed
         condition arrives as a bare ``OSError``.
+
+        Raises:
+            OSError: re-raised unchanged when it is a broken pipe, so the
+                caller can treat it as a clean stop.
+            MieWriterError: wrapping any other OS error.
         """
         if is_broken_pipe(exc):
             raise exc
@@ -582,7 +618,20 @@ def _write_csv_to_file(
 ) -> WriteOutcome:
     """Stream rows into an atomic temp file (constant memory), then commit() over
     the destination — or commit_partial() to ``<dest>.partial`` on an
-    allow_partial sync loss."""
+    allow_partial sync loss.
+
+    Returns:
+        The row counts, with ``partial`` set when the rows were committed to
+        ``<dest>.partial`` instead of the destination.
+
+    Raises:
+        MieInputOutputCollisionError: destination is also an input.
+        MieClobberRefusedError: destination exists and ``no_clobber`` is set.
+        MieUnrecoverableSyncLossError: sync was lost and ``allow_partial`` is
+            NOT set. With it set, the rows are committed and this returns
+            normally.
+        MieWriterError: on an I/O failure writing or renaming.
+    """
     _preflight_output(dest, opts)
     partial_info: tuple[int, int] | None = None
     with _AtomicCsvFile(dest) as atomic:
@@ -628,7 +677,19 @@ def _write_csv_to_stream(
 ) -> WriteOutcome:
     """Stream rows straight to a text sink. No on-disk identity, so no preflight,
     no atomic temp, and no ``.partial`` — rows already sent are what the consumer
-    has seen."""
+    has seen.
+
+    Returns:
+        The row counts, always with ``partial`` unset -- a stream has no
+        ``.partial`` to commit to.
+
+    Raises:
+        MieUnrecoverableSyncLossError: sync was lost. ``allow_partial`` cannot
+            help here: the rows already sent are what the consumer has seen.
+        OSError: re-raised unchanged when it is a broken pipe, so the caller
+            can treat a closed consumer as a clean stop (L2-WRT-018).
+        MieWriterError: on any other I/O failure.
+    """
     writer = _StreamingCsvRowWriter(stream, dest_name)
     try:
         for msg in messages:
@@ -678,13 +739,18 @@ def write_csv_split(
             The L2-WRT-014 collision check applies to the main path.
 
     Returns:
-        A tuple of (normal_count, error_count).
+        The normal and error row counts.
 
     Raises:
         MieInputOutputCollisionError: Main output collides with input.
         MieClobberRefusedError: Main or errors destination exists and
-            ``opts.no_clobber`` is True.
-        MieWriterError: If an I/O error occurs during writing.
+            ``opts.no_clobber`` is True. The derived errors path gets its own
+            check.
+        MieUnrecoverableSyncLossError: sync was lost and ``allow_partial`` is
+            not set.
+        MieWriterError: If an I/O error occurs during writing. The main CSV is
+            committed FIRST (L2-WRT-019), so a failure on the errors file
+            leaves the main file in place.
     """
     if opts is None:
         opts = WriteOptions()
@@ -753,7 +819,12 @@ def _commit_split_outputs(
     """Commit the split outputs. ``partial_info is None`` is the normal path
     (atomic rename over each destination, MAIN first per L2-WRT-019 so a failed
     errors commit never leaves an orphan errors file); a tuple is the
-    ``--allow-partial`` path (rename each temp to its ``.partial``)."""
+    ``--allow-partial`` path (rename each temp to its ``.partial``).
+
+    Returns:
+        The counts passed in, with ``partial`` populated on the
+        ``--allow-partial`` path and ``None`` on the normal one.
+    """
     if partial_info is None:
         main_atomic.commit()
         logger.info("wrote %d normal rows to %s", normal_count, output_path)

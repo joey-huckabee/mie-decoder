@@ -64,9 +64,12 @@ def mux_from_filename(file_name: str, delimiter: str, field: int) -> str | None:
     split on ``delimiter`` and return the ``field``-th part (0-based; a negative
     ``field`` counts from the end, e.g. ``-1`` is the last part), trimmed.
 
-    Returns ``None`` (-> empty MUX) when the index is out of range, the selected
-    field is empty after trimming, or ``delimiter`` is empty. Mirrors the Rust
-    ``mux_from_filename`` (rust/src/decode.rs).
+    Mirrors the Rust ``mux_from_filename`` (rust/src/decode.rs).
+
+    Returns:
+        The selected field, trimmed. ``None`` -- which renders as an empty MUX
+        column -- when the index is out of range, the field is empty after
+        trimming, or ``delimiter`` is empty.
     """
     if not delimiter:
         return None
@@ -282,7 +285,12 @@ def _accumulate_probe_scores(
     """Walk up to ``max_records`` records from ``first_offset``, returning the
     aggregate ``(irig_score, std_score, records_probed)``. Advances by each
     record's declared length (the reader's walk) and stops at EOF or a
-    structurally-impossible record."""
+    structurally-impossible record.
+
+    Returns:
+        ``(irig_score, std_score, records_probed)`` summed over the records
+        actually walked. ``records_probed`` may be less than ``max_records``.
+    """
     n = max(1, max_records)
     file_len = len(data)
     irig_score = 0
@@ -320,7 +328,12 @@ def _accumulate_probe_scores(
 
 
 def _classify_detection_confidence(max_score: int, margin: int) -> DetectionConfidence:
-    """L2-DEC-016 confidence classification from the aggregate score and margin."""
+    """L2-DEC-016 confidence classification from the aggregate score and margin.
+
+    Returns:
+        ``DECISIVE``, ``MARGINAL`` or ``AMBIGUOUS``, per the L2-DEC-016
+        thresholds.
+    """
     if max_score < _CONFIDENCE_FLOOR or margin < _MIN_MARGIN:
         return DetectionConfidence.AMBIGUOUS
     if max_score >= _DECISIVE_FLOOR and margin >= _DECISIVE_MARGIN:
@@ -341,6 +354,10 @@ def _score_single_record(
     record (T/R: 2 + WC plausibility: 2; no range bonus because the
     Standard timestamp is a raw 32-bit counter with no semantic field
     bounds to check against).
+
+    Returns:
+        ``(irig_delta, std_delta)`` for this one record, to be added to the
+        running totals.
     """
     return (
         _score_irig_candidate(data, offset, type_word),
@@ -350,7 +367,12 @@ def _score_single_record(
 
 def _tr_direction_matches(type_word: TypeWord, cmd: CommandWord) -> bool:
     """T/R consistency: a BC_TO_RT type expects a Receive command, RT_TO_BC
-    expects Transmit. Other message types never match."""
+    expects Transmit. Other message types never match.
+
+    Returns:
+        ``True`` when the Command Word's direction matches the one the Type
+        Word's message type implies.
+    """
     if type_word.message_type == MessageType.BC_TO_RT:
         return cmd.direction == Direction.RECEIVE
     if type_word.message_type == MessageType.RT_TO_BC:
@@ -360,7 +382,12 @@ def _tr_direction_matches(type_word: TypeWord, cmd: CommandWord) -> bool:
 
 def _score_irig_candidate(data: ByteSource, offset: int, type_word: TypeWord) -> int:
     """IRIG candidate: Cmd at offset+8 (Type + 3 TS words). Up to +5
-    (T/R: 2, word-count plausibility: 2, field-range validity: 1)."""
+    (T/R: 2, word-count plausibility: 2, field-range validity: 1).
+
+    Returns:
+        The candidate's score, ``0`` when the Command Word cannot be read at
+        that offset.
+    """
     if offset + 8 + 2 > len(data):
         return 0
     cmd = decode_command_word(read_u16(data, offset + 8))
@@ -386,7 +413,12 @@ def _score_irig_candidate(data: ByteSource, offset: int, type_word: TypeWord) ->
 def _score_standard_candidate(data: ByteSource, offset: int, type_word: TypeWord) -> int:
     """Standard candidate: Cmd at offset+6 (Type + 2 TS words). Up to +4
     (T/R: 2, word-count plausibility: 2; no range bonus — the 32-bit counter
-    has no semantic field bounds to check)."""
+    has no semantic field bounds to check).
+
+    Returns:
+        The candidate's score, ``0`` when the Command Word cannot be read at
+        that offset.
+    """
     if offset + 6 + 2 > len(data):
         return 0
     cmd = decode_command_word(read_u16(data, offset + 6))
@@ -639,6 +671,14 @@ def _min_payload_words(fmt: MessageFormat, command_word: CommandWord) -> int:
     """Per-format minimum payload word count, computed from Cmd1's
     declared data_word_count. Mirrors the Rust ``min_payload_words``
     helper. ``SPURIOUS_DATA`` returns 0 (capacity check skipped).
+
+    Returns:
+        The minimum number of payload words the format requires.
+
+    Raises:
+        ValueError: if ``fmt`` is not a known :class:`MessageFormat`. Every
+            member is handled, so this is unreachable for a value produced by
+            classification.
     """
     dwc = command_word.data_word_count
     if fmt in (MessageFormat.RECEIVE, MessageFormat.TRANSMIT):
@@ -687,6 +727,10 @@ def validate_structural_invariants(
     inside the payload), and the AnomalyWarn-class Status-RT-vs-Cmd-RT
     (L2-SYN-024) and Type-Word reserved-bit (L2-SYN-025) checks in
     :func:`detect_record_anomalies`.
+
+    Returns:
+        ``None`` if every checked invariant holds, otherwise the
+        :class:`InvariantViolation` for the FIRST failure -- checks stop there.
     """
     # INV-001 / INV-002: per-type direction.
     if (
@@ -746,6 +790,11 @@ def validate_post_extract_invariants(
       capacity invariant (L2-SYN-022) only sees Cmd1, so a Cmd2 that
       disagrees — including the over-claim that the record-bounded reads of
       L2-DEC-009 defend against — is caught here.
+
+    Returns:
+        ``None`` if the invariants hold, or if the format is not RT-to-RT or
+        ``cmd2`` is ``None`` -- both are no-ops. Otherwise the
+        :class:`InvariantViolation` for the first failure.
     """
     if msg_fmt not in (MessageFormat.RT_TO_RT, MessageFormat.RT_TO_RT_BROADCAST):
         return None
@@ -787,6 +836,10 @@ def detect_record_anomalies(
     emitting the record. Returns a list because multiple anomalies can
     fire on the same record (e.g., status RT mismatch AND reserved bit
     set simultaneously).
+
+    Returns:
+        Every anomaly found, possibly empty. An empty list means no anomaly,
+        not an error -- these never reject a record.
     """
     out: list[InvariantViolation] = []
 
@@ -840,6 +893,10 @@ def is_terminator_type_word(raw: int) -> bool:
     """Return whether ``raw`` is the end-of-records terminator (null Type Word).
 
     See :data:`TERMINATOR_TYPE_WORD` and L2-RDR-021 / L2-SYN-028.
+
+    Returns:
+        ``True`` when ``raw`` is the null Type Word that ends the record
+        stream.
     """
     return raw == TERMINATOR_TYPE_WORD
 
