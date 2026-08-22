@@ -1068,6 +1068,27 @@ class TestCliEndToEnd:
         assert rc == 0
         assert out.exists()
 
+    @pytest.mark.requirement("L2-CLI-002")
+    def test_output_dash_is_a_filename_not_stdout(
+        self, tmp_mie_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``-o -`` writes a file *called* ``-``. stdout is selected by omitting
+        the flag, and that is the only way to select it.
+
+        Pinned in all three implementations because this is a rule they once
+        disagreed on: the C++ build treated ``-`` as stdout for a while, and the
+        CLI-surface-parity gate could not see it — that gate compares flag
+        *names*, not what their values mean.
+        """
+        from mie_decoder.cli import main
+
+        dash = tmp_path / "-"
+        rc = main(["decode", str(tmp_mie_file), "-o", str(dash)])
+        assert rc == 0
+        assert dash.exists(), "no file named '-' was created"
+        assert "MSG" in dash.read_text(encoding="utf-8")
+        assert capsys.readouterr().out == "", "`-o -` must not write to stdout"
+
     @pytest.mark.requirement("L3-PY-010")
     def test_cli_count_subcommand(
         self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]

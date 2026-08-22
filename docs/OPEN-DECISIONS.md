@@ -13,35 +13,7 @@ the changelog).
 
 ---
 
-## 1. `-o -` means three different things
-
-**Status:** a divergence with no gate; found while closing the `dump` character
-question.
-
-| | `decode … -o -` | `decode …` (no `-o`) |
-|---|---|---|
-| Rust | creates a **file named `-`** | stdout |
-| Python | creates a **file named `-`** | stdout |
-| C++ | **stdout** | stdout |
-
-The C++ behaviour is mine, from the CLI port: its `--help` says
-`'-' writes to stdout`, and it does. Rust and Python take `-` as an ordinary
-filename. The surface-parity gate compares flag *names*, not semantics, so
-nothing caught it.
-
-Both readings are defensible. `-` for stdout is a strong Unix convention, and
-`-o -` is more explicit than omitting the flag. Against it: all three already
-write to stdout when `-o` is omitted, so `-` adds nothing but a special case —
-and a special case that silently changes the meaning of a path is exactly the
-kind of thing that surprises someone whose file really is called `-`.
-
-**Recommendation: drop it from C++**, matching the shipped behaviour of the
-other two. Adding it to all three would be adding a special case for a
-capability that already exists; removing it from one restores parity and loses
-nothing. Either way it should be decided rather than left as an accident of
-which implementation was written last.
-
-## 2. Should a merge be allowed to overwrite a *non-input* file without `--no-clobber`?
+## 1. Should a merge be allowed to overwrite a *non-input* file without `--no-clobber`?
 
 **Status:** not blocking; raised by the collision fix.
 
@@ -61,7 +33,7 @@ not because it is believed wrong.
 
 ---
 
-## 3. Coverage and fuzz gates for the C++ tree
+## 2. Coverage and fuzz gates for the C++ tree
 
 **Status:** unbuilt; needs a threshold, not a design.
 
@@ -80,7 +52,7 @@ raised once the number is known rather than chosen in advance.
 
 ---
 
-## 4. SonarCloud: `main` is red, and C++ analysis is still deferred
+## 3. SonarCloud: `main` is red, and C++ analysis is still deferred
 
 **Status:** pre-existing; deferred deliberately.
 
@@ -99,7 +71,7 @@ lower than the cost of a gate nobody can read.
 
 ---
 
-## 5. Phase 3: release artifacts and the versioning scheme
+## 4. Phase 3: release artifacts and the versioning scheme
 
 **Status:** not started; needs direction before any of it is built.
 

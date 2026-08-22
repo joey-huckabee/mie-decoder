@@ -44,7 +44,7 @@ const char* const kHelp =
     "    -V, --version     Print the version\n"
     "\n"
     "DECODE OPTIONS:\n"
-    "    -o, --output <PATH>          Destination CSV; '-' writes to stdout\n"
+    "    -o, --output <PATH>          Destination CSV; omit it to write stdout\n"
     "    --strict                     Reject on the first anomaly\n"
     "    --time-format <F>            auto, irig, standard\n"
     "    --separate-errors            Errored rows to <stem>_errors.csv\n"
@@ -843,14 +843,15 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
         throw CliError(EXIT_NO_RECORDS, "no input file could be opened");
     }
 
-    // `-` means stdout, which has no filesystem identity: no collision check,
-    // no clobber guard, and `--allow-partial` cannot name a `.partial` beside
-    // it.
-    const bool to_stdout = args.output.has_value() && args.output.value() == "-";
-    Optional<std::string> destination;
-    if (args.output.has_value() && !to_stdout) {
-        destination = args.output.value();
-    }
+    // `--output` is a PATH, and no value of it is special-cased -- `-o -`
+    // writes a file called `-`, the same as Rust and Python. stdout is selected
+    // by OMITTING the flag (L2-CLI-002), which every implementation already
+    // did, so treating `-` as stdout only added a second way to say the same
+    // thing plus a trap for anyone whose file really is named `-`.
+    //
+    // This build did special-case it, and nothing caught the divergence: the
+    // surface-parity gate compares flag NAMES, not what their values mean.
+    const Optional<std::string>& destination = args.output;
 
     WriteOptions write_options;
     write_options.no_clobber = config.no_clobber;

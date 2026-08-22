@@ -17,6 +17,24 @@ full release workflow.
 
 ### Changed
 
+- **`-o -` now means the same thing in all three implementations: a file called
+  `-`.** It did not. Rust and Python treated the value as an ordinary path; the
+  C++ build, from its CLI port, treated `-` as stdout and said so in its help.
+  The CLI-surface-parity gate could not catch it — that gate compares flag
+  *names*, not what their values mean.
+
+  The special case is removed rather than added to the other two. `-` for stdout
+  is a genuine Unix convention, but every implementation *already* writes to
+  stdout when `-o` is omitted, so the magic filename only added a second
+  spelling for something that worked — at the cost of making one filename
+  unreachable for anyone whose file really is called `-`.
+
+  `L2-CLI-002` previously said only that decode "SHALL accept an optional output
+  path", which is silent on this and is precisely what let the three drift. It
+  now states that the value is a path and nothing else, that stdout is selected
+  by omitting the flag, and that this is the only way to select it — pinned by a
+  test in each implementation.
+
 - **The `dump` report is now identical across all three implementations, and
   gated.** It was not: Python used box-drawing (`─`), arrow (`→`) and
   en-dash (`–`) characters where Rust and C++ used `-`, `->` and `-`, so 11
