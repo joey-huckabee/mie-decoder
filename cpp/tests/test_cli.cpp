@@ -406,6 +406,45 @@ TEST_CASE("an input set that resolves to nothing names which method was empty",
     REQUIRE(err.find("matched no files") != std::string::npos);
 }
 
+TEST_CASE("a merge refuses to write over one of its own inputs", "[cli][L3-CPP-029]") {
+    // Regression pin, and a data-loss one. The writer's own input/output guard
+    // takes a single path and is deliberately given none on the merge path --
+    // it is handed one stream and cannot know how many files fed it -- so for a
+    // merge the CLI's check is the only thing standing between
+    // `decode a.mie b.mie -o a.mie` and a truncated input being read as it is
+    // overwritten. Rust and Python both guard this; C++ shipped without it.
+    const TempFile first("mie-cli-collide-a.mie", valid_recording());
+    const TempFile second("mie-cli-collide-b.mie", valid_recording());
+
+    std::string out;
+    std::string err;
+
+    SECTION("the output naming the first input") {
+        REQUIRE(run_capturing(args("decode", first.str(), second.str(), "-o", first.str()), out,
+                              err) == mie::cli::EXIT_RUNTIME);
+        REQUIRE(err.find("resolves to merge input") != std::string::npos);
+    }
+
+    SECTION("the output naming a later input") {
+        // Every input is checked, not just the first.
+        REQUIRE(run_capturing(args("decode", first.str(), second.str(), "-o", second.str()), out,
+                              err) == mie::cli::EXIT_RUNTIME);
+        REQUIRE(err.find("resolves to merge input") != std::string::npos);
+    }
+
+    SECTION("a distinct output is allowed") {
+        const TempPath destination("mie-cli-collide-out.csv");
+        REQUIRE(mie::cli::run(args("decode", first.str(), second.str(), "-o", destination.str())) ==
+                mie::cli::EXIT_OK);
+    }
+
+    SECTION("the single-input case is still guarded by the writer") {
+        // Unchanged behaviour, asserted here so a future refactor cannot move
+        // the merge guard in and drop the single-file one on the way past.
+        REQUIRE(mie::cli::run(args("decode", first.str(), "-o", first.str())) != mie::cli::EXIT_OK);
+    }
+}
+
 TEST_CASE("more inputs than the cap is refused up front", "[cli][L3-CPP-024]") {
     // Refused before anything is opened. The cap exists to keep resource use
     // predictable, so discovering it at file 257 would already have consumed
