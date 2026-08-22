@@ -37,7 +37,7 @@ Mirrors ``rust/src/order.rs`` (L3-PY-016 / L3-RS-016).
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Iterator
+from collections.abc import Iterable, Iterator
 
 from mie_decoder.exceptions import MieDecoderError
 from mie_decoder.models import IrigTimestamp, MieMessage

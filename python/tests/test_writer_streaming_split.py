@@ -20,7 +20,6 @@ from mie_decoder.exceptions import MieUnrecoverableSyncLossError
 from mie_decoder.models import MieMessage
 from mie_decoder.reader import MieFileReader
 from mie_decoder.writer import WriteOptions, write_csv_split
-
 from tests.conftest import RECORD_RT15_SA11_RCV
 
 

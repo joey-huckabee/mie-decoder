@@ -7,19 +7,18 @@ from pathlib import Path
 
 import pytest
 
-from mie_decoder.sync import DEFAULT_LOOKAHEAD_RECORDS
 from mie_decoder.config import (
     DecoderConfig,
     FilterConfig,
-    load_config,
-    _parse_type_names,
     _parse_bus_names,
+    _parse_type_names,
+    load_config,
 )
 from mie_decoder.filters import apply_filters
 from mie_decoder.models import (
     Bus,
-    DeltaScope,
     CommandWord,
+    DeltaScope,
     Direction,
     ErrorMode,
     IrigTimestamp,
@@ -28,6 +27,7 @@ from mie_decoder.models import (
     TimestampFormat,
     TypeWord,
 )
+from mie_decoder.sync import DEFAULT_LOOKAHEAD_RECORDS
 
 
 def _make_msg(
@@ -800,7 +800,7 @@ class TestSchemaValidation:
     def test_unknown_output_format_rejected(self, tmp_path: Path) -> None:
         cfg = tmp_path / "bad_fmt.toml"
         cfg.write_text('[output]\nformat = "json"\n')
-        with pytest.raises(ValueError, match="output.format"):
+        with pytest.raises(ValueError, match=r"output\.format"):
             load_config(cfg)
 
     @pytest.mark.requirement("L2-CFG-010")
@@ -848,14 +848,14 @@ class TestSchemaValidation:
         # AttributeError. Matches the Rust "must be a string" rejection.
         cfg = tmp_path / "tf_int.toml"
         cfg.write_text("[decode]\ntime_format = 1\n")
-        with pytest.raises(ValueError, match="decode.time_format"):
+        with pytest.raises(ValueError, match=r"decode\.time_format"):
             load_config(cfg)
 
     @pytest.mark.requirement("L2-CFG-010")
     def test_non_string_error_mode_rejected(self, tmp_path: Path) -> None:
         cfg = tmp_path / "em_int.toml"
         cfg.write_text("[decode]\nerror_mode = 1\n")
-        with pytest.raises(ValueError, match="decode.error_mode"):
+        with pytest.raises(ValueError, match=r"decode\.error_mode"):
             load_config(cfg)
 
     @pytest.mark.requirement("L2-CFG-010")

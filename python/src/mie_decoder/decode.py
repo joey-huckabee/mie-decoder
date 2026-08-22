@@ -16,6 +16,7 @@ from enum import Enum, IntEnum
 from typing import Final
 
 from mie_decoder.models import (
+    VALID_MESSAGE_TYPES,
     Bus,
     ByteSource,
     CommandWord,
@@ -26,7 +27,6 @@ from mie_decoder.models import (
     StandardTimestamp,
     TimestampFormat,
     TypeWord,
-    VALID_MESSAGE_TYPES,
 )
 
 #: Minimum record size in bytes for IRIG: Type(2) + TS(6) + Cmd(2) = 10

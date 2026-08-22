@@ -16,8 +16,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.conftest import normal_record_rt15_sa11_us
-
 from mie_decoder import cli
 from mie_decoder.cli import (
     EXIT_MERGE_INCOMPATIBLE,
@@ -38,7 +36,7 @@ from mie_decoder.exceptions import (
     MieUnrecoverableSyncLossError,
     MieWriterError,
 )
-
+from tests.conftest import normal_record_rt15_sa11_us
 
 # ── validators ─────────────────────────────────────────────────────────────
 

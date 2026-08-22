@@ -37,7 +37,7 @@ class TestMieFileReader:
 
         Expected: 192:15:54:50.456225,15,11R,...,7800,797E,...,A
         """
-        msg = list(MieFileReader(tmp_mie_file))[0]
+        msg = next(iter(MieFileReader(tmp_mie_file)))
         assert msg.timestamp.format() == "192:15:54:50.456225"
         assert msg.rt == 15
         assert msg.msg_label == "11R"
@@ -86,7 +86,7 @@ class TestMieFileReader:
     @pytest.mark.requirement("L2-MSG-002")
     def test_bus_b_record(self, tmp_busb_file: Path) -> None:
         """Bus B file should decode bus=B correctly."""
-        msg = list(MieFileReader(tmp_busb_file))[0]
+        msg = next(iter(MieFileReader(tmp_busb_file)))
         assert msg.bus == Bus.B
         assert msg.rt == 15
         assert msg.msg_label == "10T"
@@ -145,8 +145,8 @@ class TestMieFileReader:
     @pytest.mark.requirement("L2-RDR-003")
     def test_truncated_record_strict(self, tmp_path: Path) -> None:
         """Strict mode should raise MieRecordTruncatedError on truncation."""
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.exceptions import MieRecordTruncatedError
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         fpath = tmp_path / "truncated_strict.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV + RECORD_RT15_SA11_RCV[:20])
@@ -157,7 +157,6 @@ class TestMieFileReader:
     def test_invalid_record_strict(self, tmp_path: Path) -> None:
         """Strict mode should raise on invalid record after good data."""
         from mie_decoder.exceptions import MieDecoderError
-
         from tests.conftest import RECORD_RT15_SA11_RCV
 
         bad_record = b"\x03\x00" + b"\x00" * 18  # type 0x03, wc=0
@@ -183,8 +182,8 @@ class TestMieFileReader:
         # declares data_word_count=30. R2: a normal valid record after it.
         r1 = (
             b"\x02\x0a"  # Type: wc=10, type=0x02 (BC->RT), little-endian 0x0A02
-            + b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
-            + b"\x7e\x79"  # Cmd 0x797E (RT15 R SA11 dwc=30), little-endian
+            b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
+            b"\x7e\x79"  # Cmd 0x797E (RT15 R SA11 dwc=30), little-endian
             + bytes(10)  # 5 payload words -> total 10 words = 20 bytes
         )
         assert len(r1) == 20
@@ -235,11 +234,10 @@ class TestMieFileReader:
         # Cmd2 0x797E declares dwc=30 (the over-claim). R2: a valid record.
         r1 = (
             b"\x08\x0a"  # Type: wc=10, type=0x08 (RT_TO_RT)
-            + b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
-            + b"\x61\x79"  # Cmd1 0x7961 (RT15 R SA11 dwc=1)
-            + b"\x7e\x79"  # Cmd2 0x797E (RT15 R SA11 dwc=30)
-            + b"\x00\x00"  # tx_status
-            + bytes(6)  # 3 padding words → total 10 words
+            b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
+            b"\x61\x79"  # Cmd1 0x7961 (RT15 R SA11 dwc=1)
+            b"\x7e\x79"  # Cmd2 0x797E (RT15 R SA11 dwc=30)
+            b"\x00\x00" + bytes(6)  # tx_status  # 3 padding words → total 10 words
         )
         assert len(r1) == 20
         data = r1 + RECORD_RT15_SA11_RCV
@@ -279,10 +277,10 @@ class TestMieFileReader:
         # record-bounded reads fire — only the Cmd1/Cmd2 mismatch is at fault.
         r1 = (
             b"\x08\x0d"  # Type: wc=13, type=0x08 (RT_TO_RT)
-            + b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
-            + b"\x63\x79"  # Cmd1 0x7963 (RT15 R SA11 dwc=3)
-            + b"\x65\x79"  # Cmd2 0x7965 (RT15 R SA11 dwc=5)
-            + b"\x00\x00"  # tx_status
+            b"\x0f\x18\x26\xdb\x21\xf6"  # IRIG timestamp (3 words)
+            b"\x63\x79"  # Cmd1 0x7963 (RT15 R SA11 dwc=3)
+            b"\x65\x79"  # Cmd2 0x7965 (RT15 R SA11 dwc=5)
+            b"\x00\x00"  # tx_status
             + bytes(10)  # 5 data words
             + b"\x00\x00"  # rx_status → total 13 words = 26 B
         )
@@ -336,11 +334,11 @@ class TestMieFileReader:
         whose declared extent runs past EOF SHALL surface a distinct
         error class in strict mode (MieFirstRecordTruncatedError, NOT
         the generic MieRecordTruncatedError)."""
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.exceptions import (
             MieFirstRecordTruncatedError,
             MieRecordTruncatedError,
         )
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         # First 20 bytes of a 72-byte record: Type Word valid (msg_type
         # 0x02, wc=36), but the record needs 72 bytes and only 20 exist.
@@ -358,8 +356,8 @@ class TestMieFileReader:
         """L2-DEC-013: forcing the wrong timestamp format on a recording
         the probe is decisive about SHALL raise in strict mode rather than
         silently emit garbage timestamps."""
-        from tests.conftest import RECORD_RT15_SA11_RCV
         from mie_decoder.exceptions import MieTimestampFormatMismatchError
+        from tests.conftest import RECORD_RT15_SA11_RCV
 
         # Two valid IRIG records → the probe is decisive for IRIG.
         fpath = tmp_path / "forced_mismatch.mie"
@@ -999,8 +997,9 @@ class TestCliEndToEnd:
         """L1-EXIT-005: decode SHALL log a one-line exit-class summary
         naming one of {complete, partial-recovered, partial-unrecoverable,
         no-records}. This case exercises the `complete` branch."""
-        from mie_decoder.cli import main
         import logging
+
+        from mie_decoder.cli import main
 
         out = tmp_path / "summary.csv"
         with caplog.at_level(logging.INFO, logger="mie_decoder.cli"):
@@ -1024,8 +1023,9 @@ class TestCliEndToEnd:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """L1-EXIT-005: the `no-records` exit-class summary branch."""
-        from mie_decoder.cli import main
         import logging
+
+        from mie_decoder.cli import main
 
         bad = tmp_path / "garbage.bin"
         bad.write_bytes(b"\xff" * 1024)
@@ -1043,9 +1043,9 @@ class TestCliEndToEnd:
     @pytest.mark.requirement("L2-WRT-007")
     def test_cli_decode_stdout(self, tmp_mie_file: Path) -> None:
         """CLI decode should produce CSV on stdout."""
-        from mie_decoder.cli import main
-
         import sys
+
+        from mie_decoder.cli import main
 
         buf = io.StringIO()
         old_stdout = sys.stdout
@@ -1144,8 +1144,9 @@ class TestCliEndToEnd:
         no --log-level CLI flag is passed. Regression coverage for the
         bug where the TOML value was parsed into config.log_level but
         the CLI never re-configured the logger after loading."""
-        from mie_decoder.cli import main
         import logging
+
+        from mie_decoder.cli import main
 
         config_path = tmp_path / "config.toml"
         config_path.write_text('[logging]\nlevel = "INFO"\n', encoding="utf-8")
@@ -1184,8 +1185,9 @@ class TestCliEndToEnd:
     ) -> None:
         """L2-CFG-003 precedence: --log-level CLI flag overrides the
         TOML [logging] level (CLI > TOML > default)."""
-        from mie_decoder.cli import main
         import logging
+
+        from mie_decoder.cli import main
 
         # TOML asks for DEBUG (most verbose); CLI asks for ERROR
         # (suppresses INFO). CLI must win — no `decode exit class:`
@@ -1226,10 +1228,11 @@ class TestCliEndToEnd:
         dump.py emits no INFO messages of its own, so the assertion is
         on the effective log level after the run rather than captured
         records."""
-        from mie_decoder.cli import main
+        import io
         import logging
         import sys
-        import io
+
+        from mie_decoder.cli import main
 
         config_path = tmp_path / "config.toml"
         config_path.write_text('[logging]\nlevel = "DEBUG"\n', encoding="utf-8")
@@ -1325,9 +1328,9 @@ class TestCliEndToEnd:
     @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_records(self, tmp_mie_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """CLI dump should print record-aware hex dump to stdout."""
-        from mie_decoder.cli import main
-
         import sys
+
+        from mie_decoder.cli import main
 
         buf = io.StringIO()
         old_stdout = sys.stdout
@@ -1344,9 +1347,9 @@ class TestCliEndToEnd:
     @pytest.mark.requirement("L2-CLI-009")
     def test_cli_dump_raw(self, tmp_mie_file: Path) -> None:
         """CLI dump --raw should print raw hex to stdout."""
-        from mie_decoder.cli import main
-
         import sys
+
+        from mie_decoder.cli import main
 
         buf = io.StringIO()
         old_stdout = sys.stdout
@@ -1444,6 +1447,7 @@ class TestDeltaAndErrorRecords:
         message for the same RT/MSG key, DELTA SHALL be empty and a WARN
         SHALL be logged, at most once per key per file."""
         import logging
+
         from tests.conftest import normal_record_rt15_sa11_us
 
         late = normal_record_rt15_sa11_us(500_000)
@@ -1630,7 +1634,6 @@ class TestFuzzHarness:
                     ) from exc
 
                 try:
-                    yielded = 0
                     # The canonical-order stage (L2-WRT-021) is on the fuzzed
                     # path deliberately: random bytes readily decode to repeated
                     # or all-zero timestamps, which is exactly the
@@ -1638,8 +1641,7 @@ class TestFuzzHarness:
                     # exists to bound. A small cap is used so the cap-overflow
                     # branch is reached often rather than only on a pathological
                     # input. Mirrors the Rust harness in rust/tests/integration.rs.
-                    for _ in order_rows(reader, 8):
-                        yielded += 1
+                    for yielded, _ in enumerate(order_rows(reader, 8), start=1):
                         if yielded > 100_000:
                             raise AssertionError(
                                 f"iterator yielded over 100k items "

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from mie_decoder.models import (
+    VALID_MESSAGE_TYPES,
     Bus,
     CommandWord,
     Direction,
@@ -13,7 +14,6 @@ from mie_decoder.models import (
     MessageType,
     MieMessage,
     TypeWord,
-    VALID_MESSAGE_TYPES,
 )
 
 
