@@ -618,7 +618,7 @@ mod tests {
 
     /// Helper: build upper TS word from explicit fields.
     fn irig_upper(freerun: bool, day: u16, hour: u8) -> u16 {
-        ((freerun as u16) << 15) | ((day & 0x1FF) << 5) | u16::from(hour & 0x1F)
+        (u16::from(freerun) << 15) | ((day & 0x1FF) << 5) | u16::from(hour & 0x1F)
     }
 
     /// Helper: build middle TS word from explicit fields.

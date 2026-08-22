@@ -223,9 +223,11 @@ impl DecoderConfig {
             self.standard_tick_rate_hz = Some(v);
         }
         if let Some(v) = ov.collapse_window_us {
-            // CLI / config-load validation already rejects negatives; clamp
-            // defensively so the cast can never wrap.
-            self.collapse_window_us = v.max(0) as u64;
+            // CLI / config-load validation already rejects negatives; the
+            // clamp makes that defensive rather than assumed, and `try_from`
+            // then cannot fail -- which is the point of writing it this way
+            // instead of `as`: the guarantee is in the types, not a comment.
+            self.collapse_window_us = u64::try_from(v.max(0)).unwrap_or(0);
         }
 
         merge_unique(&mut self.filters.exclude_types, ov.exclude_types);
@@ -372,12 +374,16 @@ fn apply_decode_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), C
 /// Validate a TOML integer within `[lo, hi]` at load time (L2-CFG-010). `key`
 /// names the offending key for the error message.
 fn require_int_range(n: i64, key: &str, lo: usize, hi: usize) -> Result<usize, ConfigError> {
-    if n < lo as i64 || n > hi as i64 {
-        return Err(ConfigError(format!(
+    // `try_from` carries the range check and the conversion together, so a
+    // negative or oversized value cannot reach the `usize` at all. Comparing
+    // `n as i64` against the bounds and then casting back did the same job in
+    // two steps, each of which the compiler had to take on trust.
+    match usize::try_from(n) {
+        Ok(v) if (lo..=hi).contains(&v) => Ok(v),
+        _ => Err(ConfigError(format!(
             "Invalid {key}: {n}. Valid range: [{lo}, {hi}]"
-        )));
+        ))),
     }
-    Ok(n as usize)
 }
 
 /// Validate a Standard tick rate: finite and strictly positive (L2-DEC-017).
@@ -408,12 +414,16 @@ fn apply_output_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), C
     // a bad value fails at load time rather than silently clamping later; the
     // message text matches Python's `_load_max_sort_group` (L3-WRT-003).
     if let Some(n) = toml.get_int("output", "max_sort_group")? {
-        if n < MAX_SORT_GROUP_MIN as i64 || n > MAX_SORT_GROUP_MAX as i64 {
-            return Err(ConfigError(format!(
-                "Invalid output.max_sort_group: {n}. Valid range: [{MAX_SORT_GROUP_MIN}, {MAX_SORT_GROUP_MAX}]"
-            )));
+        match usize::try_from(n) {
+            Ok(v) if (MAX_SORT_GROUP_MIN..=MAX_SORT_GROUP_MAX).contains(&v) => {
+                cfg.max_sort_group = v;
+            }
+            _ => {
+                return Err(ConfigError(format!(
+                    "Invalid output.max_sort_group: {n}. Valid range: [{MAX_SORT_GROUP_MIN}, {MAX_SORT_GROUP_MAX}]"
+                )));
+            }
         }
-        cfg.max_sort_group = n as usize;
     }
     Ok(())
 }
@@ -458,7 +468,7 @@ fn apply_merge_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), Co
                 "Invalid merge.collapse_window_us: {n}; must be a non-negative integer"
             )));
         }
-        cfg.collapse_window_us = n as u64;
+        cfg.collapse_window_us = u64::try_from(n).unwrap_or(0);
     }
     Ok(())
 }
@@ -641,12 +651,16 @@ pub fn parse_bus_name(s: &str) -> Result<Bus, ConfigError> {
 fn parse_int_rt_sa(v: &TomlValue, field: &str) -> Result<u8, ConfigError> {
     match v {
         TomlValue::Int(i) => {
-            if !(0..=31).contains(i) {
-                return Err(ConfigError(format!(
+            // One expression carries both bounds: `try_from` rejects negatives
+            // and anything above 255, the range check rejects the rest. The
+            // previous form checked the range and then cast, so nothing in the
+            // types stopped the cast from being moved away from its guard.
+            match u8::try_from(*i) {
+                Ok(v) if v <= 31 => Ok(v),
+                _ => Err(ConfigError(format!(
                     "{field} value out of MIL-STD-1553 range [0, 31]: {i}"
-                )));
+                ))),
             }
-            Ok(*i as u8)
         }
         _ => Err(ConfigError(format!("{field} entries must be integers"))),
     }

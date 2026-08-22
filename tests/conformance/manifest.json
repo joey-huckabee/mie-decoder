@@ -72,6 +72,17 @@
       "config": "configs/standard-tick-rate.toml"
     },
     {
+      "name": "standard-tick-rate-unrepresentable",
+      "input": "inputs/standard-timestamps.hex",
+      "args": [
+        "--time-format",
+        "standard",
+        "--standard-tick-rate-hz",
+        "1e-300"
+      ],
+      "expected": "expected/standard-tick-rate-unrepresentable.csv"
+    },
+    {
       "name": "auto-detect-standard",
       "input": "inputs/standard-timestamps.hex",
       "expected": "expected/standard-timestamps.csv"
