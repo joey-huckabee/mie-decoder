@@ -20,11 +20,19 @@ development convenience (ADR-0003).
 > `order`, `cli`, `merge`, `dump`. See `../CHANGELOG.md` for what each landing
 > covered and `../docs/adr/` for the decisions that shape the tree.
 >
-> Remaining cross-implementation work is not C++-specific: the differential
-> config-parser checks (`config_parity.py`, `config_fuzz.py`,
-> `config_path_parity.py`) still compare Rust against Python only, and there is
-> no conformance gate on `dump` output because the Rust and Python reports
-> currently differ in their rule and arrow characters.
+> The differential config-parser checks (`config_parity.py`, `config_fuzz.py`,
+> `config_path_parity.py`) cover C++ too: each takes an implementation-to-CLI
+> mapping and compares **all pairs**, so the third hand-rolled TOML parser is
+> held to the same grammar as the other two. `dump` output is conformance-gated
+> as well -- eight cases in the manifest -- since the report characters were
+> reconciled across the three.
+>
+> **What is genuinely outstanding is tooling and release work, not decoder
+> code:** there are no libFuzzer targets and no coverage gate
+> (`docs/OPEN-DECISIONS.md` #2 -- these need a threshold, not a design), and
+> Phase 3 release artifacts and the `cpp-vX.Y.Z` scheme are undecided (#4).
+> Static analysis is now wired: CodeQL analyses `c-cpp` and SonarCloud analyses
+> `cpp/src` and `cpp/include` from the `bear` compilation database.
 
 ## Build & test
 
@@ -154,10 +162,16 @@ Python implementations:
 
 | Tier | What it proves |
 |---|---|
-| modern g++ | fast feedback, plus the sanitizers and fuzzing GCC 4.8 cannot host |
+| modern g++ | fast feedback, plus the sanitizers GCC 4.8 cannot host |
 | `gcc:4.8` container | C++11 conformance on the SLES 12 system compiler — **runs the full suite, not just a compile** |
 | MSVC on `windows-2022` | the shipping Windows artifact, at `/W4 /WX /permissive-` |
+| static analysis | clang-tidy 20, cppcheck, CodeQL `c-cpp`, SonarCloud CFamily |
 | real SLES 12 SP5 | deployability. Not in CI — verified by hand on hardware |
+
+There is deliberately **no fuzz tier**, despite the delivery plan listing one:
+the targets are unwritten and the gate's shape is an open decision (#2). It is
+listed here as absent rather than omitted silently, because a missing tier that
+nobody names reads like a tier that passes.
 
 `gcc:4.8` is a *proxy* for the target, not the target: Debian 7 "wheezy" with
 glibc 2.13 against SUSE's 2.22. Older, not merely different — which makes it a

@@ -17,6 +17,49 @@ full release workflow.
 
 ### Changed
 
+- **The C++ tree is now covered by CodeQL and SonarCloud.** It had been analysed
+  by neither: `sonar.sources` was `rust/src,python/src`, and CodeQL's matrix was
+  `rust` and `python`. Closes `docs/OPEN-DECISIONS.md` #3, which had been
+  deferred on the grounds that "adding a language to a red gate obscures both
+  problems" -- a premise that stopped holding once the gate went green.
+
+  - **CodeQL** gains `c-cpp` with `build-mode: manual` and an explicit
+    `make -C cpp all`. Deliberately not `autobuild`: this tree has a specific
+    build driven by `sources.txt`, and an extractor left to guess at it is how
+    you end up analysing less than you think while the job still reports
+    success.
+  - **SonarCloud** gains `cpp/src` and `cpp/include` as sources and `cpp/tests`
+    as tests, with the CFamily analyser reading the **compilation database**
+    that `bear` writes rather than using the build-wrapper. That database is
+    already what clang-tidy consumes, so Sonar sees the flags the real build
+    uses instead of a second description of the build that could drift from
+    `sources.txt`. Vendored Catch2 and the per-toolchain `build/` trees are
+    excluded.
+
+  Half of that decision's recommendation is **still open**: *measure before
+  making C++ blocking*. The tree joins a job that already waits on the quality
+  gate, so if the first analysis returns a large pile of style findings, the
+  answer is to scope C++ to the security and taint rules -- the ones no other
+  gate here runs -- rather than to unpick the integration.
+
+- **Three stale claims corrected in `cpp/README.md`.** Its status block said the
+  differential config-parser checks "still compare Rust against Python only" and
+  that "there is no conformance gate on `dump` output". Both had stopped being
+  true: `config_parity.py`, `config_fuzz.py` and `config_path_parity.py` each
+  take an implementation-to-CLI mapping and compare **all pairs**, so the third
+  hand-rolled TOML parser is held to the same grammar as the other two, and the
+  manifest carries **eight** `dump` cases. Separately, the CI-tier table
+  advertised that the modern-g++ tier runs "the sanitizers and fuzzing" -- there
+  are no fuzz targets at all.
+
+  Read together, those made the C++ implementation look **less** finished than
+  it is on two counts and **more** covered than it is on a third. What is
+  actually outstanding is tooling and release work rather than decoder code:
+  every module is ported, the binary passes all 90 conformance cases on Linux
+  and Windows, and all 31 `L3-CPP` requirements trace to tests. The absent fuzz
+  tier is now listed **as absent**, because a missing tier nobody names reads
+  like a tier that passes.
+
 - **`clippy::pedantic` is now denied as a group, not lint by lint.** Enabling
   lints by name only ever catches the ones already known about; the group also
   catches the ones nobody thought to look for. 76 distinct sites — deduped by

@@ -529,6 +529,22 @@ Each of the three `invariants` gates has been verified to fail on a planted
 violation as well as to pass on clean code. A check that has only ever been
 seen passing is not known to work.
 
+Two further workflows cut **across** all three implementations rather than
+gating one of them, and both now include C++:
+
+| Workflow | Covers | Notes |
+|-----|--------------|--------|
+| `.github/workflows/codeql.yml` | `rust`, `python`, `c-cpp` | Rust and Python use `build-mode: none` and extract from source. C++ **must** be compiled — the extractor observes a real build — so it uses `build-mode: manual` with an explicit `make -C cpp all`. Not `autobuild`: this tree has a specific build driven by `sources.txt`, and letting an extractor guess is how it silently analyses less than you think. `all` compiles every translation unit without running the suite, which is what the extractor needs. |
+| `.github/workflows/sonarcloud.yml` | `rust/src`, `python/src`, `cpp/src`, `cpp/include` | The CFamily analyser cannot read C++ from source alone; it needs the compile flags per translation unit. This passes `sonar.cfamily.compile-commands` pointing at the database `bear` writes, rather than using SonarCloud's build-wrapper, so the analyser sees the flags the **real** build uses instead of a second description that could drift from `sources.txt`. Vendored Catch2 and the per-toolchain `build/` trees are excluded. |
+
+Adding C++ to SonarCloud closed `docs/OPEN-DECISIONS.md` #3. The other half of
+that entry's recommendation is still live: **measure before making C++ blocking.**
+The tree joins a job that already waits on the quality gate, so if the first
+analysis surfaces a large pile of style findings, the answer is to scope C++ to
+the security and taint rules — the ones no other gate here runs — rather than to
+unpick the integration. clang-tidy 20, cppcheck, ASan, UBSan, LSan and Valgrind
+already cover the rest.
+
 The Rust and Python deployment targets are Linux. Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.
 
 The `diagrams` job pins PlantUML to `1.2026.5`, which is **not** the version that produced the committed SVGs (`1.2026.7beta11`, from the unpinnable rolling `snapshot` pre-release — read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg`). That mismatch went unnoticed because the job never compares the tracked files at all. Three independent defects and the reproducibility constraint on any replacement are written up under "Diagram rendering" in `ROADMAP.md`.
