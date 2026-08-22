@@ -178,9 +178,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends g++ make bear
 
+      # Run from `cpp/`, NOT `bear -- make -C cpp ...` from the root: bear writes
+      # compile_commands.json into its own working directory, so `-C` puts the
+      # database at the repository root while the scanner looks for it beside the
+      # sources. This is also the exact command cpp/README.md documents, so the
+      # CI invocation and the local one cannot drift.
       - name: Build C++ with a compilation database
         if: ${{ env.SONAR_TOKEN != '' && env.SONAR_PROJECT_KEY != '' && env.SONAR_ORGANIZATION != '' }}
-        run: bear -- make -C cpp -j"$(nproc)" all   # -> cpp/compile_commands.json
+        working-directory: cpp
+        run: bear -- make -j"$(nproc)" all   # -> cpp/compile_commands.json
 
       # --------------------------------------------------------------------------
       # Install SonarScanner CLI (runs on the runner, can access cargo/clippy)
