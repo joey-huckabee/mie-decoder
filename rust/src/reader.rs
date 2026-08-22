@@ -254,7 +254,8 @@ impl MieFileReader {
                 Some(MieError::HomogeneousPayload {
                     path: self.path.clone(),
                     offset: hit.offset as u64,
-                    sample_records: crate::sync::HOMOGENEITY_SAMPLE_RECORDS as u32,
+                    sample_records: u32::try_from(crate::sync::HOMOGENEITY_SAMPLE_RECORDS)
+                        .unwrap_or(u32::MAX),
                 }),
             );
         }
@@ -314,7 +315,7 @@ impl MieFileReader {
                     offset: hit.offset as u64,
                     irig_score: outcome.irig_score,
                     std_score: outcome.std_score,
-                    records_probed: outcome.records_probed as u32,
+                    records_probed: u32::try_from(outcome.records_probed).unwrap_or(u32::MAX),
                 })
             }
             DetectionConfidence::Ambiguous => {
@@ -365,7 +366,7 @@ impl MieFileReader {
                 offset: hit.offset as u64,
                 irig_score: outcome.irig_score,
                 std_score: outcome.std_score,
-                records_probed: outcome.records_probed as u32,
+                records_probed: u32::try_from(outcome.records_probed).unwrap_or(u32::MAX),
             })
         } else {
             log_warn!(
@@ -935,7 +936,8 @@ impl<'a> RecordIter<'a> {
         let raw_word_count = i32::from(tw.word_count) - 1 - i32::from(ts_words);
         let mut data_words = DataWords::new();
         if raw_word_count > 0 {
-            let n = raw_word_count as usize;
+            // Guarded by `raw_word_count > 0` above.
+            let n = usize::try_from(raw_word_count).unwrap_or(0);
             let mut buf = [0u16; crate::models::MAX_DATA_WORDS];
             let n_capped = n.min(crate::models::MAX_DATA_WORDS);
             // Bound the read to the current record (defense-in-depth).
@@ -1152,7 +1154,9 @@ impl<'a> RecordIter<'a> {
         let payload_words = i32::from(tw.word_count) - 1 - i32::from(ts_words) - 1 - 1;
         let mut data_words = DataWords::new();
         if payload_words > 0 {
-            let n = payload_words as usize;
+            // Guarded by `payload_words > 0` above; try_from makes that
+            // guarantee syntactic rather than positional.
+            let n = usize::try_from(payload_words).unwrap_or(0);
             let n_capped = n.min(crate::models::MAX_DATA_WORDS);
             let mut buf = [0u16; crate::models::MAX_DATA_WORDS];
             // Bound to the current record's bytes. payload_words is

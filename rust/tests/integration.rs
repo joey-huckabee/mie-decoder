@@ -749,7 +749,7 @@ fn fuzz_arbitrary_bytes_never_panic() {
         // Sizes range from 32 B (slightly above MIN_RECORD_BYTES_STANDARD)
         // to ~8 KB. The lower bound keeps record headers reachable; the
         // upper bound keeps each iteration fast.
-        let size = 32 + (xorshift64(&mut state) as usize % 8192);
+        let size = 32 + usize::try_from(xorshift64(&mut state) % 8192).unwrap_or(0);
         let mut bytes = vec![0u8; size];
         let mut j = 0;
         while j + 8 <= size {
@@ -841,7 +841,8 @@ fn dump_arbitrary_bytes_never_panics() {
         .unwrap_or(256);
 
     for i in 0..iterations {
-        let size = xorshift64(&mut state) as usize % 512; // small band → dense guard coverage
+        // Modulo first, so the value provably fits a usize before conversion.
+        let size = usize::try_from(xorshift64(&mut state) % 512).unwrap_or(0); // dense guard coverage
         let mut bytes = vec![0u8; size];
         let mut j = 0;
         while j + 8 <= size {

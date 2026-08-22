@@ -340,6 +340,11 @@ class IrigTimestamp:
         return f"{self.day}:{self.hour:02d}:{self.minute:02d}:{self.second:02d}.{micro:06d}"
 
 
+#: 2**64 — the largest microsecond count the Rust and C++ implementations
+#: can represent. Beyond it all three decline rather than disagree.
+_TWO_POW_64 = 1 << 64
+
+
 @dataclass(frozen=True, slots=True)
 class StandardTimestamp:
     """Standard-format timestamp decoded from a 2-word binary field.
@@ -388,6 +393,19 @@ class StandardTimestamp:
         ):
             return None
         micros = self.raw_value * 1_000_000 / standard_tick_rate_hz
+        # Decline before converting, not after. A rate like 1e-300 is finite and
+        # positive, so it passes the guard above, and the division then
+        # overflows to ``inf`` — on which ``math.floor`` raises OverflowError.
+        # This used to escape a decode as an uncaught exception.
+        #
+        # The bound is shared with Rust and C++, which cannot represent a result
+        # at or above 2**64 at all: Rust's ``as`` saturated it to u64::MAX (a
+        # fabricated timestamp that reads as real downstream) and the C++
+        # ``static_cast`` from an out-of-range double was undefined behaviour.
+        # All three decline instead, which is what keeps them byte-identical
+        # (L2-DEC-017).
+        if not math.isfinite(micros) or not 0.0 <= micros < _TWO_POW_64:
+            return None
         floor_us = math.floor(micros)
         return floor_us + 1 if micros - floor_us >= 0.5 else floor_us
 

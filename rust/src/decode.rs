@@ -149,12 +149,13 @@ pub fn mux_from_filename(file_name: &str, delimiter: &str, field: i64) -> Option
         return None;
     }
     let parts: Vec<&str> = file_name.split(delimiter).collect();
-    let len = parts.len() as i64;
+    // A negative field counts back from the end. The index is resolved in i64
+    // and converted once, by `try_from` -- so the "is it in range" question and
+    // the "can it be an index" question are answered by the same expression
+    // rather than by a bounds check the cast has to be trusted to respect.
+    let len = i64::try_from(parts.len()).unwrap_or(i64::MAX);
     let idx = if field < 0 { len + field } else { field };
-    if idx < 0 || idx >= len {
-        return None;
-    }
-    let value = parts[idx as usize].trim();
+    let value = usize::try_from(idx).ok().and_then(|i| parts.get(i))?.trim();
     if value.is_empty() {
         None
     } else {
