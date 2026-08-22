@@ -225,6 +225,15 @@ FORMAT_SRC := $(sort $(TIDY_SRC) src/platform_posix.cpp src/platform_win32.cpp) 
 # list stays in .clang-tidy where the reasoning lives; the severity is a property
 # of running it as a gate.
 tidy:
+	@actual=$$($(TIDY) --version 2>/dev/null | sed -n 's/.*LLVM version \([0-9][0-9]*\).*/\1/p' | head -1); \
+	 if [ -n "$$actual" ] && [ "$$actual" != "$(LLVM_VERSION)" ]; then \
+	   printf '\n*** clang-tidy VERSION SKEW: %s is LLVM %s, CI uses LLVM %s.\n' '$(TIDY)' "$$actual" '$(LLVM_VERSION)'; \
+	   printf '*** clang-tidy gains and drops checks between releases, so an older\n'; \
+	   printf '*** binary runs a WEAKER gate than CI while reporting clean, and can\n'; \
+	   printf '*** also emit false positives CI never sees. This result is advisory.\n'; \
+	   printf '***   make tidy TIDY=clang-tidy-%s   (if installed locally)\n' '$(LLVM_VERSION)'; \
+	   printf '***   make verify-ci                 (CI versions, in a container)\n\n'; \
+	 fi
 	$(TIDY) -p $(BUILD_DIR) --warnings-as-errors='*' $(TIDY_SRC)
 
 # --- cppcheck ----------------------------------------------------------------

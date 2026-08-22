@@ -282,8 +282,7 @@ fn make_temp_path(final_path: &Path) -> PathBuf {
     let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let mut name = final_path
         .file_name()
         .map(std::ffi::OsStr::to_os_string)
@@ -456,7 +455,7 @@ fn write_row<W: Write>(out: &mut W, msg: &MieMessage) -> std::io::Result<()> {
     // DELTA — empty cell when delta is None (SPURIOUS_DATA, uncalibrated
     // Standard timestamps, or non-monotonic timestamps).
     if let Some(d) = msg.delta {
-        write!(out, "{:.6}", d)?;
+        write!(out, "{d:.6}")?;
     }
     out.write_all(b",")?;
 
@@ -698,7 +697,9 @@ where
                 }
                 Err(e) => return Err(e),
             };
-            if !msg.error_label().is_empty() {
+            if msg.error_label().is_empty() {
+                main.write_message(&msg)?;
+            } else {
                 if error_writer.is_none() {
                     errors_atomic = Some(AtomicCsvFile::create(error_path.clone())?);
                     let Some(inner) = errors_atomic.as_mut() else {
@@ -716,8 +717,6 @@ where
                     });
                 };
                 writer.write_message(&msg)?;
-            } else {
-                main.write_message(&msg)?;
             }
         }
 
@@ -888,6 +887,10 @@ mod tests {
         assert!(row(None).contains(",797E,,,"));
     }
 
+    #[allow(
+        clippy::unreadable_literal,
+        reason = "the fixture value is asserted verbatim as CSV text below (`,A,0.123456,`); digit separators here would break that correspondence"
+    )]
     fn sample_msg() -> MieMessage {
         MieMessage {
             timestamp: Timestamp::Irig(IrigTimestamp {

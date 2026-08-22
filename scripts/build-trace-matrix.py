@@ -312,8 +312,18 @@ def collect_rust_markers(source_roots: list[Path]) -> dict[str, list[str]]:
             rel = rs_file.relative_to(ROOT).as_posix()
             pending_ids: list[str] = []
             saw_test_attr = False
+            # Depth of an attribute that spans lines. A multi-line
+            # `#[allow(..., reason = "...")]` sitting between a
+            # `/// Requirements:` marker and its `fn` used to fall through to
+            # the reset below, silently dropping the trace link -- the marker
+            # was still in the source but the artifact vanished from the
+            # matrix, which reads as an untested requirement.
+            attr_depth = 0
             for line in text.splitlines():
                 stripped = line.strip()
+                if attr_depth > 0:
+                    attr_depth += stripped.count("[") - stripped.count("]")
+                    continue
                 if stripped.startswith("///") and "Requirements:" in stripped:
                     _, _, after = stripped.partition("Requirements:")
                     for match in REQ_ID_PATTERN.finditer(after):
@@ -331,6 +341,7 @@ def collect_rust_markers(source_roots: list[Path]) -> dict[str, list[str]]:
                         or stripped.startswith("#[rstest")
                     ):
                         saw_test_attr = True
+                    attr_depth = stripped.count("[") - stripped.count("]")
                     continue
                 if stripped.startswith("//"):
                     continue

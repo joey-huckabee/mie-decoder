@@ -1058,6 +1058,10 @@ fn detect_records_flag_rejects_out_of_range() {
 /// A valid receive record (Type 0x02, RT/SA patched) placed at `micro` within a
 /// fixed day 192 15:54:50, so several records can share one `TIME_STAMP`. Keeps
 /// the fixture's 30-data-word count so the record layout is untouched.
+#[allow(
+    clippy::decimal_bitwise_operands,
+    reason = "packs wire fields whose values are semantic, not masks: `192` is the day-of-year, `15` the hour of 15:54:50, `30` the documented data-word count. Hex would obscure them, and the lint is inconsistent here anyway -- it flags the hour but not the minute and second in the same expression, because those sit inside shifts."
+)]
 fn record_at(rt: u8, sa: u8, micro: u32) -> Vec<u8> {
     let mut rec = one_valid_record();
     let upper: u16 = ((192u16 & 0x1FF) << 5) | 15;

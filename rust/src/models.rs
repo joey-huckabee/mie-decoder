@@ -347,6 +347,13 @@ impl StandardTimestamp {
     /// the Python implementation's `int(x + 0.5)` exactly (see L2-DEC-017).
     #[must_use]
     pub fn to_microseconds(self, standard_tick_rate_hz: f64) -> Option<u64> {
+        // 2^64 exactly, which f64 represents without rounding -- so this bound
+        // needs no cast of its own. Comparing against `u64::MAX as f64` would
+        // have introduced the very kind of lossy cast this guard exists to
+        // avoid (u64::MAX is not representable in f64 and rounds UP, so the
+        // comparison would have admitted a value that then saturates).
+        const TWO_POW_64: f64 = 18_446_744_073_709_551_616.0;
+
         if !standard_tick_rate_hz.is_finite() || standard_tick_rate_hz <= 0.0 {
             return None;
         }
@@ -357,12 +364,6 @@ impl StandardTimestamp {
         // makes `micros` enormous -- to u64::MAX, which would then read as a
         // real timestamp downstream. This is the one cast in this file where
         // the out-of-range case is reachable from operator input.
-        // 2^64 exactly, which f64 represents without rounding -- so this bound
-        // needs no cast of its own. Comparing against `u64::MAX as f64` would
-        // have introduced the very kind of lossy cast this guard exists to
-        // avoid (u64::MAX is not representable in f64 and rounds UP, so the
-        // comparison would have admitted a value that then saturates).
-        const TWO_POW_64: f64 = 18_446_744_073_709_551_616.0;
         let rounded = micros.round();
         if !rounded.is_finite() || !(0.0..TWO_POW_64).contains(&rounded) {
             return None;
@@ -548,6 +549,15 @@ impl DataWords {
 
     pub fn iter(&self) -> std::slice::Iter<'_, u16> {
         self.as_slice().iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a DataWords {
+    type Item = &'a u16;
+    type IntoIter = std::slice::Iter<'a, u16>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

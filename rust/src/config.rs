@@ -556,6 +556,10 @@ fn is_known_section(name: &str) -> bool {
 /// Shared schema membership check used by L2-CFG-009. Any
 /// `(section, key)` pair not in this list triggers an unknown-key WARN
 /// at load time.
+#[allow(
+    clippy::unnested_or_patterns,
+    reason = "one `(section, key)` pair per line is a table mirroring CONFIG-REFERENCE.md; nesting groups by section, which makes adding a key edit an existing line instead of adding one"
+)]
 fn is_known_shared_key(section: &str, key: &str) -> bool {
     matches!(
         (section, key),
@@ -1815,6 +1819,10 @@ exclude_types = ["UNICORN"]
 
     /// Requirements: L2-CFG-001
     #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "asserts the parser produced EXACTLY 1500000.0, a value representable in f64; an epsilon comparison would weaken the test"
+    )]
     fn parses_float_value() {
         let doc = parse_toml("[decode]\nstandard_tick_rate_hz = 1.5e6\n").unwrap();
         match doc.get("decode", "standard_tick_rate_hz") {

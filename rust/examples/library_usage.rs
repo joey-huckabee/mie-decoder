@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reader = MieFileReader::new("recording.mie")?;
 
     // Basic iteration
-    for msg in reader.iter() {
+    for msg in &reader {
         let msg = msg?;
         println!(
             "{} RT{:?} {}",

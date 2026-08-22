@@ -5,6 +5,7 @@
 //!
 //! Mirrors the Python `dump.py` output format closely enough for diffing.
 
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::Path;
@@ -76,7 +77,8 @@ fn write_hex_line<W: Write>(
     write!(out, "{indent}{addr:08X}  ")?;
     let mut hex_part = String::with_capacity(48);
     for b in chunk {
-        hex_part.push_str(&format!("{b:02X} "));
+        // Infallible: writing to a String never errors.
+        let _ = write!(hex_part, "{b:02X} ");
     }
     if hex_part.ends_with(' ') {
         hex_part.pop();
@@ -146,8 +148,8 @@ fn write_hex_dump_raw<W: Write>(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    writeln!(out, "File: {name} ({} bytes)", file_len)?;
-    writeln!(out, "Range: 0x{:08X}-0x{:08X}", chunk_start, end)?;
+    writeln!(out, "File: {name} ({file_len} bytes)")?;
+    writeln!(out, "Range: 0x{chunk_start:08X}-0x{end:08X}")?;
     writeln!(out)?;
 
     let mut i = 0;
@@ -196,7 +198,7 @@ fn write_hex_dump_records<W: Write>(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     writeln!(out, "File: {name} ({file_len} bytes)")?;
-    writeln!(out, "Record dump starting at offset 0x{:08X}", start_offset)?;
+    writeln!(out, "Record dump starting at offset 0x{start_offset:08X}")?;
     writeln!(out)?;
 
     // Loop guard uses checked_add so a start_offset of usize::MAX (or a
@@ -212,21 +214,19 @@ fn write_hex_dump_records<W: Write>(
             break;
         }
 
-        let type_raw = match read_u16(data, offset) {
-            Some(v) => v,
-            None => break,
+        let Some(type_raw) = read_u16(data, offset) else {
+            break;
         };
         let tw = decode_type_word(type_raw);
 
         // Validate the record's extent; a stop reason is written inline and
         // logged (L2-CLI-013) inside the helper, so here we just break.
-        let record_end = match dump_record_extent(&tw, offset, file_len, out)? {
-            Some(end) => end,
-            None => break,
+        let Some(record_end) = dump_record_extent(tw, offset, file_len, out)? else {
+            break;
         };
         let record_bytes = record_end - offset;
 
-        write_record_annotation(out, data, &tw, offset, record_bytes, record_num)?;
+        write_record_annotation(out, data, tw, offset, record_bytes, record_num)?;
         write_record_hex_payload(out, &data[offset..record_end], offset)?;
         writeln!(out)?;
 
@@ -245,7 +245,7 @@ fn write_hex_dump_records<W: Write>(
 /// to proceed, or `None` to stop scanning — writing the inline anomaly note to
 /// `out` and logging it (L2-CLI-013) on each stop path.
 fn dump_record_extent<W: Write>(
-    tw: &TypeWord,
+    tw: TypeWord,
     offset: usize,
     file_len: usize,
     out: &mut W,
@@ -269,8 +269,7 @@ fn dump_record_extent<W: Write>(
     let Some(record_end) = offset.checked_add(record_bytes) else {
         writeln!(
             out,
-            "  !! Offset overflow at 0x{:08X} (record_bytes={}), stopping",
-            offset, record_bytes
+            "  !! Offset overflow at 0x{offset:08X} (record_bytes={record_bytes}), stopping"
         )?;
         log_warn!(
             "dump: offset overflow at 0x{:X} (record_bytes={}); stopping record scan",
@@ -305,7 +304,7 @@ fn dump_record_extent<W: Write>(
 fn write_record_annotation<W: Write>(
     out: &mut W,
     data: &[u8],
-    tw: &TypeWord,
+    tw: TypeWord,
     offset: usize,
     record_bytes: usize,
     record_num: u64,
@@ -325,8 +324,7 @@ fn write_record_annotation<W: Write>(
     // cannot be classified degrades to a label rather than propagating an error.
     // `3` = IRIG timestamp words (the timestamp above is decoded as IRIG).
     let fmt_name = classify_message_format(tw.message_type, &cmd, tw.word_count, 3)
-        .map(message_format_name)
-        .unwrap_or("(unclassifiable)");
+        .map_or("(unclassifiable)", message_format_name);
 
     writeln!(out, "{}", "-".repeat(72))?;
     writeln!(
@@ -650,7 +648,7 @@ mod tests {
         assert!(tw.word_count >= MIN_RECORD_WORDS);
 
         let mut out = Vec::new();
-        let stop = dump_record_extent(&tw, usize::MAX - 4, usize::MAX, &mut out).unwrap();
+        let stop = dump_record_extent(tw, usize::MAX - 4, usize::MAX, &mut out).unwrap();
 
         assert!(stop.is_none(), "overflow must stop the scan");
         let s = String::from_utf8(out).unwrap();

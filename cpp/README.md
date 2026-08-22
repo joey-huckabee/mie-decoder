@@ -56,6 +56,25 @@ bear -- make -j"$(nproc)" all      # writes compile_commands.json
 make tidy
 ```
 
+**Check the clang-tidy version.** `TIDY` defaults to whatever `clang-tidy` is
+on `PATH`, and CI runs LLVM 20. Ubuntu 22.04 (the usual WSL2 image) ships
+LLVM 14, which is a materially different check set — `misc-const-correctness`,
+for one, does not exist before LLVM 15, so a clean run on 14 says nothing about
+that check, and 14 emits `bugprone-throw-keyword-missing` false positives that
+20 does not. `make tidy` prints a loud advisory when the versions disagree.
+Either point it at a matching binary or use the container:
+
+```bash
+make tidy TIDY=clang-tidy-20       # if installed locally
+make verify-ci                     # CI's versions, in a container
+```
+
+`make verify-ci` is the authoritative pre-push check for everything
+version-sensitive: clang-format 20, clang-tidy 20, cppcheck 2.13 and the
+sanitizers, all on the CI compiler. Note that rootless podman cannot
+bind-mount a DrvFs path, so under WSL2 it must be run from a Linux-native
+directory, not `/mnt/c`.
+
 ### Windows / Visual Studio
 
 **Visual Studio 2022 → File → Open → Folder → `cpp\`.** VS configures CMake,

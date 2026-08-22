@@ -536,7 +536,7 @@ impl MieFileReader {
         RecordIter {
             data,
             file_len,
-            offset: start_offset.map(|h| h.offset).unwrap_or(file_len),
+            offset: start_offset.map_or(file_len, |h| h.offset),
             done: early_done,
             pending_error,
             pending_unrecoverable: None,
@@ -652,9 +652,13 @@ enum Step {
     Stop,
 }
 
-impl<'a> Iterator for RecordIter<'a> {
+impl Iterator for RecordIter<'_> {
     type Item = MieResult<MieMessage>;
 
+    #[allow(
+        clippy::needless_continue,
+        reason = "the three arms map 1:1 onto the three `Step` variants; `Step::Continue => continue` names the control flow the variant is named for"
+    )]
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {
             return None;
@@ -688,7 +692,7 @@ impl<'a> Iterator for RecordIter<'a> {
     }
 }
 
-impl<'a> RecordIter<'a> {
+impl RecordIter<'_> {
     /// Decode one record at the current offset, returning how the loop should
     /// proceed. All the original loop-body paths are preserved exactly; only the
     /// control flow is expressed via [`Step`] so the work can live in helpers.
@@ -738,7 +742,7 @@ impl<'a> RecordIter<'a> {
         if let Err(failure) =
             validate_record_detailed(self.data, self.offset, self.file_len, Some(resolved), 1)
         {
-            return self.handle_sync_loss(failure, type_raw, &tw, record_bytes);
+            return self.handle_sync_loss(failure, type_raw, tw, record_bytes);
         }
 
         // Timestamp. An OOB read here historically returned None without setting
@@ -750,8 +754,7 @@ impl<'a> RecordIter<'a> {
 
         // SPURIOUS_DATA: no Command Word.
         if tw.message_type == MessageType::SpuriousData as u8 {
-            let msg =
-                self.spurious_message(&tw, timestamp, ts_words, cmd_byte_offset, record_bytes);
+            let msg = self.spurious_message(tw, timestamp, ts_words, cmd_byte_offset, record_bytes);
             return Step::Yield(Ok(msg));
         }
 
@@ -763,9 +766,9 @@ impl<'a> RecordIter<'a> {
 
         // Errored record (Type Word bit 14 set).
         if tw.error {
-            let delta = self.delta_for(&cmd, &timestamp);
+            let delta = self.delta_for(cmd, &timestamp);
             let msg =
-                self.decode_error_record(&tw, timestamp, &cmd, cmd_byte_offset, ts_words, delta);
+                self.decode_error_record(tw, timestamp, cmd, cmd_byte_offset, ts_words, delta);
             // A failure here (strict-mode `UnknownErrorCode`, or an out-of-bounds
             // Error Word) is terminal, exactly like every other error this
             // iterator yields — `handle_sync_loss` and `decode_normal_record`
@@ -785,14 +788,7 @@ impl<'a> RecordIter<'a> {
             return Step::Yield(msg);
         }
 
-        self.decode_normal_record(
-            &tw,
-            &cmd,
-            timestamp,
-            ts_words,
-            cmd_byte_offset,
-            record_bytes,
-        )
+        self.decode_normal_record(tw, cmd, timestamp, ts_words, cmd_byte_offset, record_bytes)
     }
 
     /// Validation failed at the current offset: strict mode surfaces a terminal
@@ -803,7 +799,7 @@ impl<'a> RecordIter<'a> {
         &mut self,
         failure: ValidationFailure,
         type_raw: u16,
-        tw: &TypeWord,
+        tw: TypeWord,
         record_bytes: usize,
     ) -> Step {
         self.sync_losses += 1;
@@ -940,7 +936,7 @@ impl<'a> RecordIter<'a> {
     /// chosen from whether the immediately preceding decoded record errored.
     fn spurious_message(
         &mut self,
-        tw: &TypeWord,
+        tw: TypeWord,
         timestamp: Timestamp,
         ts_words: u16,
         cmd_byte_offset: usize,
@@ -979,7 +975,7 @@ impl<'a> RecordIter<'a> {
 
         let msg = MieMessage {
             timestamp,
-            type_word: *tw,
+            type_word: tw,
             message_format: MessageFormat::SpuriousData,
             command_word: None,
             command_word_2: None,
@@ -1001,25 +997,23 @@ impl<'a> RecordIter<'a> {
     /// error, skip it (`Continue`); strict mode surfaces a terminal `PayloadError`.
     fn decode_normal_record(
         &mut self,
-        tw: &TypeWord,
-        cmd: &CommandWord,
+        tw: TypeWord,
+        cmd: CommandWord,
         timestamp: Timestamp,
         ts_words: u16,
         cmd_byte_offset: usize,
         record_bytes: usize,
     ) -> Step {
-        let msg_fmt = match classify_message_format(tw.message_type, cmd, tw.word_count, ts_words) {
-            Ok(f) => f,
-            Err(_) => {
-                log_warn!(
-                    "cannot classify record at 0x{:X} (type=0x{:02X}); skipping",
-                    self.offset,
-                    tw.message_type
-                );
-                self.offset += record_bytes;
-                self.prev_was_error = false;
-                return Step::Continue;
-            }
+        let Ok(msg_fmt) = classify_message_format(tw.message_type, &cmd, tw.word_count, ts_words)
+        else {
+            log_warn!(
+                "cannot classify record at 0x{:X} (type=0x{:02X}); skipping",
+                self.offset,
+                tw.message_type
+            );
+            self.offset += record_bytes;
+            self.prev_was_error = false;
+            return Step::Continue;
         };
 
         log_debug!(
@@ -1032,7 +1026,8 @@ impl<'a> RecordIter<'a> {
         );
 
         // L2-SYN-020..025 pre-extract invariants.
-        if let Err(v) = crate::decode::validate_structural_invariants(tw, cmd, msg_fmt, ts_words) {
+        if let Err(v) = crate::decode::validate_structural_invariants(&tw, &cmd, msg_fmt, ts_words)
+        {
             if self.strict {
                 self.done = true;
                 return Step::Yield(Err(crate::error::MieError::PayloadError {
@@ -1059,7 +1054,8 @@ impl<'a> RecordIter<'a> {
             extract_payload(record_data, payload_offset, msg_fmt, cmd);
 
         // L2-SYN-023 / L2-SYN-027 post-extract invariants.
-        if let Err(v) = crate::decode::validate_post_extract_invariants(msg_fmt, cmd, cmd2.as_ref())
+        if let Err(v) =
+            crate::decode::validate_post_extract_invariants(msg_fmt, &cmd, cmd2.as_ref())
         {
             if self.strict {
                 self.done = true;
@@ -1079,7 +1075,7 @@ impl<'a> RecordIter<'a> {
         }
 
         // L2-SYN-024 / L2-SYN-025 anomaly observations (WARN, still emitted).
-        for v in crate::decode::detect_record_anomalies(tw, cmd, status) {
+        for v in crate::decode::detect_record_anomalies(&tw, &cmd, status) {
             log_warn!("L2-SYN anomaly at 0x{:X}: {}", self.offset, v.detail);
         }
 
@@ -1087,9 +1083,9 @@ impl<'a> RecordIter<'a> {
 
         let msg = MieMessage {
             timestamp,
-            type_word: *tw,
+            type_word: tw,
             message_format: msg_fmt,
-            command_word: Some(*cmd),
+            command_word: Some(cmd),
             command_word_2: cmd2,
             status_word: status,
             status_word_2: status2,
@@ -1131,22 +1127,19 @@ impl<'a> RecordIter<'a> {
 
     fn decode_error_record(
         &self,
-        tw: &TypeWord,
+        tw: TypeWord,
         timestamp: Timestamp,
-        cmd: &CommandWord,
+        cmd: CommandWord,
         cmd_byte_offset: usize,
         ts_words: u16,
         delta: Option<f64>,
     ) -> MieResult<MieMessage> {
         let error_word_offset = self.offset + (usize::from(tw.word_count) - 1) * 2;
-        let error_code = match read_u16(self.data, error_word_offset) {
-            Some(c) => c,
-            None => {
-                return Err(MieError::PayloadError {
-                    offset: self.offset as u64,
-                    detail: "error word out of bounds".into(),
-                });
-            }
+        let Some(error_code) = read_u16(self.data, error_word_offset) else {
+            return Err(MieError::PayloadError {
+                offset: self.offset as u64,
+                detail: "error word out of bounds".into(),
+            });
         };
 
         if !is_known_ddc_error_code(error_code) {
@@ -1182,7 +1175,7 @@ impl<'a> RecordIter<'a> {
             }
         }
 
-        let msg_fmt = classify_message_format(tw.message_type, cmd, tw.word_count, ts_words)
+        let msg_fmt = classify_message_format(tw.message_type, &cmd, tw.word_count, ts_words)
             .unwrap_or(MessageFormat::Receive);
 
         log_info!(
@@ -1198,9 +1191,9 @@ impl<'a> RecordIter<'a> {
 
         Ok(MieMessage {
             timestamp,
-            type_word: *tw,
+            type_word: tw,
             message_format: msg_fmt,
-            command_word: Some(*cmd),
+            command_word: Some(cmd),
             command_word_2: None,
             status_word: None,
             status_word_2: None,
@@ -1219,8 +1212,8 @@ impl<'a> RecordIter<'a> {
     /// tracker deliberately does not log: it cannot know that a backward step
     /// is worth a line in a single-file decode and merely noise in a merge that
     /// already reports unsorted inputs at file granularity (L2-MRG-006).
-    fn delta_for(&mut self, cmd: &CommandWord, timestamp: &Timestamp) -> Option<f64> {
-        let outcome = self.delta_tracker.observe(Some(cmd), timestamp);
+    fn delta_for(&mut self, cmd: CommandWord, timestamp: &Timestamp) -> Option<f64> {
+        let outcome = self.delta_tracker.observe(Some(&cmd), timestamp);
         if let DeltaOutcome::Backward {
             prev_us,
             curr_us,
@@ -1249,9 +1242,12 @@ fn extract_payload(
     data: &[u8],
     p: usize,
     fmt: MessageFormat,
-    cmd: &CommandWord,
+    cmd: CommandWord,
 ) -> (Option<CommandWord>, Option<u16>, Option<u16>, DataWords) {
-    use MessageFormat::*;
+    use MessageFormat::{
+        ModeCodeBcastData, ModeCodeBcastNoData, ModeCodeNoData, ModeCodeRxData, ModeCodeTxData,
+        Receive, ReceiveBroadcast, RtToRt, RtToRtBroadcast, SpuriousData, Transmit,
+    };
 
     let read_n = |start: usize, n: usize| -> DataWords {
         let mut buf = [0u16; crate::models::MAX_DATA_WORDS];

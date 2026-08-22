@@ -100,19 +100,52 @@ staged.
    justify the suppression with a scoped `#[allow(...)]` and a
    comment explaining why.
 
-   **This does not mean "all clippy lints".** `-D warnings` only denies
-   lints that actually *fire*, and clippy's `pedantic`, `nursery`,
-   `restriction` and `cargo` groups are **allow-by-default** — they never
-   fire, so the gate never sees them. Enabling `pedantic` + `nursery`
-   here surfaces 413 warnings the gate reports none of.
+   **`-D warnings` alone is weaker than it looks.** It only denies lints
+   that actually *fire*, and clippy's `pedantic`, `nursery`,
+   `restriction` and `cargo` groups are **allow-by-default** — so they
+   never fire and the gate never sees them.
 
-   That gap is visible from outside: SonarCloud's Rust rules map onto
-   clippy's *including* those tiers, so it can report findings that
-   `cargo clippy` calls clean. When that happens the tools are not
-   disagreeing — they are running different lint sets. Lints worth
-   enforcing are enabled by name in `rust/Cargo.toml`'s `[lints.clippy]`,
-   which is where `redundant_closure_for_method_calls`
-   (SonarCloud `rust:S1612`) lives.
+   That gap was visible from outside: SonarCloud's Rust rules map onto
+   clippy's *including* those tiers, so it reported findings `cargo
+   clippy` called clean. The tools were not disagreeing; they were
+   running different lint sets.
+
+   `rust/Cargo.toml`'s `[lints.clippy]` closes it. **The whole `pedantic`
+   group is denied** (`priority = -1`, so the per-lint `allow`s below it
+   win), plus `undocumented_unsafe_blocks` from `restriction`. `nursery`
+   stays off — see the `cognitive_complexity` note in that file for why
+   matching Sonar's threshold buys a stricter local rule rather than a
+   predictive one.
+
+   Two consequences worth knowing before you hit them:
+
+   * **A clippy upgrade can turn this red on code you did not touch**,
+     because a new release can add pedantic lints. That is the intended
+     trade — it surfaces on a PR rather than in a release — but the right
+     fix is sometimes a documented entry in the exception list rather
+     than a change to the code.
+   * **Every exception carries its reason in `[lints.clippy]`.** Six
+     lints are allowed wholesale, each because every site in this crate
+     is deliberate (format-specification tables, options structs taken by
+     value on purpose, flag-bag structs that mirror the CLI and TOML
+     surfaces 1:1). Narrow one-site exceptions use a scoped
+     `#[allow(..., reason = "...")]` instead.
+
+   When adding a scoped `#[allow]` above a `#[test]`, keep it on **one
+   line** if the test carries a `/// Requirements:` marker, or make sure
+   `python scripts/build-trace-matrix.py --check` still passes — the
+   collector understands multi-line attributes, but the marker must still
+   pair with its `fn`.
+
+   **Run `rustup update stable` before trusting a local clippy run.** The
+   repo pins no `rust-toolchain` file, so CI floats on current stable. A
+   local toolchain that has fallen behind runs a genuinely *weaker* gate
+   than CI — not a differently-configured one — because clippy widens
+   existing lints between releases. This is not hypothetical: the commit
+   that enabled the `pedantic` group passed a clean local `-D warnings`
+   on 1.93 and failed CI on 1.98, where `map_unwrap_or` had grown to
+   cover `Result` as well as `Option`. Two call sites the local run could
+   not see.
 12. **`cargo test --all-targets` + `cargo test --doc`** — all unit,
     integration **and documentation** tests pass. `--all-targets`
     excludes doctests, so the hook runs them as a second invocation;

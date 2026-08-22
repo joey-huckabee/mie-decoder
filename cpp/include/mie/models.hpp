@@ -322,6 +322,16 @@ class DataWords {
 
     const uint16_t* data() const { return buf_; }
 
+    /// Range-for support over the live prefix.
+    ///
+    /// Present so `for (uint16_t w : words)` reads the same in all three
+    /// implementations: Rust has `IntoIterator for &DataWords` and Python's
+    /// `data_words` is a tuple. Without these, C++ callers had to spell out
+    /// `data()`/`size()` and index by hand -- the one place the three diverged
+    /// on how the payload is traversed.
+    const uint16_t* begin() const { return buf_; }
+    const uint16_t* end() const { return buf_ + len_; }
+
     void clear() { len_ = 0; }
 
     bool operator==(const DataWords& other) const;

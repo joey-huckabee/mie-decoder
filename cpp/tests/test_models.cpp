@@ -13,6 +13,7 @@
 #include <catch2/catch.hpp>
 
 #include <string>
+#include <vector>
 
 TEST_CASE("bus and direction discriminants are wire values", "[models]") {
     CHECK(static_cast<int>(mie::BUS_A) == 0);
@@ -298,6 +299,28 @@ TEST_CASE("DataWords truncates an over-long input rather than failing",
     CHECK(w.size() == 32);
     CHECK(w[0] == 100);
     CHECK(w[31] == 131);
+}
+
+TEST_CASE("DataWords is range-for iterable over its live prefix", "[models][datawords]") {
+    const uint16_t source[4] = {0x1111, 0x2222, 0x3333, 0x4444};
+    const mie::DataWords w = mie::DataWords::from_words(source, 3);
+
+    std::vector<uint16_t> seen;
+    for (const uint16_t word : w) {
+        // The raw loop is the point of the test: std::copy would exercise
+        // begin()/end() without proving the range-for syntax itself compiles.
+        // cppcheck-suppress useStlAlgorithm
+        seen.push_back(word);
+    }
+
+    // Three, not four: the fourth word is past the live prefix.
+    REQUIRE(seen.size() == 3u);
+    CHECK(seen[0] == 0x1111);
+    CHECK(seen[1] == 0x2222);
+    CHECK(seen[2] == 0x3333);
+
+    const mie::DataWords empty;
+    CHECK(empty.begin() == empty.end());
 }
 
 TEST_CASE("DataWords equality compares only the live prefix", "[models][datawords]") {
