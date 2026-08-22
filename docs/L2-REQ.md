@@ -820,8 +820,8 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 #### L2-CLI-002
 
 **Parent**: L1-CLI-001
-**Statement**: Decode capability SHALL accept an optional output path.
-**Rationale**: When absent, the implementation writes to stdout (per L2-WRT-007).
+**Statement**: Decode capability SHALL accept an optional output path. The flag's value SHALL be treated as a **path and nothing else**: no value is special-cased, so `-o -` writes a file named `-`. Writing to stdout SHALL be selected by **omitting** the flag, and that SHALL be the only way to select it.
+**Rationale**: When absent, the implementation writes to stdout (per L2-WRT-007). `-` for stdout is a real Unix convention, and the C++ implementation honoured it for a while — but the other two did not, and the CLI-surface-parity gate cannot catch that: it compares flag *names*, not what their values mean. Since omitting `-o` already writes stdout in every implementation, a magic filename adds a second spelling for something that already works, and takes a filename away from anyone whose file really is called `-`. The rule is stated here because its absence is exactly what let the three drift apart unnoticed.
 **Verification Method**: Test (T)
 
 #### L2-CLI-004

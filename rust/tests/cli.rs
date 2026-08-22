@@ -192,6 +192,44 @@ fn version_flag_accepts_all_spellings() {
     }
 }
 
+/// Requirements: L2-CLI-002
+#[test]
+fn output_dash_is_a_filename_not_stdout() {
+    // `-o -` writes a file CALLED `-`. stdout is selected by omitting the flag,
+    // and that is the only way to select it.
+    //
+    // Pinned in all three implementations because this is a rule they once
+    // disagreed on: the C++ build treated `-` as stdout for a while, and the
+    // CLI-surface-parity gate could not see it -- that gate compares flag
+    // names, not what their values mean.
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let dash = tmp.path().join("-");
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        input.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        dash.as_os_str(),
+    ]);
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "writing to a file named `-` must succeed"
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "`-o -` must not write to stdout; got {} bytes",
+        out.stdout.len()
+    );
+
+    let csv = std::fs::read_to_string(&dash).expect("no file named `-` was created");
+    assert!(
+        csv.contains("MSG"),
+        "the file named `-` should hold the CSV"
+    );
+}
+
 /// Requirements: L2-CLI-001, L2-CLI-002, L2-WRT-001
 #[test]
 fn decode_happy_path_writes_csv_with_header_and_one_row() {

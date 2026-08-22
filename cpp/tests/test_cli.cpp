@@ -561,7 +561,8 @@ TEST_CASE("--separate-errors on stdout forces inline, and says so", "[cli][L3-CP
     const mie_test::LogCapture capture(mie::log::LEVEL_WARN);
     std::string out;
     std::string err;
-    REQUIRE(run_capturing(args("decode", input.str(), "-o", "-", "--separate-errors"), out, err) ==
+    // No --output at all: that is how stdout is selected.
+    REQUIRE(run_capturing(args("decode", input.str(), "--separate-errors"), out, err) ==
             mie::cli::EXIT_OK);
     REQUIRE(out.find("TIME_STAMP") == 0);
 
@@ -575,11 +576,39 @@ TEST_CASE("--separate-errors on stdout forces inline, and says so", "[cli][L3-CP
     REQUIRE(warned);
 }
 
-TEST_CASE("-o - selects stdout", "[cli][L3-CPP-017]") {
+TEST_CASE("omitting --output writes stdout", "[cli][L2-CLI-002]") {
+    // stdout is selected by leaving the flag off. That is the ONLY way to
+    // select it, in all three implementations.
     const TempFile input("mie-cli-stdout-dest.mie", valid_recording());
     std::string out;
-    REQUIRE(run_capturing_stdout(args("decode", input.str(), "-o", "-"), out) == mie::cli::EXIT_OK);
+    REQUIRE(run_capturing_stdout(args("decode", input.str()), out) == mie::cli::EXIT_OK);
     REQUIRE(out.find("TIME_STAMP") == 0);
     // A single trailing newline, not a CRLF pair, on every host (L2-WRT-012).
     REQUIRE(out.find("\r\n") == std::string::npos);
+}
+
+TEST_CASE("--output takes a path, and no value of it is magic", "[cli][L2-CLI-002]") {
+    // `-o -` writes a file CALLED `-`. It used to mean stdout in this build and
+    // nowhere else, which the surface-parity gate could not catch: that gate
+    // compares flag names, not what their values mean.
+    //
+    // The convention is real, but so is the trap -- and since omitting `-o`
+    // already writes stdout, the special case only added a second spelling for
+    // something that worked, at the cost of making one filename unreachable.
+    const TempFile input("mie-cli-dash-dest.mie", valid_recording());
+
+    // Written beside the input so the odd name is cleaned up with it.
+    const std::string dash = input.str() + "-dash";
+    TempPath destination("mie-cli-dash-holder");
+    const std::string literal_dash = destination.also_remove(dash);
+
+    std::string out;
+    REQUIRE(run_capturing_stdout(args("decode", input.str(), "-o", literal_dash), out) ==
+            mie::cli::EXIT_OK);
+    // Nothing on stdout: it all went to the file.
+    REQUIRE(out.empty());
+
+    std::string written;
+    REQUIRE(mie_test::read_file(literal_dash, written));
+    REQUIRE(written.find("TIME_STAMP") == 0);
 }
