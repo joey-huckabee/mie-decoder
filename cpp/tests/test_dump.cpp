@@ -354,3 +354,46 @@ TEST_CASE("a missing or empty input is refused", "[dump][L3-CPP-027]") {
         }
     }
 }
+
+TEST_CASE("the report is pure ASCII with LF endings", "[dump][L2-CLI-014]") {
+    // The report is a stdout PAYLOAD -- piped, redirected, and diffed against
+    // the Rust and Python reports -- so it carries no byte above 0x7F and no
+    // CR. Python's report used box-drawing, arrow and en-dash characters until
+    // this was written down; those could not be encoded on a redirected Windows
+    // stdout at cp1252, and made 11 of 34 lines differ from this one.
+    //
+    // Both views, and a record carrying an anomaly note, because the rule, the
+    // arrow and the `!!` note are the three places a non-ASCII character would
+    // plausibly be reintroduced.
+    std::vector<uint16_t> words;
+    mie_test::append(words, mie_test::bc_to_rt(15, 11, 2, 100));
+    words.push_back(mie_test::type_word(mie::MESSAGE_TYPE_BC_TO_RT, 2));  // anomaly
+    // Padding so the scan can still read a minimum-sized record at the bad Type
+    // Word's offset. Without it the loop stops for lack of bytes BEFORE
+    // validating the word count, and the note this case is checking for is
+    // never written -- the test would then pass over a report that never
+    // reached the path it means to cover.
+    for (int i = 0; i < 6; ++i) {
+        words.push_back(0x0000);
+    }
+    const TempFile input("mie-dump-ascii-contract.mie", mie_test::le_bytes(words));
+
+    std::string reports[2];
+    reports[0] = capture_records(input.str(), mie::Optional<uint64_t>(), 0);
+    reports[1] = capture_raw(input.str(), 0, mie::Optional<std::size_t>());
+
+    for (std::size_t which = 0; which < 2; ++which) {
+        const std::string& report = reports[which];
+        INFO((which == 0 ? "record view" : "raw view"));
+        REQUIRE_FALSE(report.empty());
+        for (std::size_t i = 0; i < report.size(); ++i) {
+            const unsigned char byte = static_cast<unsigned char>(report[i]);
+            INFO("byte " << i << " = 0x" << std::hex << static_cast<unsigned>(byte));
+            REQUIRE(byte < 0x80);
+            REQUIRE(byte != '\r');
+        }
+    }
+    // The anomaly note really is present, so the sweep above covered it rather
+    // than passing over a report that never reached the interesting path.
+    REQUIRE(reports[0].find("!! Invalid word_count") != std::string::npos);
+}

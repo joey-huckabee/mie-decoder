@@ -1745,16 +1745,24 @@ class TestDumpDiagnostics:
             for r in caplog.records
         ), [r.getMessage() for r in caplog.records]
 
-    @pytest.mark.requirement("L2-CLI-009")
-    def test_dump_to_cp1252_stdout_emits_utf8(
+    @pytest.mark.requirement("L2-CLI-014")
+    def test_dump_report_is_pure_ascii_and_lf(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Regression: the record-aware dump's annotation contains non-ASCII
-        characters (box-drawing, en-dash, section marks). On a *redirected*
-        Windows stdout — which defaults to the cp1252 code page — writing them
-        raised ``UnicodeEncodeError`` and aborted the dump. The CLI now forces
-        UTF-8 on stdout/stderr, so the output is faithful on every platform,
-        matching the raw UTF-8 byte stream the Rust dump already emits.
+        """The dump report is a stdout *payload* -- piped, redirected, diffed
+        against the Rust and C++ reports -- so it is pure ASCII with LF endings.
+
+        This replaces a test that asserted the opposite. The annotation used to
+        contain box-drawing, arrow and en-dash characters, which raised
+        ``UnicodeEncodeError`` on a redirected Windows stdout (cp1252) and
+        aborted the dump; the CLI forced UTF-8 on the stream to compensate. The
+        characters are gone instead, so the report needs no such compensation
+        and now matches the other two implementations byte for byte -- pinned by
+        the ``dump-*`` conformance cases.
+
+        Asserted on the BYTES, not the decoded text: a payload that decodes
+        identically under cp1252 and UTF-8 is exactly one containing no byte
+        above 0x7F, which is the property that makes it safe on any console.
         """
         import sys
 
@@ -1764,8 +1772,6 @@ class TestDumpDiagnostics:
         fpath = tmp_path / "in.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV)
 
-        # Simulate a redirected Windows stdout: a text stream whose encoding
-        # (cp1252) cannot represent the dump's non-ASCII annotation characters.
         raw = io.BytesIO()
         monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252", newline=""))
 
@@ -1773,11 +1779,14 @@ class TestDumpDiagnostics:
         sys.stdout.flush()
 
         assert rc == 0
-        # Faithful UTF-8 — would have raised UnicodeEncodeError before the fix.
-        text = raw.getvalue().decode("utf-8")
-        # And it genuinely contains non-ASCII annotation characters, so the
-        # assertion would fail on mojibake / '?' substitution too.
-        assert any(ord(ch) > 0x7F for ch in text)
+        payload = raw.getvalue()
+        assert payload, "the dump produced no output"
+
+        high = [b for b in payload if b > 0x7F]
+        assert not high, f"dump emitted {len(high)} non-ASCII byte(s): {high[:8]}"
+        assert b"\r" not in payload, "dump emitted CR; the report is LF on every platform"
+        # The defining property: identical under a legacy codepage and UTF-8.
+        assert payload.decode("cp1252") == payload.decode("utf-8")
 
     @pytest.mark.requirement("L2-CLI-009")
     def test_dump_annotates_errored_record_with_code_and_format(self, tmp_path: Path) -> None:

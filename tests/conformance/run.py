@@ -47,7 +47,12 @@ FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "expected_stderr_contains": str,
     "expected_exit": int,
 }
-ALLOWED_MODES: frozenset[str] = frozenset({"decode", "count"})
+ALLOWED_MODES: frozenset[str] = frozenset({"decode", "count", "dump"})
+# Modes whose payload is stdout rather than a written file. `dump` joined them
+# once its report was made identical across the implementations: until then the
+# three differed in their rule and arrow characters, and Python emitted CRLF on
+# Windows, so there was no shared artifact to oracle against.
+_STDOUT_MODES: frozenset[str] = frozenset({"count", "dump"})
 
 
 def validate_case_schema(case: Any, index: int) -> None:
@@ -320,8 +325,10 @@ def _build_command(
     if config := case.get("config"):
         command += ["--config", str((SUITE / config).resolve())]
     mode = case.get("mode", "decode")
-    if mode == "count":
-        command += ["count", str(sources[0])]
+    if mode in _STDOUT_MODES:
+        # `count` and `dump` write their result to stdout and take exactly one
+        # input, so there is no -o and no second positional.
+        command += [mode, str(sources[0])]
     else:
         command += ["decode", *(str(s) for s in sources), "-o", str(output)]
     command += case.get("args", [])
@@ -738,7 +745,7 @@ def main() -> int:
             outputs: dict[str, Path | None] = {}
             for impl in running:
                 outputs[impl.name] = (
-                    None if mode == "count" else temp / f"{name}-{impl.name}.csv"
+                    None if mode in _STDOUT_MODES else temp / f"{name}-{impl.name}.csv"
                 )
 
             # An --allow-partial case commits to ``<output>.partial``; read that

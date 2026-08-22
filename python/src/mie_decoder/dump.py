@@ -37,11 +37,11 @@ logger = logging.getLogger(__name__)
 #: Map of known type codes to human-readable names.
 _TYPE_NAMES: dict[int, str] = {
     MessageType.MODE_COMMAND: "Mode Command",
-    MessageType.BC_TO_RT: "BC→RT (Receive)",
-    MessageType.RT_TO_BC: "RT→BC (Transmit)",
-    MessageType.RT_TO_RT: "RT→RT",
-    MessageType.BROADCAST_BC_TO_RT: "Broadcast BC→RT",
-    MessageType.BROADCAST_RT_TO_RT: "Broadcast RT→RT",
+    MessageType.BC_TO_RT: "BC->RT (Receive)",
+    MessageType.RT_TO_BC: "RT->BC (Transmit)",
+    MessageType.RT_TO_RT: "RT->RT",
+    MessageType.BROADCAST_BC_TO_RT: "Broadcast BC->RT",
+    MessageType.BROADCAST_RT_TO_RT: "Broadcast RT->RT",
     MessageType.SPURIOUS_DATA: "Spurious Data",
 }
 
@@ -75,14 +75,22 @@ def hex_dump_raw(
 
     out = stream if stream is not None else sys.stdout
 
+    # Both bounds are clamped to the file, and the start is clamped FIRST. An
+    # offset past the end previously printed a range running backwards --
+    # `Range: 0x000186A0-0x000000B2` -- because only the end was bounded. The
+    # bytes shown were right either way (the slice is empty), but the header
+    # said something impossible, and it disagreed with the Rust and C++
+    # reports, which clamp both.
+    start = min(start_offset, len(data))
     end = len(data) if length is None else min(start_offset + length, len(data))
-    chunk = data[start_offset:end]
+    end = max(end, start)
+    chunk = data[start:end]
 
     print(f"File: {fpath.name} ({len(data)} bytes)", file=out)
-    print(f"Range: 0x{start_offset:08X}–0x{end:08X}\n", file=out)
+    print(f"Range: 0x{start:08X}-0x{end:08X}\n", file=out)
 
     for i in range(0, len(chunk), 16):
-        addr = start_offset + i
+        addr = start + i
         hex_part = " ".join(f"{b:02X}" for b in chunk[i : i + 16])
         ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk[i : i + 16])
         print(
@@ -158,7 +166,7 @@ def hex_dump_records(
         record_num += 1
 
     print(
-        f"{'─' * 72}\n{record_num} records dumped.",
+        f"{'-' * 72}\n{record_num} records dumped.",
         file=out,
     )
 
@@ -219,13 +227,13 @@ def _write_record_annotation(
         fmt_name = "(unclassifiable)"
 
     lines = [
-        "─" * 72,
+        "-" * 72,
         f"  Record #{record_num}  @  0x{offset:08X}  ({record_bytes} bytes, {tw.word_count} words)",
-        f"  Type:   0x{tw.raw:04X}  →  {type_name}  Bus {'B' if tw.bus else 'A'}  "
+        f"  Type:   0x{tw.raw:04X}  ->  {type_name}  Bus {'B' if tw.bus else 'A'}  "
         f"error flag (bit 14): {'SET' if tw.error else 'clear'}",
         f"  Format: {fmt_name}",
         f"  Time:   {timestamp.format()}{'  [FREERUN]' if timestamp.freerun else ''}",
-        f"  Cmd:    0x{cmd.raw:04X}  →  RT{cmd.rt} SA{cmd.subaddress} "
+        f"  Cmd:    0x{cmd.raw:04X}  ->  RT{cmd.rt} SA{cmd.subaddress} "
         f"{'T' if cmd.direction else 'R'} WC={cmd.data_word_count}",
     ]
     # For an errored record the Error Word is the last word of the record; show
@@ -233,7 +241,7 @@ def _write_record_annotation(
     if tw.error:
         err_code = read_u16(data, offset + (tw.word_count - 1) * 2)
         desc = DDC_ERROR_DESCRIPTIONS.get(err_code, "unknown DDC error code")
-        lines.append(f"  Error:  0x{err_code:04X}  →  {desc}")
+        lines.append(f"  Error:  0x{err_code:04X}  ->  {desc}")
     print("\n".join(lines), file=out)
 
 

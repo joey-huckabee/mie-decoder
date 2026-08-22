@@ -1,0 +1,6 @@
+File: dump-truncated-record-in0.mie (20 bytes)
+Record dump starting at offset 0x00000000
+
+  !! Truncated record at 0x00000000 (72 bytes needed, 20 available)
+------------------------------------------------------------------------
+0 records dumped.

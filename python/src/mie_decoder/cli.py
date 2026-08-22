@@ -1317,18 +1317,27 @@ def _run_dump(args: argparse.Namespace) -> int:
 
 
 def _force_utf8_streams() -> None:
-    """Emit UTF-8 on stdout/stderr regardless of the platform locale.
+    """Emit UTF-8 with LF line endings on stdout/stderr, whatever the platform.
 
-    On Windows a redirected stdout defaults to the active code page (cp1252 in
-    most locales), which cannot encode the box-drawing / section characters in
-    ``dump`` output — writing them raises ``UnicodeEncodeError`` and aborts the
-    dump — nor the en-dash / section marks in log messages, which garble to
-    ``?``. Reconfiguring the streams to UTF-8 makes output faithful and matches
-    the POSIX default, where stdout is already UTF-8.
+    Two separate problems, both Windows-only.
 
-    Encoding only: ``newline`` is left untouched so the byte-exact CSV contract
-    (``L2-WRT-*``, verified by the conformance oracle) is unaffected. Streams
-    that cannot be reconfigured (already detached, or replaced by a test
+    **Encoding.** A redirected stdout defaults to the active code page (cp1252
+    in most locales), which cannot encode the em-dash and section marks in log
+    messages — they garble to ``?``. The ``dump`` report itself is now pure
+    ASCII (it is a stdout *payload*, diffed and piped, so it matches the Rust
+    and C++ reports byte for byte), but the diagnostics around it are prose and
+    still use them.
+
+    **Line endings.** A text-mode stream translates ``"\\n"`` to ``"\\r\\n"`` on
+    Windows. This was previously left alone on the grounds that the byte-exact
+    CSV contract was unaffected — true only of CSV written to a *file*, which is
+    opened separately with ``newline=""``. Everything written to **stdout** went
+    through the translation: ``decode -o -`` emitted CRLF where Rust and C++
+    emit LF, in plain violation of ``L2-WRT-012`` ("CSV output SHALL use LF line
+    endings on every supported platform"), and so did every line of ``dump``.
+    No conformance case caught it, because the runner always decodes to a file.
+
+    Streams that cannot be reconfigured (already detached, or replaced by a test
     harness / capture object without ``reconfigure``) are left as-is.
     """
     for stream in (sys.stdout, sys.stderr):
@@ -1336,7 +1345,7 @@ def _force_utf8_streams() -> None:
         if reconfigure is None:
             continue
         try:
-            reconfigure(encoding="utf-8")
+            reconfigure(encoding="utf-8", newline="\n")
         except (ValueError, OSError):
             # Detached buffer or a stream that refuses reconfiguration — the
             # dump / log output is best-effort in that case, not a hard error.

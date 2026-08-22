@@ -430,6 +430,42 @@ mod tests {
         }
     }
 
+    /// Requirements: L2-CLI-014
+    #[test]
+    fn dump_report_is_pure_ascii_and_lf() {
+        // The report is a stdout PAYLOAD -- piped, redirected, and diffed
+        // against the Python and C++ reports -- so it carries no byte above
+        // 0x7F and no CR. Python's report used box-drawing, arrow and en-dash
+        // characters until this was written down; those could not be encoded on
+        // a redirected Windows stdout at cp1252 and made 11 of 34 lines differ.
+        //
+        // Both views, and a record with an anomaly note, because the rule, the
+        // arrow and the `!!` note are the three places a non-ASCII character
+        // would plausibly be reintroduced.
+        let f = TempFile::write(&[
+            0x02, 0x24, 0x0F, 0x18, 0x26, 0xDB, 0x21, 0xF6, 0x7E, 0x79, 0x00, 0x04,
+        ]);
+
+        for raw in [true, false] {
+            let mut out = Vec::new();
+            if raw {
+                hex_dump_raw(f.path(), 0, None, &mut out).unwrap();
+            } else {
+                hex_dump_records(f.path(), None, 0, &mut out).unwrap();
+            }
+            assert!(!out.is_empty(), "raw={raw}: the dump produced no output");
+            let offending: Vec<u8> = out.iter().copied().filter(|b| *b > 0x7F).collect();
+            assert!(
+                offending.is_empty(),
+                "raw={raw}: dump emitted non-ASCII bytes {offending:?}"
+            );
+            assert!(
+                !out.contains(&b'\r'),
+                "raw={raw}: dump emitted CR; the report is LF on every platform"
+            );
+        }
+    }
+
     /// Requirements: L2-CLI-009
     #[test]
     fn raw_dump_format() {
