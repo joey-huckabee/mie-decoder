@@ -182,7 +182,9 @@ pub fn classify_message_format(
     word_count: u16,
     timestamp_words: u16,
 ) -> MieResult<MessageFormat> {
-    use MessageType::*;
+    use MessageType::{
+        BcToRt, BroadcastBcToRt, BroadcastRtToRt, ModeCommand, RtToBc, RtToRt, SpuriousData,
+    };
     match MessageType::from_code(message_type) {
         Some(BcToRt) => Ok(MessageFormat::Receive),
         Some(RtToBc) => Ok(MessageFormat::Transmit),
@@ -190,7 +192,7 @@ pub fn classify_message_format(
         Some(BroadcastBcToRt) => Ok(MessageFormat::ReceiveBroadcast),
         Some(BroadcastRtToRt) => Ok(MessageFormat::RtToRtBroadcast),
         Some(ModeCommand) => Ok(classify_mode_code(
-            command_word,
+            *command_word,
             word_count,
             timestamp_words,
         )),
@@ -253,7 +255,7 @@ pub struct InvariantViolation {
 /// not yet decoded at the time we call this; we use Cmd1's
 /// `data_word_count` as an approximation (the bus protocol requires
 /// Cmd1 and Cmd2 to agree on `data_word_count`).
-fn min_payload_words(fmt: MessageFormat, cmd: &CommandWord) -> u16 {
+fn min_payload_words(fmt: MessageFormat, cmd: CommandWord) -> u16 {
     let dwc = u16::from(cmd.data_word_count);
     match fmt {
         MessageFormat::Receive | MessageFormat::Transmit => dwc + 1, // data + status
@@ -322,7 +324,7 @@ pub fn validate_structural_invariants(
     }
 
     // L2-SYN-022: word-count capacity check.
-    let min_wc = 1 + ts_words + 1 + min_payload_words(msg_fmt, cmd);
+    let min_wc = 1 + ts_words + 1 + min_payload_words(msg_fmt, *cmd);
     if tw.word_count < min_wc {
         return Err(InvariantViolation {
             kind: WhichInvariant::WordCountCapacity,
@@ -444,7 +446,7 @@ pub fn detect_record_anomalies(
     out
 }
 
-fn classify_mode_code(cmd: &CommandWord, word_count: u16, timestamp_words: u16) -> MessageFormat {
+fn classify_mode_code(cmd: CommandWord, word_count: u16, timestamp_words: u16) -> MessageFormat {
     // The data-vs-no-data thresholds are relative to the record's timestamp
     // word count (IRIG = 3, Standard = 2), not absolute — a Standard record is
     // one word shorter than the IRIG equivalent (L2-MSG-004). The fixed
@@ -605,7 +607,7 @@ fn accumulate_probe_scores(
             break;
         }
 
-        let (i_delta, s_delta) = score_single_record(data, offset, &tw);
+        let (i_delta, s_delta) = score_single_record(data, offset, tw);
         irig_score += i_delta;
         std_score += s_delta;
         records_probed += 1;
@@ -646,7 +648,7 @@ fn classify_confidence(max_score: i32, margin: i32) -> DetectionConfidence {
 /// record (T/R: `2` + WC plausibility: `2`; no range-validity bonus
 /// because the Standard timestamp is a raw 32-bit counter with no
 /// semantic field bounds to check against).
-fn score_single_record(data: &[u8], offset: usize, type_word: &TypeWord) -> (i32, i32) {
+fn score_single_record(data: &[u8], offset: usize, type_word: TypeWord) -> (i32, i32) {
     (
         score_irig_candidate(data, offset, type_word),
         score_standard_candidate(data, offset, type_word),
@@ -655,7 +657,7 @@ fn score_single_record(data: &[u8], offset: usize, type_word: &TypeWord) -> (i32
 
 /// T/R consistency: a `BC_TO_RT` type expects a Receive command, `RT_TO_BC`
 /// expects Transmit. Other message types never match.
-fn tr_direction_matches(type_word: &TypeWord, cmd: &CommandWord) -> bool {
+fn tr_direction_matches(type_word: TypeWord, cmd: CommandWord) -> bool {
     (type_word.message_type == MessageType::BcToRt as u8 && cmd.direction == Direction::Receive)
         || (type_word.message_type == MessageType::RtToBc as u8
             && cmd.direction == Direction::Transmit)
@@ -663,13 +665,13 @@ fn tr_direction_matches(type_word: &TypeWord, cmd: &CommandWord) -> bool {
 
 /// IRIG candidate: Cmd at offset+8 (Type + 3 TS words). Up to `+5`
 /// (T/R: 2, word-count plausibility: 2, field-range validity: 1).
-fn score_irig_candidate(data: &[u8], offset: usize, type_word: &TypeWord) -> i32 {
+fn score_irig_candidate(data: &[u8], offset: usize, type_word: TypeWord) -> i32 {
     let Some(cmd_raw) = read_u16(data, offset + 8) else {
         return 0;
     };
     let cmd = decode_command_word(cmd_raw);
     let mut score = 0;
-    if tr_direction_matches(type_word, &cmd) {
+    if tr_direction_matches(type_word, cmd) {
         score += 2;
     }
     // IRIG overhead = TS(3) + Cmd(1) + Stat(1) + Type(1) = 6
@@ -695,13 +697,13 @@ fn score_irig_candidate(data: &[u8], offset: usize, type_word: &TypeWord) -> i32
 /// Standard candidate: Cmd at offset+6 (Type + 2 TS words). Up to `+4`
 /// (T/R: 2, word-count plausibility: 2; no range bonus — the 32-bit counter
 /// has no semantic field bounds to check).
-fn score_standard_candidate(data: &[u8], offset: usize, type_word: &TypeWord) -> i32 {
+fn score_standard_candidate(data: &[u8], offset: usize, type_word: TypeWord) -> i32 {
     let Some(cmd_raw) = read_u16(data, offset + 6) else {
         return 0;
     };
     let cmd = decode_command_word(cmd_raw);
     let mut score = 0;
-    if tr_direction_matches(type_word, &cmd) {
+    if tr_direction_matches(type_word, cmd) {
         score += 2;
     }
     // Standard overhead = TS(2) + Cmd(1) + Stat(1) + Type(1) = 5

@@ -23,12 +23,11 @@ use mie_decoder::writer::write_csv;
 #[test]
 fn crate_root_reexports_public_decode_api() {
     fn takes_reader(_: mie_decoder::reader::MieFileReader) {}
-    let _: fn(mie_decoder::MieFileReader) = takes_reader;
-
     fn takes_message(_: mie_decoder::models::MieMessage) {}
-    let _: fn(mie_decoder::MieMessage) = takes_message;
-
     fn takes_error(_: mie_decoder::error::MieError) {}
+
+    let _: fn(mie_decoder::MieFileReader) = takes_reader;
+    let _: fn(mie_decoder::MieMessage) = takes_message;
     let _: fn(mie_decoder::MieError) = takes_error;
 }
 
@@ -551,6 +550,7 @@ fn filtering_drops_excluded_rts() {
 /// Requirements: L2-WRT-001
 #[test]
 fn csv_output_has_one_row_per_message_plus_header() {
+    use mie_decoder::writer::WriteOptions;
     let mut bytes = Vec::new();
     bytes.extend(record_rt15_sa11_rcv());
     bytes.extend(record_rt15_sa22_rcv());
@@ -559,7 +559,7 @@ fn csv_output_has_one_row_per_message_plus_header() {
 
     let out_path = std::env::temp_dir().join(format!("mie-int-out-{}.csv", std::process::id()));
     let reader = MieFileReader::new(f.path()).unwrap();
-    let n = write_csv(reader.iter(), Some(&out_path), Default::default())
+    let n = write_csv(reader.iter(), Some(&out_path), WriteOptions::default())
         .unwrap()
         .normal_count;
     assert_eq!(n, 3);
@@ -731,7 +731,7 @@ fn fuzz_arbitrary_bytes_never_panic() {
         x
     }
 
-    let seed: u64 = 0x0DDCD1ECDDC0DEC0;
+    let seed: u64 = 0x0DDC_D1EC_DDC0_DEC0;
     let mut state = seed;
     // 256 iterations runs in a few seconds and consistently exercises
     // every invariant + recovery branch (verified by inspecting the
@@ -798,13 +798,12 @@ fn fuzz_arbitrary_bytes_never_panic() {
             }
         });
 
-        if result.is_err() {
-            panic!(
-                "MieFileReader panicked on random input (seed=0x{seed:X}, iter={i}, \
-                 size={size}). First 32 bytes: {:02X?}",
-                &bytes[..bytes.len().min(32)]
-            );
-        }
+        assert!(
+            result.is_ok(),
+            "MieFileReader panicked on random input (seed=0x{seed:X}, iter={i}, \
+             size={size}). First 32 bytes: {:02X?}",
+            &bytes[..bytes.len().min(32)]
+        );
     }
 }
 
@@ -829,7 +828,7 @@ fn dump_arbitrary_bytes_never_panics() {
         x
     }
 
-    let seed: u64 = 0x0DDCD1ECDDC0DEC0; // same seed family as the reader harness
+    let seed: u64 = 0x0DDC_D1EC_DDC0_DEC0; // same seed family as the reader harness
     let mut state = seed;
 
     // Honor MIE_FUZZ_ITERATIONS for the scheduled burn-in, same as the reader
@@ -865,13 +864,12 @@ fn dump_arbitrary_bytes_never_panics() {
             let _ = mie_decoder::dump::hex_dump_raw(f.path(), 0, None, &mut sink);
         });
 
-        if result.is_err() {
-            panic!(
-                "dump panicked on random input (seed=0x{seed:X}, iter={i}, size={size}). \
-                 First 32 bytes: {:02X?}",
-                &bytes[..bytes.len().min(32)]
-            );
-        }
+        assert!(
+            result.is_ok(),
+            "dump panicked on random input (seed=0x{seed:X}, iter={i}, size={size}). \
+             First 32 bytes: {:02X?}",
+            &bytes[..bytes.len().min(32)]
+        );
     }
 }
 
@@ -1065,7 +1063,7 @@ fn merge_input_resolution_tolerates_arbitrary_bytes() {
         *state = x;
         x
     }
-    let mut state = 0x0DDCD1ECDDC0DEC0u64;
+    let mut state = 0x0DDC_D1EC_DDC0_DEC0u64;
     for _ in 0..512 {
         let n = (xorshift64(&mut state) % 96) as usize;
         let bytes: Vec<u8> = (0..n)
@@ -1728,7 +1726,7 @@ fn canonical_order_cap_of_one_restores_capture_order() {
 #[test]
 fn canonical_order_is_visible_in_written_csv() {
     use mie_decoder::order::OrderIterExt;
-    use mie_decoder::writer::write_csv;
+    use mie_decoder::writer::{WriteOptions, write_csv};
 
     let bytes = [
         rcv_record_at(21, 3, 500),
@@ -1744,7 +1742,7 @@ fn canonical_order_is_visible_in_written_csv() {
             .iter()
             .order_rows(mie_decoder::order::DEFAULT_MAX_SORT_GROUP),
         Some(out.as_path()),
-        Default::default(),
+        WriteOptions::default(),
     )
     .unwrap();
     let text = std::fs::read_to_string(&out).unwrap();
@@ -1803,7 +1801,7 @@ fn per_file_delta_matches_single_file_decode() {
     let mut alone: Vec<(u64, Option<f64>)> = Vec::new();
     for path in [fa.path(), fb.path()] {
         let r = MieFileReader::new(path).unwrap();
-        for m in r.iter() {
+        for m in &r {
             let m = m.unwrap();
             alone.push((m.file_offset, m.delta));
         }

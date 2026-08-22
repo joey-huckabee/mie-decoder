@@ -1588,7 +1588,7 @@ class TestFuzzHarness:
         from mie_decoder.exceptions import MieDecoderError
         from mie_decoder.reader import MieFileReader
 
-        seed = 0x0DDCD1ECDDC0DEC0
+        seed = 0x0DDC_D1EC_DDC0_DEC0
         state = seed
         # The scheduled CI fuzz job overrides the iteration count via
         # MIE_FUZZ_ITERATIONS for a longer burn-in; the default-suite cost
@@ -1701,7 +1701,7 @@ class TestFuzzHarness:
         if override and override.isdigit() and int(override) > 0:
             iterations = int(override)
 
-        state = 0x0DDCD1ECDDC0DEC0  # same seed family as the reader harness
+        state = 0x0DDC_D1EC_DDC0_DEC0  # same seed family as the reader harness
         with self._surface_logs():
             for i in range(iterations):
                 state, r = self._xorshift64(state)

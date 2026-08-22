@@ -355,7 +355,7 @@ fn parse_global_flags(
 ) -> Result<String, ExitCode> {
     loop {
         match iter.peek().map(String::as_str) {
-            Some("-h") | Some("--help") => {
+            Some("-h" | "--help") => {
                 print!("{HELP}");
                 return Err(ExitCode::SUCCESS);
             }
@@ -657,7 +657,7 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--exclude-rts=") => {
                 push_filter(&s["--exclude-rts=".len()..], &mut args.exclude_rts, |v| {
                     parse_u8_value(v, "--exclude-rts").map_err(Into::into)
-                })?
+                })?;
             }
             "--include-rts" => push_filter(
                 &next_value("--include-rts", iter)?,
@@ -667,7 +667,7 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             s if s.starts_with("--include-rts=") => {
                 push_filter(&s["--include-rts=".len()..], &mut args.include_rts, |v| {
                     parse_u8_value(v, "--include-rts").map_err(Into::into)
-                })?
+                })?;
             }
             "--exclude-buses" => push_filter(
                 &next_value("--exclude-buses", iter)?,
@@ -1648,7 +1648,7 @@ mod tests {
     /// A single-value filter flag consumes exactly one value; any further
     /// tokens are positional inputs. With multi-file input (L2-MRG-001),
     /// `--include-rts 15 31 file.mie` parses as include-rts=[15] and inputs
-    /// ["31", "file.mie"] — the stray "31" becomes a path (failing later at
+    /// `["31", "file.mie"]` — the stray "31" becomes a path (failing later at
     /// open time) rather than being silently absorbed as a second RT value.
     /// Requirements: L2-CLI-010, L2-MRG-001
     #[test]
