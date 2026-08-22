@@ -298,7 +298,7 @@ mod tests {
         }
     }
 
-    /// A SPURIOUS_DATA record (no Command Word) at `us`.
+    /// A `SPURIOUS_DATA` record (no Command Word) at `us`.
     fn spurious(us: u32) -> MieMessage {
         let mut m = rec(us, 0, 0, Direction::Receive);
         m.command_word = None;
@@ -691,7 +691,7 @@ mod tests {
         assert!(same_group(&a, &b));
     }
 
-    /// The `freerun` flag is not part of the rendered TIME_STAMP and so is not
+    /// The `freerun` flag is not part of the rendered `TIME_STAMP` and so is not
     /// part of grouping.
     ///
     /// Requirements: L2-WRT-021

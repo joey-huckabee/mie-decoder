@@ -59,6 +59,7 @@ pub fn read_manifest(path: &Path) -> io::Result<Vec<PathBuf>> {
 /// matches exactly one character; no other metacharacters are special.
 /// Iterative backtracking matcher (no recursion, no allocation beyond the
 /// char vectors). Identical semantics to the Python implementation.
+#[must_use]
 pub fn glob_match(pattern: &str, name: &str) -> bool {
     let pat: Vec<char> = pattern.chars().collect();
     let txt: Vec<char> = name.chars().collect();
@@ -389,6 +390,7 @@ impl<'a> MergedRecordIter<'a> {
     /// Enable cross-recorder duplicate collapsing on this merge (L2-MRG-007),
     /// builder-style so `new` keeps a stable signature. `enabled == false` (the
     /// default) is a no-op; `window_us` is the timestamp tolerance.
+    #[must_use]
     pub fn collapse(mut self, enabled: bool, window_us: u64) -> Self {
         self.dedup = enabled.then(|| DedupWindow::new(window_us));
         self
@@ -399,6 +401,7 @@ impl<'a> MergedRecordIter<'a> {
     /// the DELTA each reader already computed for its own file in place, which
     /// is what makes a merged record's value identical to the one it would get
     /// from a single-file decode — the same code path produced both.
+    #[must_use]
     pub fn delta_scope(mut self, scope: DeltaScope) -> Self {
         self.delta_scope = scope;
         self
@@ -407,6 +410,7 @@ impl<'a> MergedRecordIter<'a> {
     /// A shared handle to the suppressed-duplicate counter (L2-MRG-007). The CLI
     /// clones this before the iterator is consumed by the writer, then reads it
     /// afterward for the end-of-run summary.
+    #[must_use]
     pub fn collapsed_handle(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.collapsed)
     }

@@ -33,7 +33,7 @@ pub const DETECT_RECORDS_MIN: usize = 1;
 pub const DETECT_RECORDS_MAX: usize = 32;
 
 /// L2-SYN-026 valid range for `decode.lookahead_records`. Same shape as
-/// DETECT_RECORDS_MIN/_MAX — the two configurable record-count knobs
+/// `DETECT_RECORDS_MIN`/_MAX — the two configurable record-count knobs
 /// share their valid range for consistency.
 pub const LOOKAHEAD_RECORDS_MIN: usize = 1;
 pub const LOOKAHEAD_RECORDS_MAX: usize = 32;
@@ -192,6 +192,7 @@ macro_rules! apply_plain_overrides {
 }
 
 impl DecoderConfig {
+    #[must_use]
     pub fn with_overrides(mut self, ov: ConfigOverrides) -> Self {
         // The plain fields — "if the override is present, take it" — are applied
         // from a declarative name list rather than as fourteen near-identical
@@ -601,7 +602,7 @@ pub fn parse_type_value(v: &TomlValue) -> Result<u8, ConfigError> {
     }
 }
 
-/// Parse a message-type identifier: name (e.g. "BC_TO_RT") or hex (e.g. "0x02").
+/// Parse a message-type identifier: name (e.g. "`BC_TO_RT`") or hex (e.g. "0x02").
 pub fn parse_type_name(s: &str) -> Result<u8, ConfigError> {
     let upper = s.trim().to_uppercase();
     let by_name: &[(&str, u8)] = &[
@@ -684,6 +685,7 @@ pub struct TomlDoc {
 }
 
 impl TomlDoc {
+    #[must_use]
     pub fn get(&self, section: &str, key: &str) -> Option<&TomlValue> {
         self.entries
             .iter()

@@ -75,7 +75,7 @@ pub enum MieError {
     /// consecutive candidate-sized chunks; if they are byte-identical
     /// in every position except the timestamp triple, the file is
     /// rejected. Defends against 0x20-fill (where `0x20 0x20` parses
-    /// as a valid SPURIOUS_DATA Type Word and look-ahead alone admits
+    /// as a valid `SPURIOUS_DATA` Type Word and look-ahead alone admits
     /// the stream) and similar single-byte pads.
     HomogeneousPayload {
         path: PathBuf,
@@ -173,6 +173,7 @@ pub enum MieErrorKind {
 }
 
 impl MieError {
+    #[must_use]
     pub fn kind(&self) -> MieErrorKind {
         match self {
             Self::FileNotFound { .. } => MieErrorKind::FileNotFound,
@@ -199,6 +200,7 @@ impl MieError {
     /// True if this error wraps an `io::Error` whose kind is `BrokenPipe`.
     /// Per L2-WRT-018 a broken-pipe condition on stdout output SHALL
     /// exit `0` with no error; the CLI driver uses this predicate.
+    #[must_use]
     pub fn is_broken_pipe(&self) -> bool {
         matches!(
             self,
@@ -216,6 +218,7 @@ impl MieError {
     /// not I/O failures on the input, so folding them in would make the
     /// predicate mean less. Match on [`MieError::kind`] when you need the wider
     /// set. See `docs/ERROR-CATALOG.md` §2 for the full mapping.
+    #[must_use]
     pub fn is_file_error(&self) -> bool {
         matches!(
             self.kind(),
@@ -230,6 +233,7 @@ impl MieError {
     /// `HomogeneousPayload` and `TimestampFormatMismatch` both cite an offset
     /// but reject the file as a whole, and Python classes them under
     /// `MieFileError` accordingly.
+    #[must_use]
     pub fn is_record_error(&self) -> bool {
         matches!(
             self.kind(),

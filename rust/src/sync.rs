@@ -91,6 +91,7 @@ fn min_word_count(ts_format: Option<TimestampFormat>) -> u16 {
 /// The look-ahead walk advances through each subsequent candidate by its
 /// declared `word_count`; EOF terminates the walk gracefully without
 /// rejecting the original candidate.
+#[must_use]
 pub fn validate_record(
     data: &[u8],
     offset: usize,
@@ -303,6 +304,7 @@ pub struct ScanHit {
 /// is valid, returns immediately (no header). If a header is present, returns
 /// the offset just after it. Returns `None` if no valid record found within
 /// the scan window.
+#[must_use]
 pub fn find_first_record(
     data: &[u8],
     file_len: usize,
@@ -336,9 +338,10 @@ pub const HOMOGENEITY_SAMPLE_RECORDS: usize = 4;
 /// sized chunks. If they are byte-identical in every position except
 /// the timestamp triple (bytes 2..8 of each record), the input is
 /// pathological — most likely a single-byte pad (e.g. 0x20-fill, where
-/// `0x20 0x20` parses as a valid SPURIOUS_DATA Type Word and look-ahead
+/// `0x20 0x20` parses as a valid `SPURIOUS_DATA` Type Word and look-ahead
 /// validation alone admits the stream). Returns `true` iff the input
 /// SHALL be rejected.
+#[must_use]
 pub fn is_homogeneous_payload(data: &[u8], offset: usize, record_bytes: usize) -> bool {
     let total = HOMOGENEITY_SAMPLE_RECORDS.saturating_mul(record_bytes);
     if offset.saturating_add(total) > data.len() {
@@ -376,6 +379,7 @@ pub fn is_homogeneous_payload(data: &[u8], offset: usize, record_bytes: usize) -
 /// matches a Type Word that *would have been valid* if the file were
 /// long enough. Returns `Some((offset, record_bytes, available))` for
 /// the first such candidate, or `None`.
+#[must_use]
 pub fn diagnose_header_scan_failure(
     data: &[u8],
     file_len: usize,
@@ -418,6 +422,7 @@ pub fn diagnose_header_scan_failure(
 
 /// Walk forward from `offset` looking for the next valid record. Used after
 /// validation fails mid-file.
+#[must_use]
 pub fn recover_sync(
     data: &[u8],
     offset: usize,
@@ -460,7 +465,7 @@ mod tests {
     use super::*;
 
     /// One synthetic record:
-    ///   Type Word 0x2402 → type=0x02, bus A, word_count=36, no error
+    ///   Type Word 0x2402 → type=0x02, bus A, `word_count=36`, no error
     ///   Followed by 35 zeroed words to fill to 36 total
     fn make_valid_record_36w(count: usize) -> Vec<u8> {
         let mut buf = Vec::with_capacity(count * 36 * 2);
@@ -597,7 +602,7 @@ mod tests {
     // ── IRIG range validation (L2-SYN-004, L2-SYN-019) ──────────────
 
     /// Build a minimal IRIG-shaped record from explicit timestamp word
-    /// values. word_count = 5 (Type + 3 TS + Cmd, no data, no status).
+    /// values. `word_count` = 5 (Type + 3 TS + Cmd, no data, no status).
     /// Two records back-to-back so the look-ahead check passes.
     fn make_irig_record_with_ts(upper: u16, middle: u16, lower: u16) -> Vec<u8> {
         // Type word 0x0502: type=0x02 BcToRt, bus A, wc=5, error=0.

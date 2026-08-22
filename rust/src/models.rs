@@ -22,6 +22,7 @@ pub enum Bus {
 }
 
 impl Bus {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::A => "A",
@@ -61,6 +62,7 @@ pub enum MessageType {
 
 impl MessageType {
     /// Convert raw 8-bit code to enum, or `None` if unknown.
+    #[must_use]
     pub fn from_code(code: u8) -> Option<Self> {
         match code {
             0x01 => Some(Self::ModeCommand),
@@ -75,6 +77,7 @@ impl MessageType {
     }
 
     /// CLI-friendly canonical name (matches Python enum name).
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::ModeCommand => "MODE_COMMAND",
@@ -90,6 +93,7 @@ impl MessageType {
 
 /// O(1) check that a raw type code is in the known set.
 #[inline]
+#[must_use]
 pub fn is_valid_message_type(code: u8) -> bool {
     matches!(code, 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x18 | 0x20)
 }
@@ -142,7 +146,7 @@ impl TimestampFormat {
 pub enum ErrorMode {
     /// Errored + spurious go to a separate `<output>_errors.csv`.
     Separate = 0,
-    /// Everything in one CSV with ERROR/ERROR_CODE columns populated.
+    /// Everything in one CSV with `ERROR/ERROR_CODE` columns populated.
     Inline = 1,
 }
 
@@ -179,6 +183,7 @@ impl DeltaScope {
     }
 
     /// Canonical spelling, for help text and error messages.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PerFile => "per-file",
@@ -200,13 +205,14 @@ pub const ERROR_TOO_MANY_WORDS: u16 = 0x0140;
 /// Unknown / undocumented DDC error.
 pub const ERROR_UNKNOWN_DDC: u16 = 0x0150;
 
-/// SPURIOUS_DATA continuation of a preceding errored message (decoder-assigned).
+/// `SPURIOUS_DATA` continuation of a preceding errored message (decoder-assigned).
 pub const ERROR_SPURIOUS_CONTINUATION: u16 = 0x2000;
-/// Standalone SPURIOUS_DATA, no preceding error record (decoder-assigned).
+/// Standalone `SPURIOUS_DATA`, no preceding error record (decoder-assigned).
 pub const ERROR_SPURIOUS_STANDALONE: u16 = 0x2001;
 
 /// True if `code` is a known DDC hardware error code (0x01xx range).
 #[inline]
+#[must_use]
 pub fn is_known_ddc_error_code(code: u16) -> bool {
     matches!(
         code,
@@ -220,6 +226,7 @@ pub fn is_known_ddc_error_code(code: u16) -> bool {
 
 /// True if `code` is a decoder-assigned spurious code (0x20xx range).
 #[inline]
+#[must_use]
 pub fn is_known_custom_error_code(code: u16) -> bool {
     matches!(
         code,
@@ -229,6 +236,7 @@ pub fn is_known_custom_error_code(code: u16) -> bool {
 
 /// True if `code` is in either known set.
 #[inline]
+#[must_use]
 pub fn is_known_error_code(code: u16) -> bool {
     is_known_ddc_error_code(code) || is_known_custom_error_code(code)
 }
@@ -241,6 +249,7 @@ pub fn is_known_error_code(code: u16) -> bool {
 /// code, which formats as an uninformative `code=0x0199 ()`. Python's
 /// equivalent lookups always carry a fallback, so this keeps the two
 /// implementations' operator-facing text aligned.
+#[must_use]
 pub fn ddc_error_description_or_unknown(code: u16) -> &'static str {
     let desc = ddc_error_description(code);
     if desc.is_empty() {
@@ -251,6 +260,7 @@ pub fn ddc_error_description_or_unknown(code: u16) -> &'static str {
 }
 
 /// Human-readable description for a known error code, else empty string.
+#[must_use]
 pub fn ddc_error_description(code: u16) -> &'static str {
     match code {
         ERROR_MANCHESTER_PARITY => "Manchester/Parity Error or Bit Count Error",
@@ -277,6 +287,7 @@ pub struct IrigTimestamp {
 
 impl IrigTimestamp {
     /// Absolute microseconds from start of year.
+    #[must_use]
     pub fn to_total_microseconds(self) -> u64 {
         let day = u64::from(self.day);
         let hour = u64::from(self.hour);
@@ -290,10 +301,11 @@ impl IrigTimestamp {
     ///
     /// Per L2-DEC-014 the microsecond field SHALL be exactly six
     /// digits. Validation in `sync::validate_record` should reject any
-    /// record whose microsecond is >= 1_000_000 (L2-SYN-004), so this
+    /// record whose microsecond is >= `1_000_000` (L2-SYN-004), so this
     /// truncation is a defensive belt-and-suspenders: if a caller
     /// constructs an out-of-range `IrigTimestamp` directly (bypassing
     /// validation), the formatter still produces a well-formed string.
+    #[must_use]
     pub fn format(&self) -> String {
         let micro = self.microsecond % 1_000_000;
         format!(
@@ -319,6 +331,7 @@ impl StandardTimestamp {
     /// Raw 32-bit free-running counter value, in unknown tick units.
     /// The tick rate is card-dependent and not encoded in the file, so
     /// callers cannot convert this to seconds without external calibration.
+    #[must_use]
     pub fn raw_ticks(self) -> u32 {
         self.raw_value
     }
@@ -332,6 +345,7 @@ impl StandardTimestamp {
     ///
     /// Rounding is half-away-from-zero; ticks are non-negative so this matches
     /// the Python implementation's `int(x + 0.5)` exactly (see L2-DEC-017).
+    #[must_use]
     pub fn to_microseconds(self, standard_tick_rate_hz: f64) -> Option<u64> {
         if !standard_tick_rate_hz.is_finite() || standard_tick_rate_hz <= 0.0 {
             return None;
@@ -363,6 +377,7 @@ impl StandardTimestamp {
     }
 
     /// Format as `0xNNNNNNNN`.
+    #[must_use]
     pub fn format(&self) -> String {
         format!("0x{:08X}", self.raw_value)
     }
@@ -384,6 +399,7 @@ impl Timestamp {
     /// frequency, otherwise `None` — raw counter ticks have no known tick
     /// rate or epoch, so DELTA in seconds cannot be computed truthfully
     /// without one. IRIG ignores `standard_tick_rate_hz`. See L2-DEC-017.
+    #[must_use]
     pub fn to_microseconds(&self, standard_tick_rate_hz: Option<f64>) -> Option<u64> {
         match self {
             Self::Irig(t) => Some(t.to_total_microseconds()),
@@ -391,6 +407,7 @@ impl Timestamp {
         }
     }
 
+    #[must_use]
     pub fn format(&self) -> String {
         match self {
             Self::Irig(t) => t.format(),
@@ -400,6 +417,7 @@ impl Timestamp {
 }
 
 /// Number of 16-bit words consumed by each timestamp format.
+#[must_use]
 pub const fn timestamp_word_count(fmt: TimestampFormat) -> u16 {
     match fmt {
         TimestampFormat::Irig => 3,
@@ -432,9 +450,11 @@ pub struct CommandWord {
 }
 
 impl CommandWord {
+    #[must_use]
     pub fn is_broadcast(&self) -> bool {
         self.rt == 31
     }
+    #[must_use]
     pub fn is_mode_code(&self) -> bool {
         self.subaddress == 0 || self.subaddress == 31
     }
@@ -453,6 +473,7 @@ pub struct DataWords {
 }
 
 impl DataWords {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             buf: [0; MAX_DATA_WORDS],
@@ -466,6 +487,7 @@ impl DataWords {
     /// unaffected, and the over-length case stays total (L1-ROB-001) — matching
     /// [`DataWords::from_iter_capped`]. (In-crate callers already pre-cap, so
     /// the truncation is defensive.)
+    #[must_use]
     pub fn from_slice(slice: &[u16]) -> Self {
         let n = slice.len().min(MAX_DATA_WORDS);
         let mut buf = [0u16; MAX_DATA_WORDS];
@@ -507,16 +529,19 @@ impl DataWords {
     }
 
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len as usize
     }
 
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     #[inline]
+    #[must_use]
     pub fn as_slice(&self) -> &[u16] {
         &self.buf[..self.len as usize]
     }
@@ -564,7 +589,7 @@ pub struct MieMessage {
     ///
     /// `Some(0.0)` on first occurrence of an RT/MSG key with a calibrated
     /// timestamp. `Some(s)` for a non-negative gap. `None` when no DELTA
-    /// is meaningful: SPURIOUS_DATA (no RT/MSG key), uncalibrated Standard
+    /// is meaningful: `SPURIOUS_DATA` (no RT/MSG key), uncalibrated Standard
     /// timestamps (no known tick rate), and non-monotonic timestamps.
     pub delta: Option<f64>,
     pub file_offset: u64,
@@ -576,19 +601,23 @@ pub struct MieMessage {
 }
 
 impl MieMessage {
+    #[must_use]
     pub fn rt(&self) -> Option<u8> {
         self.command_word.map(|c| c.rt)
     }
 
+    #[must_use]
     pub fn subaddress(&self) -> Option<u8> {
         self.command_word.map(|c| c.subaddress)
     }
 
+    #[must_use]
     pub fn bus(&self) -> Bus {
         self.type_word.bus
     }
 
-    /// Message label in `<SA><T|R>` format, or empty for SPURIOUS_DATA.
+    /// Message label in `<SA><T|R>` format, or empty for `SPURIOUS_DATA`.
+    #[must_use]
     pub fn msg_label(&self) -> String {
         match self.command_word {
             None => String::new(),
@@ -602,7 +631,8 @@ impl MieMessage {
         }
     }
 
-    /// Unique key for per-RT/MSG delta tracking. Empty for SPURIOUS_DATA.
+    /// Unique key for per-RT/MSG delta tracking. Empty for `SPURIOUS_DATA`.
+    #[must_use]
     pub fn delta_key(&self) -> String {
         match self.command_word {
             None => String::new(),
@@ -616,15 +646,18 @@ impl MieMessage {
         }
     }
 
+    #[must_use]
     pub fn is_error(&self) -> bool {
         self.type_word.error
     }
 
+    #[must_use]
     pub fn is_spurious(&self) -> bool {
         self.message_format == MessageFormat::SpuriousData
     }
 
     /// CSV-column error label: `""`, `"ERROR"`, or `"SPURIOUS"`.
+    #[must_use]
     pub fn error_label(&self) -> &'static str {
         if self.type_word.error {
             "ERROR"

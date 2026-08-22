@@ -1052,7 +1052,7 @@ fn read_manifest_skips_blanks_and_comments() {
 }
 
 /// L1-ROB-001 for the merge input-resolution surface: a manifest of arbitrary
-/// bytes, an arbitrary glob pattern, and arbitrary glob_match inputs must
+/// bytes, an arbitrary glob pattern, and arbitrary `glob_match` inputs must
 /// never panic — only return Ok/Err (or a bool). Deterministic PRNG.
 /// Requirements: L1-ROB-001, L2-MRG-001
 #[test]
@@ -1508,7 +1508,7 @@ fn merge_collapse_no_over_collapse_after_backward_step() {
 
 // ── L1-OUT-003 / L2-WRT-021 / L2-WRT-022: canonical row order ──────────────
 
-/// A receive (Type Word 0x02 = BC_TO_RT) record for `rt`/`sa` at a chosen
+/// A receive (Type Word 0x02 = `BC_TO_RT`) record for `rt`/`sa` at a chosen
 /// microsecond within a fixed day/hour/minute/second, built by patching the
 /// canonical fixture's timestamp triple and Command Word. The data-word count
 /// stays at the fixture's 30 so the record layout is untouched.
@@ -1522,7 +1522,7 @@ fn rcv_record_at(rt: u8, sa: u8, micro: u32) -> Vec<u8> {
     rec
 }
 
-/// A transmit (Type Word 0x04 = RT_TO_BC) record for `rt`/`sa` at `micro`.
+/// A transmit (Type Word 0x04 = `RT_TO_BC`) record for `rt`/`sa` at `micro`.
 /// Type 0x04 requires `Direction::Transmit`.
 fn xmt_record_at(rt: u8, sa: u8, micro: u32) -> Vec<u8> {
     let mut rec = record_rt15_sa22_xmt();
