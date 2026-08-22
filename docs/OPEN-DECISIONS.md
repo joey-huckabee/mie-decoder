@@ -52,9 +52,12 @@ raised once the number is known rather than chosen in advance.
 
 ---
 
-## 3. SonarCloud does not analyse the C++ tree
+## 3. SonarCloud does not analyse the C++ tree — RESOLVED
 
-**Status:** the blocker is gone; only the work remains.
+**Status:** done. C++ is analysed by SonarCloud and by CodeQL. Kept here rather
+than deleted because the reasoning below -- particularly the correction -- is
+what made the decision, and the "measure before making it blocking" caveat is
+still live.
 
 **Correction.** The previous version of this entry said `main` "ships red on
 SonarCloud ... roadmapped rather than suppressed". That was true when it was
@@ -72,10 +75,22 @@ reported none of the Rust ones is understood and documented: clippy's `pedantic`
 and `nursery` groups are allow-by-default, so `-D warnings` never sees them
 while Sonar's rules do. See `CONTRIBUTING.md` step 11.
 
-**What is actually open.** `sonar.sources` is `rust/src,python/src`. The C++ tree
-is not analysed at all. That was deferred by the delivery plan on the grounds
-that "adding a language to a red gate obscures both problems" — a premise that
-no longer holds.
+**What was open, and what was done.** `sonar.sources` was `rust/src,python/src`;
+the C++ tree was not analysed at all. That was deferred by the delivery plan on
+the grounds that "adding a language to a red gate obscures both problems" — a
+premise that stopped holding once the gate went green.
+
+Both analysers now cover it:
+
+* **SonarCloud** — `cpp/src` and `cpp/include` are sources, `cpp/tests` are
+  tests, and the CFamily analyser reads the **compilation database** that `bear`
+  writes, rather than using the build-wrapper. The database is what clang-tidy
+  already consumes, so Sonar sees the flags the real build uses instead of a
+  second description that could drift from `sources.txt`. Vendored Catch2 and
+  the per-toolchain `build/` trees are excluded.
+* **CodeQL** — `c-cpp` joins `rust` and `python`, with `build-mode: manual` and
+  an explicit `make -C cpp all`. Not `autobuild`: this tree has a specific build
+  and guessing at it is how an extractor silently analyses less than you think.
 
 **Needs deciding:** whether it is worth adding. C/C++ analysis needs SonarCloud's
 build-wrapper around a real compile, which is a meaningful addition to CI. The
@@ -84,11 +99,13 @@ GCC 4.8.5 full-suite tier, so the marginal defect-finding value is genuinely
 lower here than it was for Python — the question is whether Sonar's taint and
 security rules add something those do not.
 
-**Recommendation:** add it, and measure before making it blocking. The rules that
-found something in Python were the security/taint ones, which no other gate in
-this repository runs; that is the gap worth closing. If it surfaces a large pile
-of style findings instead, that is an argument for scoping it to the security
-rules rather than for skipping it.
+**Recommendation, as taken:** added. The remaining half of that recommendation
+is **still open** — *measure before making it blocking*. The C++ tree joins an
+existing `sonar.qualitygate.wait=true` job, so if the first analysis surfaces a
+large pile of style findings the answer is to scope C++ to the security rules,
+not to unpick the integration. The rules worth having are the security and taint
+ones, which no other gate in this repository runs; clang-tidy 20, cppcheck, ASan,
+UBSan, LSan and Valgrind already cover the rest.
 
 ---
 
