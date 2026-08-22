@@ -8,6 +8,7 @@
 // divergence shows up here rather than in a conformance diff.
 
 #include "mie/decode.hpp"
+#include "record_fixtures.hpp"
 
 #include <catch2/catch.hpp>
 
@@ -18,17 +19,7 @@ namespace {
 
 namespace dec = mie::decode;
 
-/// Build a little-endian byte buffer from 16-bit words, the way an MIE file
-/// stores them.
-std::vector<uint8_t> le_bytes(const uint16_t* words, std::size_t count) {
-    std::vector<uint8_t> out;
-    out.reserve(count * 2);
-    for (std::size_t i = 0; i < count; ++i) {
-        out.push_back(static_cast<uint8_t>(words[i] & 0xFF));
-        out.push_back(static_cast<uint8_t>((words[i] >> 8) & 0xFF));
-    }
-    return out;
-}
+using mie_test::le_bytes;
 
 }  // namespace
 
@@ -523,19 +514,22 @@ namespace {
 /// then `data_words` data words. Word count is set so the IRIG scorer's
 /// plausibility test matches.
 std::vector<uint8_t> irig_record(uint8_t data_words) {
-    const uint16_t word_count = static_cast<uint16_t>(1 + 3 + 1 + 1 + data_words);
+    // Built from the shared wire-format helpers rather than by hand. The
+    // hand-rolled version packed the same fields at the same offsets -- and
+    // packed the Type Word WITHOUT masking, so an out-of-range argument would
+    // have spilled into the bus and error bits rather than being caught.
+    const uint16_t word_count = static_cast<uint16_t>(6 + data_words);
     std::vector<uint16_t> words;
-    words.push_back(static_cast<uint16_t>((word_count << 8) | mie::MESSAGE_TYPE_BC_TO_RT));
-    words.push_back(static_cast<uint16_t>((10 << 5) | 15));          // day 10, hour 15
-    words.push_back(static_cast<uint16_t>((54 << 10) | (50 << 4)));  // minute 54, second 50
-    words.push_back(0x0000);                                         // microsecond low
-    // Receive command, subaddress 11, matching data word count.
-    words.push_back(static_cast<uint16_t>((5 << 11) | (11 << 5) | (data_words & 0x1F)));
-    words.push_back(static_cast<uint16_t>(5 << 11));  // status, RT 5
+    words.push_back(mie_test::type_word(mie::MESSAGE_TYPE_BC_TO_RT, word_count));
+    // push_irig's defaults are day 10, hour 15, minute 54, second 50 -- exactly
+    // the time this fixture used to spell out.
+    mie_test::push_irig(words);
+    words.push_back(mie_test::command_word(5, mie::DIRECTION_RECEIVE, 11, data_words));
+    words.push_back(mie_test::status_word(5));
     for (uint8_t i = 0; i < data_words; ++i) {
         words.push_back(static_cast<uint16_t>(0x1000 + i));
     }
-    return le_bytes(&words[0], words.size());
+    return le_bytes(words);
 }
 
 }  // namespace

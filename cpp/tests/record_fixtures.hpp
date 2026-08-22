@@ -12,9 +12,12 @@
 // `docs/MIE-FORMAT.md` is the normative description; this is that description
 // expressed as code, and nothing here may drift from it.
 //
-// Not every suite has been migrated yet -- `test_reader.cpp`, `test_sync.cpp`
-// and `test_decode.cpp` still carry their own copies, along with the
-// specialised builders their cases need.
+// Every suite that builds records on the wire uses these. What stays local to a
+// suite is a fixture with ONE caller -- `test_reader.cpp`'s RT-to-RT,
+// SPURIOUS_DATA and errored-record builders, `test_sync.cpp`'s malformed-record
+// helpers. A fixture with one caller is not shared code, it is that suite's own
+// setup, and hoisting it here would make this header a junk drawer rather than
+// a statement of the format.
 
 #ifndef MIE_TESTS_RECORD_FIXTURES_HPP
 #define MIE_TESTS_RECORD_FIXTURES_HPP
@@ -29,14 +32,23 @@
 namespace mie_test {
 
 /// Words to little-endian bytes, which is how the card writes them.
-inline std::vector<uint8_t> le_bytes(const std::vector<uint16_t>& words) {
+///
+/// Two shapes because callers have two: some build a vector, some hold a raw
+/// array. The packing itself exists once -- it is the byte order that is the
+/// format contract, and having it written twice is how two suites end up
+/// disagreeing about it.
+inline std::vector<uint8_t> le_bytes(const uint16_t* words, std::size_t count) {
     std::vector<uint8_t> out;
-    out.reserve(words.size() * 2);
-    for (std::size_t i = 0; i < words.size(); ++i) {
+    out.reserve(count * 2);
+    for (std::size_t i = 0; i < count; ++i) {
         out.push_back(static_cast<uint8_t>(words[i] & 0xFF));
         out.push_back(static_cast<uint8_t>((words[i] >> 8) & 0xFF));
     }
     return out;
+}
+
+inline std::vector<uint8_t> le_bytes(const std::vector<uint16_t>& words) {
+    return words.empty() ? std::vector<uint8_t>() : le_bytes(&words[0], words.size());
 }
 
 /// Type Word: type in bits 0-6, bus in 7, word count in 8-13, error in 14.
