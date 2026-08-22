@@ -52,22 +52,43 @@ raised once the number is known rather than chosen in advance.
 
 ---
 
-## 3. SonarCloud: `main` is red, and C++ analysis is still deferred
+## 3. SonarCloud does not analyse the C++ tree
 
-**Status:** pre-existing; deferred deliberately.
+**Status:** the blocker is gone; only the work remains.
 
-`main` ships red on SonarCloud (S2083 / S8707 on `reader.py`'s `open()`), which
-is roadmapped rather than suppressed. C++ analysis (build-wrapper based) was
-deferred by the delivery plan on the grounds that adding a language to a red
-gate obscures both problems.
+**Correction.** The previous version of this entry said `main` "ships red on
+SonarCloud ... roadmapped rather than suppressed". That was true when it was
+first written, and had stopped being true before this file existed. The two
+`reader.py` findings (`pythonsecurity:S2083`, `pythonsecurity:S8707`) are
+**suppressed** — per-rule and per-file, in `.github/workflows/sonarcloud.yml`,
+with the taint flow and reasoning written out beside the exclusion — and `main`
+is green. `docs/ROADMAP.md` has carried the resolution the whole time. The claim
+was repeated from a stale note rather than checked against the workflow file or
+the run history.
 
-**Needs deciding:** whether to resolve the Python findings first and then add
-C++, or add C++ analysis now and accept two red sources at once.
+**Also settled since.** The six issues SonarCloud had open — four `rust:S1612`,
+one `rust:S3776`, one `python:S9073` — are fixed, and the reason `cargo clippy`
+reported none of the Rust ones is understood and documented: clippy's `pedantic`
+and `nursery` groups are allow-by-default, so `-D warnings` never sees them
+while Sonar's rules do. See `CONTRIBUTING.md` step 11.
 
-**Recommendation:** resolve the Python findings first. The reason for deferring
-has not changed, and the C++ tree already carries clang-tidy, cppcheck, ASan,
-UBSan, LSan and Valgrind — so the marginal analysis value of adding Sonar now is
-lower than the cost of a gate nobody can read.
+**What is actually open.** `sonar.sources` is `rust/src,python/src`. The C++ tree
+is not analysed at all. That was deferred by the delivery plan on the grounds
+that "adding a language to a red gate obscures both problems" — a premise that
+no longer holds.
+
+**Needs deciding:** whether it is worth adding. C/C++ analysis needs SonarCloud's
+build-wrapper around a real compile, which is a meaningful addition to CI. The
+tree already carries clang-tidy 20, cppcheck, ASan, UBSan, LSan, Valgrind and a
+GCC 4.8.5 full-suite tier, so the marginal defect-finding value is genuinely
+lower here than it was for Python — the question is whether Sonar's taint and
+security rules add something those do not.
+
+**Recommendation:** add it, and measure before making it blocking. The rules that
+found something in Python were the security/taint ones, which no other gate in
+this repository runs; that is the gap worth closing. If it surfaces a large pile
+of style findings instead, that is an argument for scoping it to the security
+rules rather than for skipping it.
 
 ---
 

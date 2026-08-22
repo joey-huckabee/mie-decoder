@@ -17,6 +17,37 @@ full release workflow.
 
 ### Changed
 
+- **The six open SonarCloud findings are fixed, and the reason the Rust ones
+  were invisible to `cargo clippy` is now closed.** Four `rust:S1612`
+  (redundant closure where a method reference would do, in `filter.rs`,
+  `reader.rs` and twice in `writer.rs`), one `rust:S3776`
+  (`FilterConfig::should_exclude`, cognitive complexity 17 against a limit of
+  15), and one `python:S9073` (a composite assertion in
+  `test_conformance_wiring.py`).
+
+  **Why clippy reported none of them.** `cargo clippy -- -D warnings` denies
+  only lints that actually *fire*, and clippy's `pedantic` and `nursery` groups
+  are allow-by-default — so the gate never saw them. SonarCloud's Rust rules map
+  onto clippy's including those tiers. Enabling `pedantic` + `nursery` in this
+  crate surfaces 413 warnings the gate reports none of.
+
+  `redundant_closure_for_method_calls` is now denied by name in
+  `[lints.clippy]`, so `S1612` cannot recur silently. `should_exclude` split
+  into its two genuinely different rules — an *exclude* set drops a record that
+  IS listed, an *include* set drops one that is not — which is the boundary its
+  own comments already marked, with the four filter fields read off the message
+  once instead of twice.
+
+  **`cognitive_complexity` was deliberately NOT enabled.** Matching clippy's
+  threshold to Sonar's 15 looked obvious and does not work: it flags
+  `should_exclude` *and* two functions Sonar does not report at all
+  (`parse_decode` at 23, `with_overrides` at 18). The two tools compute the
+  metric differently, so a matching number buys a stricter local rule rather
+  than a predictive one — and `parse_decode` scores high because it is a flat
+  dispatch chain over two dozen flags, which is a lookup table written as
+  control flow. The reasoning is recorded beside the lint list rather than
+  rediscovered.
+
 - **`-o -` now means the same thing in all three implementations: a file called
   `-`.** It did not. Rust and Python treated the value as an ordinary path; the
   C++ build, from its CLI port, treated `-` as stdout and said so in its help.

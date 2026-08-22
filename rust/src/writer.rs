@@ -154,7 +154,7 @@ impl AtomicCsvFile {
         let mut name = self
             .final_path
             .file_name()
-            .map(|n| n.to_os_string())
+            .map(std::ffi::OsStr::to_os_string)
             .unwrap_or_default();
         name.push(".partial");
         let partial = match self.final_path.parent() {
@@ -264,7 +264,7 @@ fn make_temp_path(final_path: &Path) -> PathBuf {
         .unwrap_or(0);
     let mut name = final_path
         .file_name()
-        .map(|n| n.to_os_string())
+        .map(std::ffi::OsStr::to_os_string)
         .unwrap_or_default();
     name.push(format!(
         ".mie-decoder.tmp.{}.{counter}.{nanos}",
