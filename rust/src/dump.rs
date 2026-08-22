@@ -98,6 +98,13 @@ fn write_hex_line<W: Write>(
 /// Inputs are user-supplied (`--offset`, `--length`); both default to
 /// `usize::MAX`-tolerant arithmetic. A start beyond EOF or a length
 /// that would overflow simply yields an empty dump rather than panicking.
+/// # Errors
+///
+/// Returns [`MieError::FileNotFound`] or [`MieError::FileEmpty`] for an
+/// unusable input, [`MieError::FileIo`] for a read failure, and
+/// [`MieError::WriterError`] if the report cannot be written. A closed
+/// downstream pipe surfaces as the latter with its kind preserved, so the CLI
+/// can treat `dump | head` as the success it is (L2-WRT-018).
 pub fn hex_dump_raw(
     path: &Path,
     start_offset: usize,
@@ -156,6 +163,10 @@ fn write_hex_dump_raw<W: Write>(
 
 /// Print a record-aware hex dump. Each record is preceded by a one-line
 /// header summarising decoded Type Word, timestamp, and Command Word.
+/// # Errors
+///
+/// Same set as [`hex_dump_raw`]. A malformed record is **not** an error: the
+/// scan writes an inline `!! …` note, logs it (L2-CLI-013), and stops.
 pub fn hex_dump_records(
     path: &Path,
     max_records: Option<u64>,
@@ -389,12 +400,18 @@ fn write_record_hex_payload<W: Write>(
 }
 
 /// Convenience wrapper that writes to stdout (buffered).
+/// # Errors
+///
+/// As [`hex_dump_raw`]; the destination is this process's stdout.
 pub fn hex_dump_raw_to_stdout(path: &Path, offset: usize, length: Option<usize>) -> MieResult<()> {
     let stdout = std::io::stdout();
     let buf = BufWriter::new(stdout.lock());
     hex_dump_raw(path, offset, length, buf)
 }
 
+/// # Errors
+///
+/// As [`hex_dump_records`]; the destination is this process's stdout.
 pub fn hex_dump_records_to_stdout(
     path: &Path,
     max_records: Option<u64>,

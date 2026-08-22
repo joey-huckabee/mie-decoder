@@ -113,6 +113,14 @@ pub fn validate_record(
 /// *data* word and validate as a bogus "last record"); `recover_sync` calls
 /// the strict form via the private `validate_record_detailed_impl` with
 /// `honor_terminator = false`.
+///
+/// # Errors
+///
+/// Returns the [`ValidationFailure`] that rejected the candidate — an
+/// unreadable Type Word, an unknown message type, an out-of-range word count, a
+/// record whose extent runs past `file_len`, an implausible timestamp, or a
+/// look-ahead follower that itself fails. The variant is what lets the reader
+/// narrate *why* sync was lost rather than only that it was.
 pub fn validate_record_detailed(
     data: &[u8],
     offset: usize,

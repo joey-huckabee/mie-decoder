@@ -172,6 +172,10 @@ pub fn mux_from_filename(file_name: &str, delimiter: &str, field: i64) -> Option
 
 // ── Format classification ─────────────────────────────────────────────
 
+/// # Errors
+///
+/// Returns [`MieError::UnknownTypeWord`] for a type code outside the known set.
+/// The caller supplies the offset, which this function does not know.
 pub fn classify_message_format(
     message_type: u8,
     command_word: &CommandWord,
@@ -281,6 +285,12 @@ fn min_payload_words(fmt: MessageFormat, cmd: &CommandWord) -> u16 {
 /// the payload), and the AnomalyWarn-class Status-RT-vs-Cmd-RT
 /// (L2-SYN-024) and Type-Word reserved-bit (L2-SYN-025) checks in
 /// [`detect_record_anomalies`].
+///
+/// # Errors
+///
+/// Returns [`InvariantViolation`] naming which invariant failed: per-type
+/// Command Word direction (L2-SYN-020 / L2-SYN-021), or a declared data-word
+/// count the record's own extent cannot hold (L2-SYN-022).
 pub fn validate_structural_invariants(
     tw: &TypeWord,
     cmd: &CommandWord,
@@ -340,6 +350,13 @@ pub fn validate_structural_invariants(
 ///   invariant (L2-SYN-022) only sees Cmd1, so a Cmd2 that disagrees —
 ///   including the over-claim the record-bounded reads of L2-DEC-009
 ///   defend against — is caught here.
+///
+/// # Errors
+///
+/// Returns [`InvariantViolation`] when an RT-to-RT record's Cmd2 has the wrong
+/// direction (L2-SYN-023), or when Cmd1 and Cmd2 disagree on `data_word_count`
+/// (L2-SYN-027). Both need the payload, which is why they are not in
+/// [`validate_structural_invariants`].
 pub fn validate_post_extract_invariants(
     msg_fmt: MessageFormat,
     cmd: &CommandWord,

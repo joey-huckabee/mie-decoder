@@ -42,6 +42,12 @@ pub const MAX_MERGE_FILES: usize = 256;
 /// Read a manifest file into a list of paths: one path per line, in order.
 /// Blank lines and lines whose first non-whitespace character is `#` are
 /// ignored; surrounding whitespace is trimmed (L2-MRG-001).
+///
+/// # Errors
+///
+/// Returns the [`io::Error`] from reading the manifest. A manifest containing
+/// no usable lines is **not** an error here — it yields an empty list, and the
+/// CLI decides what to say about it.
 pub fn read_manifest(path: &Path) -> io::Result<Vec<PathBuf>> {
     let text = fs::read_to_string(path)?;
     let mut out = Vec::new();
@@ -93,6 +99,12 @@ pub fn glob_match(pattern: &str, name: &str) -> bool {
 /// no recursive `**`, no brace expansion. Returns matching regular files
 /// sorted lexicographically by path (deterministic across implementations,
 /// L2-MRG-001).
+///
+/// # Errors
+///
+/// Returns the [`io::Error`] from enumerating the directory. A pattern matching
+/// nothing is **not** an error — it yields an empty list, which is what lets the
+/// CLI report "matched no files" distinctly from "could not read the directory".
 pub fn expand_glob(pattern: &str) -> io::Result<Vec<PathBuf>> {
     let p = Path::new(pattern);
     let name_pat = p
@@ -314,6 +326,14 @@ impl<'a> MergedRecordIter<'a> {
     /// is rejected here (L2-MRG-003). With `allow_partial`, a file that fails
     /// to produce a first record is skipped with a WARN instead of failing the
     /// batch (L2-MRG-004).
+    /// # Errors
+    ///
+    /// Returns [`MieError::IncompatibleMergeInputs`] for an input that cannot
+    /// anchor an absolute timeline — one resolving to the Standard format, or
+    /// leading with a freerun IRIG record (L2-MRG-003). Without
+    /// `allow_partial`, a file that fails to yield a first record propagates
+    /// that failure; with it, the file is dropped from the merge with a WARN
+    /// and the run commits what it decoded (L2-MRG-004).
     pub fn new(
         readers: &'a [MieFileReader],
         tick: Option<f64>,

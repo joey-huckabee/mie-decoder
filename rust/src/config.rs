@@ -271,6 +271,12 @@ impl std::fmt::Display for ConfigError {
 }
 impl std::error::Error for ConfigError {}
 
+/// # Errors
+///
+/// Returns [`ConfigError`] when the path does not exist, names something that
+/// is not a regular file (a directory, FIFO or character device — `--config
+/// /dev/zero` would otherwise read forever), cannot be read, or holds TOML this
+/// loader rejects. `None` is not an error: it yields the defaults.
 pub fn load_config(path: Option<&Path>) -> Result<DecoderConfig, ConfigError> {
     let Some(path) = path else {
         return Ok(DecoderConfig::default());
@@ -299,6 +305,13 @@ pub fn load_config(path: Option<&Path>) -> Result<DecoderConfig, ConfigError> {
     parse_into_config(&text)
 }
 
+/// # Errors
+///
+/// Returns [`ConfigError`] for TOML this parser rejects (see [`parse_toml`]), a
+/// section used as a scalar, or any key whose value fails its schema check —
+/// wrong type, or a number outside the range `L2-CFG-010` pins for it. Every
+/// value is validated at load time, so a bad key fails here rather than at the
+/// point of use.
 pub fn parse_into_config(text: &str) -> Result<DecoderConfig, ConfigError> {
     let toml = parse_toml(text).map_err(ConfigError)?;
     reject_section_used_as_scalar(&toml)?;
@@ -590,6 +603,10 @@ fn parse_error_mode(s: &str) -> Result<ErrorMode, ConfigError> {
     }
 }
 
+/// # Errors
+///
+/// Returns [`ConfigError`] if the value is neither a string nor an integer, if
+/// an integer is outside `u8`, or if a string names no known message type.
 pub fn parse_type_value(v: &TomlValue) -> Result<u8, ConfigError> {
     match v {
         TomlValue::String(s) => parse_type_name(s),
@@ -603,6 +620,11 @@ pub fn parse_type_value(v: &TomlValue) -> Result<u8, ConfigError> {
 }
 
 /// Parse a message-type identifier: name (e.g. "`BC_TO_RT`") or hex (e.g. "0x02").
+///
+/// # Errors
+///
+/// Returns [`ConfigError`] if the name matches no known message type and is not
+/// a valid `0x`-prefixed hex byte.
 pub fn parse_type_name(s: &str) -> Result<u8, ConfigError> {
     let upper = s.trim().to_uppercase();
     let by_name: &[(&str, u8)] = &[
@@ -630,6 +652,10 @@ pub fn parse_type_name(s: &str) -> Result<u8, ConfigError> {
     )))
 }
 
+/// # Errors
+///
+/// Returns [`ConfigError`] if the value is not a string, or names a bus other
+/// than `A` or `B`.
 pub fn parse_bus_value(v: &TomlValue) -> Result<Bus, ConfigError> {
     if let TomlValue::String(s) = v {
         parse_bus_name(s)
@@ -638,6 +664,9 @@ pub fn parse_bus_value(v: &TomlValue) -> Result<Bus, ConfigError> {
     }
 }
 
+/// # Errors
+///
+/// Returns [`ConfigError`] for anything other than `A` or `B`, case-insensitive.
 pub fn parse_bus_name(s: &str) -> Result<Bus, ConfigError> {
     match s.trim().to_ascii_uppercase().as_str() {
         "A" => Ok(Bus::A),
@@ -692,6 +721,10 @@ impl TomlDoc {
             .find(|(s, k, _)| s == section && k == key)
             .map(|(_, _, v)| v)
     }
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if the key is present but is not a string. A
+    /// missing key is `Ok(None)`, not an error.
     pub fn get_string(&self, section: &str, key: &str) -> Result<Option<&str>, ConfigError> {
         match self.get(section, key) {
             None => Ok(None),
@@ -699,6 +732,10 @@ impl TomlDoc {
             Some(_) => Err(ConfigError(format!("[{section}] {key} must be a string"))),
         }
     }
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if the key is present but is not a boolean. A
+    /// missing key is `Ok(None)`, not an error.
     pub fn get_bool(&self, section: &str, key: &str) -> Result<Option<bool>, ConfigError> {
         match self.get(section, key) {
             None => Ok(None),
@@ -706,6 +743,10 @@ impl TomlDoc {
             Some(_) => Err(ConfigError(format!("[{section}] {key} must be a boolean"))),
         }
     }
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if the key is present but is not an array. A
+    /// missing key is `Ok(None)`, not an error.
     pub fn get_array(&self, section: &str, key: &str) -> Result<Option<&[TomlValue]>, ConfigError> {
         match self.get(section, key) {
             None => Ok(None),
@@ -713,6 +754,10 @@ impl TomlDoc {
             Some(_) => Err(ConfigError(format!("[{section}] {key} must be an array"))),
         }
     }
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if the key is present but is not an integer. A
+    /// missing key is `Ok(None)`, not an error.
     pub fn get_int(&self, section: &str, key: &str) -> Result<Option<i64>, ConfigError> {
         match self.get(section, key) {
             None => Ok(None),
@@ -722,6 +767,10 @@ impl TomlDoc {
     }
     /// Read a float value. Accepts a TOML integer as well so operators can
     /// write either `1000000` or `1000000.0` for a rate-style key.
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if the key is present but is neither a float
+    /// nor an integer. A missing key is `Ok(None)`, not an error.
     pub fn get_float(&self, section: &str, key: &str) -> Result<Option<f64>, ConfigError> {
         match self.get(section, key) {
             None => Ok(None),
@@ -839,6 +888,14 @@ fn duplicate_key_error(section: &str, key: &str, lineno: usize) -> String {
     format!("line {lineno}: duplicate key '{key}'{where_}")
 }
 
+/// # Errors
+///
+/// Returns the diagnostic, with its line number, for anything outside this
+/// loader's deliberately flat subset of TOML: a malformed section header or
+/// key/value line, a duplicate key, a re-opened section, a dotted key or
+/// section header, an array-of-tables header, or an unterminated string or
+/// array. The subset is held identical to the Python and C++ loaders by
+/// `tests/conformance/config_parity.py`.
 pub fn parse_toml(text: &str) -> Result<TomlDoc, String> {
     let mut doc = TomlDoc::default();
     let mut section = String::new();
