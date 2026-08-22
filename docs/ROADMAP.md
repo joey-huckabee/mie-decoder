@@ -29,50 +29,6 @@ checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 | 3.0 | Data word decoders, additional per-message-type CSVs. |
 | 4.0 | Apache Parquet output. |
 
-## `dump` report characters diverge between Rust and Python (open decision)
-
-> Summarised with the other pending calls in [`OPEN-DECISIONS.md`](OPEN-DECISIONS.md);
-> the mechanics of re-adding the gate are below.
-
-The three implementations' `dump` reports are **not** byte-identical, and
-nothing gates them. Found while adding a `dump` mode to the conformance runner
-during the C++ port; the mode was backed out again because there is no agreed
-oracle to compare against until this is settled.
-
-| Element | Rust and C++ | Python |
-|---------|--------------|--------|
-| Section rule | `-` × 72 | `─` (U+2500) × 72 |
-| Annotation arrow | `->` | `→` (U+2192) |
-| Type label | `BC->RT (Receive)` | `BC→RT (Receive)` |
-
-`rust/src/dump.rs`'s own header comment claims it "mirrors the Python `dump.py`
-output format closely enough for diffing", which is currently false on every one
-of those lines — so this is drift rather than an intended difference, and one of
-the two has to move.
-
-**Recommendation: align Python to ASCII.** `dump` is the tool of last resort,
-reached for on consoles that may not be UTF-8 — the SLES 12 SP5 default console
-and Windows `cmd` at a legacy codepage both qualify, and the C++ tree is held
-locale-free by rule precisely because environment-dependent rendering is a real
-hazard here. Two of the three already emit ASCII. The counter-argument is that
-the box-drawing rule is easier to read where it renders, and that changing
-Python alters a shipped implementation's output.
-
-This is a user-visible output change to a shipped tool either way, so it wants a
-decision rather than a default. Once settled:
-
-1. Change whichever side moves.
-2. Re-add `"dump"` to `ALLOWED_MODES` in `tests/conformance/run.py` and route it
-   through the existing stdout-comparison path (the same one `count` uses — the
-   change is about five lines).
-3. Add dump cases to `manifest.json` covering the record view, `--raw`,
-   `--records`, a windowed range, an errored record, both reachable scan-stop
-   anomalies, and an offset past EOF; generate the oracles with
-   `--update-expected`, which will not write unless all three agree.
-
-Until then the C++ report is pinned against Rust only, by the assertions in
-`cpp/tests/test_dump.cpp`.
-
 ## Merge follow-ups
 
 The multi-file time-sorted merge has shipped (see `CHANGELOG.md`); the items

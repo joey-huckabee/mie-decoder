@@ -1,0 +1,6 @@
+File: dump-invalid-word-count-in0.mie (218 bytes)
+Record dump starting at offset 0x00000000
+
+  !! Invalid word_count=0 at 0x00000000, stopping
+------------------------------------------------------------------------
+0 records dumped.

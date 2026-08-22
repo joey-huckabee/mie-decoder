@@ -13,41 +13,33 @@ the changelog).
 
 ---
 
-## 1. `dump` report characters diverge between Rust and Python
+## 1. `-o -` means three different things
 
-**Status:** blocking a conformance gate on `dump` output.
+**Status:** a divergence with no gate; found while closing the `dump` character
+question.
 
-The three implementations' `dump` reports are not byte-identical, and nothing
-gates them. Found while adding a `dump` mode to the conformance runner during
-the C++ port.
-
-| Element | Rust and C++ | Python |
+| | `decode … -o -` | `decode …` (no `-o`) |
 |---|---|---|
-| Section rule | `-` × 72 | `─` (U+2500) × 72 |
-| Annotation arrow | `->` | `→` (U+2192) |
-| Type label | `BC->RT (Receive)` | `BC→RT (Receive)` |
+| Rust | creates a **file named `-`** | stdout |
+| Python | creates a **file named `-`** | stdout |
+| C++ | **stdout** | stdout |
 
-`rust/src/dump.rs`'s own header comment claims it "mirrors the Python `dump.py`
-output format closely enough for diffing", which is false on every one of those
-lines — so this is drift, not an intended difference, and one side has to move.
+The C++ behaviour is mine, from the CLI port: its `--help` says
+`'-' writes to stdout`, and it does. Rust and Python take `-` as an ordinary
+filename. The surface-parity gate compares flag *names*, not semantics, so
+nothing caught it.
 
-**Recommendation: align Python to ASCII.** `dump` is the tool of last resort,
-reached for on consoles that may not be UTF-8 — the SLES 12 SP5 default console
-and Windows `cmd` at a legacy codepage both qualify. The C++ tree is held
-locale-free by rule (`scripts/assert-locale-free.sh`) precisely because
-environment-dependent rendering is a real hazard in this program. Two of three
-already emit ASCII.
+Both readings are defensible. `-` for stdout is a strong Unix convention, and
+`-o -` is more explicit than omitting the flag. Against it: all three already
+write to stdout when `-o` is omitted, so `-` adds nothing but a special case —
+and a special case that silently changes the meaning of a path is exactly the
+kind of thing that surprises someone whose file really is called `-`.
 
-**Against:** the box-drawing rule reads better where it renders, and changing
-Python alters a shipped implementation's visible output.
-
-**Once decided:** change whichever side moves; re-add `"dump"` to
-`ALLOWED_MODES` in `tests/conformance/run.py` and route it through the existing
-stdout-comparison path (about five lines — `count` already uses it); add dump
-cases to `manifest.json` and generate oracles with `--update-expected`, which
-refuses to write unless all three agree. Full detail in `ROADMAP.md`.
-
----
+**Recommendation: drop it from C++**, matching the shipped behaviour of the
+other two. Adding it to all three would be adding a special case for a
+capability that already exists; removing it from one restores parity and loses
+nothing. Either way it should be decided rather than left as an accident of
+which implementation was written last.
 
 ## 2. Should a merge be allowed to overwrite a *non-input* file without `--no-clobber`?
 

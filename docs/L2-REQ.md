@@ -900,6 +900,13 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 **Note on the overflow anomaly**: it is unreachable through a real scan, in both implementations, and the wording above is scoped accordingly. Python integers do not overflow at all. In Rust the scan loop only advances while `offset + MIN_RECORD_BYTES <= file_len`, and `file_len` is a mapped file length, so `offset` stays far below `usize::MAX` while a record's declared extent is capped at 126 bytes (`word_count` is the Type Word's 6-bit field, `(raw >> 8) & 0x3F`, so at most 63 words) — the sum cannot wrap. The guard remains as defense in depth for the contract of `dump_record_extent`, which accepts an arbitrary `offset`, and is verified by calling that helper directly (`dump_record_extent_notes_offset_overflow`). It SHALL NOT be credited to the truncated-record tests, which never reach it.
 **Verification Method**: Test (T), Inspection (I)
 
+#### L2-CLI-014
+
+**Parent**: L1-CLI-001
+**Statement**: The `dump` report SHALL be **byte-identical across every implementation** for the same input and flags. It SHALL contain only ASCII characters and SHALL use LF line endings on every supported platform, including when written to stdout. Any stdout **payload** — the `dump` report, the `count` integer, and CSV written to stdout — is subject to this; human-facing prose on stderr (log messages, help text) is not, and may use non-ASCII punctuation.
+**Rationale**: The report is data, not decoration: it is piped, redirected, and diffed against another implementation's. Three properties were each violated before this was written down. The Python report used box-drawing (`─`), arrow (`→`) and en-dash (`–`) characters where Rust and C++ used `-`, `->` and `-`, so 11 of 34 lines differed on a typical fixture. Those characters could not be encoded on a redirected Windows stdout at the cp1252 code page — they raised `UnicodeEncodeError` and aborted the dump — which had been worked around by forcing the stream to UTF-8 rather than by removing the cause. And that workaround reconfigured the encoding only, leaving text-mode newline translation in place, so **every stdout payload from the Python CLI emitted CRLF on Windows**, including CSV written with `-o -`, in violation of L2-WRT-012. ASCII removes the encoding hazard at its source and needs no console-codepage manipulation — which matters most for the C++ implementation, whose platform layer is deliberately confined and which is targeted at a console (SLES 12 SP5) where a UTF-8 assumption is least safe.
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-MRG: Multi-file time-sorted merge

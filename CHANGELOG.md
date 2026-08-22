@@ -17,6 +17,44 @@ full release workflow.
 
 ### Changed
 
+- **The `dump` report is now identical across all three implementations, and
+  gated.** It was not: Python used box-drawing (`─`), arrow (`→`) and
+  en-dash (`–`) characters where Rust and C++ used `-`, `->` and `-`, so 11
+  of 34 lines differed on a typical fixture. `rust/src/dump.rs` claimed to
+  mirror `dump.py` "closely enough for diffing", which was false on every one of
+  those lines.
+
+  **Python moved to ASCII.** The report is a stdout *payload* — piped,
+  redirected, diffed — not prose. Log messages and help text still use non-ASCII
+  punctuation and are unaffected; the new `L2-CLI-014` draws that line
+  explicitly. ASCII also removes the encoding hazard at its source rather than
+  compensating for it: those characters could not be encoded on a redirected
+  Windows stdout at cp1252, and the CLI had been forcing the stream to UTF-8 to
+  stop the dump aborting.
+
+  Aligning the other way would have required the **C++** implementation to call
+  `SetConsoleOutputCP` — new OS surface in a platform layer deliberately
+  confined to five concerns, and a global process-state change — to make a
+  diagnostic tool render on the one platform (SLES 12 SP5) it was written to
+  reach.
+
+  **Fixed on the way: every stdout payload from the Python CLI emitted CRLF on
+  Windows.** The UTF-8 stream reconfiguration set the encoding only, leaving
+  text-mode newline translation in place. That affected `dump` *and* CSV written
+  with `-o -`, in violation of `L2-WRT-012` ("CSV output SHALL use LF line
+  endings on every supported platform"). No conformance case caught it, because
+  the runner always decodes to a file.
+
+  **Fixed on the way: `dump --raw --offset` past end of file printed a range
+  running backwards** — `Range: 0x000186A0-0x000000B2` — because only the end
+  bound was clamped. The bytes shown were right (the slice is empty); the header
+  said something impossible and disagreed with the other two.
+
+  The runner gained a `dump` mode and eight cases covering both views, a
+  windowed range, a record limit, an errored record, both reachable scan-stop
+  anomalies, and an offset past EOF. 120 invocations across twelve fixtures and
+  ten flag combinations are byte-identical across the three.
+
 - **Every C++ test suite now builds records from one set of wire-format
   helpers.** The Type Word layout, the IRIG triple and the Command Word
   encoding had been copied into four test files. That is the drift

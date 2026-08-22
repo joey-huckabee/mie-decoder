@@ -618,6 +618,75 @@
         "global"
       ],
       "expected": "expected/delta-keys-global.csv"
+    },
+    {
+      "name": "dump-records-basic",
+      "mode": "dump",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/dump-records-basic.txt"
+    },
+    {
+      "name": "dump-raw-basic",
+      "mode": "dump",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--raw"
+      ],
+      "expected": "expected/dump-raw-basic.txt"
+    },
+    {
+      "name": "dump-raw-window",
+      "mode": "dump",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--raw",
+        "--offset",
+        "8",
+        "--length",
+        "32"
+      ],
+      "expected": "expected/dump-raw-window.txt"
+    },
+    {
+      "name": "dump-records-limited",
+      "mode": "dump",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--records",
+        "1"
+      ],
+      "expected": "expected/dump-records-limited.txt"
+    },
+    {
+      "name": "dump-records-errored",
+      "mode": "dump",
+      "input": "inputs/errors-inline.hex",
+      "expected": "expected/dump-records-errored.txt"
+    },
+    {
+      "name": "dump-truncated-record",
+      "mode": "dump",
+      "input": "inputs/first-record-truncated.hex",
+      "expected": "expected/dump-truncated-record.txt",
+      "expected_stderr_contains": "truncated record"
+    },
+    {
+      "name": "dump-invalid-word-count",
+      "mode": "dump",
+      "input": "inputs/header-and-sync-recovery.hex",
+      "expected": "expected/dump-invalid-word-count.txt",
+      "expected_stderr_contains": "invalid word_count"
+    },
+    {
+      "name": "dump-raw-offset-past-eof",
+      "mode": "dump",
+      "input": "inputs/count-one.hex",
+      "args": [
+        "--raw",
+        "--offset",
+        "100000"
+      ],
+      "expected": "expected/dump-raw-offset-past-eof.txt"
     }
   ]
 }
