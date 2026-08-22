@@ -552,24 +552,32 @@ DecoderConfig load_config(const Optional<std::string>& path) {
     }
     const std::string& file = path.value();
 
-    std::FILE* handle = std::fopen(file.c_str(), "rb");
-    if (handle == 0) {
-        throw ConfigError("Cannot open config file: " + file);
+    // The three ways a config path fails are distinguished, because they have
+    // three different remedies: the file is not there, the path names something
+    // that is not a regular file, or it exists and could not be read. Rust and
+    // Python both say which; C++ collapsed all three into one message until a
+    // differential check compared them.
+    if (!platform::path_exists(file)) {
+        throw ConfigError("Config file not found: " + file);
     }
-    std::string text_in;
-    char buffer[4096];
-    for (;;) {
-        const std::size_t n = std::fread(buffer, 1, sizeof(buffer), handle);
-        text_in.append(buffer, n);
-        if (n < sizeof(buffer)) {
-            const bool failed = std::ferror(handle) != 0;
-            (void)std::fclose(handle);
-            if (failed) {
-                throw ConfigError("Cannot read config file: " + file);
-            }
-            break;
-        }
+    platform::OsError err;
+    uint64_t size = 0;
+    bool is_regular = false;
+    if (platform::file_metadata(file, size, is_regular, err) && !is_regular) {
+        // A directory, a device, a pipe. Reading it would either fail opaquely
+        // or -- worse, for a character device -- block forever.
+        throw ConfigError("Config file is not a regular file: " + file);
     }
+
+    // Through the platform layer, not std::fopen. On Windows the CRT reads a
+    // narrow path in the ANSI codepage, so a config at a path containing any
+    // non-ASCII byte could not be opened at all -- while Rust and Python opened
+    // it happily, and every Linux test passed.
+    std::vector<uint8_t> raw;
+    if (!platform::read_file(file, raw, err)) {
+        throw ConfigError("Cannot read config file: " + file + ": " + err.message);
+    }
+    const std::string text_in(raw.begin(), raw.end());
 
     try {
         return parse_into_config(text_in);

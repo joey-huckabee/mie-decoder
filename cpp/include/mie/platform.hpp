@@ -38,6 +38,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -227,6 +228,49 @@ bool canonical_path(const std::string& utf8_path, std::string& out, OsError& err
 /// and the filename compared.
 bool paths_same_file(const std::string& utf8_input, const std::string& utf8_output, bool& same,
                      OsError& err);
+
+/// The program's arguments as UTF-8, excluding the program name.
+///
+/// THE ARGUMENTS THEMSELVES ARE OS SURFACE ON WINDOWS. `main(argc, argv)`
+/// delivers them in the process ANSI codepage, and any character that codepage
+/// cannot represent has already been replaced by `?` before a single line of
+/// this program runs. No amount of care further down can recover it: a
+/// recording at a non-ASCII path was simply unopenable, and the diagnostic
+/// printed the mangled name back as though the file were missing.
+///
+/// So Windows ignores `argv` entirely and re-reads the real UTF-16 command
+/// line. POSIX passes `argv` through, where it is already bytes.
+///
+/// This is why the program takes its arguments as a vector of UTF-8 strings
+/// rather than `(argc, argv)` -- the conversion has to happen at the boundary,
+/// and the boundary is here.
+std::vector<std::string> command_line_arguments(int argc, char** argv);
+
+/// Open `utf8_path` for binary reading, or NULL with `err` set.
+///
+/// THIS IS OS SURFACE, despite `fopen` being standard C. On Windows the CRT
+/// interprets a `char*` path in the ANSI codepage, so a UTF-8 path containing
+/// any non-ASCII byte opens the wrong name -- or, far more often, nothing at
+/// all. Paths are carried as UTF-8 throughout this program (ADR-0003), so every
+/// read by path has to widen at this boundary like every other path operation.
+///
+/// `scripts/assert-platform-confined.sh` cannot enforce this one: it bans OS
+/// *headers*, and a bare `std::fopen` needs none. The config loader, the merge
+/// manifest reader and the dump all called it directly, and all three failed on
+/// a non-ASCII path on Windows while passing every test on Linux.
+///
+/// The caller closes the handle.
+std::FILE* open_read(const std::string& utf8_path, OsError& err);
+
+/// Read the whole file at `utf8_path` into `bytes`.
+///
+/// One implementation of the read loop, because distinguishing end-of-file from
+/// a real error is subtle enough to get wrong -- `fread` reports a short read
+/// for both, asking again in the EOF state does nothing, and after a FAILED
+/// read the stream position is indeterminate so a retry can duplicate or skip
+/// bytes. That reasoning was written out three times in this tree before it
+/// lived here once.
+bool read_file(const std::string& utf8_path, std::vector<uint8_t>& bytes, OsError& err);
 
 /// Existence test. Never fails -- a path that cannot be stat'ed is "no".
 bool path_exists(const std::string& utf8_path);

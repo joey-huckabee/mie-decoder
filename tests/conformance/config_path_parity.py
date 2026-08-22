@@ -32,6 +32,8 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+
+from differential import describe_divergence
 from typing import Callable
 
 #: A case yields ``(path to pass to --config, expected exit code, message
@@ -131,17 +133,18 @@ CASES: list[Case] = [
 
 
 def check_config_path_parity(
-    rust_bin: Path, python_bin: Path, root: Path, input_mie: Path, temp: Path
+    invocations: dict[str, list[str]], root: Path, input_mie: Path, temp: Path
 ) -> None:
-    """Drive ``CASES`` through both CLIs; raise on any divergence or mismatch.
+    """Drive ``CASES`` through every implementation; raise on any divergence or
+    mismatch.
+
+    Compares the EXACT exit code rather than mere accept/reject: these cases pin
+    specific codes (a missing config is 5, not merely "rejected"), so collapsing
+    them to a verdict would let a config error and a usage error look alike.
 
     ``input_mie`` is a materialized, valid single-record recording, so a usable
     config decodes to exit 0 and only the ``--config`` path differs between cases.
     """
-    invocations = {
-        "Rust": [str(rust_bin)],
-        "Python": [str(python_bin), "-m", "mie_decoder"],
-    }
     failures: list[str] = []
     skipped: list[str] = []
     checked = 0
@@ -168,15 +171,18 @@ def check_config_path_parity(
             codes[impl] = result.returncode
             stderrs[impl] = result.stderr
 
-        if codes["Rust"] != codes["Python"]:
-            failures.append(
-                f"{name}: DIVERGENT exit codes — Rust {codes['Rust']} vs "
-                f"Python {codes['Python']}"
-            )
+        divergence = describe_divergence(
+            {impl: f"exit {code}" for impl, code in codes.items()}
+        )
+        if divergence is not None:
+            failures.append(f"{name}: DIVERGENT exit codes — {divergence}")
             continue
-        if codes["Rust"] != expect_code:
+        agreed = next(iter(codes.values()))
+        if agreed != expect_code:
+            # Unanimous and unanimously wrong: a specification or case
+            # problem rather than an implementation one.
             failures.append(
-                f"{name}: both exited {codes['Rust']}, expected {expect_code}"
+                f"{name}: all exited {agreed}, expected {expect_code}"
             )
             continue
         if expect_msg is not None:
@@ -192,4 +198,7 @@ def check_config_path_parity(
             "config-path parity failures:\n  " + "\n  ".join(failures)
         )
     note = f" ({len(skipped)} skipped: {', '.join(skipped)})" if skipped else ""
-    print(f"PASS config-path-parity ({checked} cases){note}")
+    print(
+        f"PASS config-path-parity ({checked} cases across "
+        f"{', '.join(invocations)}){note}"
+    )

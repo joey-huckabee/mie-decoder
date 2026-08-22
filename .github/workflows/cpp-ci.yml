@@ -349,6 +349,49 @@ jobs:
         if: runner.os == 'Windows'
         run: python tests/conformance/run.py --only cpp --cpp-bin cpp/build-msvc/Release/mie-decoder.exe
 
+  # The differential checks, over ALL THREE implementations at once.
+  #
+  # This job exists because neither of the others can run them. `conformance` in
+  # ci.yml passes `--skip cpp`, and `cpp-conformance` above passes `--only cpp`
+  # -- and a differential check needs something to differ FROM, so with one
+  # implementation selected it skips itself. Without this job the three-way
+  # contract would have been checked by nothing at all, while every gate stayed
+  # green.
+  #
+  # It is worth its cost. The first three-way run found two real divergences the
+  # per-implementation suites could not: the C++ build could not open ANY file
+  # at a non-ASCII path on Windows, and it collapsed three distinct config-path
+  # failures into one diagnostic.
+  #
+  # Ubuntu only, deliberately. The cases this adds over the Windows runs are the
+  # POSIX ones -- a character device as a config path, a symlink to a real one --
+  # which Windows skips.
+  cross-impl-differential:
+    name: Differential checks (all three implementations)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the Python package
+        run: python -m pip install -e ./python
+      - name: Install the C++ toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends g++-14 make
+      - name: Build the C++ decoder
+        run: make -C cpp -j"$(nproc)" all
+      # No --only / --skip: the runner defaults to every registered
+      # implementation and fails if one is missing, which is exactly what this
+      # job wants to assert.
+      - name: Conformance, surface parity, and the differential config checks
+        run: python tests/conformance/run.py
+
   # The three invariants that make the portability argument true rather than
   # aspirational. Cheap enough to share one job.
   invariants:

@@ -69,34 +69,13 @@ not because it is believed wrong.
 
 ---
 
-## 3. Differential config-parser checks are Rust-vs-Python only
+## 3. ~~Differential config-parser checks are Rust-vs-Python only~~ — DECIDED
 
-**Status:** the work is scoped and ready; only the *shape* needs a call.
-
-`config_parity.py`, `config_fuzz.py` and `config_path_parity.py` compare two
-parsers' accept/reject behaviour against each other. The C++ TOML and config
-parsers are held to the same grammar only by their own unit tests
-(`test_toml.cpp`, `test_config.cpp`), which cannot catch a divergence *from the
-other two* — exactly the class of bug the fuzzer exists to find, and exactly how
-the `?`-versus-byte glob difference and the `dump` character drift were missed
-until something compared implementations directly.
-
-The question is what "agreement" means with three parsers:
-
-- **All-pairs.** Any two disagreeing fails. Strictest, and the most likely to
-  produce a failure that is really "Python's `tomllib` is stricter than a
-  hand-rolled parser can practically be".
-- **Majority.** Two out of three define correct. Tempting, and wrong: it would
-  let a genuine two-way bug outvote the correct implementation.
-- **Reference implementation.** Nominate one (Rust) as the oracle and hold the
-  others to it. Clearest to reason about; makes the reference's quirks
-  normative.
-
-**Recommendation: all-pairs**, on the grounds that a divergence between any two
-implementations is a bug regardless of which is right, and the runner should say
-which pair disagreed rather than silently pick a winner.
-
----
+**Resolved: all-pairs.** Shipped; see `tests/conformance/differential.py` for the
+comparison and the reasoning against majority and reference-implementation
+rules. The first three-way run found two real C++ defects (non-ASCII paths
+unopenable on Windows; three config-path failures collapsed into one
+diagnostic), both now fixed. Kept here only until the next round; delete then.
 
 ## 4. Coverage and fuzz gates for the C++ tree
 

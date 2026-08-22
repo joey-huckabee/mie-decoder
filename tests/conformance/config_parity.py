@@ -18,6 +18,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from differential import classify, describe_agreement, describe_divergence
+
 # ``accept`` = a valid config for the flat schema (both CLIs decode, exit 0).
 # ``reject`` = outside the flat schema (both CLIs must refuse with a config or
 # usage error). Every ``reject`` snippet is a full-TOML form ``tomllib`` accepts
@@ -101,22 +103,20 @@ CORPUS: list[tuple[str, str, str]] = [
 ]
 
 
-def _class_for(returncode: int) -> str:
-    return "accept" if returncode == 0 else "reject"
-
-
 def check_config_parser_parity(
-    rust_bin: Path, python_bin: Path, root: Path, input_mie: Path, temp: Path
+    invocations: dict[str, list[str]], root: Path, input_mie: Path, temp: Path
 ) -> None:
-    """Drive ``CORPUS`` through both CLIs; raise on any divergence or mismatch.
+    """Drive ``CORPUS`` through every implementation; raise on any divergence or
+    mismatch against the expected verdict.
+
+    ``invocations`` maps an implementation name to its CLI prefix. Taking the
+    whole mapping rather than two binaries is what lets a third implementation
+    join without touching this function -- and what makes the comparison
+    all-pairs by construction rather than by a chain of ``!=``.
 
     ``input_mie`` is a materialized, valid single-record recording so an accepted
     config decodes to exit 0. Only the config differs between snippets.
     """
-    invocations = {
-        "Rust": [str(rust_bin)],
-        "Python": [str(python_bin), "-m", "mie_decoder"],
-    }
     failures: list[str] = []
     for name, toml, expect in CORPUS:
         cfg = temp / f"parity-{name}.toml"
@@ -143,19 +143,23 @@ def check_config_parser_parity(
                 timeout=30,
             )
             codes[impl] = result.returncode
-            classes[impl] = _class_for(result.returncode)
-        if classes["Rust"] != classes["Python"]:
+            classes[impl] = classify(result.returncode)
+
+        divergence = describe_divergence(classes, codes)
+        if divergence is not None:
+            failures.append(f"{name}: DIVERGENT - {divergence}")
+        elif next(iter(classes.values())) != expect:
+            # Unanimous, and unanimously wrong. Worth reporting separately from
+            # a divergence: every parser agreeing on the wrong answer is a
+            # corpus or specification problem, not an implementation one.
             failures.append(
-                f"{name}: DIVERGENT — Rust {classes['Rust']} (exit {codes['Rust']}) "
-                f"vs Python {classes['Python']} (exit {codes['Python']})"
-            )
-        elif classes["Rust"] != expect:
-            failures.append(
-                f"{name}: both {classes['Rust']}, expected {expect} "
-                f"(Rust exit {codes['Rust']}, Python exit {codes['Python']})"
+                f"{name}: {describe_agreement(classes, codes)}, expected {expect}"
             )
     if failures:
         raise AssertionError(
             "config-parser parity failures:\n  " + "\n  ".join(failures)
         )
-    print(f"PASS config-parser-parity ({len(CORPUS)} snippets)")
+    print(
+        f"PASS config-parser-parity ({len(CORPUS)} snippets across "
+        f"{', '.join(invocations)})"
+    )

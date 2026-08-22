@@ -327,6 +327,32 @@ void AtomicFile::abort() {
 // Directory enumeration, metadata, identity
 // ---------------------------------------------------------------------------
 
+std::vector<std::string> command_line_arguments(int argc, char** argv) {
+    // POSIX arguments are bytes and a UTF-8 locale passes them through intact,
+    // so there is nothing to convert. The Windows backend is where this earns
+    // its existence.
+    std::vector<std::string> out;
+    if (argc > 1) {
+        out.reserve(static_cast<std::size_t>(argc - 1));
+        for (int i = 1; i < argc; ++i) {
+            out.push_back(std::string(argv[i]));
+        }
+    }
+    return out;
+}
+
+std::FILE* open_read(const std::string& utf8_path, OsError& err) {
+    err.clear();
+    // POSIX filenames are bytes, and UTF-8 is already bytes, so no conversion
+    // is needed here. The Windows backend is where this earns its existence.
+    std::FILE* handle = std::fopen(utf8_path.c_str(), "rb");
+    if (handle == NULL) {
+        fill_errno(err, errno);
+        return NULL;
+    }
+    return handle;
+}
+
 bool list_directory(const std::string& utf8_dir, std::vector<std::string>& names, OsError& err) {
     err.clear();
     names.clear();

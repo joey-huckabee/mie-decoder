@@ -559,3 +559,44 @@ TEST_CASE("the config parity corpus lands in the expected class", "[config][L2-C
     }
     CHECK(failures.empty());
 }
+
+TEST_CASE("a bad config path says WHICH way it was bad", "[config][L3-CPP-031]") {
+    // Three failures, three remedies. Collapsing them into one message -- which
+    // this implementation originally did -- tells an operator only that
+    // something is wrong with a path they can plainly see, while Rust and
+    // Python both name the condition. Found by the cross-implementation
+    // differential checks, not by any single implementation's own suite.
+    SECTION("absent") {
+        const mie_test::TempPath absent("cfg-absent.toml");
+        try {
+            mie::load_config(mie::Optional<std::string>(absent.str()));
+            FAIL("expected a config error");
+        } catch (const mie::ConfigError& error) {
+            CHECK(error.message().find("Config file not found") != std::string::npos);
+        }
+    }
+
+    SECTION("not a regular file") {
+        // Rejected BEFORE any read: reading a directory fails opaquely, and
+        // reading a character device can block indefinitely.
+        // `/dev/null` rather than a directory: there is no mkdir in the
+        // platform layer, and adding one for a test would widen the surface
+        // `assert-platform-confined.sh` exists to keep narrow. The Windows side
+        // of this case is covered by the config-path differential check, which
+        // makes a real directory from Python.
+#ifndef _WIN32
+        try {
+            mie::load_config(mie::Optional<std::string>(std::string("/dev/null")));
+            FAIL("expected a config error");
+        } catch (const mie::ConfigError& error) {
+            CHECK(error.message().find("not a regular file") != std::string::npos);
+        }
+#endif
+    }
+
+    SECTION("a readable regular file is accepted") {
+        const mie_test::TempFile good("cfg-good.toml", std::string("[decode]\nstrict = true\n"));
+        const mie::DecoderConfig config = mie::load_config(mie::Optional<std::string>(good.str()));
+        CHECK(config.strict);
+    }
+}

@@ -82,39 +82,17 @@ std::string file_name_of(const std::string& path) {
 /// Read rather than mapped: this view must work on files the reader rejects,
 /// and the ranges asked for are small and arbitrary rather than a walk.
 std::vector<uint8_t> read_whole_file(const std::string& path) {
-    std::FILE* handle = std::fopen(path.c_str(), "rb");
-    if (handle == NULL) {
-        platform::OsError err;
-        platform::capture_stream_error(err);
+    // Through the platform layer: a recording may sit at a non-ASCII path, and
+    // std::fopen would fail to find it on Windows.
+    std::vector<uint8_t> data;
+    platform::OsError err;
+    if (!platform::read_file(path, data, err)) {
+        // "not found" and "could not be read" are different problems with
+        // different remedies, and a directory stats as zero bytes on Windows --
+        // so the existence test decides which this was rather than the size.
         if (!platform::path_exists(path)) {
             throw MieError::file_not_found(path);
         }
-        throw MieError::file_io(path, err.message, err.code);
-    }
-
-    std::vector<uint8_t> data;
-    uint8_t buffer[8192];
-    bool ok = true;
-    platform::OsError err;
-    for (;;) {
-        const std::size_t got = std::fread(buffer, 1, sizeof(buffer), handle);
-        data.insert(data.end(), buffer, buffer + got);
-        if (got < sizeof(buffer)) {
-            // A short read is the end of the file or a real error, and fread
-            // alone does not say which. Reading again would be a read in the
-            // EOF state, and after a FAILED read the position is indeterminate.
-            if (std::ferror(handle) != 0) {
-                platform::capture_stream_error(err);
-                ok = false;
-            }
-            break;
-        }
-    }
-    if (std::fclose(handle) != 0 && ok) {
-        platform::capture_stream_error(err);
-        ok = false;
-    }
-    if (!ok) {
         throw MieError::file_io(path, err.message, err.code);
     }
     if (data.empty()) {

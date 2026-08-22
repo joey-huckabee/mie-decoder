@@ -36,6 +36,8 @@
 #endif
 
 #include <windows.h>
+
+#include <shellapi.h>
 // <windows.h> must precede these.
 #include <errno.h>
 #include <fcntl.h>
@@ -382,6 +384,52 @@ void AtomicFile::abort() {
 // ---------------------------------------------------------------------------
 // Directory enumeration, metadata, identity
 // ---------------------------------------------------------------------------
+
+std::vector<std::string> command_line_arguments(int argc, char** argv) {
+    // `argv` is DELIBERATELY IGNORED. The CRT built it from the command line in
+    // the ANSI codepage, so a non-representable character is already `?` by the
+    // time this runs. GetCommandLineW returns what the OS actually received.
+    (void)argc;
+    (void)argv;
+
+    std::vector<std::string> out;
+    int wide_count = 0;
+    LPWSTR* wide = ::CommandLineToArgvW(::GetCommandLineW(), &wide_count);
+    if (wide == NULL) {
+        // Nothing sensible to fall back to but the mangled arguments, which is
+        // still better than exiting with no diagnostic at all.
+        if (argc > 1) {
+            for (int i = 1; i < argc; ++i) {
+                out.push_back(std::string(argv[i]));
+            }
+        }
+        return out;
+    }
+    for (int i = 1; i < wide_count; ++i) {
+        out.push_back(from_wide(std::wstring(wide[i])));
+    }
+    ::LocalFree(wide);
+    return out;
+}
+
+std::FILE* open_read(const std::string& utf8_path, OsError& err) {
+    err.clear();
+    // _wfopen, not fopen. The CRT reads a narrow path in the ANSI codepage, so
+    // a UTF-8 path with any non-ASCII byte names a different file -- usually
+    // one that does not exist. Widening here is the same boundary every other
+    // path operation in this backend crosses.
+    const std::wstring wide = to_wide(utf8_path);
+    std::FILE* handle = ::_wfopen(wide.c_str(), L"rb");
+    if (handle == NULL) {
+        // capture_stream_error, not fill_last_error: _wfopen is a CRT call and
+        // reports through errno, while OsError::code carries a GetLastError
+        // value on this platform. That translation is exactly what
+        // capture_stream_error owns.
+        capture_stream_error(err);
+        return NULL;
+    }
+    return handle;
+}
 
 bool list_directory(const std::string& utf8_dir, std::vector<std::string>& names, OsError& err) {
     err.clear();

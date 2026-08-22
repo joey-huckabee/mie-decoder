@@ -669,29 +669,30 @@ def main() -> int:
     ) as temp_dir:
         temp = Path(temp_dir)
 
-        # Differential config-parser parity. Still Rust-vs-Python: these compare
-        # two parsers' accept/reject behavior against each other, and widening
-        # them to N parsers is its own piece of work. The C++ TOML and config
-        # parsers are held to the same grammar by cpp/tests/test_toml.cpp and
-        # cpp/tests/test_config.cpp until then.
-        names = {impl.name for impl in impls}
-        if {"rust", "python"} <= names:
+        # Differential config-parser checks, over EVERY implementation under
+        # test rather than a fixed pair. The comparison is all-pairs: any two
+        # disagreeing is a finding, regardless of which is right. A majority
+        # rule would let two implementations sharing a bug outvote the correct
+        # one, and nominating a reference would make that reference's quirks
+        # normative -- see tests/conformance/differential.py.
+        #
+        # These are the only checks that can catch a divergence BETWEEN
+        # implementations' hand-rolled parsers. Each implementation's own unit
+        # tests pin it against its own reading of the grammar, which is exactly
+        # the thing in question when two readings differ.
+        if len(impls) >= 2:
             parity_input = temp / "config-parity-in.mie"
             parity_input.write_bytes(read_hex(SUITE / "inputs" / "count-one.hex"))
-            check_config_parser_parity(
-                args.rust_bin, args.python_bin, ROOT, parity_input, temp
-            )
-            check_config_parser_fuzz(
-                args.rust_bin, args.python_bin, ROOT, parity_input, temp
-            )
+            invocations = {impl.label: impl.prefix(args) for impl in impls}
+            check_config_parser_parity(invocations, ROOT, parity_input, temp)
+            check_config_parser_fuzz(invocations, ROOT, parity_input, temp)
             # Same idea one level up: the config *path*, not its contents.
-            check_config_path_parity(
-                args.rust_bin, args.python_bin, ROOT, parity_input, temp
-            )
+            check_config_path_parity(invocations, ROOT, parity_input, temp)
         else:
+            # A differential check needs something to differ from.
             print(
                 "SKIP config-parser-parity / -fuzz / -path "
-                "(needs both the Rust and Python implementations)"
+                f"(needs two or more implementations; have {len(impls)})"
             )
 
         for case in manifest["cases"]:

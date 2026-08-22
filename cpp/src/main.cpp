@@ -20,12 +20,9 @@ int main(int argc, char** argv) {
     // output on that platform alone (L2-WRT-012).
     mie::platform::set_stdout_binary();
 
-    std::vector<std::string> args;
-    if (argc > 1) {
-        args.reserve(static_cast<std::size_t>(argc - 1));
-        for (int i = 1; i < argc; ++i) {
-            args.push_back(std::string(argv[i]));
-        }
-    }
-    return mie::cli::run(args);
+    // Through the platform layer, not straight off argv. On Windows the CRT
+    // built argv in the ANSI codepage, so a path containing any character that
+    // codepage cannot represent arrived as `?` before this line ran -- and no
+    // care further down could recover it.
+    return mie::cli::run(mie::platform::command_line_arguments(argc, argv));
 }

@@ -120,6 +120,13 @@ target_compile_definitions(mie_decoder_lib PRIVATE
 
 # --- CLI --------------------------------------------------------------------
 add_executable(mie-decoder src/main.cpp)
+if(WIN32)
+    # shell32 for CommandLineToArgvW, used to recover the real UTF-16 command
+    # line. A platform library, not a third-party one -- L3-CPP-002's
+    # no-runtime-dependency rule is about the latter.
+    target_link_libraries(mie_decoder_lib PUBLIC shell32)
+endif()
+
 target_link_libraries(mie-decoder PRIVATE mie_decoder_lib)
 target_compile_options(mie-decoder PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Werror>

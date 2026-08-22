@@ -164,6 +164,38 @@ std::string path_join(const std::string& dir, const std::string& name) {
     return out;
 }
 
+bool read_file(const std::string& utf8_path, std::vector<uint8_t>& bytes, OsError& err) {
+    err.clear();
+    bytes.clear();
+    std::FILE* handle = open_read(utf8_path, err);
+    if (handle == NULL) {
+        return false;
+    }
+
+    uint8_t buffer[8192];
+    bool ok = true;
+    for (;;) {
+        const std::size_t got = std::fread(buffer, 1, sizeof(buffer), handle);
+        bytes.insert(bytes.end(), buffer, buffer + got);
+        if (got < sizeof(buffer)) {
+            // A short read is the end of the file or a real error, and fread
+            // alone does not say which. Asking again would be a read in the EOF
+            // state, and after a FAILED read the position is indeterminate, so
+            // a retry could silently duplicate or skip bytes.
+            if (std::ferror(handle) != 0) {
+                capture_stream_error(err);
+                ok = false;
+            }
+            break;
+        }
+    }
+    if (std::fclose(handle) != 0 && ok) {
+        capture_stream_error(err);
+        ok = false;
+    }
+    return ok;
+}
+
 bool path_exists(const std::string& utf8_path) {
     uint64_t size = 0;
     bool is_regular = false;
