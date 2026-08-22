@@ -20,6 +20,31 @@ pub struct FilterConfig {
     pub include_subaddresses: Vec<u8>,
 }
 
+/// The four fields every filter looks at, read off a message once.
+///
+/// Extracted so the exclude and include halves share one decode rather than
+/// each pulling the Command Word apart again.
+struct FilterFields {
+    message_type: u8,
+    bus: Bus,
+    rt: Option<u8>,
+    subaddress: Option<u8>,
+}
+
+impl FilterFields {
+    fn of(msg: &MieMessage) -> Self {
+        let (rt, subaddress) = msg
+            .command_word
+            .map_or((None, None), |cw| (Some(cw.rt), Some(cw.subaddress)));
+        Self {
+            message_type: msg.type_word.message_type,
+            bus: msg.type_word.bus,
+            rt,
+            subaddress,
+        }
+    }
+}
+
 impl FilterConfig {
     pub fn is_active(&self) -> bool {
         !self.exclude_types.is_empty()
@@ -33,53 +58,61 @@ impl FilterConfig {
     }
 
     /// True if `msg` should be dropped from output.
+    ///
+    /// The two halves are genuinely different rules, which is why they are
+    /// separate functions rather than one run of guards: an *exclude* set drops
+    /// a record that IS listed, while an *include* set drops a record that is
+    /// not — and an include set only means anything when it is non-empty.
     pub fn should_exclude(&self, msg: &MieMessage) -> bool {
-        let message_type = msg.type_word.message_type;
-        let bus = msg.type_word.bus;
-        let (rt, subaddress) = match msg.command_word {
-            Some(cw) => (Some(cw.rt), Some(cw.subaddress)),
-            None => (None, None),
-        };
+        let field = FilterFields::of(msg);
+        self.excluded_by_negative(&field) || self.excluded_by_positive(&field)
+    }
 
-        // Negative filters
-        if self.exclude_types.contains(&message_type) {
+    /// Dropped because the record IS in an exclusion set.
+    fn excluded_by_negative(&self, field: &FilterFields) -> bool {
+        if self.exclude_types.contains(&field.message_type)
+            || self.exclude_buses.contains(&field.bus)
+        {
             return true;
         }
-        if let Some(rt) = rt
+        if let Some(rt) = field.rt
             && self.exclude_rts.contains(&rt)
         {
             return true;
         }
-        if self.exclude_buses.contains(&bus) {
-            return true;
-        }
-        if let Some(sa) = subaddress
+        if let Some(sa) = field.subaddress
             && self.exclude_subaddresses.contains(&sa)
         {
             return true;
         }
+        false
+    }
 
-        // Positive filters: if active, value must be present.
-        if !self.include_types.is_empty() && !self.include_types.contains(&message_type) {
+    /// Dropped because an inclusion set is active and the record is not in it.
+    ///
+    /// A record with no Command Word — SPURIOUS_DATA — has no RT or subaddress
+    /// to match, so an active RT or subaddress include set drops it. That is
+    /// deliberate: "keep only RT 5" cannot meaningfully keep a record that
+    /// names no RT.
+    fn excluded_by_positive(&self, field: &FilterFields) -> bool {
+        if !self.include_types.is_empty() && !self.include_types.contains(&field.message_type) {
             return true;
         }
-        if !self.include_buses.is_empty() && !self.include_buses.contains(&bus) {
+        if !self.include_buses.is_empty() && !self.include_buses.contains(&field.bus) {
             return true;
         }
-        if !self.include_rts.is_empty() {
-            match rt {
-                Some(rt) if self.include_rts.contains(&rt) => {}
-                // SPURIOUS_DATA has no RT — drop when an include filter is set.
-                _ => return true,
-            }
+        if !self.include_rts.is_empty()
+            && !field.rt.is_some_and(|rt| self.include_rts.contains(&rt))
+        {
+            return true;
         }
-        if !self.include_subaddresses.is_empty() {
-            match subaddress {
-                Some(sa) if self.include_subaddresses.contains(&sa) => {}
-                _ => return true,
-            }
+        if !self.include_subaddresses.is_empty()
+            && !field
+                .subaddress
+                .is_some_and(|sa| self.include_subaddresses.contains(&sa))
+        {
+            return true;
         }
-
         false
     }
 }
@@ -145,7 +178,7 @@ fn log_active_filters(f: &FilterConfig) {
         }
         let mut sorted: Vec<T> = v.to_vec();
         sorted.sort_unstable();
-        let items: Vec<String> = sorted.iter().map(|x| x.to_string()).collect();
+        let items: Vec<String> = sorted.iter().map(ToString::to_string).collect();
         format!("[{}]", items.join(", "))
     }
     crate::log_info!(

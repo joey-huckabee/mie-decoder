@@ -45,6 +45,35 @@ unreachable_pub = "deny"
 # repo's existing SAFETY-comment convention (also grep-checked by the
 # pre-commit hook) from a heuristic to a real lint.
 undocumented_unsafe_blocks = "deny"
+# ALLOW-BY-DEFAULT IN CLIPPY, AND THEREFORE INVISIBLE TO THE GATE.
+# `cargo clippy -- -D warnings` only denies lints that actually FIRE, and
+# clippy's pedantic / nursery / restriction groups are allow-by-default. Sonar's
+# Rust rules map onto clippy's including those tiers, so SonarCloud reported
+# findings the local gate had reported none of -- which reads as clippy
+# disagreeing with itself and is really two different lint sets.
+#
+# Enabled by name rather than by group: `pedantic` and `nursery` together
+# produce 413 warnings in this crate, most of them doc formatting.
+#
+# clippy::redundant_closure_for_method_calls == sonar rust:S1612. Exact 1:1, and
+# the crate is clean under it.
+redundant_closure_for_method_calls = "deny"
+
+# NOT ENABLED: clippy::cognitive_complexity (== sonar rust:S3776).
+#
+# Aligning the threshold looked obvious and does not work. Sonar reported one
+# S3776 -- `FilterConfig::should_exclude`, scoring 17 against its limit of 15.
+# Setting clippy's threshold to the same 15 flags that function AND two more
+# that Sonar does not report at all (`cli::parse_decode` at 23,
+# `DecoderConfig::with_overrides` at 18). The two tools compute the metric
+# differently, so a matching number buys a stricter local rule, not a predictive
+# one -- and `parse_decode` scores high because it is a flat dispatch chain over
+# two dozen flags, which is a lookup table written as control flow rather than
+# something a reader struggles with.
+#
+# Left off deliberately: enabling it would mean either contorting a
+# well-tested parser or blanket-allowing it, and neither makes SonarCloud any
+# more predictable from here.
 
 [profile.release]
 lto = "thin"

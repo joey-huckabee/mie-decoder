@@ -45,10 +45,13 @@ def _load_runner():
     """
     sys.path.insert(0, str(_CONFORMANCE_DIR))
     try:
-        spec = importlib.util.spec_from_file_location(
-            "mie_conformance_run", _CONFORMANCE_DIR / "run.py"
-        )
-        assert spec is not None and spec.loader is not None
+        runner = _CONFORMANCE_DIR / "run.py"
+        spec = importlib.util.spec_from_file_location("mie_conformance_run", runner)
+        # Split, not `a is not None and b is not None`: these are two distinct
+        # failures -- no spec at all versus a spec that cannot be executed --
+        # and a composite assertion cannot say which happened.
+        assert spec is not None, f"no module spec could be built for {runner}"
+        assert spec.loader is not None, f"the module spec for {runner} has no loader"
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module

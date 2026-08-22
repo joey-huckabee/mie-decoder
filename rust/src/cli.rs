@@ -1183,13 +1183,13 @@ fn run_decode(globals: GlobalArgs, mut args: DecodeArgs) -> Result<ExitCode, Cli
 
     // Cumulative sync-loss count across all inputs drives the L1-EXIT-005
     // exit-class summary. Safe to query after the iterator(s) are consumed.
-    let sync_losses: u64 = readers.iter().map(|r| r.sync_losses()).sum();
+    let sync_losses: u64 = readers.iter().map(MieFileReader::sync_losses).sum();
 
     // L1-EXIT-010: report the empty-recording class only when *every* opened
     // input was a valid empty recording (so a merge that also drew rows from a
     // non-empty input stays `complete`). A single-file empty decode is the
     // common case; the writer has already produced a header-only CSV.
-    let empty_recording = !readers.is_empty() && readers.iter().all(|r| r.empty_recording());
+    let empty_recording = !readers.is_empty() && readers.iter().all(MieFileReader::empty_recording);
 
     Ok(classify_decode_exit(
         write_result,
@@ -1459,7 +1459,7 @@ mod tests {
     use super::*;
 
     fn args(values: &[&str]) -> ArgIter<'static> {
-        let v: Vec<String> = values.iter().map(|s| s.to_string()).collect();
+        let v: Vec<String> = values.iter().map(|s| (*s).to_string()).collect();
         // skip(0) is required to match the ArgIter alias's
         // Skip<IntoIter<...>> shape; clippy can't see past the alias.
         #[allow(clippy::iter_skip_zero)]

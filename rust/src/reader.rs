@@ -173,7 +173,7 @@ impl MieFileReader {
         // L2-WRT-020: resolve the per-file MUX value once, from the file name.
         let mux: Option<Arc<str>> = if opts.mux_enabled {
             path.file_name()
-                .and_then(|n| n.to_str())
+                .and_then(std::ffi::OsStr::to_str)
                 .and_then(|n| mux_from_filename(n, &opts.mux_delimiter, opts.mux_field))
                 .map(Arc::from)
         } else {

@@ -99,6 +99,20 @@ staged.
    pass with warnings treated as errors. Either fix the lint or
    justify the suppression with a scoped `#[allow(...)]` and a
    comment explaining why.
+
+   **This does not mean "all clippy lints".** `-D warnings` only denies
+   lints that actually *fire*, and clippy's `pedantic`, `nursery`,
+   `restriction` and `cargo` groups are **allow-by-default** — they never
+   fire, so the gate never sees them. Enabling `pedantic` + `nursery`
+   here surfaces 413 warnings the gate reports none of.
+
+   That gap is visible from outside: SonarCloud's Rust rules map onto
+   clippy's *including* those tiers, so it can report findings that
+   `cargo clippy` calls clean. When that happens the tools are not
+   disagreeing — they are running different lint sets. Lints worth
+   enforcing are enabled by name in `rust/Cargo.toml`'s `[lints.clippy]`,
+   which is where `redundant_closure_for_method_calls`
+   (SonarCloud `rust:S1612`) lives.
 12. **`cargo test --all-targets` + `cargo test --doc`** — all unit,
     integration **and documentation** tests pass. `--all-targets`
     excludes doctests, so the hook runs them as a second invocation;
