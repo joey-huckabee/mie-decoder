@@ -64,8 +64,17 @@ pub fn enabled(level: Level) -> bool {
     (level as u8) >= LEVEL.load(Ordering::Relaxed)
 }
 
-/// Internal write — used by macros. `args` is already-formatted message text.
-pub fn _emit(level: Level, module: &str, args: std::fmt::Arguments<'_>) {
+/// Internal write — used by the `log_*!` macros. `args` is already-formatted
+/// message text.
+///
+/// `pub` only because `#[macro_export]` macros expand at their CALL site, which
+/// may be in another crate: `$crate::log::emit` has to resolve there. That is
+/// what `#[doc(hidden)]` says — the item is reachable but not API — and it is
+/// the right marker for it. The former `_emit` spelling used an underscore to
+/// mean the same thing, which contradicts the convention that `_name` is
+/// *unused*: clippy's `used_underscore_items` is correct to object.
+#[doc(hidden)]
+pub fn emit(level: Level, module: &str, args: std::fmt::Arguments<'_>) {
     if !enabled(level) {
         return;
     }
@@ -75,28 +84,38 @@ pub fn _emit(level: Level, module: &str, args: std::fmt::Arguments<'_>) {
     );
 }
 
+/// The former name of [`emit`], kept so `mie_decoder::log::_emit` still
+/// resolves.
+///
+/// Renaming a `pub` item would be an API removal, and `cargo-semver-checks`
+/// exclusions are per-LINT rather than per-item — allowing `function_missing`
+/// crate-wide to rename one internal helper would disable a check worth having.
+/// A re-export costs nothing and keeps the gate honest.
+#[doc(hidden)]
+pub use self::emit as _emit;
+
 #[macro_export]
 macro_rules! log_debug {
     ($($arg:tt)*) => {
-        $crate::log::_emit($crate::log::Level::Debug, module_path!(), format_args!($($arg)*))
+        $crate::log::emit($crate::log::Level::Debug, module_path!(), format_args!($($arg)*))
     };
 }
 #[macro_export]
 macro_rules! log_info {
     ($($arg:tt)*) => {
-        $crate::log::_emit($crate::log::Level::Info, module_path!(), format_args!($($arg)*))
+        $crate::log::emit($crate::log::Level::Info, module_path!(), format_args!($($arg)*))
     };
 }
 #[macro_export]
 macro_rules! log_warn {
     ($($arg:tt)*) => {
-        $crate::log::_emit($crate::log::Level::Warn, module_path!(), format_args!($($arg)*))
+        $crate::log::emit($crate::log::Level::Warn, module_path!(), format_args!($($arg)*))
     };
 }
 #[macro_export]
 macro_rules! log_error {
     ($($arg:tt)*) => {
-        $crate::log::_emit($crate::log::Level::Error, module_path!(), format_args!($($arg)*))
+        $crate::log::emit($crate::log::Level::Error, module_path!(), format_args!($($arg)*))
     };
 }
 

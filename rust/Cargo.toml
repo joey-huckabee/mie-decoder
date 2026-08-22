@@ -14,8 +14,18 @@ readme = "README.md"
 # `#[doc(hidden)]` so their growing field set is excluded from the SemVer
 # contract; this `allow` accepts the one-time doc-hidden transition in v2.5.0
 # (the gate still guards the real public API). See L1-MRG-003 / L2-MRG-007.
+#
+# `log::emit` (src/log.rs) is the same situation for a function. It must be `pub`
+# so the exported `log_*!` macros resolve it at a call site in another crate, and
+# `#[doc(hidden)]` is the marker that says "reachable, not API". It was
+# previously spelled `_emit`, using an underscore to mean the same thing —
+# which contradicts the convention that `_name` is *unused* and is what
+# clippy::used_underscore_items objects to. The old path is kept as a re-export,
+# so this is not a removal; only the doc-hidden transition needs accepting, and
+# it is accepted for exactly the reason the struct one was.
 [package.metadata.cargo-semver-checks.lints]
 struct_now_doc_hidden = "allow"
+function_now_doc_hidden = "allow"
 
 [lib]
 name = "mie_decoder"
@@ -58,6 +68,12 @@ undocumented_unsafe_blocks = "deny"
 # clippy::redundant_closure_for_method_calls == sonar rust:S1612. Exact 1:1, and
 # the crate is clean under it.
 redundant_closure_for_method_calls = "deny"
+
+# `_name` conventionally means UNUSED, so using such an item contradicts its own
+# name. The crate had one: `log::_emit`, public purely so the exported `log_*!`
+# macros could resolve it at a call site in another crate. `#[doc(hidden)]` is
+# the marker for that; the underscore was the wrong tool for the job.
+used_underscore_items = "deny"
 
 # THE CAST LINTS. Pedantic, so `-D warnings` never saw them either -- and unlike
 # most of pedantic these are semantic: every one asks whether a narrowing or

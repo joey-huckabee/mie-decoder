@@ -148,6 +148,7 @@ select = [
     "T20",       # stray print/pprint
     "TID",       # tidy imports
     "DTZ",       # naive datetimes
+    "SLF",       # reaching into another module's private members
 ]
 
 ignore = [
@@ -196,7 +197,13 @@ allowed-confusables = ["–", "—", "×"]
 # unused fixture parameter is the normal way to ask for that, so the rule is
 # noise here while staying useful in `src`, where an unused argument really is
 # one.
-"tests/**" = ["ARG002"]
+"tests/**" = [
+    "ARG002",
+    # SLF001: a white-box test reaching into a private member is the point of a
+    # white-box test. `src` is clean of it and stays gated, which is where
+    # reaching across a privacy boundary would actually be a design smell.
+    "SLF001",
+]
 
 # Vulture finds dead code. Scan src + tests together so test usage counts (a
 # function used only by tests is not "dead"). The ignored names are intentional:

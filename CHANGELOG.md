@@ -17,6 +17,32 @@ full release workflow.
 
 ### Changed
 
+- **`log::_emit` is now `log::emit`, marked `#[doc(hidden)]`.** It was `pub`
+  purely so the exported `log_*!` macros could resolve it at a call site in
+  another crate — a real need, expressed with the wrong tool. `_name`
+  conventionally means *unused*, so an item that is used contradicts its own
+  name; `#[doc(hidden)]` is the marker that actually says "reachable, but not
+  API".
+
+  The old path is kept as a re-export rather than removed. Renaming a `pub`
+  item is an API removal, and `cargo-semver-checks` exclusions are **per-lint,
+  not per-item** — allowing `function_missing` crate-wide to rename one internal
+  helper would have disabled a check worth having. A re-export costs nothing and
+  keeps the gate intact; both paths were verified to resolve by compiling
+  against each.
+
+  `clippy::used_underscore_items` is now `deny`. My earlier estimate of 77
+  findings was wrong: `--all-targets` counts the same library once per target,
+  and there were **4**, all the same function.
+
+- **The same class was checked in C++ and Python, and neither needed changing.**
+  C++ already calls `mie::log::emit` with no underscore. Python `src` has **zero**
+  private-member accesses; the 53 in `tests/` are white-box tests reaching in
+  deliberately, which is what a white-box test is for. Both states are now
+  gated — ruff's `SLF` family is selected, with `tests/**` exempt — so "already
+  clean" becomes "cannot regress" rather than a fact that happened to be true
+  today.
+
 - **Fixed, in all three implementations: a valid tick rate could produce a
   timestamp that was fabricated, undefined, or a crash.** Found by turning on
   clippy's cast lints, which are `pedantic` and so had never run.
