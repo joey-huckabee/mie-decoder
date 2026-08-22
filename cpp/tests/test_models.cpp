@@ -306,7 +306,10 @@ TEST_CASE("DataWords is range-for iterable over its live prefix", "[models][data
     const mie::DataWords w = mie::DataWords::from_words(source, 3);
 
     std::vector<uint16_t> seen;
-    for (uint16_t word : w) {
+    for (const uint16_t word : w) {
+        // The raw loop is the point of the test: std::copy would exercise
+        // begin()/end() without proving the range-for syntax itself compiles.
+        // cppcheck-suppress useStlAlgorithm
         seen.push_back(word);
     }
 

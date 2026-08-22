@@ -324,8 +324,7 @@ fn write_record_annotation<W: Write>(
     // cannot be classified degrades to a label rather than propagating an error.
     // `3` = IRIG timestamp words (the timestamp above is decoded as IRIG).
     let fmt_name = classify_message_format(tw.message_type, &cmd, tw.word_count, 3)
-        .map(message_format_name)
-        .unwrap_or("(unclassifiable)");
+        .map_or("(unclassifiable)", message_format_name);
 
     writeln!(out, "{}", "-".repeat(72))?;
     writeln!(

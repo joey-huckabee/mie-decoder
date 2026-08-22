@@ -136,6 +136,16 @@ staged.
    `python scripts/build-trace-matrix.py --check` still passes — the
    collector understands multi-line attributes, but the marker must still
    pair with its `fn`.
+
+   **Run `rustup update stable` before trusting a local clippy run.** The
+   repo pins no `rust-toolchain` file, so CI floats on current stable. A
+   local toolchain that has fallen behind runs a genuinely *weaker* gate
+   than CI — not a differently-configured one — because clippy widens
+   existing lints between releases. This is not hypothetical: the commit
+   that enabled the `pedantic` group passed a clean local `-D warnings`
+   on 1.93 and failed CI on 1.98, where `map_unwrap_or` had grown to
+   cover `Result` as well as `Option`. Two call sites the local run could
+   not see.
 12. **`cargo test --all-targets` + `cargo test --doc`** — all unit,
     integration **and documentation** tests pass. `--all-targets`
     excludes doctests, so the hook runs them as a second invocation;
