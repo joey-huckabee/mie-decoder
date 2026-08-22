@@ -30,6 +30,7 @@ pub const TERMINATOR_TYPE_WORD: u16 = 0x0000;
 /// True if `raw` is the end-of-records terminator (a null Type Word).
 /// See [`TERMINATOR_TYPE_WORD`] and L2-RDR-021 / L2-SYN-028.
 #[inline]
+#[must_use]
 pub fn is_terminator_type_word(raw: u16) -> bool {
     raw == TERMINATOR_TYPE_WORD
 }
@@ -38,6 +39,7 @@ pub fn is_terminator_type_word(raw: u16) -> bool {
 
 /// Read a single little-endian `u16` at `offset`. Returns `None` if OOB.
 #[inline]
+#[must_use]
 pub fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
     let bytes = data.get(offset..offset + 2)?;
     Some(u16::from_le_bytes([bytes[0], bytes[1]]))
@@ -64,6 +66,7 @@ pub fn read_u16_array(data: &[u8], offset: usize, count: usize, out: &mut [u16])
 // ── Field decoders ────────────────────────────────────────────────────
 
 #[inline]
+#[must_use]
 pub fn decode_type_word(raw: u16) -> TypeWord {
     let message_type = (raw & 0x7F) as u8;
     let bus = if (raw >> 7) & 1 == 0 { Bus::A } else { Bus::B };
@@ -78,6 +81,7 @@ pub fn decode_type_word(raw: u16) -> TypeWord {
     }
 }
 
+#[must_use]
 pub fn decode_irig_timestamp(upper: u16, middle: u16, lower: u16) -> IrigTimestamp {
     let freerun = ((upper >> 15) & 1) != 0;
     let day = (upper >> 5) & 0x01FF;
@@ -97,6 +101,7 @@ pub fn decode_irig_timestamp(upper: u16, middle: u16, lower: u16) -> IrigTimesta
     }
 }
 
+#[must_use]
 pub fn decode_standard_timestamp(upper: u16, lower: u16) -> StandardTimestamp {
     let raw_value = (u32::from(upper) << 16) | u32::from(lower);
     StandardTimestamp {
@@ -106,6 +111,7 @@ pub fn decode_standard_timestamp(upper: u16, lower: u16) -> StandardTimestamp {
     }
 }
 
+#[must_use]
 pub fn decode_command_word(raw: u16) -> CommandWord {
     let rt = ((raw >> 11) & 0x1F) as u8;
     let direction = if (raw >> 10) & 1 == 0 {
@@ -144,6 +150,7 @@ pub const DEFAULT_MUX_FIELD: i64 = 4;
 /// Returns `None` (→ empty MUX) when the index is out of range, the selected
 /// field is empty after trimming, or `delimiter` is empty. Pure and
 /// allocation-light; the caller wraps the result in a shared `Arc<str>`.
+#[must_use]
 pub fn mux_from_filename(file_name: &str, delimiter: &str, field: i64) -> Option<String> {
     if delimiter.is_empty() {
         return None;
@@ -201,7 +208,7 @@ pub enum WhichInvariant {
     DirectionBcToRt,
     /// L2-SYN-021: Type 0x04 (RT→BC) requires Cmd direction = Transmit.
     DirectionRtToBc,
-    /// L2-SYN-022: Type Word word_count too small for declared payload.
+    /// L2-SYN-022: Type Word `word_count` too small for declared payload.
     WordCountCapacity,
     /// L2-SYN-023: Cmd2 direction for RT-to-RT must be Receive.
     DirectionRtToRtCmd2,
@@ -211,7 +218,7 @@ pub enum WhichInvariant {
     /// L2-SYN-025: Type Word bit 15 (reserved) is set.
     /// AnomalyWarn-class — possible vendor extension.
     TypeWordReservedBit,
-    /// L2-SYN-027: RT-to-RT Cmd1 and Cmd2 disagree on data_word_count.
+    /// L2-SYN-027: RT-to-RT Cmd1 and Cmd2 disagree on `data_word_count`.
     DataWordCountMismatch,
 }
 
@@ -236,12 +243,12 @@ pub struct InvariantViolation {
 }
 
 /// Per-format minimum payload word count, computed from the primary
-/// Command Word's declared data_word_count. Used by the L2-SYN-022
+/// Command Word's declared `data_word_count`. Used by the L2-SYN-022
 /// capacity check. `SpuriousData` has variable size so returns 0
 /// (skip the check). For RT-to-RT formats the second Command Word is
 /// not yet decoded at the time we call this; we use Cmd1's
-/// data_word_count as an approximation (the bus protocol requires
-/// Cmd1 and Cmd2 to agree on data_word_count).
+/// `data_word_count` as an approximation (the bus protocol requires
+/// Cmd1 and Cmd2 to agree on `data_word_count`).
 fn min_payload_words(fmt: MessageFormat, cmd: &CommandWord) -> u16 {
     let dwc = u16::from(cmd.data_word_count);
     match fmt {
@@ -260,13 +267,13 @@ fn min_payload_words(fmt: MessageFormat, cmd: &CommandWord) -> u16 {
 
 /// L2-SYN-020..025: structural invariants per the locked schema. Caller
 /// has already framing-validated (sync.rs) and classified the format
-/// (classify_message_format). Returns Err describing the first
+/// (`classify_message_format`). Returns Err describing the first
 /// invariant the record violates; Ok if all hold.
 ///
 /// Reject-class invariants checkable before payload extraction:
 /// - INV-001 (L2-SYN-020): Type 0x02 → Cmd direction = Receive
 /// - INV-002 (L2-SYN-021): Type 0x04 → Cmd direction = Transmit
-/// - INV-003 (L2-SYN-022): TW.word_count >= 1 + ts_words + 1 + min_payload_words(format, cmd)
+/// - INV-003 (L2-SYN-022): `TW.word_count` >= 1 + `ts_words` + 1 + `min_payload_words(format`, cmd)
 ///
 /// The remaining structural invariants live in companion functions
 /// because they need data not available here: RT-to-RT Cmd2 direction
@@ -380,6 +387,7 @@ pub fn validate_post_extract_invariants(
 /// emitting the record. Returns a Vec because multiple anomalies can
 /// fire on a single record (e.g., Status RT mismatch AND reserved
 /// bit set simultaneously).
+#[must_use]
 pub fn detect_record_anomalies(
     tw: &TypeWord,
     cmd: &CommandWord,
@@ -523,6 +531,7 @@ pub const DEFAULT_DETECT_RECORDS: usize = 8;
 /// returns with however many records it managed to score.
 ///
 /// IRIG wins ties per L2-DEC-012.
+#[must_use]
 pub fn probe_timestamp_format(
     data: &[u8],
     first_offset: usize,
@@ -686,6 +695,7 @@ fn score_standard_candidate(data: &[u8], offset: usize, type_word: &TypeWord) ->
 }
 
 #[inline]
+#[must_use]
 pub fn message_type_is_valid(code: u8) -> bool {
     is_valid_message_type(code)
 }
@@ -839,7 +849,7 @@ mod tests {
     }
 
     /// Broadcast mode-code data/no-data boundary is relative to the timestamp
-    /// word count: data iff word_count >= timestamp_words + 3 (L2-MSG-004). For
+    /// word count: data iff `word_count` >= `timestamp_words` + 3 (L2-MSG-004). For
     /// IRIG (3) that is WC >= 6; for Standard (2) that is WC >= 5.
     /// Requirements: L2-MSG-001, L2-MSG-004
     #[test]
@@ -872,8 +882,8 @@ mod tests {
     }
 
     /// A transmit mode code is `ModeCodeTxData` only when the record is long
-    /// enough to carry a data word (word_count >= timestamp_words + 4); without
-    /// one it is `ModeCodeNoData` — the wire shape is ModeCmd + Status either
+    /// enough to carry a data word (`word_count` >= `timestamp_words` + 4); without
+    /// one it is `ModeCodeNoData` — the wire shape is `ModeCmd` + Status either
     /// way, and the `CMD` column preserves the direction. Regression: a no-data
     /// transmit mode code (1553 mode codes 0–15 — "transmit status word", etc.)
     /// was previously forced to `ModeCodeTxData`, failed the L2-SYN-022 capacity
@@ -910,7 +920,7 @@ mod tests {
     }
 
     /// Non-broadcast receive mode-code data/no-data boundary is relative to the
-    /// timestamp word count: data iff word_count >= timestamp_words + 4
+    /// timestamp word count: data iff `word_count` >= `timestamp_words` + 4
     /// (L2-MSG-004). For IRIG (3) that is WC >= 7; for Standard (2) WC >= 6.
     /// Requirements: L2-MSG-001, L2-MSG-004
     #[test]

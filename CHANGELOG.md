@@ -17,6 +17,34 @@ full release workflow.
 
 ### Changed
 
+- **`doc_markdown` and `must_use_candidate` cleared and denied.** Both were
+  `pedantic`, so `-D warnings` had never seen either.
+
+  `doc_markdown` (33): every finding was a real code identifier named in prose
+  without backticks — `SPURIOUS_DATA`, `RecordIter`, `iter()` — which rustdoc
+  therefore rendered as plain text. None were domain acronyms needing an
+  exception, so `doc-valid-idents` was left alone.
+
+  `must_use_candidate` (64): all pure functions or accessors where discarding
+  the result is meaningless. The clearest is `cli::run`, which returns the
+  process **exit code** — dropping it makes the process exit 0 whatever
+  happened. Adding `#[must_use]` is additive, confirmed by running
+  `cargo-semver-checks` locally before pushing: 194 checks, 194 pass.
+
+  Counts are lib-only. The `--all-targets` figures (101 and 128) that I quoted
+  earlier are inflated, because that flag compiles the library once per test
+  binary and counts each copy.
+
+- **Neither lint has a cross-implementation analogue, and the C++ reason is
+  structural.** `doc_markdown` is a rustdoc rendering rule. `#[must_use]`'s C++
+  equivalent is `[[nodiscard]]`, which is **C++17** — unavailable at the C++11
+  floor ADR-0001 sets for GCC 4.8.5 on SLES 12 SP5. The compiler-specific
+  spellings (`__attribute__((warn_unused_result))`, `_Check_return_`) differ
+  between GCC and MSVC, so adopting one would mean a new portability macro for
+  modest benefit. C++ already gets partial coverage free: `bugprone-*` is
+  enabled in `.clang-tidy`, which includes `bugprone-unused-return-value`.
+  Python has no equivalent construct at all.
+
 - **`log::_emit` is now `log::emit`, marked `#[doc(hidden)]`.** It was `pub`
   purely so the exported `log_*!` macros could resolve it at a call site in
   another crate — a real need, expressed with the wrong tool. `_name`

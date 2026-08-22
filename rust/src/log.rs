@@ -19,6 +19,7 @@ pub enum Level {
 }
 
 impl Level {
+    #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         match name.to_ascii_uppercase().as_str() {
             "DEBUG" => Some(Self::Debug),
@@ -30,6 +31,7 @@ impl Level {
         }
     }
 
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Debug => "DEBUG",

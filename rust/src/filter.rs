@@ -46,6 +46,7 @@ impl FilterFields {
 }
 
 impl FilterConfig {
+    #[must_use]
     pub fn is_active(&self) -> bool {
         !self.exclude_types.is_empty()
             || !self.exclude_rts.is_empty()
@@ -63,6 +64,7 @@ impl FilterConfig {
     /// separate functions rather than one run of guards: an *exclude* set drops
     /// a record that IS listed, while an *include* set drops a record that is
     /// not — and an include set only means anything when it is non-empty.
+    #[must_use]
     pub fn should_exclude(&self, msg: &MieMessage) -> bool {
         let field = FilterFields::of(msg);
         self.excluded_by_negative(&field) || self.excluded_by_positive(&field)
@@ -90,7 +92,7 @@ impl FilterConfig {
 
     /// Dropped because an inclusion set is active and the record is not in it.
     ///
-    /// A record with no Command Word — SPURIOUS_DATA — has no RT or subaddress
+    /// A record with no Command Word — `SPURIOUS_DATA` — has no RT or subaddress
     /// to match, so an active RT or subaddress include set drops it. That is
     /// deliberate: "keep only RT 5" cannot meaningfully keep a record that
     /// names no RT.

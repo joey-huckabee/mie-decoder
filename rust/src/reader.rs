@@ -63,9 +63,9 @@ pub struct MieFileReader {
     /// absent/empty). Shared per file as an `Arc<str>` and cloned (a refcount
     /// bump) onto each decoded message, so per-record carry is O(1).
     mux: Option<Arc<str>>,
-    /// Cumulative sync-recovery attempts during the most recent iter()
-    /// call. Reset to 0 at the start of each iter(). Shared with the
-    /// active RecordIter via a reference so the CLI can query it
+    /// Cumulative sync-recovery attempts during the most recent `iter()`
+    /// call. Reset to 0 at the start of each `iter()`. Shared with the
+    /// active `RecordIter` via a reference so the CLI can query it
     /// post-iteration (e.g., to distinguish L1-EXIT-003 partial-recovered
     /// from L1-EXIT-002 complete in the exit-class summary).
     sync_losses: AtomicU64,
@@ -203,7 +203,7 @@ impl MieFileReader {
         self.file_size
     }
 
-    /// Cumulative sync-recovery count from the most recent iter() call.
+    /// Cumulative sync-recovery count from the most recent `iter()` call.
     /// Reset to 0 each time `iter()` is invoked. Query after the
     /// iterator is exhausted to derive the L1-EXIT-003/005 exit class.
     pub fn sync_losses(&self) -> u64 {
@@ -561,7 +561,7 @@ pub struct RecordIter<'a> {
     /// scan window) without silently yielding an empty stream.
     pending_error: Option<MieError>,
     /// Set when lenient-mode sync recovery exhausts mid-file. The next
-    /// next() call yields this terminal Err once, then transitions to
+    /// `next()` call yields this terminal Err once, then transitions to
     /// done = true. Distinct from `pending_error` so the message-decoding
     /// loop can populate it without entangling with construction-time
     /// errors. Per L1-EXIT-004 the CLI catches this variant to decide
@@ -922,7 +922,7 @@ impl<'a> RecordIter<'a> {
         }
     }
 
-    /// Build the SPURIOUS_DATA message (no Command/Status), advance past it, and
+    /// Build the `SPURIOUS_DATA` message (no Command/Status), advance past it, and
     /// clear the prev-was-error flag. The `0x2000`/`0x2001` continuation code is
     /// chosen from whether the immediately preceding decoded record errored.
     fn spurious_message(
@@ -1431,7 +1431,7 @@ mod tests {
     }
 
     /// Regression: a non-empty file with no decodable records must
-    /// surface MieError::NoValidRecords on the first iter() call,
+    /// surface `MieError::NoValidRecords` on the first `iter()` call,
     /// then return None forever after. Previously the iterator was
     /// silently marked done so callers like `count` and `decode` saw
     /// zero messages and exited successfully — producing a header-only
@@ -1467,8 +1467,8 @@ mod tests {
 
     /// Regression: L2-RDR-004. A file that contains a structurally-
     /// valid Type Word whose declared extent runs past EOF SHALL surface
-    /// MieError::FirstRecordTruncated in strict mode (distinct from the
-    /// generic RecordTruncated) and SHALL terminate cleanly with zero
+    /// `MieError::FirstRecordTruncated` in strict mode (distinct from the
+    /// generic `RecordTruncated`) and SHALL terminate cleanly with zero
     /// records in lenient mode.
     /// Requirements: L2-RDR-004
     #[test]
@@ -1716,11 +1716,11 @@ mod tests {
         assert_eq!(msgs[0].error_word, Some(0x0199));
     }
 
-    /// L2-SYN-018: 0x20-fill parses as a SPURIOUS_DATA Type Word
-    /// (msg_type=0x20, wc=32) and passes basic validation, but every
+    /// L2-SYN-018: 0x20-fill parses as a `SPURIOUS_DATA` Type Word
+    /// (`msg_type=0x20`, wc=32) and passes basic validation, but every
     /// "record" is byte-identical to its successor. The reader SHALL
-    /// reject the input with MieError::HomogeneousPayload rather than
-    /// emit a torrent of synthetic SPURIOUS_DATA frames.
+    /// reject the input with `MieError::HomogeneousPayload` rather than
+    /// emit a torrent of synthetic `SPURIOUS_DATA` frames.
     /// Requirements: L2-SYN-018
     #[test]
     fn homogeneous_payload_input_rejected() {
@@ -1793,7 +1793,7 @@ mod tests {
     /// recording — it SHALL yield zero records with NO error (distinct from
     /// the `NoValidRecords` wrong-file rejection) and flag `empty_recording()`.
     /// Regression: an "unused channel" recording is literally the two bytes
-    /// `00 00`; the decoder previously raised NoValidRecords and exited 2.
+    /// `00 00`; the decoder previously raised `NoValidRecords` and exited 2.
     /// Requirements: L1-EXIT-010, L2-RDR-021
     #[test]
     fn empty_recording_terminator_only_yields_zero_records() {
@@ -1811,7 +1811,7 @@ mod tests {
     }
 
     /// L1-EXIT-010: a wrong-file input (no terminator, no valid record) must
-    /// still surface NoValidRecords and NOT be mistaken for an empty
+    /// still surface `NoValidRecords` and NOT be mistaken for an empty
     /// recording. Guards the positive terminator signature against masking
     /// genuinely non-MIE inputs.
     /// Requirements: L1-EXIT-010, L2-RDR-021
@@ -1836,7 +1836,7 @@ mod tests {
     /// terminator SHALL decode that record. Regression: the single record's
     /// look-ahead follower is the terminator, which the pre-fix 2-record
     /// look-ahead rejected — the lone record was dropped and the file failed
-    /// as NoValidRecords.
+    /// as `NoValidRecords`.
     /// Requirements: L2-SYN-028
     #[test]
     fn single_record_then_terminator_decodes() {

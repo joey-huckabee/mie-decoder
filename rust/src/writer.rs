@@ -1,7 +1,7 @@
 //! Streaming CSV writer.
 //!
 //! Rows are written directly to a `Write` impl as they are produced — no
-//! intermediate `Vec<Row>` or DataFrame buffering. Memory usage is constant
+//! intermediate `Vec<Row>` or `DataFrame` buffering. Memory usage is constant
 //! regardless of file size.
 //!
 //! Column order matches the DDC vendor CSV byte-for-byte. `TERM_NAME`,
@@ -171,6 +171,7 @@ impl AtomicCsvFile {
         Ok(partial)
     }
 
+    #[must_use]
     pub fn final_path(&self) -> &Path {
         &self.final_path
     }
@@ -467,7 +468,7 @@ pub struct WriteOptions {
 /// `UnrecoverableSyncLoss` — the rows decoded so far have been
 /// committed to the `.partial` path captured in `PartialCommit`.
 /// `partial` is `None` for a complete (or completely-recovered)
-/// decode; the CLI distinguishes Complete from PartialRecovered by
+/// decode; the CLI distinguishes Complete from `PartialRecovered` by
 /// querying `MieFileReader::sync_losses()` post-iteration.
 #[derive(Debug)]
 pub struct WriteOutcome {
@@ -509,7 +510,7 @@ fn preflight_output(output: &Path, opts: &WriteOptions) -> MieResult<()> {
 }
 
 /// Stream `messages` to a single CSV. Errors and spurious records are
-/// included with their ERROR / ERROR_CODE columns populated (INLINE mode,
+/// included with their ERROR / `ERROR_CODE` columns populated (INLINE mode,
 /// or stdout where splitting is not possible).
 ///
 /// `output` may be `None` for stdout; stdout output skips the
@@ -603,10 +604,10 @@ where
 /// first error row, so files with no errors don't produce an empty
 /// `_errors.csv` (and don't even create a temp).
 ///
-/// Both files use the AtomicCsvFile pattern — temp + atomic rename.
+/// Both files use the `AtomicCsvFile` pattern — temp + atomic rename.
 /// When `opts.allow_partial` and the iterator yields
 /// `UnrecoverableSyncLoss`, both files (if any) are committed as
-/// `.partial` and the function returns Ok with PartialCommit info.
+/// `.partial` and the function returns Ok with `PartialCommit` info.
 pub fn write_csv_split<I>(messages: I, output: &Path, opts: WriteOptions) -> MieResult<WriteOutcome>
 where
     I: IntoIterator<Item = MieResult<MieMessage>>,
@@ -1231,7 +1232,7 @@ mod tests {
     /// Separate mode commits main before errors. We force the *second*
     /// (errors) commit to fail by making the errors destination a
     /// directory — renaming a file over a directory fails on both POSIX
-    /// (EISDIR) and Windows (MoveFileEx). The already-committed main CSV
+    /// (EISDIR) and Windows (`MoveFileEx`). The already-committed main CSV
     /// must remain (the primary artifact is the residue), and the errors
     /// temp must be unlinked — never an orphan errors file.
     #[test]

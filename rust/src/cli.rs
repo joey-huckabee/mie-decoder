@@ -271,6 +271,7 @@ impl CliError {
 
 // ── Top-level entry ───────────────────────────────────────────────────
 
+#[must_use]
 pub fn run(argv: Vec<String>) -> ExitCode {
     let mut iter = argv.into_iter().skip(1).peekable();
 
@@ -935,7 +936,7 @@ fn apply_log_level(source: &str, value: &str) -> Result<(), String> {
 }
 
 /// Load `--config` (or the built-in defaults if none was specified) and
-/// apply log-level precedence: config overrides the run() default; CLI
+/// apply log-level precedence: config overrides the `run()` default; CLI
 /// overrides config. Used by every subcommand so a malformed config
 /// file is rejected uniformly regardless of whether you ran `decode`,
 /// `count`, or `dump`.
@@ -1550,7 +1551,7 @@ mod tests {
         }
     }
 
-    /// Parse errors should still surface as ParseError::Other, not panics
+    /// Parse errors should still surface as `ParseError::Other`, not panics
     /// or exits.
     /// Requirements: L2-CLI-005
     #[test]
@@ -1936,7 +1937,7 @@ mod tests {
         }
     }
 
-    /// More than MAX_MERGE_FILES resolved inputs is a usage error (exit 4),
+    /// More than `MAX_MERGE_FILES` resolved inputs is a usage error (exit 4),
     /// rejected before any file is opened.
     /// Requirements: L2-MRG-001
     #[test]

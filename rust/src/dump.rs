@@ -551,7 +551,7 @@ mod tests {
 
     /// Regression test: `--raw --offset usize::MAX --length 1` must not
     /// panic on the `start_offset + n` computation. The fix uses
-    /// saturating_add and clamps to file_len; the result is an empty
+    /// `saturating_add` and clamps to `file_len`; the result is an empty
     /// dump rather than a crash.
     /// Requirements: L1-ROB-001
     #[test]
@@ -586,7 +586,7 @@ mod tests {
 
     /// Regression test for the record-mode loop guard.
     /// `offset + MIN_RECORD_BYTES <= file_len` overflows if offset is
-    /// near usize::MAX; the fix uses checked_add so the loop simply
+    /// near `usize::MAX`; the fix uses `checked_add` so the loop simply
     /// doesn't enter.
     /// Requirements: L1-ROB-001
     #[test]

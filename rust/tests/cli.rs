@@ -672,7 +672,7 @@ fn dump_records_outputs_hex_to_stdout() {
 /// Requirements: L2-ERR-010, L2-ERR-011, L3-RS-009
 ///
 /// Inline is the default: with no flag, errored records stay in the main CSV
-/// with the ERROR and ERROR_CODE columns populated and no `_errors.csv` is
+/// with the ERROR and `ERROR_CODE` columns populated and no `_errors.csv` is
 /// produced. Routing them to a separate file is now the opt-in
 /// (`--separate-errors`).
 /// Requirements: L2-ERR-010, L2-ERR-011, L3-RS-009
@@ -971,7 +971,7 @@ fn detect_records_flag_accepts_valid_size() {
 /// Requirements: L2-SYN-026
 ///
 /// `--lookahead-records N` is accepted in range and the decode
-/// completes normally. Default N=2 (DEFAULT_LOOKAHEAD_RECORDS)
+/// completes normally. Default N=2 (`DEFAULT_LOOKAHEAD_RECORDS`)
 /// preserves historical behavior; any value in [1, 32] is valid.
 #[test]
 fn lookahead_records_flag_accepts_valid_size() {
@@ -1056,7 +1056,7 @@ fn detect_records_flag_rejects_out_of_range() {
 // ── L1-OUT-003 / L2-WRT-021 / L2-WRT-022: canonical row order via the CLI ───
 
 /// A valid receive record (Type 0x02, RT/SA patched) placed at `micro` within a
-/// fixed day 192 15:54:50, so several records can share one TIME_STAMP. Keeps
+/// fixed day 192 15:54:50, so several records can share one `TIME_STAMP`. Keeps
 /// the fixture's 30-data-word count so the record layout is untouched.
 fn record_at(rt: u8, sa: u8, micro: u32) -> Vec<u8> {
     let mut rec = one_valid_record();
