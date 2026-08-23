@@ -394,7 +394,36 @@ jobs:
             # If output permissions ever need to be restricted, that is a
             # deliberate feature decision across all three implementations with
             # a documented flag -- not a silent change in one backend.
-            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,dumpEmitTaint,tempFilePermissions"
+            # ----------------------------------------------------------------
+            # cpp/**: cpp:S3230 "use the in-class initializer instead"
+            # ----------------------------------------------------------------
+            #
+            # S3230 has two distinct messages behind one rule key. The first --
+            # "it is redundant with default initialization behavior" -- was a
+            # real cleanup and is FIXED: 100 lines of redundant entries removed,
+            # applied by clang-tidy's readability-redundant-member-init because
+            # that check distinguishes a redundant `std::string s()` from a
+            # LOAD-BEARING `int n()`, and Sonar's message does not.
+            #
+            # The second message prescribes a default member initializer, and
+            # that is the one suppressed here. In C++11 a class with an NSDMI is
+            # NOT AN AGGREGATE, so adopting them tree-wide would make
+            # `Foo{1, 2}` ill-formed on GCC 4.8.5 -- the SLES 12 system compiler
+            # this implementation exists to support (ADR-0001). MSVC compiles as
+            # C++14, where the same code is legal, so the breakage would appear
+            # only on the target platform and only at the fidelity tier. That
+            # exact hazard is why CONTRIBUTING.md names "aggregate-initialising a
+            # class with a default member initializer" as one of two banned
+            # constructs.
+            #
+            # Coverage of the useful half is not lost: clang-tidy's
+            # readability-redundant-member-init runs in the clang-tidy gate at
+            # LLVM 20 and will catch a newly redundant entry. Sonar's rule key
+            # cannot be suppressed per-message, so suppressing it wholesale and
+            # keeping the sharper tool is the trade.
+            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,dumpEmitTaint,tempFilePermissions,cppMemberInitNsdmi"
+            "-Dsonar.issue.ignore.multicriteria.cppMemberInitNsdmi.ruleKey=cpp:S3230"
+            "-Dsonar.issue.ignore.multicriteria.cppMemberInitNsdmi.resourceKey=cpp/**"
             "-Dsonar.issue.ignore.multicriteria.dumpEmitTaint.ruleKey=cpp:S2083"
             "-Dsonar.issue.ignore.multicriteria.dumpEmitTaint.resourceKey=cpp/src/dump.cpp"
             "-Dsonar.issue.ignore.multicriteria.tempFilePermissions.ruleKey=cpp:S2612"

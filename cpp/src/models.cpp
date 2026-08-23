@@ -250,7 +250,7 @@ bool StandardTimestamp::operator==(const StandardTimestamp& other) const {
 
 // --- Timestamp ------------------------------------------------------------
 
-Timestamp::Timestamp() : format_kind(TIMESTAMP_AUTO), irig(), standard() {}
+Timestamp::Timestamp() : format_kind(TIMESTAMP_AUTO) {}
 
 Timestamp Timestamp::from_irig(const IrigTimestamp& value) {
     Timestamp t;
@@ -382,19 +382,7 @@ bool DataWords::operator==(const DataWords& other) const {
 
 // --- MieMessage -----------------------------------------------------------
 
-MieMessage::MieMessage()
-    : timestamp(),
-      type_word(),
-      message_format(FORMAT_SPURIOUS_DATA),
-      command_word(),
-      command_word_2(),
-      status_word(),
-      status_word_2(),
-      data_words(),
-      error_word(),
-      delta(),
-      file_offset(0),
-      mux() {}
+MieMessage::MieMessage() : message_format(FORMAT_SPURIOUS_DATA), file_offset(0) {}
 
 Optional<uint8_t> MieMessage::rt() const {
     if (!command_word.has_value()) {

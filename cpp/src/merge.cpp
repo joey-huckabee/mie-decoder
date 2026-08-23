@@ -216,21 +216,13 @@ bool expand_glob(const std::string& pattern, std::vector<std::string>& out,
 // ---------------------------------------------------------------------------
 
 MergeOptions::MergeOptions()
-    : standard_tick_rate_hz(),
-      allow_partial(false),
+    : allow_partial(false),
       strict(false),
       collapse_duplicates(false),
       collapse_window_us(0),
       delta_scope(DELTA_SCOPE_PER_FILE) {}
 
-DedupKey::DedupKey()
-    : type_word(),
-      command_word(),
-      command_word_2(),
-      status_word(),
-      status_word_2(),
-      error_word(),
-      data_words() {}
+DedupKey::DedupKey() = default;
 
 DedupKey DedupKey::of(const MieMessage& message) {
     DedupKey key;
@@ -254,7 +246,7 @@ bool DedupKey::operator==(const DedupKey& other) const {
 DedupWindow::Survivor::Survivor(uint64_t us_, std::size_t file_index_, const DedupKey& key_)
     : us(us_), file_index(file_index_), key(key_) {}
 
-DedupWindow::DedupWindow(uint64_t window_us) : window_us_(window_us), survivors_() {}
+DedupWindow::DedupWindow(uint64_t window_us) : window_us_(window_us) {}
 
 bool DedupWindow::is_duplicate(uint64_t us, std::size_t file_index, const MieMessage& message) {
     // Evict survivors that can no longer fall within the window of this or any
@@ -291,7 +283,7 @@ bool DedupWindow::is_duplicate(uint64_t us, std::size_t file_index, const MieMes
 // MergedSource
 // ---------------------------------------------------------------------------
 
-MergedSource::Entry::Entry() : us(0), file_index(0), seq(0), message() {}
+MergedSource::Entry::Entry() : us(0), file_index(0), seq(0) {}
 
 bool MergedSource::Entry::operator<(const Entry& other) const {
     // Reversed: std::priority_queue is a max-heap and the merge wants the
@@ -307,18 +299,13 @@ bool MergedSource::Entry::operator<(const Entry& other) const {
 
 MergedSource::MergedSource(const std::vector<MieFileReader*>& readers, const MergeOptions& options)
     : readers_(readers),
-      iters_(),
-      heap_(),
       next_seq_(readers.size(), 0),
       prev_us_(readers.size(), 0),
       has_prev_(readers.size(), false),
       warned_backward_(readers.size(), false),
-      paths_(),
       options_(options),
       delta_tracker_(options.standard_tick_rate_hz),
       dedup_(options.collapse_window_us),
-      pending_error_(),
-      pending_terminal_(),
       collapsed_(0) {
     iters_.reserve(readers_.size());
     paths_.reserve(readers_.size());

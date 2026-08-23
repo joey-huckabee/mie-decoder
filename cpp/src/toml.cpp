@@ -13,8 +13,7 @@ namespace toml {
 // Value
 // ---------------------------------------------------------------------------
 
-Value::Value()
-    : kind_(VALUE_STRING), string_(), integer_(0), float_(0.0), boolean_(false), array_() {}
+Value::Value() : kind_(VALUE_STRING), integer_(0), float_(0.0), boolean_(false) {}
 
 Value Value::of_string(const std::string& value) {
     Value v;
@@ -66,7 +65,7 @@ const char* Value::kind_name() const {
 // ParseError, Entry, Document
 // ---------------------------------------------------------------------------
 
-ParseError::ParseError() : line(0), message() {}
+ParseError::ParseError() : line(0) {}
 
 std::string ParseError::format() const {
     if (line == 0) {
@@ -75,9 +74,9 @@ std::string ParseError::format() const {
     return "line " + text::decimal(static_cast<uint64_t>(line)) + ": " + message;
 }
 
-Entry::Entry() : section(), key(), value(), line(0) {}
+Entry::Entry() : line(0) {}
 
-Document::Document() : entries_() {}
+Document::Document() = default;
 
 void Document::add(const Entry& entry) { entries_.push_back(entry); }
 

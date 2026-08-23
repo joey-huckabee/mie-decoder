@@ -322,7 +322,7 @@ struct GlobalArgs {
     Optional<std::string> config;
     Optional<std::string> log_level;
 
-    GlobalArgs() : config(), log_level() {}
+    GlobalArgs() = default;
 };
 
 struct DecodeArgs {
@@ -335,7 +335,7 @@ struct DecodeArgs {
     Optional<std::string> output;
     ConfigOverrides overrides;
 
-    DecodeArgs() : inputs(), manifest(), glob(), output(), overrides() {}
+    DecodeArgs() = default;
 };
 
 /// Parse everything after `decode`.
@@ -496,7 +496,7 @@ struct DumpArgs {
     Optional<std::size_t> length;
     Optional<uint64_t> records;
 
-    DumpArgs() : input(), raw(false), offset(0), length(), records() {}
+    DumpArgs() : raw(false), offset(0) {}
 };
 
 DumpArgs parse_dump(ArgReader& reader) {

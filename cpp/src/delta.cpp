@@ -22,10 +22,9 @@ Optional<double> DeltaOutcome::value() const {
     return Optional<double>();
 }
 
-DeltaTracker::DeltaTracker() : last_us_(), warned_keys_(), tick_rate_hz_() {}
+DeltaTracker::DeltaTracker() = default;
 
-DeltaTracker::DeltaTracker(const Optional<double>& tick_rate_hz)
-    : last_us_(), warned_keys_(), tick_rate_hz_(tick_rate_hz) {}
+DeltaTracker::DeltaTracker(const Optional<double>& tick_rate_hz) : tick_rate_hz_(tick_rate_hz) {}
 
 DeltaOutcome DeltaTracker::observe(const CommandWord* command_word, const Timestamp& timestamp) {
     DeltaOutcome outcome;

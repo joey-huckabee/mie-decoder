@@ -14,15 +14,7 @@
 
 namespace mie {
 
-FilterConfig::FilterConfig()
-    : exclude_types(),
-      exclude_rts(),
-      exclude_buses(),
-      exclude_subaddresses(),
-      include_types(),
-      include_rts(),
-      include_buses(),
-      include_subaddresses() {}
+FilterConfig::FilterConfig() = default;
 
 bool FilterConfig::is_active() const {
     return !exclude_types.empty() || !exclude_rts.empty() || !exclude_buses.empty() ||
@@ -43,13 +35,11 @@ DecoderConfig::DecoderConfig()
       time_format(TIMESTAMP_AUTO),
       strict(false),
       error_mode(ERROR_MODE_INLINE),
-      filters(),
       output_format("csv"),
       no_clobber(false),
       allow_partial(false),
       detect_records(decode::DEFAULT_DETECT_RECORDS),
       lookahead_records(sync::DEFAULT_LOOKAHEAD_RECORDS),
-      standard_tick_rate_hz(),
       mux_enabled(decode::DEFAULT_MUX_ENABLED),
       mux_delimiter(decode::DEFAULT_MUX_DELIMITER),
       mux_field(decode::DEFAULT_MUX_FIELD),
@@ -58,25 +48,7 @@ DecoderConfig::DecoderConfig()
       delta_scope(DELTA_SCOPE_PER_FILE),
       max_sort_group(DEFAULT_MAX_SORT_GROUP) {}
 
-ConfigOverrides::ConfigOverrides()
-    : log_level(),
-      time_format(),
-      strict(),
-      error_mode(),
-      output_format(),
-      no_clobber(),
-      allow_partial(),
-      detect_records(),
-      lookahead_records(),
-      standard_tick_rate_hz(),
-      mux_enabled(),
-      mux_delimiter(),
-      mux_field(),
-      collapse_duplicates(),
-      collapse_window_us(),
-      delta_scope(),
-      max_sort_group(),
-      filters() {}
+ConfigOverrides::ConfigOverrides() = default;
 
 // ---------------------------------------------------------------------------
 // Schema membership

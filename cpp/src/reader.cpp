@@ -173,7 +173,6 @@ ReaderOptions::ReaderOptions()
       time_format(TIMESTAMP_AUTO),
       detect_records(decode::DEFAULT_DETECT_RECORDS),
       lookahead_records(sync::DEFAULT_LOOKAHEAD_RECORDS),
-      standard_tick_rate_hz(),
       mux_enabled(decode::DEFAULT_MUX_ENABLED),
       mux_delimiter(decode::DEFAULT_MUX_DELIMITER),
       mux_field(decode::DEFAULT_MUX_FIELD) {}
@@ -183,15 +182,11 @@ ReaderOptions::ReaderOptions()
 // ---------------------------------------------------------------------------
 
 MieFileReader::MieFileReader()
-    : path_(),
-      mapping_(),
-      file_size_(0),
+    : file_size_(0),
       strict_(false),
       time_format_(TIMESTAMP_AUTO),
       detect_records_(decode::DEFAULT_DETECT_RECORDS),
       lookahead_records_(sync::DEFAULT_LOOKAHEAD_RECORDS),
-      standard_tick_rate_hz_(),
-      mux_(),
       sync_losses_(0),
       empty_recording_(false) {}
 
@@ -460,7 +455,6 @@ RecordIter::RecordIter(MieFileReader& owner)
       file_len_(static_cast<std::size_t>(owner.file_size_)),
       offset_(0),
       done_(false),
-      pending_error_(),
       strict_(owner.strict_),
       resolved_format_(TIMESTAMP_IRIG),
       lookahead_records_(owner.lookahead_records_),

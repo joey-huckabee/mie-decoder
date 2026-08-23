@@ -18,6 +18,9 @@
 #include <cerrno>
 #endif
 
+// Unconditional: std::make_shared is used below on every platform.
+#include <memory>
+
 namespace mie {
 
 namespace {
@@ -66,11 +69,7 @@ const char* error_kind_name(MieErrorKind kind) {
 }
 
 MieError::MieError(MieErrorKind kind, const std::string& message)
-    : kind_(kind),
-      message_(new std::string(message)),
-      offset_(),
-      sync_losses_(),
-      broken_pipe_(false) {}
+    : kind_(kind), message_(std::make_shared<std::string>(message)), broken_pipe_(false) {}
 
 // --- File-level -----------------------------------------------------------
 

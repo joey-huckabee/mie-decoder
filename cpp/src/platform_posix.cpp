@@ -185,8 +185,7 @@ void MappedFile::close() {
 // AtomicFile
 // ---------------------------------------------------------------------------
 
-AtomicFile::AtomicFile()
-    : handle_(nullptr), temp_path_(), final_path_(), buffer_(), committed_(false) {
+AtomicFile::AtomicFile() : handle_(nullptr), committed_(false) {
     buffer_.reserve(kWriteBufferSize);
 }
 
