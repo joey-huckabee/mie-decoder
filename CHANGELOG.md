@@ -17,6 +17,18 @@ full release workflow.
 
 ### Changed
 
+- **The last two findings, both created by batch 4's own fixes.** Moving a
+  `shared_ptr` to `make_shared` made the explicit type redundant (`cpp:S5827`),
+  and making two reader helpers `const` exposed their **caller** as const-able
+  too (`cpp:S5817`). Neither existed before the fix that caused it.
+
+  That is the third time in this sweep that resolving one rule created work
+  under another — `S3230` produced `S3490` in batch 2, range-for produced
+  `misc-const-correctness` and `useStlAlgorithm` in batch 3, and now this. Worth
+  stating plainly: on a codebase this size, a static-analysis count is a moving
+  target while you are working it, and "fixed N" is only true after the next
+  full branch analysis, not after the change that fixed them.
+
 - **Fourth and final batch of the SonarCloud C++ sweep. 402 findings became
   zero: 313 fixed across four batches, 89 recorded here with the reason each is
   not a defect in this tree.** That ratio is what working down a list until only

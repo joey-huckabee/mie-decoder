@@ -819,7 +819,7 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     owned.reserve(inputs.size());
     readers.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
-        const std::shared_ptr<MieFileReader> reader = std::make_shared<MieFileReader>();
+        const auto reader = std::make_shared<MieFileReader>();
         try {
             reader->open(inputs[i], reader_options(config));
         } catch (const MieError& error) {

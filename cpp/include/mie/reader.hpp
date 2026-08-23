@@ -150,7 +150,7 @@ class MieFileReader {
     /// Reject a homogeneous-payload pad (L2-SYN-018), then auto-detect
     /// (L2-DEC-015) or sanity-check a forced format (L2-DEC-013). Returns the
     /// format to decode with; sets `error` when iteration must stop first.
-    TimestampFormat resolve_format_for_hit(const sync::ScanHit& hit, PendingError& error);
+    TimestampFormat resolve_format_for_hit(const sync::ScanHit& hit, PendingError& error) const;
     TimestampFormat resolve_auto_format(const sync::ScanHit& hit, PendingError& error) const;
     TimestampFormat check_forced_format(const sync::ScanHit& hit, PendingError& error) const;
 
