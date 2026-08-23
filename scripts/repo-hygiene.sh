@@ -133,14 +133,24 @@ step "all three implementations declare the same version"
 py_ver=$(awk '/^\[(tool\.poetry|project)\]/{p=1;next} /^\[/{p=0} p && /^version *=/{gsub(/[" ]/,""); sub(/version=/,""); print; exit}' python/pyproject.toml)
 cpp_ver=$(awk -F'"' '/kVersion *=/{print $2; exit}' cpp/src/cli.cpp)
 cmake_ver=$(awk '/^ *VERSION [0-9]/{print $2; exit}' cpp/CMakeLists.txt)
-if [[ -z "$py_ver" || -z "$cpp_ver" || -z "$cmake_ver" ]]; then
-    bad "could not read a version (python=$py_ver cpp=$cpp_ver cmake=$cmake_ver)"
-elif [[ "$toml_ver" != "$py_ver" || "$toml_ver" != "$cpp_ver" || "$toml_ver" != "$cmake_ver" ]]; then
-    list "rust/Cargo.toml        $toml_ver" \
-         "python/pyproject.toml  $py_ver" \
-         "cpp/src/cli.cpp        $cpp_ver" \
-         "cpp/CMakeLists.txt     $cmake_ver"
-    bad "implementations disagree on the version — a joint cut must ship one number"
+# The C++ CI smoke steps assert the exact --version STRING, once for Linux and
+# once for Windows. They are a sixth place the version lives, and the first cut
+# to use this gate still missed them: the gate passed while CI failed on
+# `mie-decoder 2.12.0` != `mie-decoder 2.13.0`. Both are checked here now, and
+# distinct values are collapsed so one wrong line is enough to fail.
+smoke_vers=$(grep -o 'mie-decoder [0-9][0-9.]*' .github/workflows/cpp-ci.yml \
+             | awk '{print $2}' | sort -u)
+smoke_count=$(printf '%s\n' "$smoke_vers" | grep -c .)
+if [[ -z "$py_ver" || -z "$cpp_ver" || -z "$cmake_ver" || -z "$smoke_vers" ]]; then
+    bad "could not read a version (python=$py_ver cpp=$cpp_ver cmake=$cmake_ver smoke=$smoke_vers)"
+elif [[ "$toml_ver" != "$py_ver" || "$toml_ver" != "$cpp_ver" \
+     || "$toml_ver" != "$cmake_ver" || "$smoke_count" != "1" || "$smoke_vers" != "$toml_ver" ]]; then
+    list "rust/Cargo.toml            $toml_ver" \
+         "python/pyproject.toml      $py_ver" \
+         "cpp/src/cli.cpp            $cpp_ver" \
+         "cpp/CMakeLists.txt         $cmake_ver" \
+         "cpp-ci.yml --version smoke $(printf '%s ' $smoke_vers)"
+    bad "version sources disagree — a joint cut must ship one number"
 fi
 
 # ── 7. No forgotten dbg!() ────────────────────────────────────────────

@@ -26,12 +26,19 @@ full release workflow.
   which implementation an operator ran — while every release to date has been a
   **joint cut** shipping one version from one tag.
 
-  `repo-hygiene.sh` now fails when `rust/Cargo.toml`, `rust/Cargo.lock`,
-  `python/pyproject.toml`, `cpp/src/cli.cpp` (`kVersion`, what `--version`
-  actually prints) and `cpp/CMakeLists.txt` disagree, naming the offenders.
-  Proven by planting a disagreement and confirming the failure. The
-  `MAINTAINER-GUIDE` checklist now names all five, so the written procedure and
-  the gate say the same thing.
+  `repo-hygiene.sh` now fails when any of **six** sources disagree, naming the
+  offenders: `rust/Cargo.toml`, `rust/Cargo.lock`, `python/pyproject.toml`,
+  `cpp/src/cli.cpp` (`kVersion`, what `--version` actually prints),
+  `cpp/CMakeLists.txt`, and the **two CLI smoke assertions** in `cpp-ci.yml`
+  that compare `--version` output against a literal string.
+
+  Six, not five, because the first cut to use this gate still missed the smoke
+  assertions — the gate passed locally and CI failed on
+  `mie-decoder 2.12.0` != `mie-decoder 2.13.0`, on both the Linux and Windows
+  C++ jobs. The gate was widened to cover them and then proven against exactly
+  that case: with one assertion left at the old version it reports
+  `cpp-ci.yml --version smoke 2.12.0 2.13.0` and fails. The `MAINTAINER-GUIDE`
+  checklist names all six, so the written procedure and the gate agree.
 
 - **`docs/OPEN-DECISIONS.md` is retired.** It held questions blocked on a
   maintainer's judgement rather than on effort. Three of its four are now
