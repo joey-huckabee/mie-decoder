@@ -53,7 +53,7 @@ struct Chunk {
     SortKey key;
     std::vector<MieMessage> records;
 
-    Chunk() : has_key(false), key(), records() {}
+    Chunk() : has_key(false) {}
 
     bool operator<(const Chunk& other) const {
         if (has_key != other.has_key) {
@@ -142,12 +142,7 @@ std::vector<MieMessage> sort_run(const std::vector<MieMessage>& run) {
 }  // namespace
 
 OrderedSource::OrderedSource(MessageSource& inner, std::size_t max_sort_group)
-    : inner_(&inner),
-      buffer_(),
-      pending_(),
-      max_group_(max_sort_group > 0 ? max_sort_group : 1),
-      done_(false),
-      deferred_() {}
+    : inner_(&inner), max_group_(max_sort_group > 0 ? max_sort_group : 1), done_(false) {}
 
 void OrderedSource::flush() {
     if (buffer_.empty()) {

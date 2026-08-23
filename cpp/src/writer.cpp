@@ -82,7 +82,7 @@ bool StdoutCsvSink::flush(platform::OsError& err) {
 
 std::string StdoutCsvSink::destination() const { return std::string("stdout"); }
 
-AtomicCsvSink::AtomicCsvSink() : file_(), path_(), open_(false) {}
+AtomicCsvSink::AtomicCsvSink() : open_(false) {}
 
 void AtomicCsvSink::create(const std::string& path) {
     platform::OsError err;
@@ -269,12 +269,11 @@ uint64_t CsvWriter::finish() {
 // Entry points
 // ---------------------------------------------------------------------------
 
-WriteOptions::WriteOptions()
-    : input_path(), no_clobber(false), allow_partial(false), stdout_stream(stdout) {}
+WriteOptions::WriteOptions() : no_clobber(false), allow_partial(false), stdout_stream(stdout) {}
 
-PartialCommit::PartialCommit() : main_path(), errors_path(), offset(0), sync_losses(0) {}
+PartialCommit::PartialCommit() : offset(0), sync_losses(0) {}
 
-WriteOutcome::WriteOutcome() : normal_count(0), error_count(0), partial() {}
+WriteOutcome::WriteOutcome() : normal_count(0), error_count(0) {}
 
 std::string error_path_for(const std::string& output) {
     const std::string parent = platform::path_parent(output);

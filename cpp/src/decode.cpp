@@ -243,7 +243,7 @@ bool classify_message_format(uint8_t message_type, const CommandWord& command_wo
 // --- Structural invariants ------------------------------------------------
 
 InvariantViolation::InvariantViolation()
-    : kind(INVARIANT_DIRECTION_BC_TO_RT), severity(SEVERITY_REJECT), detail() {}
+    : kind(INVARIANT_DIRECTION_BC_TO_RT), severity(SEVERITY_REJECT) {}
 
 InvariantViolation::InvariantViolation(WhichInvariant kind_in, InvariantSeverity severity_in,
                                        const std::string& detail_in)

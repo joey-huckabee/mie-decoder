@@ -54,7 +54,7 @@ struct OsError {
     int code;
     std::string message;
 
-    OsError() : code(0), message() {}
+    OsError() : code(0) {}
 
     bool ok() const { return code == 0; }
     void clear() {

@@ -17,6 +17,41 @@ full release workflow.
 
 ### Changed
 
+- **Second batch of the SonarCloud C++ code smells: redundant member
+  initializers removed** (`cpp:S3230`, the largest single rule at 176 findings).
+  100 lines deleted across 13 files; five constructors now have empty
+  initializer lists because every entry in them was redundant.
+
+  **This batch could have introduced uninitialised reads, so it was not applied
+  by hand.** `std::string s` with `s()` is genuinely redundant — value-init and
+  default-init do the same thing for a class type — but `int n` with `n()` is
+  not: value-init zeroes it while default-init leaves it indeterminate. Sonar's
+  message does not draw that line. clang-tidy's
+  `readability-redundant-member-init` does, so it made the edits.
+
+  Two things confirm it drew the line correctly. It left `optional.hpp` alone:
+  `Optional<T>`'s own `value_()` cannot be proven redundant for a template `T`
+  that might be POD, and removing it *would* have been a bug. And every removal
+  in the outer classes was an `Optional<T>` member, whose user-provided
+  `Optional() : value_(), has_value_(false) {}` initialises the flag either way.
+
+  **Valgrind is the proof, not the reasoning:** `ERROR SUMMARY: 0 errors from 0
+  contexts` over the full suite. Use of an uninitialised value is exactly what
+  memcheck detects, so a wrongly removed initializer would have surfaced there
+  rather than as a silent field of garbage months later.
+
+  clang-tidy deletes the entry text but not the layout around it, and
+  clang-format does not collapse what is left — an emptied list leaves
+  `Foo::Foo()\n\n{}`, a partly emptied one leaves a blank line mid-list. Those
+  14 sites were tidied separately, as pure whitespace with no token added or
+  removed.
+
+  Verified: format-check, the full suite on host g++ (475 cases), **valgrind
+  clean**, ASan + UBSan + LSan, the **GCC 4.8.5** fidelity tier (475 cases,
+  3,692,836 assertions), MSVC at `/W4 /WX` (476 cases, no warnings),
+  `make verify-ci` across all six stages at CI tool versions, 90/90 conformance,
+  and the three invariant gates.
+
 - **First batch of the SonarCloud C++ code smells: 94 mechanical modernisations.**
   `cpp:S4962` use `nullptr` (45), `cpp:S5827` use `auto` where the type is
   already spelled in the cast (32), `cpp:S3490` `= default` (7), `cpp:S6003`
