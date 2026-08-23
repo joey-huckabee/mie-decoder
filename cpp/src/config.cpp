@@ -14,7 +14,7 @@
 
 namespace mie {
 
-FilterConfig::FilterConfig() {}
+FilterConfig::FilterConfig() = default;
 
 bool FilterConfig::is_active() const {
     return !exclude_types.empty() || !exclude_rts.empty() || !exclude_buses.empty() ||
@@ -48,7 +48,7 @@ DecoderConfig::DecoderConfig()
       delta_scope(DELTA_SCOPE_PER_FILE),
       max_sort_group(DEFAULT_MAX_SORT_GROUP) {}
 
-ConfigOverrides::ConfigOverrides() {}
+ConfigOverrides::ConfigOverrides() = default;
 
 // ---------------------------------------------------------------------------
 // Schema membership

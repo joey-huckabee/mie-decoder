@@ -222,7 +222,7 @@ MergeOptions::MergeOptions()
       collapse_window_us(0),
       delta_scope(DELTA_SCOPE_PER_FILE) {}
 
-DedupKey::DedupKey() {}
+DedupKey::DedupKey() = default;
 
 DedupKey DedupKey::of(const MieMessage& message) {
     DedupKey key;

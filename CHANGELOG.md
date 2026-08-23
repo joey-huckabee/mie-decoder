@@ -46,6 +46,40 @@ full release workflow.
   14 sites were tidied separately, as pure whitespace with no token added or
   removed.
 
+  **The first attempt at this batch made the gate worse, which is worth
+  recording.** Emptying seven constructors turned each into a CRITICAL
+  `cpp:S3490` ("use `= default`"), and `new_maintainability_rating` fell to D.
+  Removing findings under one rule created them under another — visible only
+  once SonarCloud analysed the branch, because this was the first C++ change
+  large enough for pull-request analysis to have anything to say. All seven are
+  now `= default`, which is also strictly safer: under value-initialisation a
+  defaulted constructor zero-initialises first, where a user-provided empty body
+  does not. None carries a dynamic exception specification, so the cppcheck 2.13
+  `throw() = default` parser bug from batch 1 does not apply.
+
+- **`cpp:S3230` is suppressed for `cpp/**`, and the reason is a real constraint
+  rather than a preference.** The rule has two distinct messages behind one key.
+  The first — "redundant with default initialization behavior" — was a genuine
+  cleanup and is fixed above. The second prescribes a **default member
+  initializer**, and in C++11 a class with an NSDMI is *not an aggregate*:
+  adopting them would make `Foo{1, 2}` ill-formed on **GCC 4.8.5**, the SLES 12
+  system compiler this implementation exists to support. MSVC compiles as C++14
+  where the same code is legal, so the breakage would appear only on the target
+  platform, only at the fidelity tier. That is precisely why `CONTRIBUTING.md`
+  lists aggregate-initialising an NSDMI class as one of two banned constructs.
+
+  Coverage of the useful half is not lost: clang-tidy's
+  `readability-redundant-member-init` runs at LLVM 20 in the clang-tidy gate and
+  is the sharper tool anyway, since it distinguishes a redundant
+  `std::string s()` from a load-bearing `int n()`. Sonar cannot suppress one
+  message of a rule, so the trade is the whole key for the better checker.
+
+- **`cpp:S5950`:** `MieError`'s message is now built with `std::make_shared`
+  rather than `new` — one allocation instead of two, and no window where the raw
+  pointer is unowned. The `<memory>` include went in unconditionally; its first
+  placement landed inside a `_WIN32` `#else` branch, which would have compiled
+  on Linux and failed on the shipping Windows build.
+
   Verified: format-check, the full suite on host g++ (475 cases), **valgrind
   clean**, ASan + UBSan + LSan, the **GCC 4.8.5** fidelity tier (475 cases,
   3,692,836 assertions), MSVC at `/W4 /WX` (476 cases, no warnings),

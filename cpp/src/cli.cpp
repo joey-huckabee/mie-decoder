@@ -322,7 +322,7 @@ struct GlobalArgs {
     Optional<std::string> config;
     Optional<std::string> log_level;
 
-    GlobalArgs() {}
+    GlobalArgs() = default;
 };
 
 struct DecodeArgs {
@@ -335,7 +335,7 @@ struct DecodeArgs {
     Optional<std::string> output;
     ConfigOverrides overrides;
 
-    DecodeArgs() {}
+    DecodeArgs() = default;
 };
 
 /// Parse everything after `decode`.

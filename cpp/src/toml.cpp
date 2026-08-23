@@ -76,7 +76,7 @@ std::string ParseError::format() const {
 
 Entry::Entry() : line(0) {}
 
-Document::Document() {}
+Document::Document() = default;
 
 void Document::add(const Entry& entry) { entries_.push_back(entry); }
 

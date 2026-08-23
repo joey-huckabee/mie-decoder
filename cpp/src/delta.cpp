@@ -22,7 +22,7 @@ Optional<double> DeltaOutcome::value() const {
     return Optional<double>();
 }
 
-DeltaTracker::DeltaTracker() {}
+DeltaTracker::DeltaTracker() = default;
 
 DeltaTracker::DeltaTracker(const Optional<double>& tick_rate_hz) : tick_rate_hz_(tick_rate_hz) {}
 
