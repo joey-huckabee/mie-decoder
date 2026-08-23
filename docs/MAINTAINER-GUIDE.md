@@ -518,7 +518,7 @@ and a C++ change never waits on the Python matrix. Its jobs:
 | `build-test-msvc` | CMake + MSVC at `/W4 /WX /permissive-`, then `ctest`, then a smoke check that stdout carries no CR. Windows is a shipping target, not a convenience build (ADR-0003) | `windows-2022` | Any test failure, any warning |
 | `sanitizers` | `make check SANITIZE=1` — AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer, all fatal on first finding. Modern toolchain only; GCC 4.8 has partial ASan and no LSan | `ubuntu-24.04` | Any finding |
 | `valgrind` | `make check-valgrind` with `--errors-for-leak-kinds=all`. A still-reachable block at exit is a leak for a short-lived CLI, not a tolerable steady state | `ubuntu-24.04` | Any leak or invalid access |
-| `coverage` | `make -C cpp coverage` — rebuilds from clean with `--coverage` at `-O0`, runs the **full** Catch2 suite, gates with `gcovr` on 90% lines and 76% branches. Driven through the Makefile target so this job and a developer's `make coverage` are one invocation with one threshold. Excludes the conformance suite, as the Rust and Python gates do — it drives the CLI out-of-process, and counting it would measure a different thing in each implementation | `ubuntu-24.04` | Below either floor |
+| `coverage` | `make -C cpp coverage` — rebuilds from clean with `--coverage` at `-O0`, runs the **full** Catch2 suite, gates with `gcovr` on 90% lines and 76% branches. Driven through the Makefile target so this job and a developer's `make coverage` are one invocation with one threshold — deliberately one number rather than a tighter CI-only value, because gcov branch counts vary ~5pp with compiler version and a CI-only floor would let local pass while CI failed. Excludes the conformance suite, as the Rust and Python gates do — it drives the CLI out-of-process, and counting it would measure a different thing in each implementation | `ubuntu-24.04` | Below either floor |
 | `static-analysis` | `cppcheck` over `cpp/src` and `cpp/tests`. Vendored Catch2 excluded — it is third-party code the project is forbidden to edit | `ubuntu-24.04` | Any finding |
 | `clang-tidy` | `bear` generates a compilation database from the real build, then `make tidy` runs clang-tidy with `--warnings-as-errors`. Without that flag clang-tidy exits 0 on warnings and the gate reports success while printing findings | `ubuntu-24.04` | Any finding |
 | `format` | `make format-check`. Covers **both** platform backends, not just the one this host compiles — the inactive backend is checked by no other tier | `ubuntu-24.04` | Any diff |
@@ -568,7 +568,9 @@ All three implementations are gated. Rust uses `cargo-llvm-cov`; Python uses `py
 |---|---|---|---|
 | Rust | 90.40% | 89.37% (regions) | 90 / 89 |
 | Python | 95.50% | 92.89% (branches) | 92 combined |
-| C++ | 91.11% | 76.50% (branches) | 90 / 76 |
+| C++ | 90.9% CI / 91.1% local | 81.5% CI / 76.5% local (branches) | 90 / 76 |
+
+The C++ row has two numbers because **gcov branch coverage is not portable across compiler versions**: the same suite measures 76.5% branches on g++ 11.4 (the documented WSL2 host) and 81.5% on CI's ubuntu-24.04 g++. Lines barely move. The floor is set to hold on the oldest compiler in use, so CI carries ~5pp of slack — the alternative, pinning CI to its own higher number, would make a local `make coverage` pass while CI fails.
 
 ### Rust
 
@@ -620,7 +622,7 @@ does not close.
 
 When coverage is consistently above the floor by >2pp, bump it. For Rust, edit the `cov-ci` alias in `rust/.cargo/config.toml`. For Python, edit `fail_under` in `python/pyproject.toml`'s `[tool.coverage.report]` block (the CI job has no `--cov-fail-under` flag — the config value is authoritative). For C++, edit `COVERAGE_MIN_LINE` / `COVERAGE_MIN_BRANCH` in `cpp/Makefile`. Update the rationale comment in each file when you do.
 
-**The C++ branch floor is the one that needs work, not just a bump.** At 76.5% it is ~1,150 uncovered branch outcomes away from the 90% the other columns reach, concentrated in `reader.cpp` (64%), `writer.cpp` (64%) and `merge.cpp` (66%). It is set at today's number so nothing regresses, not because 76% is the intended destination.
+**The C++ branch floor is the one that needs work, not just a bump.** CI measures 81.5% and the WSL2 host 76.5%; either way it is several hundred uncovered branch outcomes short of the 90% the other columns reach, concentrated in `reader.cpp`, `writer.cpp` and `merge.cpp`. The floor sits at the lower, portable figure so nothing regresses on any supported compiler — not because 76% is the intended destination. Raise it toward CI's number once the spread is understood, and toward 90% once the tests exist.
 
 ---
 

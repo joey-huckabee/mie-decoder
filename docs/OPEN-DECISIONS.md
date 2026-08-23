@@ -52,8 +52,10 @@ job that opens an issue rather than blocking a merge. Coverage at 85% initially,
 raised once the number is known rather than chosen in advance.
 
 **Coverage, as built.** `make -C cpp coverage` gates on 90% lines and 76%
-branches, wired as a required `cpp-ci.yml` job. The measured numbers are 91.11%
-lines, 96.6% functions, 76.50% branches over the Catch2 suite — the conformance
+branches, wired as a required `cpp-ci.yml` job. CI measures 90.9% lines, 96.6%
+functions and 81.5% branches over the Catch2 suite; the WSL2 host measures 91.1%
+/ 96.6% / 76.5% for the same code, because gcov branch counts follow the
+conditionals the COMPILER emits and so move with its version — the conformance
 suite is deliberately excluded, as it is for Rust and Python, because it drives
 each CLI out-of-process and counting it would measure a different thing in each
 implementation.
@@ -64,9 +66,11 @@ followed: a number chosen after measuring rather than before. The 85% it
 originally guessed at would have been *below* the line coverage that already
 existed and so would have gated nothing.
 
-The branch figure deserves naming rather than burying: **76.50% is ~1,150
-uncovered branch outcomes**, concentrated in `reader.cpp`, `writer.cpp` and
-`merge.cpp`. Part of that gap is metric rather than test quality — gcov counts
+The branch figure deserves naming rather than burying: **81.5% on CI, 76.5% on
+the older host — several hundred uncovered branch outcomes either way**,
+concentrated in `reader.cpp`, `writer.cpp` and `merge.cpp`. The floor is pinned
+to the lower figure so it holds on every supported compiler; pinning it to CI's
+number would make a local run pass while CI failed. Part of that gap is metric rather than test quality — gcov counts
 every conditional the compiler emits, so it reads lower than the llvm-cov
 *regions* the Rust gate uses — but not all of it. Raising it is real work that
 has not been done.

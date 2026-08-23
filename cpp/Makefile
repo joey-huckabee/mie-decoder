@@ -272,9 +272,20 @@ FORMAT_SRC := $(sort $(TIDY_SRC) src/platform_posix.cpp src/platform_win32.cpp) 
 # materially harder bar than 90% regions there, which is why the two numbers in
 # this repository are not equal and should not be forced to match.
 #
-# The branch figure was measured on g++ 11.4. Branch counts vary with compiler
-# version, so if CI's g++ reports differently this floor moves to CI's number --
-# it is the observed floor that matters, not the one measured on one host.
+# GCOV BRANCH COVERAGE IS NOT PORTABLE ACROSS COMPILER VERSIONS. The same suite
+# over the same sources measures 76.5% branches on g++ 11.4 (Ubuntu 22.04, the
+# documented WSL2 host) and 81.5% on CI's ubuntu-24.04 g++ -- a 5pp spread from
+# nothing but the compiler, because branch counts follow the conditionals the
+# compiler emits, not the ones the source spells out. Lines barely move (91.1%
+# vs 90.9%).
+#
+# So this single threshold is set to hold on the OLDEST compiler in use, not the
+# newest. 76 is the floor that passes everywhere; CI has ~5pp of slack against
+# it. The alternative -- pinning CI to its own higher number -- was rejected
+# because it makes a local `make coverage` pass while CI fails, which is the
+# exact local/CI divergence that has cost this project several red builds.
+#
+# The ratchet target is therefore CI's number, currently 81.5%.
 COVERAGE_MIN_LINE   ?= 90
 COVERAGE_MIN_BRANCH ?= 76
 # gcov must match the compiler that wrote the .gcno files; a mismatched

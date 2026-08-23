@@ -29,7 +29,7 @@ full release workflow.
   |---|---|---|---|
   | Rust | 90.40% | 89.37% (llvm-cov regions) | 90 / 89 (was 87 / 86) |
   | Python | 95.50% | 92.89% (branches) | 92 combined, unchanged |
-  | C++ | 91.11% | 76.50% (gcov branches) | 90 / 76 (new) |
+  | C++ | 90.9% CI / 91.1% local | 81.5% CI / 76.5% local (gcov branches) | 90 / 76 (new) |
 
   That entry had recommended "85% initially". 85% would have been **below** the
   line coverage the C++ suite already had, so it would have gated nothing — the
@@ -45,10 +45,21 @@ full release workflow.
   than LLVM region coverage for equally well-tested code. Forcing the three
   numbers to match would not make them mean the same thing.
 
-  The honest figure, named rather than buried: **C++ branch coverage is 76.50%,
-  about 1,150 uncovered branch outcomes**, concentrated in `reader.cpp` (64%),
-  `writer.cpp` (64%) and `merge.cpp` (66%). Some of that gap is the metric; not
-  all of it. Raising it is real work that has not been done.
+  The honest figure, named rather than buried: **C++ branch coverage is 81.5% on
+  CI and 76.5% on the WSL2 host** — several hundred uncovered branch outcomes
+  either way, concentrated in `reader.cpp`, `writer.cpp` and `merge.cpp`. Some of
+  that gap is the metric; not all of it. Raising it is real work that has not
+  been done.
+
+  **That 5pp spread is itself worth recording: gcov branch coverage is not
+  portable across compiler versions.** The same suite over the same sources
+  measures 76.5% on g++ 11.4 and 81.5% on CI's ubuntu-24.04 g++, because branch
+  counts follow the conditionals the *compiler* emits rather than the ones the
+  source spells out. Lines barely move (91.1% vs 90.9%). The single threshold is
+  therefore set to hold on the **oldest** compiler in use, leaving CI ~5pp of
+  slack; pinning CI to its own higher number would make a local `make coverage`
+  pass while CI failed, which is the precise local/CI divergence that has cost
+  this project several red builds already.
 
 - **No coverage gate counts the conformance suite** — not Rust, not Python, and
   not the new C++ one. Each measures its own in-process tests. The conformance
