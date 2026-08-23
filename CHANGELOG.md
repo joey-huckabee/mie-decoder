@@ -17,6 +17,24 @@ full release workflow.
 
 ### Changed
 
+- **`docs/OPEN-DECISIONS.md` is retired.** It held questions blocked on a
+  maintainer's judgement rather than on effort. Three of its four are now
+  settled — the merge-overwrite question (closed, no change, pinned by the
+  `clobber-*` conformance cases), the C++ coverage and fuzz gates (both built),
+  and SonarCloud C++ analysis (added, zero findings) — and the fourth, Phase 3
+  release artifacts and the versioning scheme, moves to `docs/ROADMAP.md`, which
+  is where work waiting on direction belongs.
+
+  **The reasoning was not deleted; it was already living where it is acted on.**
+  The libFuzzer decision is in `cpp/tests/test_fuzz.cpp`'s header, the coverage
+  floors in `cpp/Makefile`'s threshold comment, every Sonar suppression carries
+  its own justification in `.github/workflows/sonarcloud.yml`, and this
+  CHANGELOG records all three. A register that only pointed at those was one
+  more place to keep in step.
+
+  All seven files that referenced it were rewritten rather than left with
+  dangling `#N` pointers, and `CLAUDE.md`'s documentation index drops the entry.
+
 - **The one check that compares implementations was gated behind one
   implementation's path filter.** `cross-impl-differential` runs `run.py` with
   no `--only` / `--skip`, which makes it the only job that exercises all three
@@ -51,7 +69,7 @@ full release workflow.
   every tier, so that note is corrected.
 
 - **The output-overwrite contract is now pinned by conformance, and
-  `docs/OPEN-DECISIONS.md` #1 is closed as no-change.** Two cases:
+  the merge-overwrite question is closed as no-change.** Two cases:
   `clobber-default-overwrites` (an existing destination is replaced, exit 0,
   output matches the oracle) and `clobber-refuses-when-configured`
   (`no_clobber = true`, exit 1).
@@ -78,7 +96,7 @@ full release workflow.
   into a 1,418-line diff on the first attempt.
 
 - **The C++ tree has a fuzz harness, and the decision went against the delivery
-  plan's assumption.** `docs/OPEN-DECISIONS.md` #2 asked whether the fuzz gate
+  plan's assumption.** The open question was whether the fuzz gate
   should be corpus replay only or also a timed exploratory run. Both options
   presupposed **libFuzzer** — and checking what Rust and Python actually do
   dissolved the question. Neither uses it. Both run a **deterministic seeded
@@ -365,7 +383,7 @@ full release workflow.
   full branch analysis on `main` reports **404 findings, every one from `cpp/`**:
   402 code smells, 2 vulnerabilities, 0 bugs. Rust and Python contribute none.
 
-  So `OPEN-DECISIONS.md` #3's caveat — *measure before making it blocking* — was
+  So the caveat attached to adding it — *measure before making it blocking* — was
   the right one to keep, and the first measurement was taken against the wrong
   scope. The 402 code smells do not fail the gate (maintainability on new code
   is still A) and are being addressed separately; they are concentrated in a few
@@ -375,7 +393,7 @@ full release workflow.
   90% lines.** `make -C cpp coverage` rebuilds from clean with `--coverage` at
   `-O0`, runs the full Catch2 suite and gates with `gcovr`; it is wired as a
   required `cpp-ci.yml` job and is the same target a developer runs. Closes the
-  coverage half of `docs/OPEN-DECISIONS.md` #2.
+  coverage half of the C++ gate question.
 
   Measured rather than guessed, which mattered:
 
@@ -434,7 +452,7 @@ full release workflow.
 
 - **The C++ tree is now covered by CodeQL and SonarCloud.** It had been analysed
   by neither: `sonar.sources` was `rust/src,python/src`, and CodeQL's matrix was
-  `rust` and `python`. Closes `docs/OPEN-DECISIONS.md` #3, which had been
+  `rust` and `python`. Closes the C++-analysis question, which had been
   deferred on the grounds that "adding a language to a red gate obscures both
   problems" -- a premise that stopped holding once the gate went green.
 

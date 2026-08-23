@@ -22,7 +22,7 @@
 //
 //   3. It is deterministic. Coverage-guided exploration means a required job
 //      can fail on an input nobody's change produced, which is the concern
-//      docs/OPEN-DECISIONS.md #2 raised against a blocking timed fuzz run.
+//      was raised against a blocking timed fuzz run when this was scoped.
 //
 // No committed corpus, for the same reason: the generator reproduces its inputs
 // exactly, so a corpus would be storage for something already derivable.

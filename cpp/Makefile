@@ -262,7 +262,7 @@ FORMAT_SRC := $(sort $(TIDY_SRC) src/platform_posix.cpp src/platform_win32.cpp) 
 # Runs the FULL suite: coverage of a subset would be a number about the subset.
 # FLOORS, not targets. Both sit at what the suite measures today so nothing can
 # regress, and both are meant to be raised as tests land -- the approach
-# OPEN-DECISIONS #2 argued for: a number chosen after measuring rather than
+# the delivery plan argued for: a number chosen after measuring rather than
 # before.
 #
 # Lines and branches are far apart (91% vs 76%) and that gap is not all test
