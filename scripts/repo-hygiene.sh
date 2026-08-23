@@ -169,7 +169,8 @@ step "MAINTAINER-GUIDE §9 lists every CI job"
 # jobs.
 mapfile -t yml_jobs < <(
     awk 'FNR==1{inj=0} /^jobs:/{inj=1;next} inj && /^  [a-z0-9-]+:/{gsub(/[ :]/,"");print}' \
-        .github/workflows/ci.yml .github/workflows/cpp-ci.yml
+        .github/workflows/ci.yml .github/workflows/cpp-ci.yml \
+        .github/workflows/differential.yml
 )
 # A job name reused across the two workflows would satisfy this check with ONE
 # guide row, leaving the other job undocumented while the gate reported success.
