@@ -60,23 +60,23 @@ bool read_u16_array(const uint8_t* data, std::size_t size, std::size_t offset, s
 // --- Field decoders -------------------------------------------------------
 
 TypeWord decode_type_word(uint16_t raw) {
-    const uint8_t message_type = static_cast<uint8_t>(raw & 0x7F);
+    const auto message_type = static_cast<uint8_t>(raw & 0x7F);
     const Bus bus = ((raw >> 7) & 1) == 0 ? BUS_A : BUS_B;
-    const uint16_t word_count = static_cast<uint16_t>((raw >> 8) & 0x3F);
+    const auto word_count = static_cast<uint16_t>((raw >> 8) & 0x3F);
     const bool error = ((raw >> 14) & 1) != 0;
     return TypeWord(message_type, bus, word_count, error, raw);
 }
 
 IrigTimestamp decode_irig_timestamp(uint16_t upper, uint16_t middle, uint16_t lower) {
     const bool freerun = ((upper >> 15) & 1) != 0;
-    const uint16_t day = static_cast<uint16_t>((upper >> 5) & 0x01FF);
-    const uint8_t hour = static_cast<uint8_t>(upper & 0x1F);
-    const uint8_t minute = static_cast<uint8_t>((middle >> 10) & 0x3F);
-    const uint8_t second = static_cast<uint8_t>((middle >> 4) & 0x3F);
+    const auto day = static_cast<uint16_t>((upper >> 5) & 0x01FF);
+    const auto hour = static_cast<uint8_t>(upper & 0x1F);
+    const auto minute = static_cast<uint8_t>((middle >> 10) & 0x3F);
+    const auto second = static_cast<uint8_t>((middle >> 4) & 0x3F);
     // The microsecond spans two words: the low nibble of the middle word holds
     // its high bits, the whole lower word holds the rest.
-    const uint32_t us_hi = static_cast<uint32_t>(middle & 0xF);
-    const uint32_t us_lo = static_cast<uint32_t>(lower);
+    const auto us_hi = static_cast<uint32_t>(middle & 0xF);
+    const auto us_lo = static_cast<uint32_t>(lower);
     const uint32_t microsecond = (us_hi << 16) | us_lo;
     return IrigTimestamp(day, hour, minute, second, microsecond, freerun);
 }
@@ -87,10 +87,10 @@ StandardTimestamp decode_standard_timestamp(uint16_t upper, uint16_t lower) {
 }
 
 CommandWord decode_command_word(uint16_t raw) {
-    const uint8_t rt = static_cast<uint8_t>((raw >> 11) & 0x1F);
+    const auto rt = static_cast<uint8_t>((raw >> 11) & 0x1F);
     const Direction direction = ((raw >> 10) & 1) == 0 ? DIRECTION_RECEIVE : DIRECTION_TRANSMIT;
-    const uint8_t subaddress = static_cast<uint8_t>((raw >> 5) & 0x1F);
-    uint8_t data_word_count = static_cast<uint8_t>(raw & 0x1F);
+    const auto subaddress = static_cast<uint8_t>((raw >> 5) & 0x1F);
+    auto data_word_count = static_cast<uint8_t>(raw & 0x1F);
     // A raw field of 0 means 32 data words, not zero. The five-bit field cannot
     // encode 32, so the bus standard reuses 0 for it -- read literally, every
     // full-length transaction would decode as empty.
@@ -122,7 +122,7 @@ bool mux_from_filename(const std::string& file_name, const std::string& delimite
         start = hit + delimiter.size();
     }
 
-    const int64_t count = static_cast<int64_t>(parts.size());
+    const auto count = static_cast<int64_t>(parts.size());
     // A negative index counts from the end, so -1 selects the last field.
     const int64_t index = field < 0 ? count + field : field;
     if (index < 0 || index >= count) {
@@ -280,8 +280,7 @@ bool validate_structural_invariants(const TypeWord& tw, const CommandWord& cmd,
 
     // L2-SYN-022: the declared word count must be able to hold the payload the
     // Command Word promises. Overhead is Type(1) + timestamp + Cmd(1).
-    const uint16_t min_wc =
-        static_cast<uint16_t>(1 + ts_words + 1 + min_payload_words(msg_fmt, cmd));
+    const auto min_wc = static_cast<uint16_t>(1 + ts_words + 1 + min_payload_words(msg_fmt, cmd));
     if (tw.word_count < min_wc) {
         out = InvariantViolation(
             INVARIANT_WORD_COUNT_CAPACITY, SEVERITY_REJECT,
@@ -337,23 +336,23 @@ std::vector<InvariantViolation> detect_record_anomalies(const TypeWord& tw, cons
     // recordings, and rejecting would drop valid records.
     if (status_word.has_value()) {
         const uint16_t status_raw = status_word.value();
-        const uint8_t status_rt = static_cast<uint8_t>((status_raw >> 11) & 0x1F);
+        const auto status_rt = static_cast<uint8_t>((status_raw >> 11) & 0x1F);
         if (status_rt != cmd.rt) {
-            out.push_back(InvariantViolation(
-                INVARIANT_STATUS_RT_MISMATCH, SEVERITY_ANOMALY_WARN,
-                "Status RT = " + text::decimal(status_rt) +
-                    " does not match Cmd RT = " + text::decimal(cmd.rt) + " (raw Status = 0x" +
-                    text::hex_upper(status_raw, 4) + "); possible bus interference"));
+            out.emplace_back(INVARIANT_STATUS_RT_MISMATCH, SEVERITY_ANOMALY_WARN,
+                             "Status RT = " + text::decimal(status_rt) +
+                                 " does not match Cmd RT = " + text::decimal(cmd.rt) +
+                                 " (raw Status = 0x" + text::hex_upper(status_raw, 4) +
+                                 "); possible bus interference");
         }
     }
 
     // L2-SYN-025: bit 15 is reserved. AnomalyWarn because a set bit may be an
     // undocumented vendor extension rather than corruption.
     if (((tw.raw >> 15) & 1) != 0) {
-        out.push_back(InvariantViolation(INVARIANT_TYPE_WORD_RESERVED_BIT, SEVERITY_ANOMALY_WARN,
-                                         "Type Word bit 15 (reserved) is set in raw 0x" +
-                                             text::hex_upper(tw.raw, 4) +
-                                             "; possible undocumented vendor extension"));
+        out.emplace_back(INVARIANT_TYPE_WORD_RESERVED_BIT, SEVERITY_ANOMALY_WARN,
+                         "Type Word bit 15 (reserved) is set in raw 0x" +
+                             text::hex_upper(tw.raw, 4) +
+                             "; possible undocumented vendor extension");
     }
 
     return out;
@@ -400,9 +399,9 @@ int32_t score_irig_candidate(const uint8_t* data, std::size_t size, std::size_t 
         // Only fields with a real semantic range are scored. The microsecond
         // high nibble is always below 16 by construction, so testing it would
         // award a point to every candidate and separate nothing.
-        const uint16_t hour = static_cast<uint16_t>(ts_upper & 0x1F);
-        const uint16_t minute = static_cast<uint16_t>((ts_middle >> 10) & 0x3F);
-        const uint16_t second = static_cast<uint16_t>((ts_middle >> 4) & 0x3F);
+        const auto hour = static_cast<uint16_t>(ts_upper & 0x1F);
+        const auto minute = static_cast<uint16_t>((ts_middle >> 10) & 0x3F);
+        const auto second = static_cast<uint16_t>((ts_middle >> 4) & 0x3F);
         if (hour < 24 && minute < 60 && second < 60) {
             score += 1;
         }

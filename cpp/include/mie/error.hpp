@@ -122,7 +122,7 @@ class MieError : public std::exception {
     /// stderr text across implementations.
     const std::string& message() const { return *message_; }
 
-    const char* what() const throw() { return message_->c_str(); }
+    const char* what() const throw() override { return message_->c_str(); }
 
     /// Byte offset of the failing record, when the failure has one.
     ///
@@ -152,7 +152,12 @@ class MieError : public std::exception {
     /// and Rust's `is_record_error()`.
     bool is_record_error() const;
 
-    ~MieError() throw() {}
+    // NOT `= default`: cppcheck 2.13 cannot parse a defaulted destructor that
+    // carries a dynamic exception specification and reports internalAstError,
+    // which degrades its analysis of the whole translation unit. The empty body
+    // is identical in behaviour. (Sonar cpp:S3490 flags this; the trade is
+    // deliberate -- a parser error costs more than a style finding.)
+    ~MieError() throw() override {}
 
   private:
     MieError(MieErrorKind kind, const std::string& message);

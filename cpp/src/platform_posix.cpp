@@ -61,7 +61,7 @@ void* encode_fd(int fd) {
 }
 
 int decode_fd(void* handle) {
-    if (handle == 0) {
+    if (handle == nullptr) {
         return -1;
     }
     return static_cast<int>(reinterpret_cast<intptr_t>(handle) - 1);
@@ -73,7 +73,7 @@ void fill_errno(OsError& err, int captured) {
     // strerror is not thread-safe. The decoder is single-threaded, so plain
     // strerror is correct here and avoids a portability fight that buys nothing.
     const char* text = strerror(captured);
-    err.message = text != 0 ? text : "unknown error";
+    err.message = text != nullptr ? text : "unknown error";
 }
 
 }  // namespace
@@ -82,7 +82,8 @@ void fill_errno(OsError& err, int captured) {
 // MappedFile
 // ---------------------------------------------------------------------------
 
-MappedFile::MappedFile() : file_handle_(0), mapping_handle_(0), data_(0), size_(0) {}
+MappedFile::MappedFile()
+    : file_handle_(nullptr), mapping_handle_(nullptr), data_(nullptr), size_(0) {}
 
 MappedFile::~MappedFile() { close(); }
 
@@ -91,9 +92,9 @@ MappedFile::MappedFile(MappedFile&& other) noexcept
       mapping_handle_(other.mapping_handle_),
       data_(other.data_),
       size_(other.size_) {
-    other.file_handle_ = 0;
-    other.mapping_handle_ = 0;
-    other.data_ = 0;
+    other.file_handle_ = nullptr;
+    other.mapping_handle_ = nullptr;
+    other.data_ = nullptr;
     other.size_ = 0;
 }
 
@@ -104,9 +105,9 @@ MappedFile& MappedFile::operator=(MappedFile&& other) noexcept {
         mapping_handle_ = other.mapping_handle_;
         data_ = other.data_;
         size_ = other.size_;
-        other.file_handle_ = 0;
-        other.mapping_handle_ = 0;
-        other.data_ = 0;
+        other.file_handle_ = nullptr;
+        other.mapping_handle_ = nullptr;
+        other.data_ = nullptr;
         other.size_ = 0;
     }
     return *this;
@@ -151,10 +152,10 @@ bool MappedFile::open(const std::string& utf8_path, OsError& err) {
         return false;
     }
 
-    const size_t length = static_cast<size_t>(st.st_size);
+    const auto length = static_cast<size_t>(st.st_size);
     // const void*: the mapping is PROT_READ, so nothing here may write through
     // it, and saying so lets the compiler and cppcheck both hold that line.
-    const void* addr = ::mmap(0, length, PROT_READ, MAP_PRIVATE, fd, 0);
+    const void* addr = ::mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0);
     if (addr == MAP_FAILED) {
         fill_errno(err, errno);
         ::close(fd);
@@ -168,15 +169,15 @@ bool MappedFile::open(const std::string& utf8_path, OsError& err) {
 }
 
 void MappedFile::close() {
-    if (data_ != 0) {
+    if (data_ != nullptr) {
         ::munmap(const_cast<void*>(static_cast<const void*>(data_)), static_cast<size_t>(size_));
-        data_ = 0;
+        data_ = nullptr;
         size_ = 0;
     }
     const int fd = decode_fd(file_handle_);
     if (fd >= 0) {
         ::close(fd);
-        file_handle_ = 0;
+        file_handle_ = nullptr;
     }
 }
 
@@ -184,7 +185,8 @@ void MappedFile::close() {
 // AtomicFile
 // ---------------------------------------------------------------------------
 
-AtomicFile::AtomicFile() : handle_(0), temp_path_(), final_path_(), buffer_(), committed_(false) {
+AtomicFile::AtomicFile()
+    : handle_(nullptr), temp_path_(), final_path_(), buffer_(), committed_(false) {
     buffer_.reserve(kWriteBufferSize);
 }
 
@@ -295,10 +297,10 @@ bool AtomicFile::commit_with_suffix(const std::string& suffix, OsError& err) {
         // data never reached the filesystem. Swallowing it would let a
         // truncated CSV be renamed into place and reported as success.
         fill_errno(err, errno);
-        handle_ = 0;
+        handle_ = nullptr;
         return false;
     }
-    handle_ = 0;
+    handle_ = nullptr;
 
     const std::string destination = final_path_ + suffix;
     if (::rename(temp_path_.c_str(), destination.c_str()) != 0) {
@@ -314,7 +316,7 @@ void AtomicFile::abort() {
     const int fd = decode_fd(handle_);
     if (fd >= 0) {
         ::close(fd);
-        handle_ = 0;
+        handle_ = nullptr;
     }
     if (!committed_ && !temp_path_.empty()) {
         ::unlink(temp_path_.c_str());
@@ -335,7 +337,7 @@ std::vector<std::string> command_line_arguments(int argc, char** argv) {
     if (argc > 1) {
         out.reserve(static_cast<std::size_t>(argc - 1));
         for (int i = 1; i < argc; ++i) {
-            out.push_back(std::string(argv[i]));
+            out.emplace_back(argv[i]);
         }
     }
     return out;
@@ -346,9 +348,9 @@ std::FILE* open_read(const std::string& utf8_path, OsError& err) {
     // POSIX filenames are bytes, and UTF-8 is already bytes, so no conversion
     // is needed here. The Windows backend is where this earns its existence.
     std::FILE* handle = std::fopen(utf8_path.c_str(), "rb");
-    if (handle == NULL) {
+    if (handle == nullptr) {
         fill_errno(err, errno);
-        return NULL;
+        return nullptr;
     }
     return handle;
 }
@@ -358,7 +360,7 @@ bool list_directory(const std::string& utf8_dir, std::vector<std::string>& names
     names.clear();
 
     DIR* dir = ::opendir(utf8_dir.c_str());
-    if (dir == 0) {
+    if (dir == nullptr) {
         fill_errno(err, errno);
         return false;
     }
@@ -366,12 +368,12 @@ bool list_directory(const std::string& utf8_dir, std::vector<std::string>& names
     // readdir returning NULL is ambiguous between "end of stream" and "error",
     // and the two are told apart only by errno -- which readdir does not clear.
     errno = 0;
-    for (struct dirent* entry = ::readdir(dir); entry != 0; entry = ::readdir(dir)) {
+    for (struct dirent* entry = ::readdir(dir); entry != nullptr; entry = ::readdir(dir)) {
         const char* name = entry->d_name;
         if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
             continue;
         }
-        names.push_back(std::string(name));
+        names.emplace_back(name);
         errno = 0;
     }
     const int captured = errno;
@@ -397,8 +399,8 @@ bool canonical_path(const std::string& utf8_path, std::string& out, OsError& err
     // realpath(path, NULL) allocates, which is the only form that is safe
     // against a path longer than PATH_MAX. The array form silently overflows on
     // some libc versions and has been a source of CVEs.
-    char* resolved = ::realpath(utf8_path.c_str(), 0);
-    if (resolved == 0) {
+    char* resolved = ::realpath(utf8_path.c_str(), nullptr);
+    if (resolved == nullptr) {
         fill_errno(err, errno);
         return false;
     }

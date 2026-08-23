@@ -283,7 +283,7 @@ bool DedupWindow::is_duplicate(uint64_t us, std::size_t file_index, const MieMes
     if (matched) {
         return true;
     }
-    survivors_.push_back(Survivor(us, file_index, key));
+    survivors_.emplace_back(us, file_index, key);
     return false;
 }
 
@@ -376,7 +376,7 @@ void MergedSource::apply_global_delta(MieMessage& message) {
         return;
     }
     const CommandWord* command =
-        message.command_word.has_value() ? &message.command_word.value() : NULL;
+        message.command_word.has_value() ? &message.command_word.value() : nullptr;
     // No WARN here. A backward step on the merged timeline means some input was
     // not internally sorted, which `advance` already reports once per file
     // (L2-MRG-006); repeating it per record would bury that one message.

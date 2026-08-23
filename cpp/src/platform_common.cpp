@@ -93,11 +93,11 @@ std::string make_temp_name(const std::string& final_path) {
 }
 
 uint64_t wall_clock_nanos() {
-    typedef std::chrono::system_clock Clock;
+    using Clock = std::chrono::system_clock;
     const Clock::time_point now = Clock::now();
     const std::chrono::nanoseconds since_epoch =
         std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch());
-    const long long count = static_cast<long long>(since_epoch.count());
+    const auto count = static_cast<long long>(since_epoch.count());
     // A pre-1970 clock would make this negative. Clamp rather than wrap: the
     // value is only ever a uniqueness salt, so a misconfigured clock must not
     // be able to produce a huge unsigned number that reads like a real stamp.
@@ -168,7 +168,7 @@ bool read_file(const std::string& utf8_path, std::vector<uint8_t>& bytes, OsErro
     err.clear();
     bytes.clear();
     std::FILE* handle = open_read(utf8_path, err);
-    if (handle == NULL) {
+    if (handle == nullptr) {
         return false;
     }
 

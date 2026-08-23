@@ -17,6 +17,36 @@ full release workflow.
 
 ### Changed
 
+- **First batch of the SonarCloud C++ code smells: 94 mechanical modernisations.**
+  `cpp:S4962` use `nullptr` (45), `cpp:S5827` use `auto` where the type is
+  already spelled in the cast (32), `cpp:S3490` `= default` (7), `cpp:S6003`
+  `emplace_back` (5), `cpp:S5416` `using` over `typedef` (3), `cpp:S3471`
+  `override` (2). Applied with clang-tidy's own fixers rather than by hand, from
+  the real compilation database — which carries `-std=c++11`, so no C++14
+  construct can enter this way.
+
+  The `auto` conversions were reviewed rather than accepted wholesale, since
+  `decode.cpp` is a wire-format decoder where the declared width of a field is
+  documentation. They are kept because nothing is lost: `const auto day =
+  static_cast<uint16_t>(...)` still names `uint16_t` on the same line. That is a
+  different case from the Rust `match_same_arms` rejection, where collapsing arms
+  would have deleted per-format comments.
+
+- **Two of those fixes were reverted, and the reason is worth keeping.**
+  `~MieError()` and `~ConfigError()` carry a dynamic exception specification, and
+  **cppcheck 2.13 cannot parse `throw() = default`** — it reports
+  `internalAstError`, which degrades its analysis of the entire translation unit.
+  Suppressing that would have blinded cppcheck to real findings in `config.cpp`,
+  so the empty body stays and `cpp:S3490` keeps flagging those two sites. A
+  parser error costs more than a style finding.
+
+  Found by `make verify-ci` — CI's tool versions in a container — and by nothing
+  else. clang-tidy 20 passed, the host g++ build passed, the **GCC 4.8.5**
+  fidelity tier passed, MSVC passed, and all 90 conformance cases passed. Only
+  the cppcheck version CI actually runs objected. This is the third time this
+  release that a local tool a version behind CI reported clean on something CI
+  would reject.
+
 - **SonarCloud's C++ analysis turned `main` red, and this fixes it.** Two gate
   conditions failed on the first branch analysis after the C++ tree joined:
   `new_coverage` at 51.7% against an 80% threshold, and `new_security_rating` at

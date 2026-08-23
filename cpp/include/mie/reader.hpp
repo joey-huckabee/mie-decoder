@@ -52,7 +52,7 @@ namespace mie {
 /// constructors ARE its schema, and a default-constructed error would be an
 /// error with no kind. A shared_ptr sidesteps that, costs one allocation per
 /// walk at most, and copies without throwing.
-typedef std::shared_ptr<MieError> PendingError;
+using PendingError = std::shared_ptr<MieError>;
 
 /// `[[noreturn]]` is C++11 and both floors have it (GCC 4.8, MSVC 2015+), but
 /// spelling it once here keeps the option of swapping in a compiler-specific

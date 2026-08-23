@@ -67,10 +67,10 @@ const std::size_t DEFAULT_MAX_SORT_GROUP = 4096;
 class ConfigError : public std::exception {
   public:
     explicit ConfigError(const std::string& message);
-    ~ConfigError() throw();
+    ~ConfigError() throw() override;
 
     const std::string& message() const { return *message_; }
-    const char* what() const throw();
+    const char* what() const throw() override;
 
   private:
     /// Behind a shared_ptr for the same reason MieError's message is: this type

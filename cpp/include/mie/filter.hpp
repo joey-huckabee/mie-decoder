@@ -70,7 +70,7 @@ class FilteredSource : public MessageSource {
     /// `Drop`: a consumer can stop early -- a broken pipe, `| head` -- and an
     /// end-of-stream hook would simply never run, silently losing the tally
     /// exactly when the operator most wants to know how much was dropped.
-    ~FilteredSource();
+    ~FilteredSource() override;
 
     bool next(MieMessage& out) override;
 
