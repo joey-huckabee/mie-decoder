@@ -151,8 +151,8 @@ class MieFileReader {
     /// (L2-DEC-015) or sanity-check a forced format (L2-DEC-013). Returns the
     /// format to decode with; sets `error` when iteration must stop first.
     TimestampFormat resolve_format_for_hit(const sync::ScanHit& hit, PendingError& error);
-    TimestampFormat resolve_auto_format(const sync::ScanHit& hit, PendingError& error);
-    TimestampFormat check_forced_format(const sync::ScanHit& hit, PendingError& error);
+    TimestampFormat resolve_auto_format(const sync::ScanHit& hit, PendingError& error) const;
+    TimestampFormat check_forced_format(const sync::ScanHit& hit, PendingError& error) const;
 
     /// No first record: empty recording, truncated first record (L2-RDR-004),
     /// or wrong file (L1-EXIT-002). Returns true when iteration should end

@@ -274,7 +274,8 @@ TimestampFormat MieFileReader::resolve_format_for_hit(const sync::ScanHit& hit,
     return check_forced_format(hit, error);
 }
 
-TimestampFormat MieFileReader::resolve_auto_format(const sync::ScanHit& hit, PendingError& error) {
+TimestampFormat MieFileReader::resolve_auto_format(const sync::ScanHit& hit,
+                                                   PendingError& error) const {
     const decode::DetectionOutcome outcome = decode::probe_timestamp_format(
         mapping_.data(), static_cast<std::size_t>(file_size_), hit.offset, detect_records_);
 
@@ -312,7 +313,8 @@ TimestampFormat MieFileReader::resolve_auto_format(const sync::ScanHit& hit, Pen
     return outcome.format;
 }
 
-TimestampFormat MieFileReader::check_forced_format(const sync::ScanHit& hit, PendingError& error) {
+TimestampFormat MieFileReader::check_forced_format(const sync::ScanHit& hit,
+                                                   PendingError& error) const {
     const decode::DetectionOutcome outcome = decode::probe_timestamp_format(
         mapping_.data(), static_cast<std::size_t>(file_size_), hit.offset, detect_records_);
 

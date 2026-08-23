@@ -480,7 +480,132 @@ jobs:
             # The C++11 floor is a factor too: no structured bindings, no
             # ranges, and lambdas that would carry the loop body are the whole
             # of the readability cost with none of the modern compensations.
-            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,dumpEmitTaint,tempFilePermissions,cppMemberInitNsdmi,readerMsvcCast,decodeSectionBanner,cppRawForLoop"
+            # ================================================================
+            # BATCH 4: the architectural remainder.
+            # ================================================================
+            #
+            # 4 of these 89 findings were fixed; the rest are recorded here with
+            # the reason each is not a defect in this tree. That ratio is the
+            # honest outcome of working down a list until only the judgement
+            # calls remain -- and suppressing them is what makes the count
+            # ACTIONABLE: a new finding stands out against zero, not against 89.
+            #
+            # Three of the reasons recur, so they are stated once:
+            #
+            #   (a) CROSS-IMPLEMENTATION CONTRACT. The three implementations are
+            #       held to one shared design. A C++-only change to a shape the
+            #       Rust and Python ones also carry breaks that, whatever its
+            #       local merit.
+            #   (b) C++11 / GCC 4.8.5 FLOOR (ADR-0001). The SLES 12 system
+            #       compiler is the target, not a fallback.
+            #   (c) THE C API SAYS SO. The platform layer calls POSIX; POSIX
+            #       signatures are not negotiable from inside it.
+            #
+            # ---- Deferred modernisations, NOT rejections -------------------
+            #
+            # cpp:S2807 (18) hidden friends, and cpp:S3642 (16) `enum class`.
+            # Both are real improvements and neither is being argued against.
+            # S3642 is blocked on (a): the enums carry WIRE VALUES and are used
+            # as integers throughout, mirroring Rust's `#[repr(u8)]` and Python's
+            # IntEnum. `enum class` removes the implicit conversion, so adopting
+            # it means casts at every use and a C++-only divergence from a shape
+            # the other two share. S2807 is a broad reshuffle of operator
+            # overloads with no behavioural effect. Both are recorded in
+            # docs/ROADMAP.md so suppressing them here does not lose them.
+            #
+            # ---- Design decisions this repository has already made ---------
+            #
+            # cpp:S5945 (12) C-style arrays. Two shapes: `DataWords`' inline
+            #   `uint16_t buf_[32]`, which CLAUDE.md protects by name because the
+            #   32-word cap is a property of MIL-STD-1553B and the inline buffer
+            #   is what keeps the per-record path allocation-free; and static
+            #   lookup tables, where a `std::vector` would move a compile-time
+            #   constant to the heap.
+            # cpp:S5028 (8) `MIE_LOG_MODULE`. Defined per translation unit and
+            #   consumed INSIDE another macro, so it cannot be a constant.
+            # cpp:S5421 (3) mutable globals: a settable log level, a
+            #   test-injectable sink, a temp-name counter. Mutable by design,
+            #   each with its rationale written at the definition.
+            # cpp:S8417 (3) `memory_order_relaxed` on the log level. A standalone
+            #   flag synchronising nothing else is the textbook case where
+            #   relaxed is correct; seq_cst would add fences on the per-record
+            #   path to no end.
+            # cpp:S1709 (2) `Optional`'s implicit constructors, already carrying
+            #   NOLINT and cppcheck-suppress with the reasoning at the two lines.
+            # cpp:S5205 (1) a captureless function pointer for the log sink
+            #   rather than std::function -- documented at the declaration.
+            # cpp:S3624 (1) `RecordIter` owns nothing, so it needs no destructor.
+            # cpp:S886 (1) a TOML escape scanner that must look ahead one
+            #   character; the index is the point.
+            # cpp:S1181 / S2486 / S2738 (3) deliberate catch sites: a top-level
+            #   CLI backstop that exists so a ConfigError cannot abort the
+            #   process, and two catch-alls that flush buffered rows before
+            #   re-raising. Two already carry NOLINT.
+            # cpp:S107 / S3776 / S924 (10) parameter counts, cognitive complexity
+            #   and nested breaks. Same judgement recorded for Rust's
+            #   `too_many_lines` and `cognitive_complexity`: these are exhaustive
+            #   dispatch tables and record-shape walkers, read by lookup rather
+            #   than top to bottom.
+            #
+            # ---- The C API leaves no choice -------------------------------
+            #
+            # cpp:S3630 / S5008 (3) `reinterpret_cast` and `void*` in the fd
+            #   encoding. `platform.hpp` presents ONE opaque handle type across a
+            #   POSIX `int` and a Windows `HANDLE`; `void*` is that type.
+            # cpp:S859 (1) `const_cast` for `munmap`, which takes `void*` while
+            #   the mapping is held as `const uint8_t*`. Unmapping writes nothing.
+            # cpp:S1231 (1) `free` on `realpath(path, nullptr)`, which allocates
+            #   with malloc. `delete` there is undefined behaviour.
+            #
+            # ---- Blocked by a tool this repository must keep green ---------
+            #
+            # cpp:S3490 (2) `= default` on the two `throw()` destructors.
+            #   cppcheck 2.13 cannot parse `throw() = default` and reports
+            #   internalAstError, degrading its analysis of the whole file.
+            #   Attempted twice, reverted twice; the sites carry NOLINT now.
+            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,dumpEmitTaint,tempFilePermissions,cppMemberInitNsdmi,readerMsvcCast,decodeSectionBanner,cppRawForLoop,cppHiddenFriend,cppEnumClass,cppCArray,cppLogModuleMacro,cppParamCount,cppCognitiveComplexity,cppNestedBreak,cppMutableGlobal,cppRelaxedAtomic,cppEqualsDefaultThrow,cppOptionalImplicit,cppPlatformVoidPtr,cppTopLevelCatch,cppEmptyCatch,cppCatchAll,cppLookaheadLoop,cppNonOwningIter,cppSinkFnPointer,cppReinterpretFd,cppMunmapConstCast,cppRealpathFree"
+            "-Dsonar.issue.ignore.multicriteria.cppHiddenFriend.ruleKey=cpp:S2807"
+            "-Dsonar.issue.ignore.multicriteria.cppHiddenFriend.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppEnumClass.ruleKey=cpp:S3642"
+            "-Dsonar.issue.ignore.multicriteria.cppEnumClass.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppCArray.ruleKey=cpp:S5945"
+            "-Dsonar.issue.ignore.multicriteria.cppCArray.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppLogModuleMacro.ruleKey=cpp:S5028"
+            "-Dsonar.issue.ignore.multicriteria.cppLogModuleMacro.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppParamCount.ruleKey=cpp:S107"
+            "-Dsonar.issue.ignore.multicriteria.cppParamCount.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppCognitiveComplexity.ruleKey=cpp:S3776"
+            "-Dsonar.issue.ignore.multicriteria.cppCognitiveComplexity.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppNestedBreak.ruleKey=cpp:S924"
+            "-Dsonar.issue.ignore.multicriteria.cppNestedBreak.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppMutableGlobal.ruleKey=cpp:S5421"
+            "-Dsonar.issue.ignore.multicriteria.cppMutableGlobal.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppRelaxedAtomic.ruleKey=cpp:S8417"
+            "-Dsonar.issue.ignore.multicriteria.cppRelaxedAtomic.resourceKey=cpp/src/log.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppEqualsDefaultThrow.ruleKey=cpp:S3490"
+            "-Dsonar.issue.ignore.multicriteria.cppEqualsDefaultThrow.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.cppOptionalImplicit.ruleKey=cpp:S1709"
+            "-Dsonar.issue.ignore.multicriteria.cppOptionalImplicit.resourceKey=cpp/include/mie/optional.hpp"
+            "-Dsonar.issue.ignore.multicriteria.cppPlatformVoidPtr.ruleKey=cpp:S5008"
+            "-Dsonar.issue.ignore.multicriteria.cppPlatformVoidPtr.resourceKey=cpp/src/platform_posix.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppTopLevelCatch.ruleKey=cpp:S1181"
+            "-Dsonar.issue.ignore.multicriteria.cppTopLevelCatch.resourceKey=cpp/src/cli.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppEmptyCatch.ruleKey=cpp:S2486"
+            "-Dsonar.issue.ignore.multicriteria.cppEmptyCatch.resourceKey=cpp/src/filter.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppCatchAll.ruleKey=cpp:S2738"
+            "-Dsonar.issue.ignore.multicriteria.cppCatchAll.resourceKey=cpp/src/order.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppLookaheadLoop.ruleKey=cpp:S886"
+            "-Dsonar.issue.ignore.multicriteria.cppLookaheadLoop.resourceKey=cpp/src/toml.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppNonOwningIter.ruleKey=cpp:S3624"
+            "-Dsonar.issue.ignore.multicriteria.cppNonOwningIter.resourceKey=cpp/include/mie/reader.hpp"
+            "-Dsonar.issue.ignore.multicriteria.cppSinkFnPointer.ruleKey=cpp:S5205"
+            "-Dsonar.issue.ignore.multicriteria.cppSinkFnPointer.resourceKey=cpp/src/log.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppReinterpretFd.ruleKey=cpp:S3630"
+            "-Dsonar.issue.ignore.multicriteria.cppReinterpretFd.resourceKey=cpp/src/platform_posix.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppMunmapConstCast.ruleKey=cpp:S859"
+            "-Dsonar.issue.ignore.multicriteria.cppMunmapConstCast.resourceKey=cpp/src/platform_posix.cpp"
+            "-Dsonar.issue.ignore.multicriteria.cppRealpathFree.ruleKey=cpp:S1231"
+            "-Dsonar.issue.ignore.multicriteria.cppRealpathFree.resourceKey=cpp/src/platform_posix.cpp"
             "-Dsonar.issue.ignore.multicriteria.cppRawForLoop.ruleKey=cpp:S5566"
             "-Dsonar.issue.ignore.multicriteria.cppRawForLoop.resourceKey=cpp/**"
             "-Dsonar.issue.ignore.multicriteria.readerMsvcCast.ruleKey=cpp:S1905"

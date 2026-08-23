@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
 #include "mie/log.hpp"
@@ -22,7 +23,8 @@ bool FilterConfig::is_active() const {
            !include_buses.empty() || !include_subaddresses.empty();
 }
 
-ConfigError::ConfigError(const std::string& message) : message_(new std::string(message)) {}
+ConfigError::ConfigError(const std::string& message)
+    : message_(std::make_shared<std::string>(message)) {}
 
 // NOT `= default`: see the note on MieError's destructor in mie/error.hpp --
 // cppcheck 2.13 reports internalAstError on `throw() = default`.
