@@ -128,8 +128,25 @@ GCC 4.8.5 full-suite tier, so the marginal defect-finding value is genuinely
 lower here than it was for Python — the question is whether Sonar's taint and
 security rules add something those do not.
 
-**Recommendation, as taken:** added. The remaining half of that recommendation
-is **still open** — *measure before making it blocking*. The C++ tree joins an
+**Measured.** The first branch analysis of `main` reported **404 findings, all
+from `cpp/`**: 402 code smells, 2 vulnerabilities, 0 bugs. Rust and Python
+contribute none. An earlier note here and in the CHANGELOG said "zero findings";
+that came from a pull-request analysis, which only examines changed files, and no
+C++ file changed in that PR.
+
+Both vulnerabilities are suppressed with the reasoning recorded in
+`.github/workflows/sonarcloud.yml`, scoped per-rule and per-file as the Python
+entries are: `cpp:S2083` on `dump.cpp` (a path-injection rule matching a function
+that touches no path — the tainted value is report text bound for stdout) and
+`cpp:S2612` on `platform_posix.cpp` (the 0644 temp-file mode, which is stricter
+than the 0666 Rust and Python request, so tightening C++ alone would diverge the
+three).
+
+The 402 code smells do not fail the gate — maintainability on new code is A — and
+are being worked separately. They concentrate in a few rules; `cpp:S3230` alone
+is 176 of them.
+
+**Recommendation, as taken:** added, and now measured. The C++ tree joins an
 existing `sonar.qualitygate.wait=true` job, so if the first analysis surfaces a
 large pile of style findings the answer is to scope C++ to the security rules,
 not to unpick the integration. The rules worth having are the security and taint

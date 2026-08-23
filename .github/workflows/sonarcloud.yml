@@ -188,6 +188,45 @@ jobs:
         working-directory: cpp
         run: bear -- make -j"$(nproc)" all   # -> cpp/compile_commands.json
 
+      # C++ COVERAGE FOR SONAR.
+      #
+      # Adding cpp/src and cpp/include as sources without this made Sonar count
+      # all 66 C++ files as ZERO-covered, which dropped new_coverage to 51.7%
+      # against an 80% gate and turned `main` red -- a self-inflicted failure
+      # that had nothing to do with the code.
+      #
+      # A SEPARATE build from the one above: this tier is -O0 with --coverage
+      # and keys its own BUILD_DIR, so it cannot clobber the compilation
+      # database the CFamily analyser reads.
+      #
+      # `--sonarqube` is gcovr's native emitter for SonarQube's generic coverage
+      # XML, so no format conversion sits between the measurement and the gate.
+      # gcovr runs FROM THE REPOSITORY ROOT, not from cpp/. The emitted paths
+      # must be repo-relative (`cpp/src/reader.cpp`) because Sonar resolves them
+      # against its project base dir. Run from cpp/ they come out as
+      # `src/reader.cpp`, Sonar matches no file, and coverage silently stays at
+      # zero while every step reports success. Verified locally before pushing,
+      # which is the only reason this says `--root .` with a `cpp` search path.
+      #
+      # The two asserts below exist because that failure is silent: an empty or
+      # wrongly-rooted report is indistinguishable from a passing one at the
+      # step level, and would show up only as an unexplained coverage drop.
+      - name: C++ coverage report for Sonar
+        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_PROJECT_KEY != '' && env.SONAR_ORGANIZATION != '' }}
+        run: |
+          pipx install gcovr==8.6
+          make -C cpp -j"$(nproc)" check COVERAGE=1
+          gcovr --root . \
+            --filter 'cpp/src/' \
+            --exclude 'cpp/src/main\.cpp' \
+            --exclude 'cpp/src/platform_win32\.cpp' \
+            --exclude-unreachable-branches \
+            --exclude-throw-branches \
+            --sonarqube cpp/coverage-sonar.xml \
+            cpp
+          test -s cpp/coverage-sonar.xml
+          grep -q 'path="cpp/src/' cpp/coverage-sonar.xml
+
       # --------------------------------------------------------------------------
       # Install SonarScanner CLI (runs on the runner, can access cargo/clippy)
       # --------------------------------------------------------------------------
@@ -244,6 +283,7 @@ jobs:
             # been bitten by twice (the vacuous diagrams job, the compile-DB
             # probe with container paths).
             "-Dsonar.cfamily.compile-commands=cpp/compile_commands.json"
+            "-Dsonar.coverageReportPaths=cpp/coverage-sonar.xml"
             "-Dsonar.rust.lcov.reportPaths=rust/lcov.info"
             "-Dsonar.rust.clippy.enabled=false"
             "-Dsonar.python.version=3.10"
@@ -310,7 +350,55 @@ jobs:
             # docs/ROADMAP.md asked for. Both entries stay scoped to one rule in
             # one file: any other finding in reader.py, and either rule anywhere
             # else, still fails the build.
-            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection"
+            # ----------------------------------------------------------------
+            # dump.cpp: cpp:S2083 "tainted value 'text' is leaking"
+            # ----------------------------------------------------------------
+            #
+            # Fires on the `std::fwrite` inside `emit()`. The taint source is the
+            # operator-named input file, and the sink is STDOUT -- which is the
+            # entire purpose of `mie-decoder dump`: render the bytes of the file
+            # the operator asked about.
+            #
+            # S2083 is path injection. There is no path here. `emit()` writes to
+            # an already-open `FILE*`; the tainted value is the report TEXT, not
+            # a filename, and it reaches no filesystem call, no shell and no
+            # interpreter. A rule about choosing a path by untrusted input has
+            # matched a function that chooses nothing.
+            #
+            # Same adjudication as the reader.py/config.py entries above and for
+            # the same reason: this is an operator-run CLI holding exactly the
+            # permissions of the user who typed the command. Scoped to the one
+            # rule in the one file, so this rule anywhere else -- and any other
+            # finding in dump.cpp -- still fails the build.
+            #
+            # ----------------------------------------------------------------
+            # platform_posix.cpp: cpp:S2612 "permissions granted to others"
+            # ----------------------------------------------------------------
+            #
+            # Fires on `::open(candidate, O_WRONLY|O_CREAT|O_EXCL, 0644)` in the
+            # atomic-write path. Two reasons this stays:
+            #
+            # 1. 0644 is the MODE ARGUMENT, not the resulting mode -- the umask
+            #    still applies. It is also stricter than what the other two
+            #    implementations request: Rust's `File::create` passes 0666 and
+            #    Python's `open(...,"w")` does the same. Tightening C++ to 0600
+            #    would make the three implementations emit output files with
+            #    DIFFERENT permissions from the same input, which is exactly the
+            #    kind of cross-implementation divergence this repository exists
+            #    to prevent.
+            # 2. The temp file becomes the operator's CSV via rename. A decoded
+            #    recording is not a secret relative to the recording it came
+            #    from, and a 0600 output would break the ordinary case of a CSV
+            #    read by another user or a downstream service.
+            #
+            # If output permissions ever need to be restricted, that is a
+            # deliberate feature decision across all three implementations with
+            # a documented flag -- not a silent change in one backend.
+            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,dumpEmitTaint,tempFilePermissions"
+            "-Dsonar.issue.ignore.multicriteria.dumpEmitTaint.ruleKey=cpp:S2083"
+            "-Dsonar.issue.ignore.multicriteria.dumpEmitTaint.resourceKey=cpp/src/dump.cpp"
+            "-Dsonar.issue.ignore.multicriteria.tempFilePermissions.ruleKey=cpp:S2612"
+            "-Dsonar.issue.ignore.multicriteria.tempFilePermissions.resourceKey=cpp/src/platform_posix.cpp"
             "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.ruleKey=pythonsecurity:S8707"
             "-Dsonar.issue.ignore.multicriteria.agenticPathInjection.resourceKey=python/src/mie_decoder/config.py"
             "-Dsonar.issue.ignore.multicriteria.readerPathInjection.ruleKey=pythonsecurity:S2083"

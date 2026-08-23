@@ -17,6 +17,52 @@ full release workflow.
 
 ### Changed
 
+- **SonarCloud's C++ analysis turned `main` red, and this fixes it.** Two gate
+  conditions failed on the first branch analysis after the C++ tree joined:
+  `new_coverage` at 51.7% against an 80% threshold, and `new_security_rating` at
+  E against A.
+
+  **The coverage half was self-inflicted.** `cpp/src` and `cpp/include` were
+  added as Sonar sources without a C++ coverage report, so all 66 files counted
+  as zero-covered — a failure about the configuration, not the code. The
+  SonarCloud job now builds the coverage tier and emits gcovr's native
+  `--sonarqube` XML.
+
+  That emitter has a trap worth recording: run from `cpp/`, it writes paths like
+  `src/reader.cpp`, which Sonar resolves against its project base dir, matches
+  against nothing, and applies as **zero coverage while every step reports
+  success**. gcovr therefore runs from the repository root so the paths come out
+  as `cpp/src/reader.cpp`, and the step asserts both that the report is
+  non-empty and that it contains repo-relative paths — because the failure is
+  otherwise indistinguishable from a pass.
+
+  **The security half is two findings, both suppressed with the reasoning
+  written out**, scoped per-rule and per-file exactly as the existing
+  `reader.py` / `config.py` entries are:
+
+  - `cpp:S2083` on `dump.cpp` — "tainted value is leaking" at the `fwrite` in
+    `emit()`. S2083 is *path injection*, and there is no path: the tainted value
+    is the report **text**, the sink is stdout, and rendering an operator-named
+    file to stdout is the entire purpose of `dump`. The value reaches no
+    filesystem call, no shell and no interpreter.
+  - `cpp:S2612` on `platform_posix.cpp` — the `0644` mode on the atomic-write
+    temp file. It is the mode *argument*, still subject to umask, and it is
+    **stricter than the other two implementations request**: Rust's
+    `File::create` and Python's `open(..., "w")` both pass 0666. Tightening C++
+    alone would make the three emit different permissions from the same input.
+
+- **Correcting a claim made when the analysis first landed.** It was reported
+  here as adding "zero findings". That number came from a pull-request analysis,
+  which only examines **changed files** — and no C++ file changed in that PR. The
+  full branch analysis on `main` reports **404 findings, every one from `cpp/`**:
+  402 code smells, 2 vulnerabilities, 0 bugs. Rust and Python contribute none.
+
+  So `OPEN-DECISIONS.md` #3's caveat — *measure before making it blocking* — was
+  the right one to keep, and the first measurement was taken against the wrong
+  scope. The 402 code smells do not fail the gate (maintainability on new code
+  is still A) and are being addressed separately; they are concentrated in a few
+  rules, `cpp:S3230` alone accounting for 176.
+
 - **The C++ tree has a coverage gate, and all three implementations now gate on
   90% lines.** `make -C cpp coverage` rebuilds from clean with `--coverage` at
   `-O0`, runs the full Catch2 suite and gates with `gcovr`; it is wired as a
