@@ -421,7 +421,72 @@ jobs:
             # LLVM 20 and will catch a newly redundant entry. Sonar's rule key
             # cannot be suppressed per-message, so suppressing it wholesale and
             # keeping the sharper tool is the trade.
-            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,dumpEmitTaint,tempFilePermissions,cppMemberInitNsdmi"
+            # ----------------------------------------------------------------
+            # reader.cpp: cpp:S1905 "remove this redundant cast"
+            # ----------------------------------------------------------------
+            #
+            # The cast is NOT redundant -- it is load-bearing on the shipping
+            # Windows build, and the comment above it says so:
+            #
+            #   GCC is quiet about it here; MSVC compiles at /W4 /WX, where
+            #   C4244 makes it an error -- green on Linux, broken on the
+            #   Windows build.
+            #
+            # SonarCloud analyses this tree on Linux, so it sees only the half
+            # of the story where the cast is unnecessary. Acting on the finding
+            # would break MSVC, which is a shipping target (ADR-0003), and the
+            # breakage would not appear in the analysis that suggested it.
+            #
+            # ----------------------------------------------------------------
+            # decode.hpp: cpp:S125 "remove the commented out code"
+            # ----------------------------------------------------------------
+            #
+            # The line is a section banner:
+            #
+            #   // --- Timestamp-format auto-detection (L2-DEC-015 / L2-DEC-016) ---
+            #
+            # A requirement id in a dashed rule reads as commented-out code to
+            # the heuristic. The header uses these banners throughout to group
+            # declarations against the requirements they implement, which is a
+            # navigation aid, not a leftover.
+            # ----------------------------------------------------------------
+            # cpp/**: cpp:S5566 "change this raw for-loop to a range for-loop"
+            # ----------------------------------------------------------------
+            #
+            # SUPPRESSED BECAUSE SATISFYING IT FAILS A REQUIRED GATE. This was
+            # attempted, with clang-tidy's modernize-loop-convert applying all
+            # 39, and the result was reverted. Converting an index loop to a
+            # range-for is exactly the shape cppcheck's `useStlAlgorithm`
+            # matches, so cppcheck -- which runs with --error-exitcode=1 and
+            # blocks the merge -- then demanded that a dozen plain loops be
+            # rewritten as std::transform / std::any_of / std::find_if with
+            # lambdas. Each round of that surfaced more:
+            #
+            #   round 1  clang-tidy 20 misc-const-correctness x11 (every
+            #            generated element was non-const; the check does not
+            #            exist before LLVM 15, so clang-tidy 14 was silent)
+            #   round 2  a compile error from an incomplete rename
+            #   round 3  cppcheck internalAstError -- modernize-use-equals-default
+            #            had re-applied the `throw() = default` that an earlier
+            #            batch reverted for cppcheck's sake
+            #   round 4  cppcheck constVariablePointer + useStlAlgorithm x14
+            #
+            # Two analysers hold opposite opinions about the same code. S5566 is
+            # MINOR; cppcheck blocks the merge. Rewriting readable loops as
+            # algorithm calls with lambdas is a legibility trade this project
+            # has not chosen, and it is not worth making to satisfy a MINOR rule
+            # that a required gate then rejects.
+            #
+            # The C++11 floor is a factor too: no structured bindings, no
+            # ranges, and lambdas that would carry the loop body are the whole
+            # of the readability cost with none of the modern compensations.
+            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,dumpEmitTaint,tempFilePermissions,cppMemberInitNsdmi,readerMsvcCast,decodeSectionBanner,cppRawForLoop"
+            "-Dsonar.issue.ignore.multicriteria.cppRawForLoop.ruleKey=cpp:S5566"
+            "-Dsonar.issue.ignore.multicriteria.cppRawForLoop.resourceKey=cpp/**"
+            "-Dsonar.issue.ignore.multicriteria.readerMsvcCast.ruleKey=cpp:S1905"
+            "-Dsonar.issue.ignore.multicriteria.readerMsvcCast.resourceKey=cpp/src/reader.cpp"
+            "-Dsonar.issue.ignore.multicriteria.decodeSectionBanner.ruleKey=cpp:S125"
+            "-Dsonar.issue.ignore.multicriteria.decodeSectionBanner.resourceKey=cpp/include/mie/decode.hpp"
             "-Dsonar.issue.ignore.multicriteria.cppMemberInitNsdmi.ruleKey=cpp:S3230"
             "-Dsonar.issue.ignore.multicriteria.cppMemberInitNsdmi.resourceKey=cpp/**"
             "-Dsonar.issue.ignore.multicriteria.dumpEmitTaint.ruleKey=cpp:S2083"
