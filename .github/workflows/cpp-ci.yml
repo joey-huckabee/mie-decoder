@@ -9,7 +9,7 @@ name: C++ CI
 #                           cannot host (LSan, full UBSan). NOT libFuzzer:
 #                           the fuzz harness is a deterministic Catch2 case
 #                           so it runs on every tier, including 2 and 3.
-#                           See docs/OPEN-DECISIONS.md #2.
+#                           See cpp/tests/test_fuzz.cpp for why.
 #   2. gcc 4.8.5         -- fidelity for the SLES 12 SP5 system compiler
 #   3. MSVC              -- the shipping Windows artifact (ADR-0003)
 #   ( real SLES 12 SP5   -- NOT here. Deployability is verified by hand on

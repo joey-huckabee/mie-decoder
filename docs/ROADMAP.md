@@ -197,6 +197,35 @@ are per-rule and per-file by design. `docs/CONFIG-REFERENCE.md`'s "Trust boundar
 section carries the operator-facing statement of the same decision — keep the two
 in step.
 
+## Phase 3: release artifacts and the versioning scheme (needs direction)
+
+Carried over from the retired open-decisions register, where this was the only
+entry still unresolved. Nothing here is built.
+
+`CLAUDE.md` anticipates impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`,
+`cpp-vX.Y.Z`) while every release so far has been a joint cut from one tag.
+
+**Needs deciding:**
+
+- Does the C++ implementation ship in the next joint cut, or take its own
+  `cpp-v*` tag first?
+- Linux artifact built in the `gcc:4.8` container (runs on glibc 2.13 and up,
+  so SLES 12 SP5 is covered) -- confirm that is the intended build host.
+- Windows artifact: MSVC Release x64. Is a static CRT wanted so the binary does
+  not depend on the VC++ redistributable being present?
+- Real SLES 12 SP5 deployment verification is **manual and out of CI** -- the
+  `gcc:4.8` container is Debian 7 / glibc 2.13, a conservative proxy that proves
+  C++11 conformance, not deployability. Who does that check, and against what?
+
+**The three decisions that shared that file are settled**, and their reasoning
+lives where it is acted on rather than in a register of its own: the merge
+overwrite question (closed, no change -- pinned by the `clobber-*` conformance
+cases), the C++ coverage and fuzz gates (built -- see `cpp/Makefile`'s coverage
+threshold comment and `cpp/tests/test_fuzz.cpp`'s header), and SonarCloud C++
+analysis (added -- see the suppression list in
+`.github/workflows/sonarcloud.yml`, where each entry carries its own
+justification). `CHANGELOG.md` records all three.
+
 ## C++ modernisations deferred from the SonarCloud sweep (deferred)
 
 Two SonarCloud C++ rules are suppressed in `.github/workflows/sonarcloud.yml`

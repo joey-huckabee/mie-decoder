@@ -29,7 +29,7 @@ development convenience (ADR-0003).
 >
 > **What is genuinely outstanding is tooling and release work, not decoder
 > code:** there are no libFuzzer targets and no coverage gate
-> (`docs/OPEN-DECISIONS.md` #2 -- these need a threshold, not a design), and
+> (see `docs/ROADMAP.md`), and
 > Phase 3 release artifacts and the `cpp-vX.Y.Z` scheme are undecided (#4).
 > Static analysis is now wired: CodeQL analyses `c-cpp` and SonarCloud analyses
 > `cpp/src` and `cpp/include` from the `bear` compilation database.

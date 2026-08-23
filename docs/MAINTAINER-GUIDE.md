@@ -538,8 +538,8 @@ gating one of them:
 | `.github/workflows/codeql.yml` | `rust`, `python`, `c-cpp` | Rust and Python use `build-mode: none` and extract from source. C++ **must** be compiled — the extractor observes a real build — so it uses `build-mode: manual` with an explicit `make -C cpp all`. Not `autobuild`: this tree has a specific build driven by `sources.txt`, and letting an extractor guess is how it silently analyses less than you think. `all` compiles every translation unit without running the suite, which is what the extractor needs. |
 | `.github/workflows/sonarcloud.yml` | `rust/src`, `python/src`, `cpp/src`, `cpp/include` | The CFamily analyser cannot read C++ from source alone; it needs the compile flags per translation unit. This passes `sonar.cfamily.compile-commands` pointing at the database `bear` writes, rather than using SonarCloud's build-wrapper, so the analyser sees the flags the **real** build uses instead of a second description that could drift from `sources.txt`. Vendored Catch2 and the per-toolchain `build/` trees are excluded. |
 
-Adding C++ to SonarCloud closed `docs/OPEN-DECISIONS.md` #3. The other half of
-that entry's recommendation is still live: **measure before making C++ blocking.**
+One caveat from when C++ analysis was added is still live: **measure before
+making C++ blocking.**
 The tree joins a job that already waits on the quality gate, so if the first
 analysis surfaces a large pile of style findings, the answer is to scope C++ to
 the security and taint rules — the ones no other gate here runs — rather than to
