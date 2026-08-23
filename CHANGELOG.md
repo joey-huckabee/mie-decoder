@@ -17,6 +17,49 @@ full release workflow.
 
 ### Changed
 
+- **Third batch of the SonarCloud C++ code smells — and the batch where the two
+  analysers turned out to contradict each other.** `cpp:S1669` (`module` is a
+  keyword in C++20, so the log parameter is renamed) and `cpp:S5350`
+  (`readdir`'s result is only read, so the pointer is pointer-to-const). Small,
+  because the large part of the batch was attempted and reverted.
+
+- **`cpp:S5566` (39 findings, "use a range for-loop") is suppressed, because
+  satisfying it fails a required gate.** All 39 were applied with clang-tidy's
+  `modernize-loop-convert` and the result was backed out. Converting an index
+  loop to a range-for is precisely the shape cppcheck's `useStlAlgorithm`
+  matches, so **cppcheck — which runs with `--error-exitcode=1` and blocks the
+  merge — then demanded a dozen plain loops be rewritten as `std::transform` /
+  `std::any_of` / `std::find_if` with lambdas.**
+
+  Each attempt to settle it surfaced more:
+
+  | round | what broke |
+  |---|---|
+  | 1 | clang-tidy 20 `misc-const-correctness` ×11 — every generated element was non-const, and the check does not exist before LLVM 15, so the local clang-tidy 14 was silent about work it had just done |
+  | 2 | a compile error from an incomplete rename |
+  | 3 | cppcheck `internalAstError` — `modernize-use-equals-default` had re-applied the `throw() = default` that batch 1 reverted **for cppcheck's sake** |
+  | 4 | cppcheck `constVariablePointer` + `useStlAlgorithm` ×14 |
+
+  `S5566` is **MINOR**; cppcheck blocks the merge. Rewriting readable loops as
+  algorithm calls with lambdas is a legibility trade this project has not
+  chosen, and it is not worth making to satisfy a minor rule that a required
+  gate then rejects. The C++11 floor sharpens it: no structured bindings, no
+  ranges — the lambdas carry the whole readability cost with none of the modern
+  compensations.
+
+  **A prose comment does not stop an automated fixer.** Round 3 is the lesson:
+  batch 1 reverted two `throw() = default` destructors and left a comment saying
+  why, and clang-tidy re-applied one of them *directly beneath that comment*.
+  Both sites now carry `NOLINT(modernize-use-equals-default)`, which it reads.
+
+- **Two more findings suppressed because acting on them would be wrong, not
+  merely unnecessary.** `cpp:S1905` on `reader.cpp` calls a cast redundant; it
+  is **load-bearing on Windows**, and the comment above it already said so —
+  GCC is quiet, MSVC at `/W4 /WX` makes C4244 an error. SonarCloud analyses this
+  tree on Linux and sees only the half where the cast does nothing. `cpp:S125`
+  on `decode.hpp` flags a **section banner** — a requirement id inside a dashed
+  rule reads as commented-out code to the heuristic.
+
 - **Second batch of the SonarCloud C++ code smells: redundant member
   initializers removed** (`cpp:S3230`, the largest single rule at 176 findings).
   100 lines deleted across 13 files; five constructors now have empty

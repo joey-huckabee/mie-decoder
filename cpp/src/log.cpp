@@ -94,14 +94,14 @@ bool enabled(Level level) {
     return static_cast<int>(level) >= g_level.load(std::memory_order_relaxed);
 }
 
-void emit(Level level, const char* module, const std::string& message) {
+void emit(Level level, const char* module_name, const std::string& message) {
     std::string line;
     // Enough for the prefix and a typical diagnostic; longer messages simply
     // grow the string once more.
     line.reserve(message.size() + 32);
     line += level_label(level);
     line += " [";
-    line += (module != nullptr ? module : "");
+    line += (module_name != nullptr ? module_name : "");
     line += "] ";
     line += message;
     line += "\n";

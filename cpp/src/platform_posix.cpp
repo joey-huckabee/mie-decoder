@@ -367,7 +367,7 @@ bool list_directory(const std::string& utf8_dir, std::vector<std::string>& names
     // readdir returning NULL is ambiguous between "end of stream" and "error",
     // and the two are told apart only by errno -- which readdir does not clear.
     errno = 0;
-    for (struct dirent* entry = ::readdir(dir); entry != nullptr; entry = ::readdir(dir)) {
+    for (const struct dirent* entry = ::readdir(dir); entry != nullptr; entry = ::readdir(dir)) {
         const char* name = entry->d_name;
         if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
             continue;

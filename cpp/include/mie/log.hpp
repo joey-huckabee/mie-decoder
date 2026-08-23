@@ -70,7 +70,7 @@ bool enabled(Level level);
 
 /// Emit one line. Prefer the macros: this does NOT test the level, so calling
 /// it directly emits unconditionally.
-void emit(Level level, const char* module, const std::string& message);
+void emit(Level level, const char* module_name, const std::string& message);
 
 /// Where a line goes. Null (the default) means stderr.
 ///
