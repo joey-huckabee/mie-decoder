@@ -17,6 +17,39 @@ full release workflow.
 
 ### Changed
 
+- **The one check that compares implementations was gated behind one
+  implementation's path filter.** `cross-impl-differential` runs `run.py` with
+  no `--only` / `--skip`, which makes it the only job that exercises all three
+  together and therefore the only one that can run the differential
+  config-parser checks. It lived in `cpp-ci.yml`, filtered to `cpp/**` — so the
+  check written to catch a divergence **between** implementations only ran when
+  the C++ tree changed. A Rust or Python change introducing a config-parser
+  divergence would not have been caught by it. It now lives alone in
+  `.github/workflows/differential.yml`, unfiltered.
+
+- **A conformance-manifest change was not verified against C++.**
+  `cpp-ci.yml`'s filter covered `cpp/**`, its own file and the three
+  `assert-*.sh` scripts — not `tests/conformance/**`. But `manifest.json`
+  defines what **every** implementation must satisfy, and `ci.yml`'s conformance
+  job runs `--skip cpp`. So a case added to the manifest could break C++ and
+  merge green with nothing having run it. `tests/conformance/**` is now in the
+  filter.
+
+  Both gaps surfaced from a single observation — that a PR showed 54 checks
+  where the usual number is 80 — rather than from any failure. Neither had bitten
+  yet: the manifest change that exposed them was verified by hand against all
+  three before pushing.
+
+- **Moving the job would have dropped it from doc-drift coverage**, because
+  `repo-hygiene.sh` reads only `ci.yml` and `cpp-ci.yml` when checking that
+  every CI job has a row in the maintainer guide. It now reads
+  `differential.yml` too, and that widening was proven by removing the row and
+  confirming the check fails.
+
+  `cpp-ci.yml`'s header also still advertised libFuzzer among the modern tier's
+  instrumentation; the fuzz harness is a deterministic Catch2 case that runs on
+  every tier, so that note is corrected.
+
 - **The output-overwrite contract is now pinned by conformance, and
   `docs/OPEN-DECISIONS.md` #1 is closed as no-change.** Two cases:
   `clobber-default-overwrites` (an existing destination is replaced, exit 0,

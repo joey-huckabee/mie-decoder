@@ -6,7 +6,10 @@ name: C++ CI
 #
 # THREE TIERS (ADR-0001, ADR-0003):
 #   1. modern toolchain  -- fast feedback, plus the instrumentation GCC 4.8
-#                           cannot host (LSan, full UBSan, libFuzzer)
+#                           cannot host (LSan, full UBSan). NOT libFuzzer:
+#                           the fuzz harness is a deterministic Catch2 case
+#                           so it runs on every tier, including 2 and 3.
+#                           See docs/OPEN-DECISIONS.md #2.
 #   2. gcc 4.8.5         -- fidelity for the SLES 12 SP5 system compiler
 #   3. MSVC              -- the shipping Windows artifact (ADR-0003)
 #   ( real SLES 12 SP5   -- NOT here. Deployability is verified by hand on
@@ -56,6 +59,13 @@ on:
       - "scripts/assert-platform-confined.sh"
       - "scripts/assert-locale-free.sh"
       - "scripts/assert-sources-agree.sh"
+      # The shared conformance suite is part of the C++ contract even though it
+      # lives outside cpp/: manifest.json says what every implementation must
+      # satisfy and expected/ holds the bytes they are compared against. A case
+      # added there can break C++ while touching nothing under cpp/, and
+      # ci.yml's conformance job runs `--skip cpp`, so nothing else would catch
+      # it.
+      - "tests/conformance/**"
   pull_request:
     paths:
       - "cpp/**"
@@ -63,6 +73,13 @@ on:
       - "scripts/assert-platform-confined.sh"
       - "scripts/assert-locale-free.sh"
       - "scripts/assert-sources-agree.sh"
+      # The shared conformance suite is part of the C++ contract even though it
+      # lives outside cpp/: manifest.json says what every implementation must
+      # satisfy and expected/ holds the bytes they are compared against. A case
+      # added there can break C++ while touching nothing under cpp/, and
+      # ci.yml's conformance job runs `--skip cpp`, so nothing else would catch
+      # it.
+      - "tests/conformance/**"
 
 permissions:
   contents: read
@@ -385,31 +402,13 @@ jobs:
   # Ubuntu only, deliberately. The cases this adds over the Windows runs are the
   # POSIX ones -- a character device as a config path, a symlink to a real one --
   # which Windows skips.
-  cross-impl-differential:
-    name: Differential checks (all three implementations)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        run: |
-          rustup update stable --no-self-update
-          rustup default stable
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Install the Python package
-        run: python -m pip install -e ./python
-      - name: Install the C++ toolchain
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends g++-14 make
-      - name: Build the C++ decoder
-        run: make -C cpp -j"$(nproc)" all
-      # No --only / --skip: the runner defaults to every registered
-      # implementation and fails if one is missing, which is exactly what this
-      # job wants to assert.
-      - name: Conformance, surface parity, and the differential config checks
-        run: python tests/conformance/run.py
+  # cross-impl-differential MOVED to .github/workflows/differential.yml.
+  #
+  # It was the only job that runs all three implementations together -- and so
+  # the only one that can run the differential config checks -- but it sat in
+  # THIS workflow, which is filtered to `cpp/**`. The check written to catch a
+  # divergence between implementations therefore only ran when the C++ tree
+  # changed. It now runs unfiltered, on every push and pull request.
 
   # The three invariants that make the portability argument true rather than
   # aspirational. Cheap enough to share one job.

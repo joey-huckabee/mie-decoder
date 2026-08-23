@@ -523,18 +523,18 @@ and a C++ change never waits on the Python matrix. Its jobs:
 | `clang-tidy` | `bear` generates a compilation database from the real build, then `make tidy` runs clang-tidy with `--warnings-as-errors`. Without that flag clang-tidy exits 0 on warnings and the gate reports success while printing findings | `ubuntu-24.04` | Any finding |
 | `format` | `make format-check`. Covers **both** platform backends, not just the one this host compiles — the inactive backend is checked by no other tier | `ubuntu-24.04` | Any diff |
 | `cpp-conformance` | The C++ binary against the **same** byte-exact oracles in `tests/conformance/expected/`, via `run.py --only cpp`. Needs no cargo and no installed `mie_decoder`, because it compares against the committed oracles rather than against the other CLIs. The C++ build runs **every** case in the manifest, so nothing is skipped | `ubuntu-24.04`, `windows-2022` | Block merge |
-| `cross-impl-differential` | The only job that runs **all three** implementations together, and therefore the only one that can run the differential config checks: `conformance` passes `--skip cpp` and `cpp-conformance` passes `--only cpp`, and a differential check with one implementation selected skips itself. Its first run found two real divergences | `ubuntu-24.04` | Block merge |
 | `invariants` | The three properties that make the portability claim true rather than aspirational: OS headers confined to the platform backends, no locale-sensitive parsing or formatting, and the Makefile and CMake resolving the same source list | `ubuntu-24.04` | Any violation |
 
 Each of the three `invariants` gates has been verified to fail on a planted
 violation as well as to pass on clean code. A check that has only ever been
 seen passing is not known to work.
 
-Two further workflows cut **across** all three implementations rather than
-gating one of them, and both now include C++:
+Three further workflows cut **across** all three implementations rather than
+gating one of them:
 
-| Workflow | Covers | Notes |
+| Workflow / job | Covers | Notes |
 |-----|--------------|--------|
+| `cross-impl-differential` | all three | **The only job that runs all three implementations together**, and therefore the only one that can run the differential config checks (`config_parity`, `config_fuzz`, `config_path_parity`), which compare **all pairs** and skip themselves when fewer than two implementations are selected. Lives alone in `.github/workflows/differential.yml`. It runs `run.py` with no `--only` / `--skip`, so a missing implementation is an error rather than a smaller pass. Deliberately **unfiltered**: it previously lived in `cpp-ci.yml` behind a `cpp/**` filter, which meant the check written to catch a divergence *between* implementations only ran when the C++ tree changed. Its first run found two real divergences. |
 | `.github/workflows/codeql.yml` | `rust`, `python`, `c-cpp` | Rust and Python use `build-mode: none` and extract from source. C++ **must** be compiled — the extractor observes a real build — so it uses `build-mode: manual` with an explicit `make -C cpp all`. Not `autobuild`: this tree has a specific build driven by `sources.txt`, and letting an extractor guess is how it silently analyses less than you think. `all` compiles every translation unit without running the suite, which is what the extractor needs. |
 | `.github/workflows/sonarcloud.yml` | `rust/src`, `python/src`, `cpp/src`, `cpp/include` | The CFamily analyser cannot read C++ from source alone; it needs the compile flags per translation unit. This passes `sonar.cfamily.compile-commands` pointing at the database `bear` writes, rather than using SonarCloud's build-wrapper, so the analyser sees the flags the **real** build uses instead of a second description that could drift from `sources.txt`. Vendored Catch2 and the per-toolchain `build/` trees are excluded. |
 
