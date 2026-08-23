@@ -17,6 +17,55 @@ full release workflow.
 
 ### Changed
 
+- **The C++ tree has a fuzz harness, and the decision went against the delivery
+  plan's assumption.** `docs/OPEN-DECISIONS.md` #2 asked whether the fuzz gate
+  should be corpus replay only or also a timed exploratory run. Both options
+  presupposed **libFuzzer** — and checking what Rust and Python actually do
+  dissolved the question. Neither uses it. Both run a **deterministic seeded
+  generator inside the ordinary test suite**: xorshift64, fixed seed, 256
+  iterations by default, scaled by `MIE_FUZZ_ITERATIONS` in a nightly burn-in.
+  C++ now does the same, in `cpp/tests/test_fuzz.cpp`.
+
+  Three reasons that shape beats libFuzzer **in this tree specifically**:
+
+  1. **libFuzzer needs clang.** The defining constraint here is GCC 4.8.5
+     (ADR-0001). A libFuzzer target would run on one of four C++ tiers and *not*
+     the one this implementation exists for. An ordinary Catch2 case runs on all
+     of them, and again under ASan/UBSan and Valgrind — where a real memory
+     fault on random input actually surfaces.
+  2. **Same generator, same seed, same inputs in all three implementations.**
+     `L1-ROB-001` is a shared requirement; testing it three different ways would
+     produce three incomparable results. This makes a behavioural divergence on
+     identical bytes detectable.
+  3. **It is deterministic**, so a required gate cannot go red on an input
+     nobody's change produced — the exact objection #2 raised against a blocking
+     timed run.
+
+  **There is no corpus, and that is not an omission:** the generator reproduces
+  its inputs exactly, so a committed corpus would be storage for something
+  already derivable. The "timed run" is simply a larger iteration count, so both
+  halves of the original question are satisfied without either being a separate
+  artifact.
+
+  No new CI job was needed for the required gate — the harness is a test case,
+  so `make check` already runs it on every tier. `fuzz.yml` gained a `fuzz-cpp`
+  job purely to turn the count up nightly, alongside the existing Rust and
+  Python ones.
+
+  Verified non-vacuous rather than assumed: assertion counts scale with the
+  iteration count (1 -> 7, 256 -> 1,826, 2000 -> 14,021), which also shows the
+  random bytes really are decoding into records rather than being rejected at
+  open. And the sanitizer tier runs over those inputs -- the concrete payoff of
+  the shape choice, since a clang-only libFuzzer target would have given that on
+  one tier instead of all of them.
+
+  `make verify-ci` caught the one problem: clang-tidy 20's `bugprone-empty-catch`
+  on the deliberately empty `catch (const MieError&)`. That catch IS the
+  assertion -- swallowing the documented error path is the point, and any other
+  exception type escaping is the failure. It now carries a NOLINT, matching the
+  precedent already in `filter.cpp`, which is the machine-readable way to say
+  what a comment alone could not.
+
 - **The last two findings, both created by batch 4's own fixes.** Moving a
   `shared_ptr` to `make_shared` made the explicit type redundant (`cpp:S5827`),
   and making two reader helpers `const` exposed their **caller** as const-able

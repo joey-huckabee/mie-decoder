@@ -62,6 +62,37 @@ jobs:
         working-directory: rust
         run: cargo test --locked --test integration dump_arbitrary_bytes_never_panics -- $NOCAPTURE
 
+  fuzz-cpp:
+    name: C++ fuzz burn-in
+    runs-on: ubuntu-24.04
+    env:
+      MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install a compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends g++ make
+
+      # No separate fuzz target and no corpus: the harness is an ordinary
+      # Catch2 test case, so it already runs on EVERY tier -- modern g++, the
+      # GCC 4.8.5 fidelity tier, MSVC, and again under ASan/UBSan and Valgrind,
+      # which is where a real memory fault on random input actually surfaces.
+      # This job exists only to turn the iteration count up. It runs the WHOLE
+      # suite rather than filtering to `[fuzz]`: the other 475 cases take a few
+      # seconds, and `make check` staying a single unparameterised command is
+      # what keeps this job and a developer's `make check` the same invocation.
+      #
+      # The generator is deterministic and seeded identically to the Rust and
+      # Python harnesses, so this burn-in is a strict SUPERSET of the default
+      # run -- the first 256 inputs are the same bytes in all three
+      # implementations.
+      - name: Run the L1-ROB-001 fuzz harness (burn-in)
+        run: make -C cpp -j"$(nproc)" check
+
   fuzz-python:
     name: Python fuzz burn-in
     runs-on: ubuntu-latest

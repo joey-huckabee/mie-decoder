@@ -33,10 +33,11 @@ not because it is believed wrong.
 
 ---
 
-## 2. Coverage and fuzz gates for the C++ tree — COVERAGE DONE, FUZZ OPEN
+## 2. Coverage and fuzz gates for the C++ tree — RESOLVED
 
-**Status:** the coverage gate is built and wired. The fuzz targets are still
-unwritten, and that half still needs the decision below.
+**Status:** done. Both halves are built. Kept rather than deleted because the
+fuzz decision went against this entry's own framing, and the reasoning is worth
+having.
 
 The delivery plan listed a gcov coverage gate and libFuzzer targets (record
 decoder/sync over arbitrary bytes, the TOML config parser, CLI argv) as Phase 1
@@ -75,9 +76,43 @@ every conditional the compiler emits, so it reads lower than the llvm-cov
 *regions* the Rust gate uses — but not all of it. Raising it is real work that
 has not been done.
 
-**Fuzz remains open.** No `cpp/fuzz/` directory, no targets, no job. The shape
-question above (corpus replay as a required gate, timed run as a scheduled one)
-is unchanged and still needs a call.
+**Fuzz, as built — and the question above was the wrong one.** It asked whether
+the gate should be corpus replay only or also a timed exploratory run. Both
+options presupposed **libFuzzer**, which the delivery plan had assumed. Checking
+what Rust and Python actually do dissolved the question:
+
+Neither uses libFuzzer. Both run a **deterministic seeded generator inside the
+ordinary test suite** — xorshift64, fixed seed `0x0DDC_D1EC_DDC0_DEC0`, 256
+iterations by default, scaled by `MIE_FUZZ_ITERATIONS` in a nightly `fuzz.yml`
+burn-in. C++ now does the same, in `cpp/tests/test_fuzz.cpp`.
+
+Three reasons that shape beats libFuzzer **here specifically**:
+
+1. **libFuzzer needs clang.** The defining constraint of this tree is GCC 4.8.5
+   (ADR-0001). A libFuzzer target would run on one of the four C++ tiers and
+   *not* on the one this implementation exists for. An ordinary Catch2 case runs
+   on all of them, and again under ASan/UBSan and Valgrind — which is where a
+   real memory fault on random input actually surfaces.
+2. **The same generator and seed means the same inputs in all three
+   implementations.** `L1-ROB-001` is a shared requirement; testing it three
+   different ways would produce three incomparable results. This way a
+   behavioural divergence on identical bytes is detectable.
+3. **It is deterministic**, so a required gate cannot go red from an input
+   nobody's change produced — the precise objection this entry raised against a
+   blocking timed run.
+
+**There is no corpus**, and that is not an omission: the generator reproduces
+its inputs exactly, so a committed corpus would be storage for something already
+derivable. The "timed run" is simply a larger iteration count, so both halves of
+the original question are satisfied without either being a separate artifact.
+
+No new CI job was needed for the required gate — the harness is a test case, so
+`make check` already runs it on every tier. `fuzz.yml` gained a `fuzz-cpp` job
+purely to turn the count up nightly.
+
+Verified non-vacuous rather than assumed: assertion counts scale with the
+iteration count (1 → 7, 256 → 1,826, 2000 → 14,021), which also shows random
+bytes really are decoding into records rather than being rejected at open.
 
 ---
 
