@@ -17,6 +17,67 @@ full release workflow.
 
 ### Changed
 
+- **The C++ tree has a coverage gate, and all three implementations now gate on
+  90% lines.** `make -C cpp coverage` rebuilds from clean with `--coverage` at
+  `-O0`, runs the full Catch2 suite and gates with `gcovr`; it is wired as a
+  required `cpp-ci.yml` job and is the same target a developer runs. Closes the
+  coverage half of `docs/OPEN-DECISIONS.md` #2.
+
+  Measured rather than guessed, which mattered:
+
+  | | lines | regions / branches | floor |
+  |---|---|---|---|
+  | Rust | 90.40% | 89.37% (llvm-cov regions) | 90 / 89 (was 87 / 86) |
+  | Python | 95.50% | 92.89% (branches) | 92 combined, unchanged |
+  | C++ | 90.9% CI / 91.1% local | 81.5% CI / 76.5% local (gcov branches) | 90 / 76 (new) |
+
+  That entry had recommended "85% initially". 85% would have been **below** the
+  line coverage the C++ suite already had, so it would have gated nothing — the
+  case for its own advice to measure first rather than pick a number in advance.
+
+  Both C++ floors sit at today's numbers so nothing can regress, and both are
+  meant to rise as tests land.
+
+- **The second column is not the same metric in each language, and the floors say
+  so rather than pretending otherwise.** Rust gates on llvm-cov *regions*, Python
+  and C++ on *branches*. `gcov` counts every conditional the compiler emits,
+  including ones the source never spells out, so it reads systematically lower
+  than LLVM region coverage for equally well-tested code. Forcing the three
+  numbers to match would not make them mean the same thing.
+
+  The honest figure, named rather than buried: **C++ branch coverage is 81.5% on
+  CI and 76.5% on the WSL2 host** — several hundred uncovered branch outcomes
+  either way, concentrated in `reader.cpp`, `writer.cpp` and `merge.cpp`. Some of
+  that gap is the metric; not all of it. Raising it is real work that has not
+  been done.
+
+  **That 5pp spread is itself worth recording: gcov branch coverage is not
+  portable across compiler versions.** The same suite over the same sources
+  measures 76.5% on g++ 11.4 and 81.5% on CI's ubuntu-24.04 g++, because branch
+  counts follow the conditionals the *compiler* emits rather than the ones the
+  source spells out. Lines barely move (91.1% vs 90.9%). The single threshold is
+  therefore set to hold on the **oldest** compiler in use, leaving CI ~5pp of
+  slack; pinning CI to its own higher number would make a local `make coverage`
+  pass while CI failed, which is the precise local/CI divergence that has cost
+  this project several red builds already.
+
+- **No coverage gate counts the conformance suite** — not Rust, not Python, and
+  not the new C++ one. Each measures its own in-process tests. The conformance
+  runner drives every CLI out-of-process, so counting it would measure a
+  different thing in each implementation and make the three numbers
+  incomparable. Paths reached only that way read as uncovered, which is the
+  conservative direction. Including it was measured (it moves C++ lines 91.1 ->
+  92.8 and branches 76.5 -> 79.5) and deliberately not adopted.
+
+  Two exclusions in the C++ gate are also deliberate: `src/main.cpp`, the
+  executable entry point whose body is three calls — the Rust gate ignores its
+  own `bin/mie-decoder.rs` for the same reason, which keeps the numbers
+  comparable — and `src/platform_win32.cpp`, which is not compiled on Linux so
+  gcov never sees it. The second is named in the exclusion list anyway, so it is
+  a stated fact rather than an accident of which host ran the build. It is
+  covered by the MSVC tier, which has **no** coverage measurement: a real gap
+  this gate does not close.
+
 - **The C++ tree is now covered by CodeQL and SonarCloud.** It had been analysed
   by neither: `sonar.sources` was `rust/src,python/src`, and CodeQL's matrix was
   `rust` and `python`. Closes `docs/OPEN-DECISIONS.md` #3, which had been

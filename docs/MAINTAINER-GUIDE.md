@@ -518,6 +518,7 @@ and a C++ change never waits on the Python matrix. Its jobs:
 | `build-test-msvc` | CMake + MSVC at `/W4 /WX /permissive-`, then `ctest`, then a smoke check that stdout carries no CR. Windows is a shipping target, not a convenience build (ADR-0003) | `windows-2022` | Any test failure, any warning |
 | `sanitizers` | `make check SANITIZE=1` — AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer, all fatal on first finding. Modern toolchain only; GCC 4.8 has partial ASan and no LSan | `ubuntu-24.04` | Any finding |
 | `valgrind` | `make check-valgrind` with `--errors-for-leak-kinds=all`. A still-reachable block at exit is a leak for a short-lived CLI, not a tolerable steady state | `ubuntu-24.04` | Any leak or invalid access |
+| `coverage` | `make -C cpp coverage` — rebuilds from clean with `--coverage` at `-O0`, runs the **full** Catch2 suite, gates with `gcovr` on 90% lines and 76% branches. Driven through the Makefile target so this job and a developer's `make coverage` are one invocation with one threshold — deliberately one number rather than a tighter CI-only value, because gcov branch counts vary ~5pp with compiler version and a CI-only floor would let local pass while CI failed. Excludes the conformance suite, as the Rust and Python gates do — it drives the CLI out-of-process, and counting it would measure a different thing in each implementation | `ubuntu-24.04` | Below either floor |
 | `static-analysis` | `cppcheck` over `cpp/src` and `cpp/tests`. Vendored Catch2 excluded — it is third-party code the project is forbidden to edit | `ubuntu-24.04` | Any finding |
 | `clang-tidy` | `bear` generates a compilation database from the real build, then `make tidy` runs clang-tidy with `--warnings-as-errors`. Without that flag clang-tidy exits 0 on warnings and the gate reports success while printing findings | `ubuntu-24.04` | Any finding |
 | `format` | `make format-check`. Covers **both** platform backends, not just the one this host compiles — the inactive backend is checked by no other tier | `ubuntu-24.04` | Any diff |
@@ -557,7 +558,19 @@ Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which poin
 
 ## 10. Coverage workflow
 
-Both implementations are gated. Rust uses `cargo-llvm-cov`; Python uses `pytest-cov` (which wraps `coverage.py`). Each gate runs once on Linux only — coverage isn't platform-dependent, so fanning the gate across the full matrix would waste CI minutes.
+All three implementations are gated. Rust uses `cargo-llvm-cov`; Python uses `pytest-cov` (which wraps `coverage.py`); C++ uses `gcov` via `gcovr`. Each gate runs once on Linux only — coverage isn't platform-dependent, so fanning the gate across the full matrix would waste CI minutes.
+
+**None of the three includes the conformance suite.** Rust measures its `cargo test` targets, Python measures `python/tests`, C++ measures the Catch2 suite. The conformance runner drives each CLI out-of-process, so counting it would measure a different thing in each implementation and make the numbers incomparable. Paths reached only through conformance therefore read as uncovered — the conservative direction.
+
+**The second metric is not the same thing in each language, and the floors reflect that.** Rust gates on llvm-cov *regions*, Python and C++ on *branches*. `gcov` counts every conditional the compiler emits, including ones the source never spells out, so it runs systematically lower than LLVM region coverage for equally well-tested code. Forcing the three numbers to match would not make them mean the same thing.
+
+| | lines | regions / branches | floor |
+|---|---|---|---|
+| Rust | 90.40% | 89.37% (regions) | 90 / 89 |
+| Python | 95.50% | 92.89% (branches) | 92 combined |
+| C++ | 90.9% CI / 91.1% local | 81.5% CI / 76.5% local (branches) | 90 / 76 |
+
+The C++ row has two numbers because **gcov branch coverage is not portable across compiler versions**: the same suite measures 76.5% branches on g++ 11.4 (the documented WSL2 host) and 81.5% on CI's ubuntu-24.04 g++. Lines barely move. The floor is set to hold on the oldest compiler in use, so CI carries ~5pp of slack — the alternative, pinning CI to its own higher number, would make a local `make coverage` pass while CI fails.
 
 ### Rust
 
@@ -582,9 +595,34 @@ poetry -C python run pytest --cov --cov-report=term-missing
 poetry -C python run pytest --cov --cov-report=html
 ```
 
+### C++
+
+The CI gate is `make -C cpp coverage`, the same target a developer runs. It
+rebuilds from clean with `--coverage` at `-O0` (optimisation reorders and merges
+basic blocks, so branch counts would describe the optimised control flow rather
+than the source), runs the **full** Catch2 suite, then gates with `gcovr` on
+`COVERAGE_MIN_LINE` and `COVERAGE_MIN_BRANCH` from the Makefile.
+
+```bash
+cd cpp
+make coverage          # what CI runs: measure and gate
+make coverage-report   # same measurement, no gate, with per-branch detail
+```
+
+Two files are excluded, both deliberately. `src/main.cpp` is the executable
+entry point and nothing else — its body is three calls, and the Rust gate
+ignores its own `bin/mie-decoder.rs` for the same reason, which keeps the two
+numbers comparable. `src/platform_win32.cpp` is not compiled on Linux so gcov
+never sees it; it is named in the exclusion list anyway, so that the omission is
+a stated fact rather than an accident of which host ran the build. It is covered
+by the MSVC tier, which has **no** coverage measurement — a real gap this gate
+does not close.
+
 ### Ratcheting the floor
 
-When coverage is consistently above the floor by >2pp, bump it. For Rust, edit the `cov-ci` alias in `rust/.cargo/config.toml`. For Python, edit `fail_under` in `python/pyproject.toml`'s `[tool.coverage.report]` block (the CI job has no `--cov-fail-under` flag — the config value is authoritative). Update the rationale comment in both files when you do.
+When coverage is consistently above the floor by >2pp, bump it. For Rust, edit the `cov-ci` alias in `rust/.cargo/config.toml`. For Python, edit `fail_under` in `python/pyproject.toml`'s `[tool.coverage.report]` block (the CI job has no `--cov-fail-under` flag — the config value is authoritative). For C++, edit `COVERAGE_MIN_LINE` / `COVERAGE_MIN_BRANCH` in `cpp/Makefile`. Update the rationale comment in each file when you do.
+
+**The C++ branch floor is the one that needs work, not just a bump.** CI measures 81.5% and the WSL2 host 76.5%; either way it is several hundred uncovered branch outcomes short of the 90% the other columns reach, concentrated in `reader.cpp`, `writer.cpp` and `merge.cpp`. The floor sits at the lower, portable figure so nothing regresses on any supported compiler — not because 76% is the intended destination. Raise it toward CI's number once the spread is understood, and toward 90% once the tests exist.
 
 ---
 

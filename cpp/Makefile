@@ -24,7 +24,19 @@ CPPFLAGS += -Iinclude -isystem third_party -D_FILE_OFFSET_BITS=64
 # This block must precede BUILD_DIR, which keys on TIER: make expands target
 # patterns as it parses, so a later assignment would not reach the rules below.
 SANITIZE ?= 0
-ifeq ($(SANITIZE),1)
+COVERAGE ?= 0
+ifeq ($(COVERAGE),1)
+# Coverage instrumentation. -O0 because optimisation reorders and merges basic
+# blocks, which makes branch counts describe the OPTIMISED control flow rather
+# than the source a reader is looking at -- the numbers stop meaning what the
+# report says they mean.
+#
+# `--coverage` is in CXXFLAGS rather than split across CXXFLAGS/LDFLAGS because
+# the link rules below pass CXXFLAGS to the link step, and gcov needs the flag
+# in both places (it implies -lgcov when linking).
+CXXFLAGS ?= -std=c++11 -Wall -Wextra -Werror -O0 -g --coverage
+TIER := coverage
+else ifeq ($(SANITIZE),1)
 # -Wno-maybe-uninitialized is disabled FOR THIS TIER ONLY.
 #
 # Under -O1 plus instrumentation the diagnostic false-positives deep inside
@@ -107,7 +119,8 @@ DEPFLAGS := -MMD -MP
 
 .PHONY: all check clean clean-all toolchain versions check-valgrind \
         check-gcc48 verify-ci print-test-bin print-decoder-bin \
-        print-lib-sources decoder tidy cppcheck format format-check
+        print-lib-sources decoder tidy cppcheck format format-check \
+        coverage coverage-report
 
 all: $(TEST_BIN) $(DECODER_BIN)
 
@@ -224,6 +237,84 @@ FORMAT_SRC := $(sort $(TIDY_SRC) src/platform_posix.cpp src/platform_win32.cpp) 
 # no gate, because the log looks like it was checked. The enabled/disabled check
 # list stays in .clang-tidy where the reasoning lives; the severity is a property
 # of running it as a gate.
+
+# ---------------------------------------------------------------------------
+# Coverage (gcov via gcovr). Gate: 90% lines AND 90% branches.
+# ---------------------------------------------------------------------------
+# Branches, not "regions": gcov has no region counter. Branch coverage is the
+# nearest equivalent to what `cargo llvm-cov` calls regions, and it is the
+# stricter of the two numbers here, so gating on it is the meaningful check.
+#
+# Two exclusions, both deliberate:
+#
+#   src/main.cpp          -- the executable entry point and nothing else. Its
+#                            body is three calls; the CLI it delegates to is
+#                            tested in-process. The Rust gate ignores its own
+#                            `bin/mie-decoder.rs` for the same reason, so this
+#                            keeps the two numbers comparable.
+#   src/platform_win32.cpp -- not compiled on this platform, so it produces no
+#                            .gcno and gcov never sees it. Named here anyway so
+#                            the exclusion is a stated fact rather than an
+#                            accident of which host ran the build. It is covered
+#                            by the MSVC tier, which has no coverage measurement
+#                            -- a real gap, and one this gate does not close.
+#
+# Runs the FULL suite: coverage of a subset would be a number about the subset.
+# FLOORS, not targets. Both sit at what the suite measures today so nothing can
+# regress, and both are meant to be raised as tests land -- the approach
+# OPEN-DECISIONS #2 argued for: a number chosen after measuring rather than
+# before.
+#
+# Lines and branches are far apart (91% vs 76%) and that gap is not all test
+# quality. gcov counts every conditional the compiler emits, including ones the
+# source does not spell out, so gcov branch coverage runs systematically lower
+# than the llvm-cov REGION coverage the Rust gate uses. 90% branches here is a
+# materially harder bar than 90% regions there, which is why the two numbers in
+# this repository are not equal and should not be forced to match.
+#
+# GCOV BRANCH COVERAGE IS NOT PORTABLE ACROSS COMPILER VERSIONS. The same suite
+# over the same sources measures 76.5% branches on g++ 11.4 (Ubuntu 22.04, the
+# documented WSL2 host) and 81.5% on CI's ubuntu-24.04 g++ -- a 5pp spread from
+# nothing but the compiler, because branch counts follow the conditionals the
+# compiler emits, not the ones the source spells out. Lines barely move (91.1%
+# vs 90.9%).
+#
+# So this single threshold is set to hold on the OLDEST compiler in use, not the
+# newest. 76 is the floor that passes everywhere; CI has ~5pp of slack against
+# it. The alternative -- pinning CI to its own higher number -- was rejected
+# because it makes a local `make coverage` pass while CI fails, which is the
+# exact local/CI divergence that has cost this project several red builds.
+#
+# The ratchet target is therefore CI's number, currently 81.5%.
+COVERAGE_MIN_LINE   ?= 90
+COVERAGE_MIN_BRANCH ?= 76
+# gcov must match the compiler that wrote the .gcno files; a mismatched
+# pair fails with "version 'B14*', prefer 'A11*'" and reports nothing.
+GCOV  ?= $(if $(filter g++%,$(notdir $(CXX))),$(subst g++,gcov,$(notdir $(CXX))),gcov)
+GCOVR ?= gcovr
+
+coverage:
+	$(MAKE) --no-print-directory clean COVERAGE=1
+	$(MAKE) --no-print-directory check COVERAGE=1
+	$(GCOVR) --root . \
+	  --gcov-executable "$(GCOV)" \
+	  --filter 'src/' \
+	  --exclude 'src/main\.cpp' \
+	  --exclude 'src/platform_win32\.cpp' \
+	  --exclude-unreachable-branches \
+	  --exclude-throw-branches \
+	  --print-summary \
+	  --fail-under-line $(COVERAGE_MIN_LINE) \
+	  --fail-under-branch $(COVERAGE_MIN_BRANCH)
+
+# Same measurement, no gate -- for looking at where the misses are.
+coverage-report:
+	$(MAKE) --no-print-directory clean COVERAGE=1
+	$(MAKE) --no-print-directory check COVERAGE=1
+	$(GCOVR) --root . --gcov-executable "$(GCOV)" --filter 'src/' \
+	  --exclude 'src/main\.cpp' --exclude 'src/platform_win32\.cpp' \
+	  --exclude-unreachable-branches --exclude-throw-branches --branches
+
 tidy:
 	@actual=$$($(TIDY) --version 2>/dev/null | sed -n 's/.*LLVM version \([0-9][0-9]*\).*/\1/p' | head -1); \
 	 if [ -n "$$actual" ] && [ "$$actual" != "$(LLVM_VERSION)" ]; then \
