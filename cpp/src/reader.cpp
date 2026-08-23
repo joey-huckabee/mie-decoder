@@ -248,7 +248,7 @@ TimestampFormat MieFileReader::default_resolved_format() const {
 }
 
 TimestampFormat MieFileReader::resolve_format_for_hit(const sync::ScanHit& hit,
-                                                      PendingError& error) {
+                                                      PendingError& error) const {
     const uint8_t* data = mapping_.data();
     const auto size = static_cast<std::size_t>(file_size_);
 
