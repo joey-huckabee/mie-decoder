@@ -113,6 +113,7 @@ array of case objects. Each case object accepts the following fields:
 | `args` | array of string | no | Additional CLI arguments appended to both invocations verbatim. The Rust and Python CLIs share one argument surface, so a single vector serves both — there is no per-impl argument translation. |
 | `expected_stderr_contains` | string | no | Substring assertion applied to each impl's captured stderr. Used by `mode == "count"` cases to pin the human-readable status line without byte-comparing a temp path. |
 | `expected_exit` | integer | no | Expected exit code for both implementations. Defaults to `0`. Negative cases (exit `1`/`2`/`3` per `L1-EXIT-002`..`L1-EXIT-004`) may omit `expected`; the exit code alone is the assertion. |
+| `global_args` | array of string | no | Arguments placed **before** the subcommand, where the global flags (`--log-level`, `--config`) are parsed. `args` goes *after* the subcommand, so it cannot reach them — and Rust parses globals in a separate loop from subcommand flags, so both paths need covering independently. |
 | `pre_existing_output` | string | no | Content written to the destination **before** the run. Pins the overwrite contract (`L2-WRT-017`): with `no_clobber` off — the default — a decode must replace an unrelated existing file, and with it on must refuse. The sentinel is deliberately not valid CSV, so any of it surviving into the comparison means the destination was appended to rather than replaced. |
 
 Unknown fields SHALL be rejected by the runner with a clear error so typos do

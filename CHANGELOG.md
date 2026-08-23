@@ -15,6 +15,48 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **Every flag accepts both `--flag value` and `--flag=value` in all three
+  implementations — and nothing shared proved it.** The two spellings are
+  standard, both have always worked, and neither was mentioned anywhere in the
+  documentation. Coverage was thin and lopsided: three Rust unit tests, one C++
+  test, zero Python tests, and zero conformance cases. `cli-surface-parity`
+  compares `--help` flag *names*, so it cannot see a difference in how a value
+  is attached to one.
+
+  That matters more here than it would in a project using an argument-parsing
+  library, because two of the three parsers are hand-rolled and the `=` form is
+  handled per-flag: Python inherits it from `argparse` for free, C++ resolves it
+  in one place (`ArgReader::take_value`), and **Rust repeats the same
+  `starts_with("--x=")` idiom at 26 separate sites**. A flag added to Rust with
+  only the space form would be a real divergence that every existing gate would
+  report as green.
+
+  Four conformance cases now pin the contract across all three, chosen to cover
+  the parse paths that differ rather than to enumerate flags — a list-valued
+  filter, two numeric flags in one invocation, and a **global** flag:
+
+  - `flag-eq-form-filter` — `--exclude-subaddresses=22`
+  - `flag-eq-form-numeric` — `--time-format=standard --standard-tick-rate-hz=1000000`
+  - `flag-eq-form-global` — `--log-level=ERROR`, before the subcommand
+  - `flag-eq-form-global-rejects-bad-value` — `--log-level=bogus`, expecting exit 4
+
+  The global cases needed a new `global_args` manifest field: the existing
+  `args` is appended *after* the subcommand, so it could never reach a global
+  flag, and Rust parses globals in a **separate loop** from subcommand flags —
+  meaning the `=` spelling had two independent implementations and the suite
+  could only ever have exercised one of them.
+
+  The last case exists because the third is vacuous on its own. `--log-level`
+  does not change the CSV, so `flag-eq-form-global` passes whether or not the
+  flag ever reaches the binary. The negative case is self-checking: it asserts
+  exit 4 *and* that stderr names the valid levels, which distinguishes "the
+  value `bogus` was rejected" from "the whole token was an unknown option" —
+  the outcome if the `=` form were not parsed. Both were proven by planting a
+  runner that silently drops `global_args`: the positive case still passed, the
+  negative one failed.
+
 ## [2.13.0] — 2026-08-23
 
 ### Changed

@@ -712,6 +712,40 @@
       "pre_existing_output": "this file existed before the decode and must not survive it\n",
       "expected_exit": 1,
       "expected_stderr_contains": "Refusing to overwrite existing file"
+    },
+    {
+      "name": "flag-eq-form-filter",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--exclude-subaddresses=22"
+      ],
+      "expected": "expected/exclude-subaddress.csv"
+    },
+    {
+      "name": "flag-eq-form-numeric",
+      "input": "inputs/standard-timestamps.hex",
+      "args": [
+        "--time-format=standard",
+        "--standard-tick-rate-hz=1000000"
+      ],
+      "expected": "expected/standard-tick-calibrated.csv"
+    },
+    {
+      "name": "flag-eq-form-global",
+      "input": "inputs/basic-multi-record.hex",
+      "global_args": [
+        "--log-level=ERROR"
+      ],
+      "expected": "expected/basic-multi-record.csv"
+    },
+    {
+      "name": "flag-eq-form-global-rejects-bad-value",
+      "input": "inputs/basic-multi-record.hex",
+      "global_args": [
+        "--log-level=bogus"
+      ],
+      "expected_exit": 4,
+      "expected_stderr_contains": "DEBUG, INFO, WARNING, WARN, ERROR, CRITICAL, OFF"
     }
   ]
 }
