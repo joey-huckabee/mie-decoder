@@ -164,7 +164,15 @@ class ArgReader {
         }
         const std::string& token = args_[at_];
         const std::string prefix = std::string(name) + "=";
-        if (token.size() > prefix.size() && token.compare(0, prefix.size(), prefix) == 0) {
+        // `>=`, not `>`: `--flag=` is the flag carrying an EMPTY value, not an
+        // unknown option. Rust and Python both hand the empty string to the
+        // flag's own validator and let it decide -- `--exclude-rts=` is an
+        // empty filter and decodes fine, while `--mux-delimiter=` is rejected
+        // as non-empty-required. With `>` this branch could never yield an
+        // empty value, so C++ answered "unknown option" (exit 4) where the
+        // other two exited 0. `compare` clamps its length, so a token shorter
+        // than the prefix still compares unequal.
+        if (token.size() >= prefix.size() && token.compare(0, prefix.size(), prefix) == 0) {
             out = token.substr(prefix.size());
             at_ += 1;
             return true;

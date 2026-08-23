@@ -221,6 +221,47 @@ TEST_CASE("--flag=value and --flag value are the same thing", "[cli][L3-CPP-014]
     }
 }
 
+TEST_CASE("--flag= is the flag with an empty value, not an unknown option",
+          "[cli][L3-CPP-014]") {
+    // The sweep above only ever passes NON-EMPTY values, so it cannot reach
+    // this boundary. `take_value` matched on `token.size() > prefix.size()`,
+    // one character too strict: `--exclude-rts=` fell past the `=` branch and
+    // past the exact-name check and was reported as an unknown option, exit 4,
+    // where Rust and Python both exited 0 having applied an empty filter.
+    //
+    // The contract is that `--flag=` hands the empty string to the flag's own
+    // validator and lets it decide -- which is why the two halves below differ.
+    const TempFile input("mie-cli-empty-eq.mie", valid_recording());
+
+    SECTION("a validator that accepts empty: an empty filter decodes") {
+        const TempPath joined("mie-cli-empty-join.csv");
+        const TempPath omitted("mie-cli-empty-omit.csv");
+
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", joined.str(),
+                                   "--exclude-rts=")) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", omitted.str())) ==
+                mie::cli::EXIT_OK);
+
+        // An empty exclusion excludes nothing, so the bytes must match the run
+        // that never passed the flag at all.
+        std::string a;
+        std::string b;
+        REQUIRE(mie_test::read_file(joined.str(), a));
+        REQUIRE(mie_test::read_file(omitted.str(), b));
+        REQUIRE(a == b);
+    }
+
+    SECTION("a validator that rejects empty still rejects it") {
+        // These already returned EXIT_USAGE before the fix -- but as "unknown
+        // option", never reaching the validator. Same code, different reason,
+        // which is why the exit code alone could not have caught the bug.
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--mux-delimiter=")) ==
+                mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--max-sort-group=")) ==
+                mie::cli::EXIT_USAGE);
+    }
+}
+
 TEST_CASE("numeric flags reject trailing junk", "[cli][L3-CPP-014]") {
     // `strtoll` stops at the first non-digit and reports success, so "4x" would
     // silently become 4. A typo must be refused, not rounded off.

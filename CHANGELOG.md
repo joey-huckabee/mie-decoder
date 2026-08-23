@@ -15,6 +15,38 @@ full release workflow.
 
 ## [Unreleased]
 
+### Fixed
+
+- **C++: `--flag=` (an empty value) was reported as an unknown option, exit 4,
+  where Rust and Python exited 0.** Writing the conformance cases above turned
+  up a live divergence rather than the documentation gap they were meant to
+  close.
+
+  `ArgReader::take_value` matched the joined form on
+  `token.size() > prefix.size()` — one character too strict. `--exclude-rts=`
+  is exactly the prefix, so it failed that test, then failed the exact-name
+  test below it, and fell through to "unknown option". Rust and Python both
+  hand the empty string to the flag's **own validator** and let it decide:
+  `--exclude-rts=` is an empty filter and decodes normally, while
+  `--mux-delimiter=` is refused as non-empty-required. C++ now does the same,
+  and the three agree on exit code and on output bytes.
+
+  Two things had hidden it. The existing C++ sweep across sixteen flags
+  compares the two spellings **byte for byte**, which is the right check, but
+  every case carries a non-empty value so none could reach the boundary. And
+  `test_cli.cpp` already asserted that `--mux-delimiter=` exits 4 — which was
+  true before the fix for the wrong reason, as an unknown option that never
+  reached the validator. The exit code alone could not distinguish the two, so
+  the new test asserts the *accepting* half by bytes: `--exclude-rts=` must
+  produce the same CSV as omitting the flag entirely.
+
+  A third sign was already in the source: `parse_integer` carries a
+  "requires a number, got an empty value" message that the joined form could
+  never trigger.
+
+  Rust and Python are unaffected — no behaviour change in either.
+  `flag-eq-form-empty-value` pins it for all three.
+
 ### Added
 
 - **Every flag accepts both `--flag value` and `--flag=value` in all three
