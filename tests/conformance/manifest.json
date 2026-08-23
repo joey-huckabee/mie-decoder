@@ -698,6 +698,20 @@
         "100000"
       ],
       "expected": "expected/dump-raw-offset-past-eof.txt"
+    },
+    {
+      "name": "clobber-default-overwrites",
+      "input": "inputs/basic-multi-record.hex",
+      "pre_existing_output": "this file existed before the decode and must not survive it\n",
+      "expected": "expected/basic-multi-record.csv"
+    },
+    {
+      "name": "clobber-refuses-when-configured",
+      "input": "inputs/basic-multi-record.hex",
+      "config": "configs/no-clobber.toml",
+      "pre_existing_output": "this file existed before the decode and must not survive it\n",
+      "expected_exit": 1,
+      "expected_stderr_contains": "Refusing to overwrite existing file"
     }
   ]
 }

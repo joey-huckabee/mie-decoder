@@ -46,6 +46,10 @@ FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "args": list,
     "expected_stderr_contains": str,
     "expected_exit": int,
+    # Content written to the destination BEFORE the run, so the overwrite
+    # contract can be pinned: `no_clobber` is off by default, so a decode must
+    # replace an unrelated existing file rather than refuse it.
+    "pre_existing_output": str,
 }
 ALLOWED_MODES: frozenset[str] = frozenset({"decode", "count", "dump"})
 # Modes whose payload is stdout rather than a written file. `dump` joined them
@@ -752,10 +756,20 @@ def main() -> int:
             # artifact for the comparison and oracle against ``expected_partial``.
             partial_oracle = case.get("expected_partial")
 
+            # A case may ask for the destination to ALREADY EXIST, which is how
+            # the overwrite contract gets pinned: `no_clobber` is off by
+            # default, so a decode must replace an unrelated existing file
+            # rather than refuse. The sentinel is deliberately not valid CSV --
+            # if any of it survives into the comparison, the destination was
+            # appended to rather than replaced, and the oracle diff says so.
+            pre_existing = case.get("pre_existing_output")
+
             produced: dict[str, bytes | None] = {}
             captured_stderr: dict[str, str] = {}
             for impl in running:
                 output = outputs[impl.name]
+                if pre_existing is not None and output is not None:
+                    output.write_text(pre_existing, encoding="utf-8")
                 read_path = (
                     Path(f"{output}.partial") if partial_oracle and output else None
                 )

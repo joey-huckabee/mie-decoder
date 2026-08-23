@@ -1,0 +1,8 @@
+# L2-WRT-017: refuse an existing destination.
+#
+# Paired with the `clobber-default-overwrites` case, which pins the OTHER
+# half of the contract: with this off (the default) an existing file is
+# replaced silently. Together they prove the flag actually changes
+# behaviour, rather than the default merely happening to look right.
+[output]
+no_clobber = true

@@ -17,6 +17,33 @@ full release workflow.
 
 ### Changed
 
+- **The output-overwrite contract is now pinned by conformance, and
+  `docs/OPEN-DECISIONS.md` #1 is closed as no-change.** Two cases:
+  `clobber-default-overwrites` (an existing destination is replaced, exit 0,
+  output matches the oracle) and `clobber-refuses-when-configured`
+  (`no_clobber = true`, exit 1).
+
+  The behaviour itself did not change and was never wrong. `preflight_output`
+  runs two guards that are easy to conflate: the **input/output collision**
+  check (L2-WRT-014) is always on and cannot be disabled, while **no-clobber**
+  (L2-WRT-017) is off by default in all three implementations. So the default
+  protects the thing you are decoding and not an unrelated output — which is the
+  intended asymmetry, since destroying your input is never what you meant while
+  replacing an output usually is.
+
+  **What was missing was a test, not a change.** The three agreed by
+  construction and nothing would have caught one drifting.
+
+  The pair is self-checking: the refusal case can only pass if the destination
+  really was pre-created, so a runner that ignored the new `pre_existing_output`
+  manifest field would **fail** it rather than pass vacuously. Confirmed by
+  planting exactly that — with the field removed the decode exits 0 and the case
+  fails.
+
+  The manifest was edited textually rather than via a JSON round-trip:
+  `json.dumps` reformats the whole document, which turned a two-case addition
+  into a 1,418-line diff on the first attempt.
+
 - **The C++ tree has a fuzz harness, and the decision went against the delivery
   plan's assumption.** `docs/OPEN-DECISIONS.md` #2 asked whether the fuzz gate
   should be corpus replay only or also a timed exploratory run. Both options
