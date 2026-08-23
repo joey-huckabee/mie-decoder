@@ -35,6 +35,51 @@ mie-decoder [global options] <subcommand> [subcommand options]
 Subcommands: [`decode`](#decode) (binary → CSV), [`count`](#count) (print a record
 count), [`dump`](#dump) (annotated hex dump).
 
+### Attaching a value to a flag
+
+Every flag that takes a value accepts **both** spellings, in all three
+implementations, for global and subcommand flags alike:
+
+```bash
+mie-decoder decode rec.mie -o out.csv --exclude-rts 3,7     # separated
+mie-decoder decode rec.mie -o out.csv --exclude-rts=3,7     # joined
+```
+
+They are the same invocation and produce byte-identical output. Use whichever
+suits the context — the joined form is the safer one to generate from a script,
+since a variable that expands to nothing cannot silently consume the next
+argument as its value.
+
+Three details are worth stating, because each has a defensible opposite:
+
+- **`--flag=` is the flag carrying an empty value**, not a malformed flag. What
+  happens next is the individual flag's decision: a list flag treats it as an
+  empty list (`--exclude-rts=` excludes nothing and decodes exactly as though
+  the flag were absent), while a flag that requires content rejects it
+  (`--mux-delimiter=` is a usage error, exit `4`).
+- **Only the first `=` separates.** `--mux-delimiter==` sets the delimiter to
+  `=`. Everything after the first `=` is the value, verbatim.
+- **A value beginning with `-` is fine in either form** — `--mux-delimiter -`
+  and `--mux-delimiter=-` both set the delimiter to `-`.
+
+  The one place the two forms genuinely differ is a value that is spelled like
+  *another flag*, and there the implementations differ too. Given
+  `--mux-delimiter --no-mux`, Rust and C++ consume `--no-mux` as the delimiter's
+  value, so it never acts as a flag; Python's `argparse` refuses to consume a
+  `--`-prefixed token as a value and exits `4`. Prefer the joined form when a
+  value could be mistaken for a flag — `--mux-delimiter=--no-mux` means the same
+  thing in all three.
+
+Flags that take no value — `--no-mux`, `--separate-errors`, `--allow-partial`
+and the rest — have nothing to attach, and `--no-mux=true` is a usage error
+rather than a way to spell "on".
+
+> Both spellings and the empty-value rule are pinned across all three
+> implementations by the `flag-eq-form-*` cases in
+> `tests/conformance/manifest.json`, not merely by each implementation's own
+> tests. `cli-surface-parity` compares flag *names*, which cannot see how a
+> value is attached to one.
+
 ### Global options
 
 Global options are placed **before** the subcommand.

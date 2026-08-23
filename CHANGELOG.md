@@ -80,6 +80,26 @@ full release workflow.
   meaning the `=` spelling had two independent implementations and the suite
   could only ever have exercised one of them.
 
+- **`docs/CLI-REFERENCE.md` now documents how a value attaches to a flag.**
+  Both spellings have always worked and neither appeared in `CLI-REFERENCE.md`,
+  `USER-GUIDE.md` or the README. The new *Attaching a value to a flag* section
+  states the equivalence and the three rules that each have a defensible
+  opposite: `--flag=` is an empty value the individual flag then accepts or
+  rejects, only the **first** `=` separates (`--mux-delimiter==` sets the
+  delimiter to `=`), and a value-less flag given a value (`--no-mux=true`) is a
+  usage error rather than a way to spell "on". Every claim was measured against
+  all three implementations rather than read off the source.
+
+  It also records the one place they genuinely disagree, which the same probing
+  turned up: given a value spelled like another flag — `--mux-delimiter --no-mux`
+  — Rust and C++ consume `--no-mux` as the value, so it never acts as a flag,
+  while Python's `argparse` refuses to consume a `--`-prefixed token and exits
+  `4`. This is documented rather than fixed: two of three agree, `argparse`
+  cannot be made to accept it without leaving `argparse`, and forcing the other
+  two to refuse would break a legitimate value that happens to start with `--`.
+  The joined form (`--mux-delimiter=--no-mux`) means the same thing in all
+  three, and is the recommendation.
+
   The last case exists because the third is vacuous on its own. `--log-level`
   does not change the CSV, so `flag-eq-form-global` passes whether or not the
   flag ever reaches the binary. The negative case is self-checking: it asserts
