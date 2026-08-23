@@ -15,6 +15,8 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.13.0] — 2026-08-23
+
 ### Changed
 
 - **Nothing checked that the three implementations agreed on the version, and
@@ -4270,7 +4272,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.12.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.13.0...HEAD
+[2.13.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...v2.12.0
 [2.11.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.10.0...v2.11.0
