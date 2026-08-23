@@ -13,9 +13,10 @@ the changelog).
 
 ---
 
-## 1. Should a merge be allowed to overwrite a *non-input* file without `--no-clobber`?
+## 1. Should a merge be allowed to overwrite a *non-input* file without `--no-clobber`? — CLOSED, NO CHANGE
 
-**Status:** not blocking; raised by the collision fix.
+**Status:** closed. The behaviour is deliberate, identical across all three
+implementations, and now pinned by conformance rather than by coincidence.
 
 A merge now refuses an output that resolves to one of its own inputs, matching
 Rust and Python. Separately, `--no-clobber` is off by default, so a merge will
@@ -26,10 +27,36 @@ changing it would be a breaking change to the default. But a merge is typically
 a long batch job whose output is expensive to reproduce, which is the case where
 a silent overwrite hurts most.
 
-**Recommendation: leave it.** Consistency with the single-file path is worth
-more than the marginal safety, and `--no-clobber` exists for operators who want
-it. Recorded here because it was noticed while fixing the input-collision gap,
-not because it is believed wrong.
+**Decision: leave it, and pin it.** Consistency with the single-file path is
+worth more than the marginal safety, and `--no-clobber` exists for operators who
+want it. Making a merge behave differently from a single-file decode would be a
+difference no operator could predict from the flag surface.
+
+**Verified rather than assumed, in all three implementations.** `preflight_output`
+runs two guards in order, and they are not the same guard:
+
+* **L2-WRT-014, input/output collision — always on, cannot be disabled.** Refuses
+  when the destination resolves to an input, symlink-safe via
+  `paths_refer_to_same_file`. A merge bypasses the writer's copy
+  (`input_path=None`) and checks the destination against *every* input at the CLI
+  level instead.
+* **L2-WRT-017, no-clobber — off by default.** `no_clobber = false` in
+  `config/default.toml`, Rust's `DecoderConfig::default()`, Python's dataclass
+  and C++'s `WriteOptions()`. All four agree.
+
+So the default protects the **input** and not an unrelated **output**, which is
+the intended asymmetry: destroying the thing you are decoding is never what you
+meant, while replacing an output usually is.
+
+**What was actually missing was a test, not a change.** The three agreed by
+construction, and nothing would have caught one drifting. Two conformance cases
+now pin both halves — `clobber-default-overwrites` (existing file replaced,
+exit 0, output matches the oracle) and `clobber-refuses-when-configured`
+(`no_clobber = true`, exit 1). They are self-checking as a pair: the refusal case
+can only pass if the destination really was pre-created, so a runner that ignored
+the new `pre_existing_output` field would fail it rather than pass vacuously.
+Confirmed by planting exactly that: with the field removed, the decode exits 0
+and the case fails.
 
 ---
 
