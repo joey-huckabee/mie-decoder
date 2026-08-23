@@ -17,6 +17,51 @@ full release workflow.
 
 ### Changed
 
+- **Fourth and final batch of the SonarCloud C++ sweep. 402 findings became
+  zero: 313 fixed across four batches, 89 recorded here with the reason each is
+  not a defect in this tree.** That ratio is what working down a list until only
+  judgement calls remain actually looks like, and suppressing the remainder is
+  what makes the count **actionable** — a new finding now stands out against
+  zero rather than being lost among 89.
+
+  Fixed in this batch: `cpp:S5817` (two reader helpers that decide without
+  mutating are now `const`) and `cpp:S5950` (two `shared_ptr` constructions
+  moved to `make_shared` — one allocation, and no window where the raw pointer
+  is unowned).
+
+- **Three reasons account for most of the suppressions, and none of them is
+  "we disagree with the rule".**
+
+  **Cross-implementation contract.** `cpp:S3642` wants `enum class` at 16
+  sites. Those enums carry **wire values** and are used as integers throughout,
+  mirroring Rust's `#[repr(u8)]` and Python's `IntEnum`. `enum class` removes
+  the implicit conversion, so adopting it means a cast at every use and a
+  C++-only divergence from a shape the other two implementations share.
+
+  **The C++11 / GCC 4.8.5 floor.** Already the reason `cpp:S3230`'s in-class
+  initializers are refused; here it also shapes what is worth doing at all.
+
+  **The C API leaves no choice.** `free` on a `realpath(path, nullptr)` result
+  is *required* — `delete` there is undefined behaviour. The `const_cast` for
+  `munmap` is required by its signature. The `void*` in the fd encoding **is**
+  the platform layer's opaque handle, spanning a POSIX `int` and a Windows
+  `HANDLE`; that is the abstraction's entire purpose.
+
+  The rest are decisions already recorded at the code: mutable globals that are
+  mutable by design, `memory_order_relaxed` on a standalone flag, `Optional`'s
+  deliberately implicit constructors, a captureless sink pointer, a lookahead
+  scanner whose index is the point, and three catch sites that already carry
+  `NOLINT`. `cpp:S107`, `S3776` and `S924` get the same answer as Rust's
+  `too_many_lines` and `cognitive_complexity`: exhaustive dispatch tables read
+  by lookup, not top to bottom.
+
+- **Two are deferred rather than rejected, and are written into
+  `docs/ROADMAP.md` so the suppression does not quietly become a decision
+  nobody revisits.** `cpp:S3642` (`enum class`) is worth doing as a deliberate
+  three-implementation decision about how message types are spelled — not as a
+  lint cleanup. `cpp:S2807` (hidden friends, 18 sites) is genuinely better C++
+  and a reasonable rider on the next change that touches `models.hpp`.
+
 - **Third batch of the SonarCloud C++ code smells — and the batch where the two
   analysers turned out to contradict each other.** `cpp:S1669` (`module` is a
   keyword in C++20, so the log parameter is renamed) and `cpp:S5350`

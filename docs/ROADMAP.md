@@ -197,6 +197,32 @@ are per-rule and per-file by design. `docs/CONFIG-REFERENCE.md`'s "Trust boundar
 section carries the operator-facing statement of the same decision — keep the two
 in step.
 
+## C++ modernisations deferred from the SonarCloud sweep (deferred)
+
+Two SonarCloud C++ rules are suppressed in `.github/workflows/sonarcloud.yml`
+as **deferred, not rejected**. Both are real improvements; both are recorded
+here so the suppression does not quietly become a decision nobody revisits.
+
+**`cpp:S3642` — replace `enum` with `enum class` (16 sites).** Blocked on
+cross-implementation contract rather than on C++ taste. These enums carry
+**wire values** and are used as integers throughout, mirroring Rust's
+`#[repr(u8)]` discriminants and Python's `IntEnum`. `enum class` removes the
+implicit conversion to `int`, so adopting it means an explicit cast at every
+use and a C++-only divergence from a shape the other two implementations
+share. Worth doing only as a deliberate three-implementation decision about
+how message types are spelled, not as a lint cleanup.
+
+**`cpp:S2807` — make member operator overloads hidden friends (18 sites).**
+A broad reshuffle of operator declarations with no behavioural effect and no
+effect on the conformance oracles. Genuinely better C++; simply not worth a
+sweeping diff across `models.hpp`, `merge.hpp` and `order.cpp` on its own.
+A reasonable rider on the next change that touches those types.
+
+Everything else from that sweep is either fixed or suppressed for a reason
+that will not expire — a C API signature, the C++11 floor, a documented design
+decision, or a tool that cannot parse the alternative. Those are catalogued at
+the suppression list itself.
+
 ## Diagram rendering: make the SVG guard real (deferred)
 
 The `diagrams` CI job re-renders `docs/diagrams/*.puml` and byte-diffs the
