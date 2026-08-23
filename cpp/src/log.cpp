@@ -25,10 +25,10 @@ std::atomic<int> g_level(static_cast<int>(LEVEL_WARN));
 
 /// Null means stderr. Not atomic: it is set by the test suite between test
 /// cases, never concurrently with logging.
-SinkFn g_sink = 0;
+SinkFn g_sink = nullptr;
 
 void write_out(const std::string& line) {
-    if (g_sink != 0) {
+    if (g_sink != nullptr) {
         g_sink(line.c_str(), line.size());
         return;
     }
@@ -101,7 +101,7 @@ void emit(Level level, const char* module, const std::string& message) {
     line.reserve(message.size() + 32);
     line += level_label(level);
     line += " [";
-    line += (module != 0 ? module : "");
+    line += (module != nullptr ? module : "");
     line += "] ";
     line += message;
     line += "\n";

@@ -195,7 +195,7 @@ MieFileReader::MieFileReader()
       sync_losses_(0),
       empty_recording_(false) {}
 
-MieFileReader::~MieFileReader() {}
+MieFileReader::~MieFileReader() = default;
 
 void MieFileReader::open(const std::string& path, const ReaderOptions& options) {
     path_ = path;
@@ -255,7 +255,7 @@ TimestampFormat MieFileReader::default_resolved_format() const {
 TimestampFormat MieFileReader::resolve_format_for_hit(const sync::ScanHit& hit,
                                                       PendingError& error) {
     const uint8_t* data = mapping_.data();
-    const std::size_t size = static_cast<std::size_t>(file_size_);
+    const auto size = static_cast<std::size_t>(file_size_);
 
     uint16_t candidate_type_raw = 0;
     static_cast<void>(decode::read_u16(data, size, hit.offset, candidate_type_raw));
@@ -363,7 +363,7 @@ TimestampFormat MieFileReader::check_forced_format(const sync::ScanHit& hit, Pen
 bool MieFileReader::diagnose_no_records(const Optional<TimestampFormat>& format_hint,
                                         PendingError& error) {
     const uint8_t* data = mapping_.data();
-    const std::size_t file_len = static_cast<std::size_t>(file_size_);
+    const auto file_len = static_cast<std::size_t>(file_size_);
 
     // L1-EXIT-010 / L2-RDR-021: a valid but EMPTY recording opens directly on
     // the end-of-records terminator. Zero records, exit 0, header-only CSV --
@@ -402,7 +402,7 @@ bool MieFileReader::diagnose_no_records(const Optional<TimestampFormat>& format_
         return true;
     }
 
-    const uint64_t scan_bytes =
+    const auto scan_bytes =
         static_cast<uint64_t>(file_len < sync::MAX_SCAN_BYTES ? file_len : sync::MAX_SCAN_BYTES);
     MIE_LOG_ERROR("no valid records found in first " + dec(scan_bytes) + " bytes of " + path_);
     error.reset(new MieError(MieError::no_valid_records(path_, scan_bytes)));
@@ -425,7 +425,7 @@ RecordIter MieFileReader::iter() {
     }
 
     const uint8_t* data = mapping_.data();
-    const std::size_t file_len = static_cast<std::size_t>(file_size_);
+    const auto file_len = static_cast<std::size_t>(file_size_);
 
     sync::ScanHit hit;
     const bool found = sync::find_first_record(data, file_len, file_len, format_hint,
@@ -744,7 +744,7 @@ void RecordIter::spurious_message(const TypeWord& tw, const Timestamp& timestamp
     out.mux = mux_;
 
     if (raw_word_count > 0) {
-        const std::size_t n = static_cast<std::size_t>(raw_word_count);
+        const auto n = static_cast<std::size_t>(raw_word_count);
         const std::size_t capped = n < MAX_DATA_WORDS ? n : MAX_DATA_WORDS;
         // Bound the read to THIS record. The clamp to file_len_ is not
         // decoration: `size` is what read_u16_array bounds against, so handing
@@ -919,7 +919,7 @@ void RecordIter::decode_error_record(const TypeWord& tw, const Timestamp& timest
     out.mux = mux_;
 
     if (payload_words > 0) {
-        const std::size_t n = static_cast<std::size_t>(payload_words);
+        const auto n = static_cast<std::size_t>(payload_words);
         const std::size_t capped = n < MAX_DATA_WORDS ? n : MAX_DATA_WORDS;
         std::size_t record_end = offset_ + static_cast<std::size_t>(tw.word_count) * 2;
         if (record_end > file_len_) {

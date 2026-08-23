@@ -101,7 +101,7 @@ class MappedFile {
 
     void close();
 
-    bool is_open() const { return data_ != 0; }
+    bool is_open() const { return data_ != nullptr; }
     const uint8_t* data() const { return data_; }
     uint64_t size() const { return size_; }
 

@@ -29,7 +29,7 @@ DeltaTracker::DeltaTracker(const Optional<double>& tick_rate_hz)
 
 DeltaOutcome DeltaTracker::observe(const CommandWord* command_word, const Timestamp& timestamp) {
     DeltaOutcome outcome;
-    if (command_word == 0) {
+    if (command_word == nullptr) {
         outcome.kind = DELTA_NO_KEY;
         return outcome;
     }

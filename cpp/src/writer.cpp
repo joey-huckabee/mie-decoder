@@ -49,8 +49,8 @@ MieError writer_failure(const std::string& destination, const platform::OsError&
 // Sinks
 // ---------------------------------------------------------------------------
 
-CsvSink::CsvSink() {}
-CsvSink::~CsvSink() {}
+CsvSink::CsvSink() = default;
+CsvSink::~CsvSink() = default;
 
 StdoutCsvSink::StdoutCsvSink() : stream_(stdout) {}
 
@@ -445,7 +445,7 @@ WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
                 main_writer.write_message(message);
                 continue;
             }
-            if (errors_writer.get() == 0) {
+            if (errors_writer.get() == nullptr) {
                 errors_sink.create(errors_path);
                 errors_writer.reset(new CsvWriter(errors_sink));
             }
@@ -454,7 +454,7 @@ WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
 
         // Both are flushed before EITHER is renamed, so a flush failure cannot
         // leave one destination replaced and the other not.
-        if (errors_writer.get() != 0) {
+        if (errors_writer.get() != nullptr) {
             error_rows = errors_writer->finish();
         }
         normal_rows = main_writer.finish();

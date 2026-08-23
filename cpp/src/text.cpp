@@ -27,7 +27,7 @@ std::string render_unsigned(uint64_t value, unsigned base, std::size_t width, bo
         digits[n++] = '0';
     }
     while (value > 0) {
-        const unsigned d = static_cast<unsigned>(value % base);
+        const auto d = static_cast<unsigned>(value % base);
         digits[n++] = hex ? kHexDigits[d] : static_cast<char>('0' + d);
         value /= base;
     }

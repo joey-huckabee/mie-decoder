@@ -77,7 +77,7 @@ void emit(Level level, const char* module, const std::string& message);
 /// A plain function pointer rather than std::function: this is set by the test
 /// suite and by nothing else, and a captureless pointer keeps the type
 /// trivially copyable and the assignment free of allocation.
-typedef void (*SinkFn)(const char* text, std::size_t length);
+using SinkFn = void (*)(const char*, std::size_t);
 
 /// Redirect output. Passing null restores stderr.
 ///

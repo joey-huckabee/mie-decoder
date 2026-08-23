@@ -198,7 +198,7 @@ bool record_extent(const TypeWord& type_word, std::size_t offset, std::size_t fi
 
 uint16_t word_at(const std::vector<uint8_t>& data, std::size_t offset) {
     uint16_t value = 0;
-    if (!decode::read_u16(data.empty() ? NULL : &data[0], data.size(), offset, value)) {
+    if (!decode::read_u16(data.empty() ? nullptr : &data[0], data.size(), offset, value)) {
         return 0;
     }
     return value;

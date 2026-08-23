@@ -367,15 +367,15 @@ bool parse_number(const std::string& s, std::size_t line, Value& out, ParseError
     const bool is_float = s.find('.') != std::string::npos || s.find('e') != std::string::npos ||
                           s.find('E') != std::string::npos;
     if (is_float) {
-        out = Value::of_float(std::strtod(s.c_str(), 0));
+        out = Value::of_float(std::strtod(s.c_str(), nullptr));
         return true;
     }
     // strtoll rather than atoll: atoll cannot report the overflow that a
     // 20-digit literal produces, and silently saturating a record count is
     // worse than refusing it.
-    char* end = 0;
+    char* end = nullptr;
     const long long value = std::strtoll(s.c_str(), &end, 10);
-    if (end == 0 || *end != '\0') {
+    if (end == nullptr || *end != '\0') {
         return fail(error, line, "invalid integer " + quoted(s));
     }
     out = Value::of_integer(static_cast<int64_t>(value));

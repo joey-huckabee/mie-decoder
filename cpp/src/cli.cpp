@@ -115,7 +115,7 @@ int exit_code_for(const MieError& error) {
 }
 
 bool write_out(std::FILE* stream, const std::string& text) {
-    if (stream == NULL) {
+    if (stream == nullptr) {
         return false;
     }
     const bool ok = std::fwrite(text.data(), 1, text.size(), stream) == text.size();
@@ -208,9 +208,9 @@ int64_t parse_integer(const std::string& text, const char* flag) {
     if (text.empty()) {
         throw usage_error(std::string(flag) + " requires a number, got an empty value");
     }
-    char* end = 0;
+    char* end = nullptr;
     const long long value = std::strtoll(text.c_str(), &end, 10);
-    if (end == 0 || *end != '\0') {
+    if (end == nullptr || *end != '\0') {
         throw usage_error(std::string(flag) + " requires a number, got \"" + text + "\"");
     }
     return static_cast<int64_t>(value);
@@ -231,9 +231,9 @@ double parse_tick_rate(const std::string& text) {
     if (text.empty()) {
         throw usage_error("--standard-tick-rate-hz requires a value");
     }
-    char* end = 0;
+    char* end = nullptr;
     const double value = std::strtod(text.c_str(), &end);
-    if (end == 0 || *end != '\0') {
+    if (end == nullptr || *end != '\0') {
         throw usage_error("--standard-tick-rate-hz requires a number, got \"" + text + "\"");
     }
     if (!(value > 0.0)) {
@@ -897,7 +897,7 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     std::shared_ptr<RecordIter> single;
     std::shared_ptr<ReaderSource> from_reader;
     std::shared_ptr<merge::MergedSource> merged;
-    MessageSource* head = NULL;
+    MessageSource* head = nullptr;
 
     if (merging) {
         try {
@@ -937,7 +937,7 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
         return report_decode_failure(streams, error, total_sync_losses(readers));
     }
 
-    if (merged.get() != NULL && merged->collapsed() > 0) {
+    if (merged.get() != nullptr && merged->collapsed() > 0) {
         MIE_LOG_INFO("merge: collapsed " + text::decimal(merged->collapsed()) +
                      " duplicate message(s) across recorders");
     }

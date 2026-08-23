@@ -32,6 +32,8 @@ bool FilterConfig::is_active() const {
 
 ConfigError::ConfigError(const std::string& message) : message_(new std::string(message)) {}
 
+// NOT `= default`: see the note on MieError's destructor in mie/error.hpp --
+// cppcheck 2.13 reports internalAstError on `throw() = default`.
 ConfigError::~ConfigError() throw() {}
 
 const char* ConfigError::what() const throw() { return message_->c_str(); }

@@ -78,10 +78,10 @@ ValidationFailure validate_irig_fields(const uint8_t* data, std::size_t size, st
     }
 
     const bool freerun = ((ts_upper >> 15) & 1) == 1;
-    const uint16_t day = static_cast<uint16_t>((ts_upper >> 5) & 0x1FF);
-    const uint16_t hour = static_cast<uint16_t>(ts_upper & 0x1F);
-    const uint16_t minute = static_cast<uint16_t>((ts_middle >> 10) & 0x3F);
-    const uint16_t second = static_cast<uint16_t>((ts_middle >> 4) & 0x3F);
+    const auto day = static_cast<uint16_t>((ts_upper >> 5) & 0x1FF);
+    const auto hour = static_cast<uint16_t>(ts_upper & 0x1F);
+    const auto minute = static_cast<uint16_t>((ts_middle >> 10) & 0x3F);
+    const auto second = static_cast<uint16_t>((ts_middle >> 4) & 0x3F);
     const uint32_t microsecond =
         (static_cast<uint32_t>(ts_middle & 0xF) << 16) | static_cast<uint32_t>(ts_lower);
 
@@ -288,7 +288,7 @@ bool diagnose_header_scan_failure(const uint8_t* data, std::size_t size, std::si
     // length, so a stricter word-count floor narrows the search rather than
     // widening it.
     const TimestampFormat resolved = ts_format.has_value() ? ts_format.value() : TIMESTAMP_IRIG;
-    const uint16_t min_wc = static_cast<uint16_t>(1 + timestamp_word_count(resolved) + 1);
+    const auto min_wc = static_cast<uint16_t>(1 + timestamp_word_count(resolved) + 1);
 
     for (std::size_t offset = 0; offset + 2 <= scan_end; offset += 2) {
         uint16_t type_raw = 0;
@@ -320,7 +320,7 @@ bool diagnose_header_scan_failure(const uint8_t* data, std::size_t size, std::si
 bool recover_sync(const uint8_t* data, std::size_t size, std::size_t offset, std::size_t file_len,
                   const Optional<TimestampFormat>& ts_format, std::size_t max_scan,
                   std::size_t lookahead_records, ScanHit& out) {
-    const std::size_t max_size = static_cast<std::size_t>(-1);
+    const auto max_size = static_cast<std::size_t>(-1);
     const std::size_t scan_start = offset > max_size - 2 ? max_size : offset + 2;
     const std::size_t window_end = offset > max_size - max_scan ? max_size : offset + max_scan;
     const std::size_t scan_end = file_len < window_end ? file_len : window_end;
