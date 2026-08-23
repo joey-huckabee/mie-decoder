@@ -223,6 +223,25 @@ jobs:
       - name: memcheck
         run: make -C cpp check-valgrind
 
+  coverage:
+    name: coverage (gcovr)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gcovr
+        run: pipx install gcovr==8.6
+      # Driven through the Makefile target for the same reason cppcheck is: this
+      # job and a developer's `make coverage` must be one invocation with one
+      # threshold, or the two drift and CI disagrees with the desk.
+      #
+      # The target rebuilds from clean with instrumentation and runs the FULL
+      # Catch2 suite -- coverage measured over a subset is a number about the
+      # subset. It does NOT include the conformance suite, which drives the
+      # separate CLI binary out-of-process; paths reached only that way are
+      # therefore counted as uncovered here, which is the conservative direction.
+      - name: Coverage gate
+        run: make -C cpp coverage
+
   static-analysis:
     name: cppcheck
     runs-on: ubuntu-24.04

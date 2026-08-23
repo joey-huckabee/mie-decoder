@@ -25,4 +25,4 @@
 [alias]
 cov      = 'llvm-cov --html --open --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
 cov-lcov = 'llvm-cov --lcov --output-path lcov.info --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
-cov-ci   = 'llvm-cov --fail-under-lines 87 --fail-under-regions 86 --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'
+cov-ci   = 'llvm-cov --fail-under-lines 90 --fail-under-regions 89 --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'

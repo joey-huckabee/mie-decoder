@@ -33,9 +33,10 @@ not because it is believed wrong.
 
 ---
 
-## 2. Coverage and fuzz gates for the C++ tree
+## 2. Coverage and fuzz gates for the C++ tree — COVERAGE DONE, FUZZ OPEN
 
-**Status:** unbuilt; needs a threshold, not a design.
+**Status:** the coverage gate is built and wired. The fuzz targets are still
+unwritten, and that half still needs the decision below.
 
 The delivery plan listed a gcov coverage gate and libFuzzer targets (record
 decoder/sync over arbitrary bytes, the TOML config parser, CLI argv) as Phase 1
@@ -49,6 +50,30 @@ finding makes an unrelated PR red).
 **Recommendation:** corpus replay as a required gate, a timed run as a scheduled
 job that opens an issue rather than blocking a merge. Coverage at 85% initially,
 raised once the number is known rather than chosen in advance.
+
+**Coverage, as built.** `make -C cpp coverage` gates on 90% lines and 76%
+branches, wired as a required `cpp-ci.yml` job. The measured numbers are 91.11%
+lines, 96.6% functions, 76.50% branches over the Catch2 suite — the conformance
+suite is deliberately excluded, as it is for Rust and Python, because it drives
+each CLI out-of-process and counting it would measure a different thing in each
+implementation.
+
+Both floors sit at what the suite measures today, so nothing can regress, and
+both are meant to rise as tests land. That is this entry's own recommendation
+followed: a number chosen after measuring rather than before. The 85% it
+originally guessed at would have been *below* the line coverage that already
+existed and so would have gated nothing.
+
+The branch figure deserves naming rather than burying: **76.50% is ~1,150
+uncovered branch outcomes**, concentrated in `reader.cpp`, `writer.cpp` and
+`merge.cpp`. Part of that gap is metric rather than test quality — gcov counts
+every conditional the compiler emits, so it reads lower than the llvm-cov
+*regions* the Rust gate uses — but not all of it. Raising it is real work that
+has not been done.
+
+**Fuzz remains open.** No `cpp/fuzz/` directory, no targets, no job. The shape
+question above (corpus replay as a required gate, timed run as a scheduled one)
+is unchanged and still needs a call.
 
 ---
 
