@@ -121,6 +121,66 @@ full release workflow.
   tier is now listed **as absent**, because a missing tier nobody names reads
   like a tier that passes.
 
+- **Python docstrings now document what a function returns, raises and yields
+  --- 171 sections across `src`.** This closes the last real asymmetry between
+  the Rust and Python lint gates: Rust has denied `missing_errors_doc` since the
+  pedantic work, while Python's equivalent family sat unselected.
+
+  Deferred once, on the grounds that ruff's pydoclint family is **preview** and
+  gating on it ties the build to rules that shift between versions. That
+  premise turned out to be checkable rather than merely plausible: CI installs
+  with `poetry sync` against `poetry.lock`, so ruff is pinned to an exact
+  version and a preview rule can only change behaviour on a deliberate lock
+  bump, never under an unattended run.
+
+  Counts: 111 `DOC201` (returns), 58 `DOC501` (raises), 2 `DOC402` (yields).
+  None are auto-fixable, and none were written mechanically -- the same
+  judgement as the 34 Rust `# Errors` sections. Several state contracts that
+  are the opposite of the obvious reading:
+
+  - `expand_glob` matching nothing and `read_manifest` finding no usable lines
+    return an **empty list, not an error** -- which is what lets the CLI tell
+    "matched no files" from "could not read the directory".
+  - `paths_refer_to_same_file` answers `False` when a path cannot be resolved:
+    a destination that cannot be resolved cannot collide.
+  - `StandardTimestamp.to_microseconds` returning `None` means *uncalibrated*,
+    and is never a timestamp of zero.
+  - `_classify_decode_error` can return `EXIT_OK` -- a broken pipe and an
+    `--allow-partial` sync loss are both clean exits.
+
+- **`DOC502` is deliberately not selected, and the reason is not "noise".** It
+  flags a documented exception the function does not `raise` in its own body,
+  and every finding here documents one that **propagates from a helper** --
+  `write_csv` naming `MieClobberRefusedError` and `MieWriterError`, `decode.py`
+  naming `struct.error` from an unpack. Which exceptions escape is exactly what
+  a caller needs; where in the call tree they originate is not. Complying would
+  mean deleting true documentation.
+
+- **`explicit-preview-rules` added alongside `preview`.** pydoclint needs
+  preview mode, but turning it on alone silently enabled preview rules across
+  every other selected family -- 35 findings in `RUF`, `ISC` and friends that
+  have nothing to do with docstrings. `explicit-preview-rules = true` means a
+  preview rule fires only when selected by its exact code, so the gate widens
+  because someone chose to widen it. The four families it defers
+  (`RUF069` float-equality in tests, `ISC004`, `RUF067`, `RUF031`) are a
+  separate decision, not a silent inheritance.
+
+  `preview` is set under `[tool.ruff.lint]`, **not** at the `[tool.ruff]` top
+  level, and that distinction is not cosmetic: the top-level key also switches
+  the **formatter** into preview style, which silently restyled six unrelated
+  files (hugging brackets in call arguments) on the first attempt at this
+  change. Formatting churn has nothing to do with docstring rules, and a
+  reviewer would have had to separate the two by hand.
+
+  One genuine finding did surface from preview and was fixed rather than
+  deferred: `RUF003` flagged `µ` (U+00B5 MICRO SIGN) in comments, suggesting
+  U+03BC GREEK SMALL LETTER MU. MICRO SIGN is the correct character for
+  microseconds -- the unit this decoder works in throughout -- so it joins
+  `allowed-confusables`.
+
+  Tests opt out of the `DOC` rules: a test helper has no callers outside its own
+  file, so a `Returns:` section there restates the one-line summary. The rules
+  stay on in `src`, where the caller is someone else.
 - **`clippy::pedantic` is now denied as a group, not lint by lint.** Enabling
   lints by name only ever catches the ones already known about; the group also
   catches the ones nobody thought to look for. 76 distinct sites — deduped by
@@ -214,6 +274,12 @@ full release workflow.
   it is not in this change: the family is **preview**, so enabling it in a gate
   ties us to rules that can shift between ruff versions; and 169 docstring
   sections is its own piece of work, not a rider on a Rust lint.
+
+  **Since landed** — see the "Python docstrings now document what a function
+  returns, raises and yields" entry earlier in this section. The
+  preview objection was resolved by checking rather than assuming: `poetry.lock`
+  pins ruff exactly in CI, so a preview rule cannot shift under an unattended
+  run.
 
   Its `DOC502` findings (5) were checked and are **false positives here**: they
   flag docstrings documenting exceptions that *propagate* from called helpers

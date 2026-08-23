@@ -75,6 +75,10 @@ def _sort_key(msg: MieMessage) -> tuple[int, int, int] | None:
     the required order. :class:`~mie_decoder.models.Direction` is an
     ``IntEnum`` with ``RECEIVE = 0`` and ``TRANSMIT = 1``, so R-before-T falls
     out of the values and cannot drift from Rust's ``#[repr(u8)]``.
+
+    Returns:
+        ``(rt, subaddress, direction)`` for a record with a Command Word, or
+        ``None`` for one without, which marks it as pinned rather than sorted.
     """
     cw = msg.command_word
     if cw is None:
@@ -89,6 +93,11 @@ def _group_value(msg: MieMessage) -> tuple[int, int]:
     compares equal. That cannot happen today — the format is resolved once per
     file and a merge rejects mixed sets — but comparing the value alone would be
     silently wrong if it ever could.
+
+    Returns:
+        ``(variant_tag, value)`` -- ``0`` and absolute microseconds for IRIG,
+        ``1`` and the raw counter for Standard. Two records group together only
+        if this compares equal.
     """
     ts = msg.timestamp
     if isinstance(ts, IrigTimestamp):
@@ -109,6 +118,10 @@ def _sort_run(buf: list[MieMessage]) -> list[MieMessage]:
     the pin exists to protect. Pins arriving before any anchor form a leading
     chunk keyed ``None``, which sorts ahead of every real key and so stays at the
     front of the run where it arrived.
+
+    Returns:
+        The run's messages in canonical order, with every pinned record still
+        immediately behind the record it followed on input.
     """
     chunks: list[_Chunk] = []
     for msg in buf:
@@ -157,6 +170,11 @@ def order_rows(
 
     Yields:
         The same messages, with each equal-timestamp run in canonical order.
+
+    Raises:
+        MieDecoderError: re-raised unchanged from the upstream stream, after the
+            buffered run has been flushed so those rows still reach the writer.
+            This generator raises nothing of its own.
     """
     cap = max(max_group, MAX_SORT_GROUP_MIN)
     buf: list[MieMessage] = []

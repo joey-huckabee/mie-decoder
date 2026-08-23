@@ -55,6 +55,11 @@ def read_manifest(path: str | Path) -> list[Path]:
 
     Blank lines and lines whose first non-whitespace character is ``#`` are
     ignored; surrounding whitespace is trimmed (L2-MRG-001).
+
+    Returns:
+        The listed paths in file order. An **empty list is not an error**: a
+        manifest with no usable lines returns ``[]``, which is what lets the CLI
+        distinguish "listed nothing" from "could not be read".
     """
     text = Path(path).read_text(encoding="utf-8")
     out: list[Path] = []
@@ -72,6 +77,9 @@ def glob_match(pattern: str, name: str) -> bool:
 
     Iterative backtracking matcher with identical semantics to the Rust
     implementation (L3-RS-014).
+
+    Returns:
+        ``True`` when the pattern matches the whole string.
     """
     p = t = 0
     star: int | None = None
@@ -98,8 +106,13 @@ def glob_match(pattern: str, name: str) -> bool:
 def expand_glob(pattern: str) -> list[Path]:
     """Expand a single-directory glob ``DIR/PATTERN`` (or ``PATTERN`` for the
     current directory). Wildcards apply to the filename only — no recursive
-    ``**``, no brace expansion. Returns matching regular files sorted
-    lexicographically (deterministic across implementations, L2-MRG-001).
+    ``**``, no brace expansion.
+
+    Returns:
+        Matching regular files, sorted lexicographically so the order is
+        deterministic across implementations (L2-MRG-001). An **empty list is
+        not an error**: a pattern that matches nothing returns ``[]``, leaving
+        "matched no files" distinguishable from "could not read the directory".
     """
     p = Path(pattern)
     name_pat = p.name
@@ -120,13 +133,24 @@ def expand_glob(pattern: str) -> list[Path]:
 
 def _merge_micros(msg: MieMessage, tick: float | None) -> int:
     """Microsecond merge key. IRIG always yields an int; the 0 fallback is
-    unreachable for a validated (IRIG-only) merge."""
+    unreachable for a validated (IRIG-only) merge.
+
+    Returns:
+        The record's absolute microseconds, or ``0`` on the unreachable
+        fallback.
+    """
     us = msg.timestamp.to_microseconds(tick)
     return 0 if us is None else us
 
 
 def _check_mergeable(msg: MieMessage, file_index: int, path: Path) -> None:
-    """Reject an input whose leading record cannot anchor an absolute timeline."""
+    """Reject an input whose leading record cannot anchor an absolute timeline.
+
+    Raises:
+        MieIncompatibleMergeInputsError: if the input resolves to the Standard
+            timestamp format, or leads with a freerun IRIG record. Either way it
+            has no calendar-locked timeline to merge against (L2-MRG-003).
+    """
     ts = msg.timestamp
     if isinstance(ts, StandardTimestamp):
         raise MieIncompatibleMergeInputsError(
@@ -168,7 +192,12 @@ def _dedup_key(msg: MieMessage) -> tuple[object, ...]:
     (L2-MRG-007): the bits a recorder reads off the wire — Type Word, Command /
     Status Words, Error Word, and the data words. Timestamp, file offset, MUX,
     and DELTA are intentionally excluded — the timestamp drives the window (not
-    equality), and the rest are per-recorder. Mirrors ``DedupKey`` in Rust."""
+    equality), and the rest are per-recorder. Mirrors ``DedupKey`` in Rust.
+
+    Returns:
+        A hashable tuple of exactly the wire content. Two messages with equal
+        keys are the same bus transaction, whatever their timestamps.
+    """
     return (
         msg.type_word,
         msg.command_word,
@@ -199,7 +228,13 @@ class _DedupWindow:
         """True if ``msg`` (at ``us``, from ``file_index``) duplicates a recent
         survivor from a *different* input within the window — the same bus
         transaction witnessed by another recorder. Same-file identical content is
-        never a duplicate; a non-duplicate is recorded as a survivor."""
+        never a duplicate; a non-duplicate is recorded as a survivor.
+
+        Returns:
+            ``True`` if this message duplicates a recent survivor from another
+            input and should be collapsed. ``False`` otherwise -- and in that
+            case ``msg`` has been recorded as a survivor itself.
+        """
         # Evict survivors too old to fall within the window of the current (or,
         # in a sorted stream, any later) record. Under lenient non-monotonic
         # input (L2-MRG-006) a backward step makes ``us - survivor_us`` negative,
@@ -247,6 +282,20 @@ def merge_readers(
     deterministic total order (L2-MRG-002). A within-file backward timestamp
     step (L2-MRG-006) WARNs once per file in lenient mode and raises
     :class:`MieNonMonotonicInputError` in ``strict`` mode.
+
+    Returns:
+        An iterator over the merged stream in global time order.
+
+    Raises:
+        MieIncompatibleMergeInputsError: **eagerly, before any output**, if any
+            input is not calendar-locked IRIG (exit 6).
+        MieNonMonotonicInputError: in ``strict`` mode only, on a backward
+            timestamp step within one input.
+        MieUnrecoverableSyncLossError: from an input that loses sync. Under
+            ``allow_partial`` this is deferred until the heap drains, so the
+            writer still commits a ``.partial``.
+        MieDecoderError: any other decoder failure from an underlying reader,
+            propagated unchanged.
     """
     iters = [iter(r) for r in readers]
     seqs = [0] * len(readers)
@@ -321,6 +370,11 @@ def _resolve_emission(
     surviving stream. Under ``PER_FILE`` (the default) the DELTA each reader
     already computed for its own file is left exactly as-is, which is what makes
     a merged record's value identical to a single-file decode (L2-MRG-005).
+
+    Returns:
+        The message to emit -- carrying a recomputed DELTA under ``GLOBAL``, or
+        untouched under ``PER_FILE`` -- or ``None`` when it was collapsed as a
+        cross-recorder duplicate and must not be emitted at all.
     """
     if dedup is not None and dedup.is_duplicate(us, idx, msg):
         return None
@@ -349,6 +403,15 @@ def _pull_next(
 
     Monotonicity is checked here, against the caller's *previous* key, before the
     caller records the new one (L2-MRG-006).
+
+    Returns:
+        ``(record, microsecond key, deferred terminal)``. The first two are both
+        ``None`` when the input is exhausted or truncated. The third is
+        non-``None`` only under ``--allow-partial``.
+
+    Raises:
+        MieUnrecoverableSyncLossError: in strict mode, when this input loses
+            sync. Under ``--allow-partial`` it is returned instead of raised.
     """
     try:
         nxt = next(iters[idx])
@@ -385,7 +448,16 @@ def _merge_drain(
 
     ``pending_terminal`` carries a priming-time --allow-partial failure (set in
     ``merge_readers``); a mid-file failure may overwrite it. Either is raised
-    after the heap drains so the writer commits a `.partial` (L2-MRG-004)."""
+    after the heap drains so the writer commits a `.partial` (L2-MRG-004).
+
+    Yields:
+        Merged messages in global time order, one per heap pop that survives
+        de-duplication.
+
+    Raises:
+        MieUnrecoverableSyncLossError: the deferred ``pending_terminal``, raised
+            only once the heap has drained.
+    """
     tracker = DeltaTracker(tick)
     collapsed = 0
     while heap:
@@ -430,7 +502,12 @@ def _check_monotonic_input(
 ) -> None:
     """L2-MRG-006: each input is assumed internally time-sorted (capture order is
     chronological). A backward step means the merged output may be out of order
-    for this file — strict fails the batch, lenient WARNs once per file."""
+    for this file — strict fails the batch, lenient WARNs once per file.
+
+    Raises:
+        MieNonMonotonicInputError: in ``strict`` mode only. Lenient mode logs one
+            WARN per file and returns normally.
+    """
     if prev is None or curr >= prev:
         return
     if strict:

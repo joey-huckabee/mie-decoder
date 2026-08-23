@@ -116,6 +116,12 @@ disable = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Required for the `DOC` (pydoclint) family selected below, which is still a
+# preview rule set. Safe to depend on here because CI installs with
+# `poetry sync` against poetry.lock, so ruff is pinned to an exact version --
+# a preview rule can only change behaviour on a deliberate lock bump, never
+# under an unattended CI run.
+#
 
 # Ruff's DEFAULT rule set is only `E4`, `E7`, `E9` and `F` -- a small slice of
 # the ~800 rules it ships. Until this section existed the gate reported "All
@@ -127,6 +133,18 @@ target-version = "py310"
 # includes 1003 `S101` hits for `assert` in a test suite where assert is the
 # point, plus rules that contradict the formatter.
 [tool.ruff.lint]
+# Scoped to the LINTER. `preview` at the `[tool.ruff]` top level also switches
+# the FORMATTER into preview style, which restyled six unrelated files on the
+# commit that introduced this -- formatting churn has nothing to do with
+# docstring rules.
+preview = true
+
+# A preview rule fires only when selected by its EXACT code, never by family
+# prefix. Without this, `preview` (needed for pydoclint) would also enable
+# preview rules across RUF, ISC and the rest -- a gate should widen because
+# someone chose to widen it.
+explicit-preview-rules = true
+
 select = [
     "E", "W",    # pycodestyle
     "F",         # pyflakes
@@ -149,6 +167,16 @@ select = [
     "TID",       # tidy imports
     "DTZ",       # naive datetimes
     "SLF",       # reaching into another module's private members
+    # pydoclint (preview -- selected by exact code, see explicit-preview-rules).
+    # DOC502 is deliberately NOT selected: it flags a documented exception the
+    # function does not `raise` itself, and every finding here documents one
+    # that PROPAGATES from a helper -- `write_csv` naming `MieClobberRefusedError`,
+    # `decode.py` naming `struct.error` from an unpack. Which exceptions escape
+    # is what a caller needs; where in the call tree they originate is not.
+    # Complying would mean DELETING true documentation.
+    "DOC201",    # a `return` is documented
+    "DOC402",    # a `yield` is documented
+    "DOC501",    # a `raise` is documented
 ]
 
 ignore = [
@@ -173,7 +201,11 @@ ignore = [
 # genuinely deceptive homoglyph (a Cyrillic `а` in an identifier, say).
 # `×` is the multiplication sign in prose ("2 × 32 words"), not a stand-in
 # for the letter x.
-allowed-confusables = ["–", "—", "×"]
+# U+00B5 MICRO SIGN is the correct character for microseconds, which is the
+# unit this decoder works in throughout (IRIG timestamps are microsecond
+# counts). Ruff suggests U+03BC GREEK SMALL LETTER MU; that is the letter,
+# not the SI prefix. Surfaced only because `preview` is now on.
+allowed-confusables = ["–", "—", "×", "µ"]
 
 [tool.ruff.lint.per-file-ignores]
 # The CLI's whole job is writing to stdout: the `count` integer, `--help`, the
@@ -198,6 +230,12 @@ allowed-confusables = ["–", "—", "×"]
 # noise here while staying useful in `src`, where an unused argument really is
 # one.
 "tests/**" = [
+    # DOC*: a test helper has no callers outside the file it lives in, so a
+    # `Returns:` section restates its one-line summary. The rules stay on in
+    # `src`, where the caller is someone else.
+    "DOC201",
+    "DOC402",
+    "DOC501",
     "ARG002",
     # SLF001: a white-box test reaching into a private member is the point of a
     # white-box test. `src` is clean of it and stays gated, which is where

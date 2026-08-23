@@ -121,6 +121,13 @@ LOOKAHEAD_RECORDS_MAX: int = 32
 def _require_bool(section: str, key: str, value: object) -> bool:
     """Validate that `value` is a real ``bool`` (not coerced from an
     int/str). Per L2-CFG-010 schema validations apply at load time.
+
+    Returns:
+        ``value``, unchanged, when it really is a ``bool``.
+
+    Raises:
+        ValueError: if the value is anything else, including an int or string
+            that would otherwise coerce.
     """
     # NOTE: ``isinstance(True, int)`` is True in Python, but
     # ``isinstance(0, bool)`` is False — the bool check is sufficient
@@ -140,6 +147,14 @@ def _require_table(data: dict[str, Any], section: str) -> dict[str, Any]:
     downstream ``.get(...)`` on a scalar leaks an ``AttributeError`` (which the
     CLI does not classify as a config error). Matches the Rust loader, which
     rejects a known section name assigned a scalar value (L2-CFG-010).
+
+    Returns:
+        The section table, or an empty dict when the section is absent. Absent
+        is not an error -- every section is optional.
+
+    Raises:
+        ValueError: if the name is present but bound to a scalar rather than a
+            table.
     """
     value = data.get(section, {})
     if not isinstance(value, dict):
@@ -176,6 +191,10 @@ def _basic_string_accepted(tok: str) -> bool:
     Rejects other escapes (``\\r``, ``\\uXXXX``) and an unescaped inner quote,
     mirroring `rust/src/config.rs::parse_string` exactly — `tomllib` accepts the
     full TOML escape set, so a naive regex would silently diverge from Rust.
+
+    Returns:
+        ``True`` if the token is a basic string the Rust parser would also
+        accept.
     """
     if len(tok) < 2 or tok[0] != '"' or tok[-1] != '"':
         return False
@@ -195,7 +214,11 @@ def _basic_string_accepted(tok: str) -> bool:
 
 def _scalar_accepted(tok: str) -> bool:
     """A single scalar value the flat schema accepts: a number, a boolean, or a
-    basic string with the Rust-supported escapes."""
+    basic string with the Rust-supported escapes.
+
+    Returns:
+        ``True`` if the token is an accepted scalar.
+    """
     tok = tok.strip()
     return bool(_NUMBER_RE.match(tok)) or tok in ("true", "false") or _basic_string_accepted(tok)
 
@@ -204,6 +227,9 @@ def _strip_toml_comment(line: str) -> str:
     """Drop a trailing ``#`` comment, preserving ``#`` inside a quoted string.
 
     Mirrors the Rust ``strip_comment`` so both parsers see the same value text.
+
+    Returns:
+        The line up to an unquoted ``#``, or the whole line when it has none.
     """
     in_quote = False
     prev_backslash = False
@@ -232,6 +258,10 @@ def _advance_inside_quote(ch: str, prev_backslash: bool) -> tuple[bool, bool]:
 
     An unescaped backslash escapes whatever follows, so the string stays open; an
     unescaped quote closes it. Anything else is ordinary content.
+
+    Returns:
+        ``(still_in_quote, next_prev_backslash)`` for the scanner to carry into
+        the next character.
     """
     if ch == "\\" and not prev_backslash:
         return True, True
@@ -247,6 +277,10 @@ def _split_array_items(inner: str) -> list[str]:
     the string), mirroring `rust/src/config.rs::split_array_items` /
     ``push_quoted_char`` — otherwise ``["a\\", b"]`` would be mis-split on the
     comma *inside* the string and rejected where Rust accepts it.
+
+    Returns:
+        The element texts, untrimmed of their own quoting but with empty
+        entries dropped.
     """
     items: list[str] = []
     buf: list[str] = []
@@ -271,7 +305,11 @@ def _value_accepted(value: str) -> bool:
     """True if ``value`` is a scalar or a single-line array of scalars the flat
     schema accepts. Rejects inline tables, multi-line arrays, date-times, and
     ``1_000`` / ``0x08`` numeric forms that ``tomllib`` would accept but the Rust
-    value parser does not."""
+    value parser does not.
+
+    Returns:
+        ``True`` if the value text is one the flat schema accepts.
+    """
     value = value.strip()
     if value.startswith("[") and value.endswith("]"):
         return all(_scalar_accepted(item) for item in _split_array_items(value[1:-1]))
@@ -307,6 +345,11 @@ def _reject_bad_section_header(line: str, lineno: int) -> None:
 
     Mirrors ``parse_section_header`` in ``rust/src/config.rs`` rule for rule, so
     a header accepted by one implementation is accepted by the other.
+
+    Raises:
+        ValueError: for an array-of-tables header, a malformed header, a dotted
+            header, or a section name outside the known set. The message names
+            the line number.
     """
     if line.startswith("[["):
         raise ValueError(f"line {lineno}: array-of-tables headers ([[...]]) are not supported")
@@ -329,6 +372,11 @@ def _reject_bad_key_value(line: str, lineno: int) -> None:
     """Whitelist check for a ``key = value`` line.
 
     Mirrors ``parse_key_value`` in ``rust/src/config.rs``.
+
+    Raises:
+        ValueError: for a line that is not ``key = value``, a dotted key, a key
+            that is not a simple identifier, or a value the flat schema does not
+            accept. The message names the line number.
     """
     if "=" not in line:
         raise ValueError(f"line {lineno}: expected 'key = value' or a [section] header")
@@ -355,6 +403,14 @@ def _require_rt_sa_range(  # pylint: disable=redefined-outer-name
 ) -> set[int]:
     """Validate a list of RT or subaddress values: each must be an int
     in [0, 31] per the L2-CFG schema reference.
+
+    Returns:
+        The values as a set, de-duplicated.
+
+    Raises:
+        ValueError: if the value is not an array, if an entry is not an integer,
+            or if an entry falls outside the MIL-STD-1553 [0, 31] range. Note
+            the CLI applies the wider u8 bound instead.
     """
     if not isinstance(values, list):
         raise ValueError(f"Invalid filter.{field}: expected array, got {type(values).__name__}")
@@ -456,7 +512,12 @@ class FilterConfig:
     def _matches_exclude(
         self, message_type: int, rt: int | None, bus: Bus, subaddress: int | None
     ) -> bool:
-        """Whether the message matches any active ``exclude_*`` set."""
+        """Whether the message matches any active ``exclude_*`` set.
+
+        Returns:
+            ``True`` if any active exclude set matches, meaning the message is
+            dropped. An empty set is inactive and never matches.
+        """
         return bool(
             (self.exclude_types and message_type in self.exclude_types)
             or (self.exclude_rts and rt in self.exclude_rts)
@@ -468,7 +529,13 @@ class FilterConfig:
         self, message_type: int, rt: int | None, bus: Bus, subaddress: int | None
     ) -> bool:
         """Whether the message is absent from any active ``include_*`` set. A
-        ``None`` rt/subaddress (SPURIOUS_DATA) fails an active RT/SA include."""
+        ``None`` rt/subaddress (SPURIOUS_DATA) fails an active RT/SA include.
+
+        Returns:
+            ``True`` if the message is absent from an active include set,
+            meaning it is dropped. An empty set is inactive and admits
+            everything.
+        """
         return bool(
             (self.include_types and message_type not in self.include_types)
             or (self.include_buses and bus not in self.include_buses)
@@ -592,13 +659,22 @@ class DecoderConfig:
         ``time_format = "irig"`` — the config value won, Rust used ``auto``, and
         the two implementations decoded the same file differently. The same trap
         applied to ``ErrorMode.SEPARATE == 0`` and to any empty-string value.
+
+        Returns:
+            The override when it is not ``None``, otherwise the current value
+            of the field. Presence, not truthiness, decides.
         """
         value = kwargs.get(name)
         return value if value is not None else getattr(self, name)
 
     def _merge_filter_overrides(self, kwargs: dict[str, Any]) -> FilterConfig:
         """CLI filters ADD to (not replace) config-file filters (Rust parity);
-        ``include_*`` are CLI-only but merge the same way for symmetry."""
+        ``include_*`` are CLI-only but merge the same way for symmetry.
+
+        Returns:
+            A new :class:`FilterConfig` whose sets are the union of the config
+            file's and the CLI's. CLI filters add to, never replace.
+        """
         return FilterConfig(
             exclude_types=self.filters.exclude_types | set(kwargs.get("exclude_types") or []),
             exclude_rts=self.filters.exclude_rts | set(kwargs.get("exclude_rts") or []),
@@ -640,7 +716,16 @@ def _parse_type_names(names: Sequence[object]) -> set[int]:
 
 
 def _parse_type_code(name: object) -> int:
-    """Parse one message-type identifier (an int code, or a string) to a u8."""
+    """Parse one message-type identifier (an int code, or a string) to a u8.
+
+    Returns:
+        The type code as an int in [0, 255].
+
+    Raises:
+        ValueError: if the value is a bool, an int outside [0, 255], or neither
+            a string nor an int. A TOML boolean is not a valid type code even
+            though ``bool`` is an ``int`` subclass.
+    """
     # bool is an int subclass; a TOML boolean is not a valid type code.
     if isinstance(name, bool):
         raise ValueError(f"Invalid message type code: {name!r}")
@@ -657,7 +742,15 @@ def _parse_type_code(name: object) -> int:
 
 
 def _parse_type_code_str(name: str) -> int:
-    """Parse a type-identifier string: an enum name (``BC_TO_RT``) or a ``0x`` hex code."""
+    """Parse a type-identifier string: an enum name or a ``0x`` hex code.
+
+    Returns:
+        The type code as an int.
+
+    Raises:
+        ValueError: if the string is neither a known message-type name nor a
+            valid ``0x`` hex code. The message lists the valid names.
+    """
     upper = name.strip().upper()
     if upper in _TYPE_NAME_MAP:
         return _TYPE_NAME_MAP[upper]
@@ -816,7 +909,14 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
 
 
 def _load_logging_level(logging_section: dict[str, Any]) -> str:
-    """`[logging] level` — validated against the known level names."""
+    """`[logging] level` — validated against the known level names.
+
+    Returns:
+        The canonical uppercase level name.
+
+    Raises:
+        ValueError: if the value is not a string, or is not a known level.
+    """
     log_level_raw = logging_section.get("level", "WARNING")
     if not isinstance(log_level_raw, str):
         raise ValueError(
@@ -832,7 +932,14 @@ def _load_logging_level(logging_section: dict[str, Any]) -> str:
 
 
 def _load_time_format(decode_section: dict[str, Any]) -> TimestampFormat:
-    """`[decode] time_format`."""
+    """`[decode] time_format`.
+
+    Returns:
+        The parsed :class:`TimestampFormat`.
+
+    Raises:
+        ValueError: if the value is not a string, or names no known format.
+    """
     raw = decode_section.get("time_format", "auto")
     if not isinstance(raw, str):
         raise ValueError(f"Invalid decode.time_format: expected string, got {type(raw).__name__}")
@@ -840,7 +947,15 @@ def _load_time_format(decode_section: dict[str, Any]) -> TimestampFormat:
 
 
 def _load_error_mode(decode_section: dict[str, Any]) -> ErrorMode:
-    """`[decode] error_mode`."""
+    """`[decode] error_mode`.
+
+    Returns:
+        The parsed :class:`ErrorMode`.
+
+    Raises:
+        ValueError: if the value is not a string, or is not ``separate`` or
+            ``inline``.
+    """
     raw = decode_section.get("error_mode", "inline")
     if not isinstance(raw, str):
         raise ValueError(f"Invalid decode.error_mode: expected string, got {type(raw).__name__}")
@@ -851,7 +966,12 @@ def _load_error_mode(decode_section: dict[str, Any]) -> ErrorMode:
 
 
 def _load_filter_section(filter_section: dict[str, Any]) -> FilterConfig:
-    """`[filter]` exclude arrays (RT/SA values validated to [0, 31])."""
+    """`[filter]` exclude arrays (RT/SA values validated to [0, 31]).
+
+    Returns:
+        The assembled :class:`FilterConfig`. Config files carry only the
+        ``exclude_*`` sets; ``include_*`` are CLI-only (L3-PY-013).
+    """
     return FilterConfig(
         exclude_types=_parse_type_names(filter_section.get("exclude_types", [])),
         exclude_rts=_require_rt_sa_range("exclude_rts", filter_section.get("exclude_rts", [])),
@@ -863,7 +983,14 @@ def _load_filter_section(filter_section: dict[str, Any]) -> FilterConfig:
 
 
 def _load_output_format(output_section: dict[str, Any]) -> str:
-    """`[output] format` — `csv` is currently the only supported value (L2-CFG-010)."""
+    """`[output] format` — `csv` is currently the only supported value (L2-CFG-010).
+
+    Returns:
+        The output format name, currently always ``csv``.
+
+    Raises:
+        ValueError: if the value is anything other than ``csv``.
+    """
     output_format: str = output_section.get("format", "csv")
     if output_format != "csv":
         raise ValueError(f"Invalid output.format: {output_format!r}. Valid: csv")
@@ -874,7 +1001,17 @@ def _load_standard_tick_rate(decode_section: dict[str, Any]) -> float | None:
     """`[decode] standard_tick_rate_hz` (L2-DEC-017): when present, a real,
     strictly-positive frequency. Accept int or float (not bool); reject
     non-finite or non-positive values so a bad rate can't silently produce
-    garbage microseconds."""
+    garbage microseconds.
+
+    Returns:
+        The rate in Hz, or ``None`` when the key is absent. ``None`` means
+        "uncalibrated", which leaves Standard timestamps unconvertible rather
+        than converted wrongly.
+
+    Raises:
+        ValueError: if the value is not a number, or is not finite and strictly
+            positive.
+    """
     if "standard_tick_rate_hz" not in decode_section:
         return None
     raw_hz = decode_section["standard_tick_rate_hz"]
@@ -892,6 +1029,13 @@ def _load_mux_section(mux_section: dict[str, Any]) -> tuple[bool, str, int]:
     """`[mux]` MUX-from-filename configuration (L2-WRT-020).
 
     The caller validates the section is a table (see :func:`_require_table`).
+
+    Returns:
+        ``(enabled, delimiter, field)``.
+
+    Raises:
+        ValueError: if the delimiter is not a non-empty string, or the field is
+            not an integer.
     """
     mux_enabled = _require_bool("mux", "enabled", mux_section.get("enabled", True))
     mux_delimiter_raw = mux_section.get("delimiter", ".")
@@ -906,7 +1050,14 @@ def _load_mux_section(mux_section: dict[str, Any]) -> tuple[bool, str, int]:
 
 
 def _load_delta_scope(merge_section: dict[str, Any]) -> DeltaScope:
-    """`[merge] delta_scope` (L2-MRG-005). Defaults to ``per-file``."""
+    """`[merge] delta_scope` (L2-MRG-005). Defaults to ``per-file``.
+
+    Returns:
+        The parsed :class:`DeltaScope`, defaulting to ``PER_FILE``.
+
+    Raises:
+        ValueError: if the value is not a string, or names no known scope.
+    """
     raw = merge_section.get("delta_scope", "per-file")
     if not isinstance(raw, str):
         raise ValueError(f"Invalid merge.delta_scope: expected string, got {type(raw).__name__}")
@@ -917,6 +1068,12 @@ def _load_merge_section(merge_section: dict[str, Any]) -> tuple[bool, int]:
     """`[merge]` cross-recorder duplicate collapsing (L2-MRG-007).
 
     The caller validates the section is a table (see :func:`_require_table`).
+
+    Returns:
+        ``(collapse_duplicates, collapse_window_us)``.
+
+    Raises:
+        ValueError: if ``collapse_window_us`` is not a non-negative integer.
     """
     collapse_duplicates = _require_bool(
         "merge", "collapse_duplicates", merge_section.get("collapse_duplicates", False)
@@ -936,7 +1093,15 @@ def _load_merge_section(merge_section: dict[str, Any]) -> tuple[bool, int]:
 
 def _require_int_range(key: str, value: object, lo: int, hi: int) -> int:
     """Validate a TOML integer within ``[lo, hi]`` at load time (L2-CFG-010),
-    rejecting bools and non-integers. ``key`` names the offending TOML key."""
+    rejecting bools and non-integers. ``key`` names the offending TOML key.
+
+    Returns:
+        ``value``, unchanged, when it is an int within ``[lo, hi]``.
+
+    Raises:
+        ValueError: if the value is a bool or non-integer, or falls outside the
+            range. The message names the TOML key.
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"Invalid {key}: {value!r}; must be an integer")
     if value < lo or value > hi:

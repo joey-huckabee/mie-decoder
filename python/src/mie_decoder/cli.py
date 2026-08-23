@@ -80,6 +80,10 @@ def _log_safe(value: object) -> str:
     A crafted input path could otherwise embed a newline and forge or inject
     additional log lines (SonarQube S5145). Escaping the control characters
     keeps each logged value on a single line without altering the visible path.
+
+    Returns:
+        The value as a string, with CR and LF replaced by their escaped
+        spellings. The visible path is otherwise unchanged.
     """
     return str(value).replace("\r", "\\r").replace("\n", "\\n")
 
@@ -92,6 +96,9 @@ def _report_error(context: str, exc: BaseException, code: int) -> int:
     conditions (file-not-found, no-records) instead of a full stack trace —
     mirroring how :func:`_classify_decode_error` reports the decode-time
     failures it is delegated.
+
+    Returns:
+        ``code``, unchanged, so the caller can ``return _report_error(...)``.
     """
     logger.error("%s: %s", context, exc)
     print(f"Error: {exc}", file=sys.stderr)
@@ -127,6 +134,9 @@ def _nonneg_int(value: str) -> int:
     Raises:
         argparse.ArgumentTypeError: if the value is not a non-negative integer.
             argparse turns this into a usage error (exit 4).
+
+    Returns:
+        The parsed non-negative integer.
     """
     try:
         parsed = int(value, 0)
@@ -169,6 +179,13 @@ def _parse_u8_list(values: list[str], flag: str) -> list[int]:
     (0–255) — the same bound the Rust CLI applies (``parse_u8_value``).
     The tighter MIL-STD-1553 [0, 31] range is enforced only on the
     config-file path, not here, so the two CLIs accept the same inputs.
+
+    Returns:
+        The parsed values, in the order given.
+
+    Raises:
+        ValueError: if a token is not an integer, or does not fit in a u8. The
+            caller maps this to a usage error.
     """
     out: list[int] = []
     for tok in values:
@@ -198,6 +215,13 @@ def _normalize_log_level(value: str) -> str:
     before the level is validated — matching the Rust CLI, which pulls those
     flags before applying the log level (so ``--log-level bogus --version``
     still prints the version instead of failing on the bad flag).
+
+    Returns:
+        The canonical uppercase level name.
+
+    Raises:
+        ValueError: if ``value`` is not a recognised level. The message lists
+            the valid set.
     """
     from mie_decoder.config import _VALID_LOG_LEVELS
 
@@ -621,6 +645,10 @@ def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
             resolution / over-cap) → the caller maps to exit 4.
         OSError: a manifest that cannot be read or a glob directory that does
             not exist → the caller maps to exit 1.
+
+    Returns:
+        The resolved input paths. Always at least one -- an empty resolution is
+        raised as a usage error rather than returned.
     """
     from mie_decoder.merge import MAX_MERGE_FILES, expand_glob, read_manifest
 
@@ -662,7 +690,12 @@ def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
 def _merge_output_collision(output: Path, inputs: list[Path]) -> str | None:
     """Return an error message if a merge's output path resolves to one of its
     inputs (L2-WRT-014 across the input set), else None. ``Path.resolve`` is
-    non-strict, so a not-yet-existing output resolves fine."""
+    non-strict, so a not-yet-existing output resolves fine.
+
+    Returns:
+        The operator-facing error message, or ``None`` when there is no
+        collision.
+    """
     out_resolved = output.resolve()
     for inp in inputs:
         if inp.resolve() == out_resolved:
@@ -680,6 +713,13 @@ def _validate_int_range(value: int, flag: str, lo: int, hi: int) -> int:
     validating the CLI value here (post-parse) keeps an out-of-range value a
     usage error (the caller maps ``ValueError`` to EXIT_USAGE) rather than
     argparse's default exit code 2.
+
+    Returns:
+        ``value``, unchanged, when it is within ``[lo, hi]``.
+
+    Raises:
+        ValueError: if ``value`` is outside the range. The caller maps this to
+            EXIT_USAGE.
     """
     if not (lo <= value <= hi):
         raise ValueError(f"invalid {flag}: {value}; valid range: [{lo}, {hi}]")
@@ -688,14 +728,28 @@ def _validate_int_range(value: int, flag: str, lo: int, hi: int) -> int:
 
 def _validate_positive_finite(value: float, flag: str) -> float:
     """Return ``value`` if finite and strictly positive, else raise
-    ``ValueError`` (L2-DEC-017 / L2-CLI-012)."""
+    ``ValueError`` (L2-DEC-017 / L2-CLI-012).
+
+    Returns:
+        ``value``, unchanged, when it is finite and strictly positive.
+
+    Raises:
+        ValueError: if ``value`` is not finite, or is zero or negative.
+    """
     if not math.isfinite(value) or value <= 0.0:
         raise ValueError(f"invalid {flag}: {value}; must be a finite value greater than 0")
     return value
 
 
 def _validate_nonempty(value: str, flag: str) -> str:
-    """Return ``value`` if non-empty, else raise ``ValueError``."""
+    """Return ``value`` if non-empty, else raise ``ValueError``.
+
+    Returns:
+        ``value``, unchanged, when it is non-empty.
+
+    Raises:
+        ValueError: if ``value`` is the empty string.
+    """
     if value == "":
         raise ValueError(f"invalid {flag}: must be a non-empty string")
     return value
@@ -707,6 +761,10 @@ def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
     A boolean flag flips a value on; its absence leaves the config value intact
     (there is no "off" form on the CLI). ``--separate-errors`` flips error_mode to
     SEPARATE; the default IS inline.
+
+    Returns:
+        The override mapping. Only flags actually given are present, so an
+        absent flag leaves the config value intact.
     """
     from mie_decoder.models import ErrorMode, parse_timestamp_format
 
@@ -738,6 +796,9 @@ def _filter_overrides(args: argparse.Namespace) -> dict[str, object]:
     types/buses parse via name-or-hex; rts/subaddresses via the u8 (0-255)
     parser mirroring the Rust CLI. Any bad value raises ``ValueError`` (the
     caller maps it to EXIT_USAGE). include_* are CLI-only (L3-PY-013).
+
+    Returns:
+        The filter override mapping, holding only the filters actually given.
     """
     from mie_decoder.config import _parse_bus_names, _parse_type_names
 
@@ -769,7 +830,15 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
     """Build overrides for the numeric/string args that carry range/format
     checks, raising ``ValueError`` (usage) on an invalid value. The bounds
     mirror the TOML load-time checks (L2-DEC-015 / L2-SYN-026 / L2-DEC-017 /
-    L2-CLI-012)."""
+    L2-CLI-012).
+
+    Returns:
+        The override mapping for the numeric and string arguments given.
+
+    Raises:
+        ValueError: on any out-of-range or malformed value. The caller maps
+            this to EXIT_USAGE.
+    """
     from mie_decoder.config import (
         DETECT_RECORDS_MAX,
         DETECT_RECORDS_MIN,
@@ -819,7 +888,12 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
 
 def _build_decode_overrides(args: argparse.Namespace) -> dict[str, object]:
     """Assemble all CLI → config overrides, raising ``ValueError`` (which the
-    caller maps to EXIT_USAGE) on any invalid value."""
+    caller maps to EXIT_USAGE) on any invalid value.
+
+    Returns:
+        The merged override mapping from the simple, filter and validated
+        numeric groups.
+    """
     overrides: dict[str, object] = {}
     overrides.update(_simple_overrides(args))
     overrides.update(_filter_overrides(args))
@@ -831,6 +905,9 @@ def _open_reader(path: Path, config: DecoderConfig) -> MieFileReader:
     """Open one input file with reader options from ``config`` (mirrors
     ``open_reader`` in ``rust/src/cli.rs``). Raises ``MieFileError`` on a
     file/open failure (the caller maps it to EXIT_RUNTIME).
+
+    Returns:
+        An open :class:`MieFileReader` for ``path``.
     """
     from mie_decoder.reader import MieFileReader
 
@@ -863,6 +940,10 @@ def _check_merge_output_collision(
     in that case the writer's own single-input guard is also bypassed (it receives
     ``input_path=None`` whenever a merge was requested), so this is the only guard
     that runs — mirroring the Rust CLI, which gates on ``merge_requested``.
+
+    Returns:
+        ``EXIT_RUNTIME`` to short-circuit on a collision, or ``None`` to
+        continue.
     """
     if merge_requested and args.output is not None:
         collision = _merge_output_collision(args.output, input_paths)
@@ -890,6 +971,10 @@ def _build_message_stream(
     rows so the writer commits a `.partial` (L2-MRG-004). ``merge_readers``
     validates the input set eagerly, so an incompatible set raises
     ``MieIncompatibleMergeInputsError`` here before any output.
+
+    Returns:
+        The message stream to hand the writer, already filtered and in
+        canonical row order.
     """
     from mie_decoder.filters import apply_filters
     from mie_decoder.merge import merge_readers
@@ -919,7 +1004,15 @@ def _build_message_stream(
 def _append_open_terminal(stream: Iterator[MieMessage]) -> Iterator[MieMessage]:
     """Yield from ``stream`` then raise an unrecoverable-sync-loss terminal so the
     writer commits a `.partial` (L2-MRG-004). Used when a merge dropped an input
-    at open time — that file contributed nothing (truncated at offset 0)."""
+    at open time — that file contributed nothing (truncated at offset 0).
+
+    Yields:
+        Every message from ``stream``, unchanged.
+
+    Raises:
+        MieUnrecoverableSyncLossError: always, once ``stream`` is exhausted.
+            The terminal is the point of this wrapper.
+    """
     yield from stream
     raise MieUnrecoverableSyncLossError(0, 0)
 
@@ -932,7 +1025,11 @@ def _write_messages(
 ) -> WriteOutcome:
     """Write the stream and log the outcome (mirrors ``write_messages`` in
     ``rust/src/cli.rs``). Separate mode with a file output writes the split
-    CSVs; INLINE mode (or stdout, which cannot be split) writes one CSV."""
+    CSVs; INLINE mode (or stdout, which cannot be split) writes one CSV.
+
+    Returns:
+        The row counts from the writer, including any ``.partial`` commit.
+    """
     from mie_decoder.models import ErrorMode
     from mie_decoder.writer import write_csv, write_csv_split
 
@@ -981,6 +1078,11 @@ _SIMPLE_DECODE_ERRORS: tuple[
 def _classify_decode_error(exc: Exception) -> int:
     """Map a decode-time exception to its exit code, emitting the stderr and
     exit-class log lines. Mirrors ``classify_decode_exit`` in ``rust/src/cli.rs``.
+
+    Returns:
+        The process exit code for this failure. Note ``EXIT_OK`` is among the
+        possibilities: a broken pipe and an ``--allow-partial`` sync loss are
+        both clean exits.
     """
     from mie_decoder.writer import is_broken_pipe
 
@@ -1018,7 +1120,11 @@ def _classify_decode_error(exc: Exception) -> int:
 
 def _report_decode_error(exc: Exception, code: int, exit_class: str | None) -> int:
     """Standard decode-error reporting: log the error, print it to stderr, and
-    emit the exit-class INFO line when one is given; return the exit code."""
+    emit the exit-class INFO line when one is given; return the exit code.
+
+    Returns:
+        ``code``, unchanged.
+    """
     logger.error("%s", exc)
     print(f"Error: {exc}", file=sys.stderr)
     if exit_class is not None:
@@ -1028,7 +1134,11 @@ def _report_decode_error(exc: Exception, code: int, exit_class: str | None) -> i
 
 def _classify_decode_success(outcome: WriteOutcome, readers: list[MieFileReader]) -> int:
     """Emit the L1-EXIT-005 exit-class summary for a successful run and return
-    EXIT_OK (mirrors the ``Ok`` arm of Rust ``classify_decode_exit``)."""
+    EXIT_OK (mirrors the ``Ok`` arm of Rust ``classify_decode_exit``).
+
+    Returns:
+        ``EXIT_OK``. A successful run has no other outcome.
+    """
     sync_losses = sum(r.sync_losses for r in readers)
     # L1-EXIT-010: report the empty-recording class only when *every* opened
     # input was a valid empty recording (so a merge that also drew rows from a
@@ -1063,6 +1173,11 @@ def _open_readers_for_decode(
 
     Raises:
         MieFileError: An open failure the caller must map to a runtime exit.
+
+    Returns:
+        ``(readers, open_dropped)`` -- the successfully opened readers, and
+        whether any input was dropped. A drop only happens under a merge with
+        ``--allow-partial``.
     """
     readers: list[MieFileReader] = []
     open_dropped = False
@@ -1356,6 +1471,10 @@ def _normalize_version_flag(argv: list[str]) -> list[str]:
     long version token to the canonical ``--version`` argparse knows. The short
     ``-v`` / ``-V`` forms are registered directly on the parser. Keeps the Python
     and Rust CLIs in agreement on every spelling of the version flag.
+
+    Returns:
+        The argument list with any case-insensitive long version token
+        rewritten to ``--version``. Every other argument is passed through.
     """
     return [
         "--version" if arg.startswith("--") and arg[2:].lower() == "version" else arg
@@ -1398,6 +1517,10 @@ def main_cli(argv: list[str] | None = None) -> int:
     Runs :func:`main` and then makes sure a dead stdout cannot turn a clean exit
     code into CPython's shutdown-failure 120. Kept separate from :func:`main`
     so importing callers get a side-effect-free function.
+
+    Returns:
+        The process exit code, with a dead stdout already handled so it cannot
+        become CPython's shutdown-failure 120.
     """
     code = main(argv)
     try:

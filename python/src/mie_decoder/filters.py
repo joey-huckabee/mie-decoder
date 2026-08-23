@@ -81,7 +81,12 @@ def apply_filters(
 def _rt_and_subaddress(msg: MieMessage) -> tuple[int | None, int | None]:
     """Extract ``(rt, subaddress)`` from a message's Command Word, or
     ``(None, None)`` for SPURIOUS_DATA (no Command Word) so only type/bus
-    filters can match it (mirrors the Rust filter) and no AttributeError."""
+    filters can match it (mirrors the Rust filter) and no AttributeError.
+
+    Returns:
+        ``(rt, subaddress)`` read from the record's Command Word, or
+        ``(None, None)`` when the record has no Command Word.
+    """
     cw = msg.command_word
     if cw is None:
         return None, None
@@ -95,6 +100,10 @@ def _show_filter_set(values: object) -> str:
     guaranteed — an unsorted render makes the log line unstable between runs.
     Buses print as their names (``A`` / ``B``) rather than ``<Bus.A: 0>``, so
     the line matches the Rust `log_active_filters` output exactly.
+
+    Returns:
+        The members as ``[a, b]`` in sorted order, or the literal ``none`` when
+        the set is empty.
     """
     items = list(values) if values else []  # type: ignore[call-overload]
     if not items:

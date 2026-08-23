@@ -149,7 +149,13 @@ def validate_record(
     ts_format: TimestampFormat | None = None,
     lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
 ) -> bool:
-    """Return whether a valid MIE record starts at the given offset."""
+    """Return whether a valid MIE record starts at the given offset.
+
+    Returns:
+        ``True`` when every check passes. Use
+        :func:`validate_record_detailed` when the caller needs to know WHICH
+        check failed.
+    """
     return (
         validate_record_detailed(
             data,
@@ -235,7 +241,14 @@ def _validate_irig_timestamp_ranges(
 ) -> ValidationFailure | None:
     """Check 5: IRIG timestamp field ranges (L2-SYN-004 / L2-SYN-019). All three
     timestamp words are needed; a near-EOF record where they are not all readable
-    is a no-op (the caller's in-bounds checks remain authoritative)."""
+    is a no-op (the caller's in-bounds checks remain authoritative).
+
+    Returns:
+        The specific :class:`ValidationFailure` for the first field found out of
+        range, or ``None`` when every field is in range -- and also when the
+        three words are not all readable, which is a no-op rather than a
+        failure.
+    """
     if offset + 8 > file_len:
         return None
     ts_upper = read_u16(data, offset + 2)
@@ -277,7 +290,14 @@ def _validate_lookahead_records(
     the next ``lookahead_records - 1`` records' Type Word fields. EOF — or the
     L2-SYN-028 ``0x0000`` terminator when ``honor_terminator`` — ends the walk
     gracefully without rejecting the original candidate (recovery passes
-    ``False`` so a mis-aligned candidate cannot validate off a stray zero)."""
+    ``False`` so a mis-aligned candidate cannot validate off a stray zero).
+
+    Returns:
+        The :class:`ValidationFailure` for the first look-ahead record whose
+        Type Word does not check out, or ``None`` when they all pass. Running
+        out of data -- EOF, or the terminator when honoured -- returns ``None``:
+        an incomplete walk does not reject the candidate.
+    """
     n = max(1, lookahead_records)
     next_offset = offset + record_bytes
     for _ in range(1, n):
@@ -361,8 +381,10 @@ def is_homogeneous_payload(
     parses as a synthetic SPURIOUS_DATA frame and look-ahead validation
     alone admits the stream.
 
-    Returns True iff the run is homogeneous and the reader should
-    reject the input as pathological.
+    Returns:
+        ``True`` iff the run is homogeneous and the reader should reject the
+        input as pathological. ``False`` when the chunks differ outside the
+        timestamp triple, or when there is not enough data to sample.
     """
     total = HOMOGENEITY_SAMPLE_RECORDS * record_bytes
     if offset + total > len(data):

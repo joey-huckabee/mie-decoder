@@ -54,6 +54,10 @@ def delta_key(rt: int, subaddress: int, transmit: bool) -> int:
     this same tuple. ``test_delta.py`` asserts the two partition the
     ``(rt, subaddress, direction)`` space identically — the check that could not
     exist while the representations lived in different modules.
+
+    Returns:
+        The three fields packed into one ``int``: ``rt`` at bit 16,
+        ``subaddress`` at bit 8, and the transmit flag in bit 0.
     """
     return (rt << 16) | (subaddress << 8) | int(transmit)
 
