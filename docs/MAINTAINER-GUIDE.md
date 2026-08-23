@@ -677,7 +677,16 @@ The version bump itself rolls up the accumulated `[Unreleased]` entries into a d
 
 1. Renames `[Unreleased]` to `[<version>] — YYYY-MM-DD` in `CHANGELOG.md` and seeds a new empty `[Unreleased]` section.
 2. Updates the compare-URL footer (`[<version>]: .../compare/<previous>...<version>`) — see the warning below; this is the step most often missed.
-3. Updates `rust/Cargo.toml` (Rust) or `python/pyproject.toml` (Python) — both for a joint cut.
+3. Updates the version in **all five places**, because a joint cut ships one number from one tag:
+   `rust/Cargo.toml`, `rust/Cargo.lock` (the `mie-decoder` entry — a `cargo build` refreshes it),
+   `python/pyproject.toml`, `cpp/src/cli.cpp` (`kVersion`, which is what `--version` prints), and
+   `cpp/CMakeLists.txt` (`project(... VERSION ...)`).
+
+   > This step named only the first three until v2.13.0. The C++ implementation was added after
+   > the checklist was written and nobody came back to it, so `mie-decoder --version` could have
+   > reported a different number depending on which implementation an operator ran.
+   > `repo-hygiene.sh` now fails when the five disagree, so the checklist and the gate say the
+   > same thing.
 4. Updates any per-version doc references (e.g. "X-test suite (as of vN.M.0)" in MAINTAINER-GUIDE.md §10).
 
 > **Watch the footer (step 2).** This step was silently skipped on the `1.4.0` and `1.4.1` cuts: the body sections were dated correctly but the footer's `[Unreleased]` link was left pointing at `v1.3.0...HEAD` and no `[1.4.0]`/`[1.4.1]` entries were added. It was repaired during the `1.5.0` cut. The body roll-up (step 1) is visible in the rendered changelog so it's hard to forget; the footer is easy to miss because nothing breaks without it. When cutting, after editing, confirm the footer's `[Unreleased]` line points at the *new* version (`compare/v<new>...HEAD`) and that every released version since the last footer update has its own `compare/<prev>...<this>` line — `git tag --sort=-creatordate` is the cross-check.

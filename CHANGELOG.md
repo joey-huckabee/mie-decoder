@@ -17,6 +17,20 @@ full release workflow.
 
 ### Changed
 
+- **Nothing checked that the three implementations agreed on the version, and
+  the release checklist named four of the five places it lives.** C++ was added
+  to this repository after that checklist was written and never got added to it,
+  so `mie-decoder --version` could have reported a different number depending on
+  which implementation an operator ran — while every release to date has been a
+  **joint cut** shipping one version from one tag.
+
+  `repo-hygiene.sh` now fails when `rust/Cargo.toml`, `rust/Cargo.lock`,
+  `python/pyproject.toml`, `cpp/src/cli.cpp` (`kVersion`, what `--version`
+  actually prints) and `cpp/CMakeLists.txt` disagree, naming the offenders.
+  Proven by planting a disagreement and confirming the failure. The
+  `MAINTAINER-GUIDE` checklist now names all five, so the written procedure and
+  the gate say the same thing.
+
 - **`docs/OPEN-DECISIONS.md` is retired.** It held questions blocked on a
   maintainer's judgement rather than on effort. Three of its four are now
   settled — the merge-overwrite question (closed, no change, pinned by the

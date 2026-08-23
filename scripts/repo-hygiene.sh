@@ -122,6 +122,27 @@ elif [[ "$toml_ver" != "$lock_ver" ]]; then
     bad "Cargo.toml is $toml_ver but Cargo.lock says $lock_ver — run \`cargo check\`"
 fi
 
+# ── 6b. Joint-cut version agreement ───────────────────────────────────
+# Every release so far has been a JOINT CUT: the three implementations ship the
+# same version from one tag. Nothing enforced that. The version lives in five
+# places and the release checklist named four of them -- C++ was added to the
+# repository after that checklist was written and never got added to it, so
+# `mie-decoder --version` could report a different number depending on which
+# implementation the operator happened to run.
+step "all three implementations declare the same version"
+py_ver=$(awk '/^\[(tool\.poetry|project)\]/{p=1;next} /^\[/{p=0} p && /^version *=/{gsub(/[" ]/,""); sub(/version=/,""); print; exit}' python/pyproject.toml)
+cpp_ver=$(awk -F'"' '/kVersion *=/{print $2; exit}' cpp/src/cli.cpp)
+cmake_ver=$(awk '/^ *VERSION [0-9]/{print $2; exit}' cpp/CMakeLists.txt)
+if [[ -z "$py_ver" || -z "$cpp_ver" || -z "$cmake_ver" ]]; then
+    bad "could not read a version (python=$py_ver cpp=$cpp_ver cmake=$cmake_ver)"
+elif [[ "$toml_ver" != "$py_ver" || "$toml_ver" != "$cpp_ver" || "$toml_ver" != "$cmake_ver" ]]; then
+    list "rust/Cargo.toml        $toml_ver" \
+         "python/pyproject.toml  $py_ver" \
+         "cpp/src/cli.cpp        $cpp_ver" \
+         "cpp/CMakeLists.txt     $cmake_ver"
+    bad "implementations disagree on the version — a joint cut must ship one number"
+fi
+
 # ── 7. No forgotten dbg!() ────────────────────────────────────────────
 step "no dbg!() in Rust sources"
 offenders=()
