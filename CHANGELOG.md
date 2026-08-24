@@ -243,6 +243,49 @@ full release workflow.
 
 ### Fixed
 
+- **Rust reported the error instead of answering a pending `--help`.**
+  `decode --nonsense --help` printed help in C++ and Python and reported the
+  unknown option in Rust, which was the last shape in the CLI where Rust was
+  the odd one out. An operator whose command line is wrong is the one most
+  likely to be asking for help, and answering the question they did not ask is
+  the least useful response available.
+
+  Help now outranks a **deferred** diagnostic — an unrecognised option, or a
+  value this CLI validates after parsing — in all three. It still does **not**
+  outrank a failed value *consumption*: `--log-level -h` and `--config --help`
+  remain usage errors, because a flag that cannot take a value leaves the rest
+  of the command line uninterpretable, so nothing in it can be attributed to
+  the right flag.
+
+  That split is `argparse`'s, and it is a real distinction rather than an
+  accident: it raises immediately when it cannot structurally take a value and
+  defers everything else until after the help action has had its chance. Rust
+  expresses it by draining the argument iterator at the point of a consumption
+  failure, so the "is help still pending" test answers `false` there — which
+  also avoids adding a variant to the public `ParseError` and tripping the
+  SemVer gate.
+
+  Six shapes moved from Rust-is-the-outlier to all-three-agree. One moved the
+  other way: `--max-sort-group abc --help` now exits `0` in Rust as it does in
+  C++, where Python exits `4`. Python's answer there comes from `argparse`
+  wiring that flag's conversion into parsing via `type=int` while
+  `--time-format` and the filter flags are validated afterwards — a fact about
+  which validations live inside `argparse`, not a rule, and reproducing it
+  would mean copying a list rather than a principle. `L2-CLI-017` records both
+  that and the one shape where **C++** is still the outlier (it answers help
+  offered as a flag's value), which is what currently blocks pinning any of
+  this in the conformance suite.
+
+- **The trace-matrix collector read only the first requirement id per marker.**
+  `@pytest.mark.requirement("L2-WRT-022", "L3-WRT-003", "L2-CFG-001")` is used
+  23 times in the Python suite, and the collector took `args[0]` and discarded
+  the rest — so a requirement named second or third lost the artifact that
+  verifies it and the matrix understated its coverage. Nothing failed: the row
+  still rendered, just with fewer artifacts than exist, which is the same
+  silent-undercount the collector had once before with Rust attributes. Found
+  because it dropped one of the links added by this change. Twelve
+  requirements regained artifacts.
+
 - **C++ answered `--version` anywhere on the command line, and `--HELP` as
   help.** Both were found while making room for `--`, and in both C++ was the
   only implementation doing it. The version and help scan ran over the whole

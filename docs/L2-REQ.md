@@ -959,6 +959,25 @@ The scoping rule is the part worth stating explicitly, because the plausible alt
 The conformance suite therefore exercises `--` only immediately before the input paths, which all three implementations and all five interpreters handle identically. The affected shapes are pinned by each implementation's own tests, and the Python tests assert the *interpreter's own* answer so they stay honest across the supported range.
 **Verification Method**: Test (T)
 
+#### L2-CLI-017
+
+**Parent**: L1-CLI-001
+**Statement**: A pending `-h`/`--help` SHALL outrank a **deferred** diagnostic. When the command line is otherwise invalid — an unrecognised option, or a flag value this CLI validates after parsing — and a help flag appears later and before any `--`, the CLI SHALL print help and exit `0` rather than report the error.
+
+It SHALL NOT outrank a failed value **consumption**. When a flag that requires a value cannot take one — because the argument list ended, or because the next token looks like an option (L2-CLI-015) — that is a usage error (exit `4`) and a later help flag SHALL NOT rescue it. `--log-level -h` and `--config --help` are usage errors in every implementation.
+
+A help flag after `--` is a path, not a request (L2-CLI-016), so `decode --nonsense -- --help` is a usage error.
+
+**Rationale**: An operator whose command line is wrong is the one most likely to be asking for help; answering the question they did not ask is the least useful response available. Python and C++ both did this and Rust did not, so `decode --nonsense --help` printed help in two implementations and reported the unknown option in the third.
+
+The split between the two halves is `argparse`'s, and it is a real distinction rather than an accident: it raises immediately when it cannot structurally take a value — at which point the rest of the command line is uninterpretable, because nothing downstream can be attributed to the right flag — and defers everything else until after the help action has had its chance. Rust expresses it by draining the argument iterator on a consumption failure, so the "is help still pending" test answers `false` without a new variant on the public `ParseError`.
+
+**Known divergences**, both pre-existing and neither introduced here:
+
+1. **C++ answers help offered as a flag's value.** `--log-level -h` exits `0` there and `4` in the other two, because the C++ help scan runs over the argument vector without knowing which tokens are values. Rust and Python agree; C++ is the outlier.
+2. **`--max-sort-group abc --help`** exits `0` in Rust and C++ and `4` in Python. `argparse` wires that flag's conversion into parsing via `type=int`, so the failure is immediate there, while `--time-format` and the filter flags are validated after `parse_args` and therefore let help win. That is an implementation accident of which validations live inside `argparse`, not a rule; reproducing it elsewhere would mean copying a list rather than a principle.
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-MRG: Multi-file time-sorted merge

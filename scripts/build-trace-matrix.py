@@ -6,7 +6,7 @@ markers, and emits a single trace matrix document:
 
 1. ``docs/L1-REQ.md`` — for L1 ids and their declared verification methods
 2. ``docs/L2-REQ.md``, ``docs/L3-REQ.md`` — for L2/L3 ids with ``Parent:`` fields
-3. ``python/tests/`` — for every ``@pytest.mark.requirement("L<N>-<CAT>-<NNN>")``
+3. ``python/tests/`` — for every id in every ``@pytest.mark.requirement(...)``
    marker, collected via AST parse
 4. ``src/**/*.rs`` and ``tests/*.rs`` — for every ``/// Requirements: ...``
    doc-comment line immediately preceding a ``#[test]`` item, collected via a
@@ -267,26 +267,37 @@ def collect_python_markers(tests_dir: Path) -> dict[str, list[str]]:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for decorator in node.decorator_list:
-                req_id = _extract_pytest_requirement_id(decorator)
-                if req_id:
+                for req_id in _extract_pytest_requirement_ids(decorator):
                     rel = py_file.relative_to(ROOT).as_posix()
                     marker_map[req_id].append(f"{rel}::{node.name}")
     return marker_map
 
 
-def _extract_pytest_requirement_id(decorator: ast.expr) -> str | None:
-    """Return the requirement id from a ``@pytest.mark.requirement(...)`` decorator."""
+def _extract_pytest_requirement_ids(decorator: ast.expr) -> list[str]:
+    """Return EVERY requirement id from a ``@pytest.mark.requirement(...)``.
+
+    A marker may name several — ``@pytest.mark.requirement("L2-WRT-022",
+    "L3-WRT-003", "L2-CFG-001")`` — and 23 of them do. This read only
+    ``args[0]`` and discarded the rest, so a requirement named second or
+    third lost the artifact that verifies it and the matrix understated its
+    coverage. Nothing failed: the row still rendered, just with fewer
+    artifacts than exist, which is the same silent-undercount failure the
+    collector had once before with Rust attributes.
+
+    Returns:
+        The string ids in marker order, or an empty list if this decorator
+        is not a requirement marker.
+    """
     if not isinstance(decorator, ast.Call):
-        return None
+        return []
     func = decorator.func
     if not (isinstance(func, ast.Attribute) and func.attr == "requirement"):
-        return None
-    if not decorator.args:
-        return None
-    first_arg = decorator.args[0]
-    if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
-        return first_arg.value
-    return None
+        return []
+    return [
+        arg.value
+        for arg in decorator.args
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+    ]
 
 
 _FN_DECL = re.compile(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)\s*[(<]")

@@ -420,14 +420,49 @@ fn parse_global_flags(
 
 /// Turn a subcommand parse result into `Command`, or an `Err(code)` for `run`
 /// to return: `HelpRequested` prints help and exits `0`; `Other` dies (usage).
-fn parse_or_help<T>(result: Result<T, ParseError>) -> Result<T, ExitCode> {
+/// Is a help request still pending in the unconsumed arguments?
+///
+/// An operator whose command line is wrong is the one most likely to have
+/// asked for help, so help outranks a *deferred* diagnostic: an unknown
+/// option, or a value this CLI validates after parsing. Python and C++ both
+/// answer help for `decode --nonsense --help`; Rust reported the unknown
+/// option and was the odd one out.
+///
+/// It does NOT outrank a failed value *consumption* -- see `next_value`, which
+/// drains the iterator precisely so this returns `false` there. That split is
+/// `argparse`'s: it raises immediately when it cannot structurally take a
+/// value, and defers everything else until after the help action has had its
+/// chance.
+///
+/// Bounded by `--`, because after the end-of-options separator a `-h` is a
+/// path and not a request (L2-CLI-016).
+fn help_pending(iter: &mut ArgIter<'_>) -> bool {
+    for token in iter.by_ref() {
+        if token == "--" {
+            return false;
+        }
+        if token == "-h" || token == "--help" {
+            return true;
+        }
+    }
+    false
+}
+
+fn parse_or_help<T>(result: Result<T, ParseError>, iter: &mut ArgIter<'_>) -> Result<T, ExitCode> {
     match result {
         Ok(c) => Ok(c),
         Err(ParseError::HelpRequested) => {
             print!("{HELP}");
             Err(ExitCode::SUCCESS)
         }
-        Err(ParseError::Other(e)) => Err(die(&e)),
+        Err(ParseError::Other(e)) => {
+            // A pending `-h` outranks a deferred diagnostic; see `help_pending`.
+            if help_pending(iter) {
+                print!("{HELP}");
+                return Err(ExitCode::SUCCESS);
+            }
+            Err(die(&e))
+        }
     }
 }
 
@@ -435,18 +470,31 @@ fn parse_or_help<T>(result: Result<T, ParseError>) -> Result<T, ExitCode> {
 /// `Command`. `Err(code)` means `run` should return that exit code.
 fn parse_subcommand(cmd_token: &str, iter: &mut ArgIter<'_>) -> Result<Command, ExitCode> {
     match cmd_token {
-        "decode" => Ok(Command::Decode(Box::new(parse_or_help(parse_decode(
+        "decode" => Ok(Command::Decode(Box::new(parse_or_help(
+            parse_decode(iter),
             iter,
-        ))?))),
-        "count" => Ok(Command::Count(parse_or_help(parse_count(iter))?)),
-        "dump" => Ok(Command::Dump(Box::new(parse_or_help(parse_dump(iter))?))),
+        )?))),
+        "count" => Ok(Command::Count(parse_or_help(parse_count(iter), iter)?)),
+        "dump" => Ok(Command::Dump(Box::new(parse_or_help(
+            parse_dump(iter),
+            iter,
+        )?))),
         // No `-h`/`--help` arm: `parse_global_flags` intercepts both before a
         // subcommand token is ever produced, so one here was unreachable — until
         // `--` made it reachable, and then wrong. After the end-of-options
         // separator the next token is a subcommand NAME, so `-- -h` must report
         // an unknown command rather than print help, which is what `argparse`
         // does (there `-h` becomes a positional and fails the choice check).
-        other => Err(die(&format!("Unknown command: {other:?}"))),
+        // An unrecognised command is a deferred diagnostic like any other, so a
+        // pending `-h` outranks it: `--nonsense --help` prints help, matching
+        // both of the other implementations.
+        other => {
+            if help_pending(iter) {
+                print!("{HELP}");
+                return Err(ExitCode::SUCCESS);
+            }
+            Err(die(&format!("Unknown command: {other:?}")))
+        }
     }
 }
 
@@ -543,15 +591,28 @@ fn starts_like_a_number(token: &str) -> bool {
 }
 
 fn next_value(name: &str, iter: &mut ArgIter<'_>) -> Result<String, String> {
-    match iter.peek() {
-        None => Err(format!("{name} requires a value")),
-        Some(token) if looks_like_option(token) => Err(format!(
+    // A flag that cannot get its value is a HARD stop, and the error arms
+    // below drain the iterator to say so. Everything after such a flag is
+    // uninterpretable -- we do not know which tokens were meant to be its
+    // value -- so nothing in it may be honoured, including a `-h`.
+    //
+    // That is the line `argparse` draws too: it raises immediately when it
+    // cannot structurally take a value, so `--log-level -h` and
+    // `--config --help` are usage errors there, while a DEFERRED diagnostic
+    // (an unknown option, or a value validated after parsing) lets a later
+    // help request win. Draining is what makes `help_pending` answer `false`
+    // here, without adding a variant to the public `ParseError`.
+    let failure = match iter.peek() {
+        None => format!("{name} requires a value"),
+        Some(token) if looks_like_option(token) => format!(
             "{name} requires a value, but the next argument is an option: {token}; \
              to pass it as a value, write {name}={token}"
-        )),
+        ),
         // `peek` returned `Some`, so `next` cannot be `None`.
-        Some(_) => Ok(iter.next().unwrap_or_default()),
-    }
+        Some(_) => return Ok(iter.next().unwrap_or_default()),
+    };
+    while iter.next().is_some() {}
+    Err(failure)
 }
 
 /// One argument token, split at the first `=`.
@@ -1729,6 +1790,64 @@ mod tests {
     }
 
     /// `--flag=value` syntax with comma-separation.
+    /// Help outranks a **deferred** diagnostic.
+    ///
+    /// An operator whose command line is wrong is the one most likely to be
+    /// asking for help. Python and C++ both answered help here; Rust reported
+    /// the unknown option and was the odd one out.
+    /// Requirements: L2-CLI-017
+    #[test]
+    fn help_outranks_a_deferred_diagnostic() {
+        // Unrecognised option, then a help request.
+        assert!(help_pending(&mut args(&["--help"])));
+        assert!(help_pending(&mut args(&["rec.mie", "-h"])));
+
+        // Nothing pending is the ordinary case.
+        assert!(!help_pending(&mut args(&["rec.mie"])));
+        assert!(!help_pending(&mut args(&[])));
+    }
+
+    /// A help flag after `--` is a path, not a request (L2-CLI-016), so it
+    /// cannot rescue a broken command line either.
+    /// Requirements: L2-CLI-016, L2-CLI-017
+    #[test]
+    fn help_after_the_end_of_options_marker_is_not_pending() {
+        assert!(!help_pending(&mut args(&["--", "--help"])));
+        assert!(!help_pending(&mut args(&["--", "-h"])));
+        // ...but before it, it still counts.
+        assert!(help_pending(&mut args(&["-h", "--", "--help"])));
+    }
+
+    /// Help does NOT outrank a failed value **consumption**.
+    ///
+    /// When a flag cannot take a value the rest of the command line is
+    /// uninterpretable — nothing downstream can be attributed to the right
+    /// flag — so `next_value` drains the iterator and a later `-h` is not
+    /// pending. That is `argparse`'s split too: it raises immediately here and
+    /// defers everything else.
+    /// Requirements: L2-CLI-015, L2-CLI-017
+    #[test]
+    fn a_failed_value_consumption_is_not_rescued_by_a_later_help() {
+        // The option-like guard fires, and the drain leaves nothing pending.
+        let mut it = args(&["-h", "--help", "rec.mie"]);
+        let err = next_value("--mux-delimiter", &mut it).unwrap_err();
+        assert!(err.contains("--mux-delimiter"), "got {err:?}");
+        assert!(
+            !help_pending(&mut it),
+            "a consumption failure must consume the rest of the line"
+        );
+
+        // Same when the arguments simply ran out.
+        let mut it = args(&[]);
+        assert!(next_value("--output", &mut it).is_err());
+        assert!(!help_pending(&mut it));
+
+        // And the success path leaves the iterator exactly where it was.
+        let mut it = args(&["value", "--help"]);
+        assert_eq!(next_value("--mux-delimiter", &mut it).unwrap(), "value");
+        assert!(help_pending(&mut it));
+    }
+
     /// POSIX end-of-options. After `--` every token is a path, however it is
     /// spelled — which is the only way to decode a file whose name begins
     /// with a dash.

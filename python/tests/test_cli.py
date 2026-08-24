@@ -724,3 +724,51 @@ class TestEndOfOptions:
         # only `decode` has the plural `inputs`, which is what feeds the merge.
         assert str(parser.parse_args(["count", "--", "-weird.mie"]).input) == "-weird.mie"
         assert str(parser.parse_args(["dump", "--", "-weird.mie"]).input) == "-weird.mie"
+
+
+class TestHelpPrecedence:
+    """A pending ``-h``/``--help`` outranks a *deferred* diagnostic
+    (L2-CLI-017).
+
+    ``argparse`` gives this for free: the help action fires while parsing,
+    whereas unrecognised arguments are reported afterwards. Rust reported the
+    unknown option instead and was the odd one out until it was changed to
+    match. These tests pin Python's side so the reference cannot drift.
+    """
+
+    @pytest.mark.requirement("L2-CLI-017")
+    def test_help_wins_over_an_unrecognised_option(self) -> None:
+        """The operator with a broken command line is the one asking."""
+        parser = cli.build_parser()
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(["decode", "rec.mie", "--nonsense", "--help"])
+        assert excinfo.value.code == EXIT_OK
+
+    @pytest.mark.requirement("L2-CLI-017")
+    def test_help_does_not_rescue_a_failed_value_consumption(self) -> None:
+        """A flag that cannot take a value is a hard stop.
+
+        ``argparse`` raises immediately rather than deferring, so the help
+        action is never reached. Rust reproduces this by draining its argument
+        iterator at the same point; C++ does not, and answers help here — the
+        one shape in this area where it is the outlier, which is why there is
+        no conformance case for it yet.
+        """
+        parser = cli.build_parser()
+        for argv in (
+            ["--log-level", "-h", "decode", "rec.mie"],
+            ["--config", "--help", "decode", "rec.mie"],
+            ["decode", "rec.mie", "--mux-delimiter", "-h", "--help"],
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                parser.parse_args(argv)
+            assert excinfo.value.code != EXIT_OK, argv
+
+    @pytest.mark.requirement("L2-CLI-016", "L2-CLI-017")
+    def test_help_after_the_end_of_options_marker_is_a_path(self) -> None:
+        """``--`` demotes a later help flag to an argument, so it cannot
+        rescue a broken command line."""
+        parser = cli.build_parser()
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(["decode", "--nonsense", "--", "--help"])
+        assert excinfo.value.code != EXIT_OK

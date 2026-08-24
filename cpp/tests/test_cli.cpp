@@ -98,7 +98,7 @@ int run_capturing_stdout(const Args& argv, std::string& out) {
 
 }  // namespace
 
-TEST_CASE("version and help are answered before anything else", "[cli][L3-CPP-014]") {
+TEST_CASE("version and help are answered before anything else", "[cli][L3-CPP-014][L2-CLI-017]") {
     SECTION("every accepted spelling exits 0") {
         // Note the asymmetry: version is case-insensitive, help is not.
         // That is not a tidiness question -- Rust and Python both reject
