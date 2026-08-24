@@ -551,7 +551,14 @@ class TestFlagValueSyntax:
         assert vars(separated) == vars(joined)
         assert joined.log_level == "ERROR"
 
-    OPTION_LIKE: tuple[str, ...] = ("--no-mux", "--foo", "-o", "-x", "-5e3", "-0x5", "-1a")
+    # Only shapes every supported interpreter agrees on. ``argparse``'s
+    # negative-number matcher changed in 3.14 -- an anchored full match
+    # (``^-\d+$|^-\d*\.\d+$``) became a prefix test (``-\.?\d``) -- so
+    # "-5e3", "-0x5" and "-1a" are options on 3.10-3.13 and values on 3.14.
+    # This project supports 3.10 through 3.14, so those shapes are outside the
+    # L2-CLI-015 contract and are asserted nowhere; see
+    # ``test_the_version_dependent_corner_is_not_asserted`` below.
+    OPTION_LIKE: tuple[str, ...] = ("--no-mux", "--foo", "-o", "-x", "-abc", "--1")
     VALUE_LIKE: tuple[str, ...] = ("-", "-5", "-5.5", "-.5", "- x")
 
     @pytest.mark.requirement("L2-CLI-015")
@@ -596,6 +603,30 @@ class TestFlagValueSyntax:
         # "not specified", so a config file still decides) rather than a bool.
         # What matters is that ``--no-mux`` did not take effect.
         assert not parsed.no_mux
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_the_version_dependent_corner_is_not_asserted(self) -> None:
+        """Pin *that* the corner is version-dependent, not which way it falls.
+
+        ``argparse`` classifies "-5e3" as an option on Python 3.10-3.13 and as
+        a value on 3.14, because the negative-number matcher went from an
+        anchored full match to a prefix test. Rust and C++ follow 3.14. This
+        test asserts only that the interpreter's answer matches its own
+        matcher, so it passes on every supported version and would fail if a
+        future release changed the rule again -- which is the signal that the
+        cross-implementation choice needs revisiting.
+        """
+        parser = cli.build_parser()
+        prefix_test = bool(parser._negative_number_matcher.match("-5e3"))
+
+        if prefix_test:
+            # 3.14+: begins like a number, therefore a value.
+            parsed = parser.parse_args(["decode", "rec.mie", "--mux-delimiter", "-5e3"])
+            assert parsed.mux_delimiter == "-5e3"
+        else:
+            # 3.13 and earlier: not a full-match number, therefore an option.
+            with pytest.raises(SystemExit):
+                parser.parse_args(["decode", "rec.mie", "--mux-delimiter", "-5e3"])
 
     @pytest.mark.requirement("L2-CLI-005")
     def test_a_lone_dash_output_is_a_path_not_stdout(self) -> None:

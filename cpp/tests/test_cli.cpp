@@ -273,7 +273,11 @@ TEST_CASE("the separated form refuses a value that looks like an option",
     const TempFile input("mie-cli-optlike.mie", valid_recording());
 
     SECTION("option-like tokens are refused") {
-        const char* tokens[] = {"--no-mux", "--foo", "-o", "-x", "-5e3", "-0x5", "-1a"};
+        // Only shapes every supported Python version agrees on. "-5e3",
+        // "-0x5" and "-1a" begin like numbers under the 3.14 matcher and are
+        // values; 3.10-3.13 called them options, so they are outside the
+        // contract and not asserted here.
+        const char* tokens[] = {"--no-mux", "--foo", "-o", "-x", "-abc", "--1"};
         for (std::size_t i = 0; i < sizeof(tokens) / sizeof(tokens[0]); ++i) {
             INFO(tokens[i]);
             REQUIRE(mie::cli::run(args("decode", input.str(), "--mux-delimiter", tokens[i])) ==

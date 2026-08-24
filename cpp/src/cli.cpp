@@ -137,40 +137,35 @@ bool write_out(std::FILE* stream, const std::string& text) {
 /// The Rust parser spells both forms out at every flag, which is twenty-odd
 /// near-identical match arms and twenty-odd chances for one of them to drift.
 /// Handling it once here is the same behaviour with one place to be wrong.
-/// Python's argparse `^-\d+$|^-\d*\.\d+$`, hand-rolled: <regex> is banned
-/// outright here (libstdc++ had none until GCC 4.9, see ADR-0001).
+/// Does this token begin like a number? Python 3.14 argparse's `-\.?\d`,
+/// applied as a PREFIX test the way re.match applies it -- a dash, an optional
+/// decimal point, then a digit. Hand-rolled because <regex> is banned outright
+/// here (libstdc++ had none until GCC 4.9, see ADR-0001).
 ///
-/// Deliberately narrow, matching the original exactly: "-5", "-.5" and "-5.5"
-/// are numbers; "-5e3" and "-0x5" are not, because argparse says they are not.
-/// Widening it would re-open the divergence this closes.
-bool is_negative_number(const std::string& token) {
+/// This deliberately accepts more than "is a number": "-5e3", "-0x5" and "-1a"
+/// all begin like one and are therefore values. That is the point -- such a
+/// token is far likelier to be a mistyped number than a flag, and letting it
+/// through means the flag's OWN validator reports it, so `--mux-field -1a`
+/// says "requires a number, got -1a" rather than the much less helpful "the
+/// next argument is an option".
+///
+/// THIS RULE IS VERSION-DEPENDENT IN PYTHON AND WE PIN THE NEWER ONE. Through
+/// 3.13 argparse used an anchored full match, `^-\d+$|^-\d*\.\d+$`, so only
+/// plain decimals were exempt; 3.14 replaced it with the prefix test above.
+/// This project supports Python 3.10 through 3.14, so argparse does not agree
+/// with itself across the supported range and no choice here can match all of
+/// them. We follow 3.14: simpler, where Python is going, and the more
+/// permissive of the two, so adopting it cannot newly reject an invocation
+/// that used to work. The shapes it disagrees with 3.10-3.13 about are
+/// consequently outside the specified contract (L2-CLI-015) and are kept out
+/// of the conformance suite.
+bool starts_like_a_number(const std::string& token) {
     if (token.size() < 2 || token[0] != '-') {
         return false;
     }
-    const std::string rest = token.substr(1);
-    const std::string::size_type dot = rest.find('.');
-    if (dot == std::string::npos) {
-        // -\d+
-        for (std::string::size_type i = 0; i < rest.size(); ++i) {
-            if (rest[i] < '0' || rest[i] > '9') {
-                return false;
-            }
-        }
-        return true;
-    }
-    // -\d*\.\d+ : at most one point, at least one digit after it.
-    if (rest.find('.', dot + 1) != std::string::npos || dot + 1 >= rest.size()) {
-        return false;
-    }
-    for (std::string::size_type i = 0; i < rest.size(); ++i) {
-        if (i == dot) {
-            continue;
-        }
-        if (rest[i] < '0' || rest[i] > '9') {
-            return false;
-        }
-    }
-    return true;
+    // The decimal point is optional; a digit after it is not.
+    const std::string::size_type at = (token[1] == '.') ? 2 : 1;
+    return at < token.size() && token[at] >= '0' && token[at] <= '9';
 }
 
 /// Does this token look like an option rather than a value?
@@ -187,8 +182,9 @@ bool is_negative_number(const std::string& token) {
 /// real invocation working:
 ///
 ///   - a lone "-" is a value, so `-o -` writes a file named "-" (L2-CLI-005);
-///   - a negative number is a value, so `--mux-field -1` (a documented
-///     feature: negative indices count from the end) still parses, and
+///   - anything beginning like a number is a value (see
+///     starts_like_a_number), so `--mux-field -1` (a documented feature:
+///     negative indices count from the end) still parses, and
 ///     `--collapse-window-us -5` still reaches its own validator to be
 ///     refused for being negative rather than for looking like a flag;
 ///   - a token containing a space is a value, since no option is spelled so.
@@ -203,7 +199,7 @@ bool looks_like_option(const std::string& token) {
     if (token.find(' ') != std::string::npos) {
         return false;
     }
-    return !is_negative_number(token);
+    return !starts_like_a_number(token);
 }
 
 class ArgReader {

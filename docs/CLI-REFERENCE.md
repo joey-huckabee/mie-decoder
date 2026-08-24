@@ -73,20 +73,28 @@ Three details are worth stating, because each has a defensible opposite:
   so. This is why it is the right form to generate from a script.
 
   A token "looks like an option" when it starts with `-`, is more than one
-  character, has no space in it, and is not a negative number. Those exemptions
-  are deliberate — each keeps a real invocation working:
+  character, has no space in it, and does not begin like a number. Those
+  exemptions are deliberate — each keeps a real invocation working:
 
   | Passed as a value | Treated as | Why it matters |
   |---|---|---|
   | `-` | value | `-o -` writes a file named `-` |
   | `-1`, `-5.5`, `-.5` | value | `--mux-field -1` counts from the end |
   | `- x` | value | no flag is spelled with a space |
-  | `-x`, `-o`, `--foo` | **option → error** | almost always a forgotten value |
-  | `-5e3`, `-0x5` | **option → error** | not a *decimal* negative number |
+  | `-x`, `-o`, `-abc`, `--foo` | **option → error** | almost always a forgotten value |
 
-  The last row is the one that surprises people: only plain decimals are
-  exempt. It is that way because Python's `argparse` draws the line there, and
-  all three implementations follow one rule rather than three similar ones.
+  Note "begins like a number", not "is a number": `-1a` is treated as a value,
+  so a mistyped number is reported by **the flag itself**, naming the bad value
+  (`--mux-field -1a` → *invalid `--mux-field`: "-1a"*), rather than by the
+  guard, which could only have told you it looked like an option.
+
+  > **One corner is version-dependent in Python.** `argparse` changed how it
+  > recognises number-like tokens in **3.14**: before that, only plain decimals
+  > were exempt, so `-5e3`, `-0x5` and `-1a` were errors. Rust and C++ follow
+  > 3.14's rule, so on Python 3.10–3.13 those particular shapes are rejected
+  > where the other two accept them. Everything above the note is identical on
+  > every supported version. If you need a value of that shape, use the joined
+  > form, which is unambiguous everywhere.
 
 Flags that take no value — `--no-mux`, `--separate-errors`, `--allow-partial`
 and the rest — have nothing to attach, and `--no-mux=true` is a usage error

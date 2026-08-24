@@ -463,17 +463,19 @@ impl From<String> for ParseError {
 /// that exited 0. Refusing turns that into a usage error, which is the whole
 /// value of the check: the failure was silent, not merely inconsistent.
 ///
-/// The rule is `argparse`'s, deliberately, because Python has always behaved
-/// this way and the alternative was to make two implementations agree with
-/// each other and disagree with the third. Its three exemptions are not
-/// quirks to be tidied away — each keeps a real invocation working:
+/// The rule is `argparse`'s, deliberately, because Python behaves this way and
+/// the alternative was to make two implementations agree with each other and
+/// disagree with the third. Its three exemptions are not quirks to be tidied
+/// away — each keeps a real invocation working:
 ///
 /// * **A lone `-`** is a value. `-o -` writes a file named `-` (L2-CLI-005).
-/// * **A negative number** is a value, matched exactly as `argparse` does it
-///   (`^-\d+$|^-\d*\.\d+$`). `--mux-field -1` is a documented feature —
-///   negative indices count from the end — and `--collapse-window-us -5` must
-///   still reach its own validator to be refused for being negative, rather
-///   than being refused here for looking like a flag.
+/// * **Anything beginning like a number** is a value; see
+///   [`starts_like_a_number`], which is also where the one version-dependent
+///   corner of `argparse` is documented. `--mux-field -1` is a documented
+///   feature — negative indices count from the end — and
+///   `--collapse-window-us -5` must still reach its own validator to be
+///   refused for being negative, rather than being refused here for looking
+///   like a flag.
 /// * **A token containing a space** is a value, since no option is spelled
 ///   that way.
 ///
@@ -484,33 +486,42 @@ fn looks_like_option(token: &str) -> bool {
     if !token.starts_with('-') || token.chars().count() < 2 || token.contains(' ') {
         return false;
     }
-    !is_negative_number(token)
+    !starts_like_a_number(token)
 }
 
-/// `argparse`'s `^-\d+$|^-\d*\.\d+$`, hand-rolled because this crate has no
-/// regex dependency and is not going to acquire one for four lines.
+/// Does this token begin like a number? `argparse`'s `-\.?\d`, applied as a
+/// **prefix** test the way `re.match` applies it — a dash, an optional decimal
+/// point, then a digit. Hand-rolled because this crate has no regex dependency
+/// and is not going to acquire one for three lines.
 ///
-/// Deliberately narrow, matching the original: `-5` and `-.5` and `-5.5` are
-/// numbers; `-5e3` and `-0x5` are not, because `argparse` says they are not.
-/// Widening it here would re-open the divergence this closes.
-fn is_negative_number(token: &str) -> bool {
+/// This deliberately accepts more than "is a number": `-5e3`, `-0x5` and `-1a`
+/// all begin like one and are therefore values. That is the point. Such a
+/// token is far likelier to be a mistyped number than a flag, and letting it
+/// through means the flag's **own** validator reports it, naming the bad
+/// value — `--mux-field -1a` gives `invalid --mux-field: "-1a"` instead of the
+/// much less helpful "the next argument is an option".
+///
+/// **This rule is version-dependent in Python and we pin the newer one.**
+/// Through 3.13 `argparse` used an anchored full match,
+/// `^-\d+$|^-\d*\.\d+$`, so only plain decimals were exempt; 3.14 replaced
+/// it with the prefix test above. Since this project supports Python 3.10
+/// through 3.14, `argparse` does not agree with *itself* across the supported
+/// range, and no choice here can match all of them. We follow 3.14: it is
+/// simpler, it is where Python is going, and it is the more permissive of the
+/// two, so adopting it cannot newly reject an invocation that used to work.
+///
+/// The shapes this disagrees with Python 3.10-3.13 about — dash, digit, then
+/// junk — are consequently **outside** the specified contract (L2-CLI-015) and
+/// are kept out of the conformance suite. What every version agrees on, and
+/// what the contract does cover, is that a token spelled like an option name
+/// (`-x`, `-o`, `--foo`) is refused and a plain decimal is not.
+fn starts_like_a_number(token: &str) -> bool {
     let Some(rest) = token.strip_prefix('-') else {
         return false;
     };
-    if rest.is_empty() {
-        return false;
-    }
-    match rest.split_once('.') {
-        // `-\d+` — digits only, no point.
-        None => rest.bytes().all(|b| b.is_ascii_digit()),
-        // `-\d*\.\d+` — optional leading digits, then a point, then at least
-        // one digit. A second point makes it not a number.
-        Some((int_part, frac_part)) => {
-            !frac_part.is_empty()
-                && int_part.bytes().all(|b| b.is_ascii_digit())
-                && frac_part.bytes().all(|b| b.is_ascii_digit())
-        }
-    }
+    // The decimal point is optional; a digit after it is not.
+    let rest = rest.strip_prefix('.').unwrap_or(rest);
+    rest.bytes().next().is_some_and(|b| b.is_ascii_digit())
 }
 
 fn next_value(name: &str, iter: &mut ArgIter<'_>) -> Result<String, String> {
@@ -1664,33 +1675,40 @@ mod tests {
 
     /// `--flag=value` syntax with comma-separation.
     /// The predicate itself, at the boundary, because the parse-level tests
-    /// below cannot reach every shape cheaply. These values are argparse's,
-    /// read out of `ArgumentParser._negative_number_matcher` rather than
-    /// guessed: `-5e3` and `-0x5` really are options to argparse, and this
-    /// must not "improve" on that.
+    /// below cannot reach every shape cheaply.
+    ///
+    /// These values are Python 3.14's, read out of its `argparse` source
+    /// rather than guessed: the matcher is `-\.?\d` applied as a **prefix**
+    /// test, so "-5e3", "-0x5" and "-1a" all begin like numbers and are
+    /// values. Python 3.10-3.13 used an anchored full match and called those
+    /// three options instead. We pin 3.14's; `starts_like_a_number` explains
+    /// why, and those shapes are deliberately outside the L2-CLI-015 contract
+    /// because `argparse` does not agree with itself about them.
     /// Requirements: L2-CLI-015
     #[test]
-    fn looks_like_option_matches_argparse() {
-        // Values -- consumed as the argument to a flag.
+    fn looks_like_option_matches_argparse_3_14() {
+        // Values — consumed as the argument to a flag.
         for token in [
-            "", "-", "-5", "-5.5", "-.5", "-0", "-00.5", "- x", "-1 2", "x", "a=b",
+            "", "-", "-5", "-0", "-5.5", "-.5", "-00.5", "-5.", "- x", "-1 2", "x", "a=b",
+            // Begin like a number, so a value; the flag's own validator gets
+            // to complain about the rest, which is the more useful message.
+            "-5e3", "-0x5", "-1a", "-5.5.5", "-1e-3",
         ] {
             assert!(
                 !looks_like_option(token),
                 "{token:?} should be treated as a value"
             );
         }
-        // Option-like -- refused as the argument to a flag.
+        // Option-like — refused as the argument to a flag.
         for token in [
             "-x",
             "-o",
-            "-5e3",
-            "-0x5",
-            "-1a",
+            "-abc",
             "-.",
             "-..5",
-            "-5.5.5",
+            "-+5",
             "--",
+            "--1",
             "--foo",
             "--no-mux",
             "--flag=value",
@@ -1713,6 +1731,8 @@ mod tests {
     /// Requirements: L2-CLI-015
     #[test]
     fn a_flag_like_value_is_refused_in_the_separated_form() {
+        // Only shapes every supported Python version agrees on; see
+        // `looks_like_option_matches_argparse_3_14` for the corner it does not.
         for token in ["--no-mux", "--foo", "-o", "-x"] {
             let err = parse_decode(&mut args(&["--mux-delimiter", token, "rec.mie"])).unwrap_err();
             let ParseError::Other(msg) = err else {

@@ -32,11 +32,9 @@ full release workflow.
   abandoning `argparse`.
 
   A token "looks like an option" when it starts with `-`, is longer than one
-  character, contains no space, and is not a negative number matching
-  `^-\d+$|^-\d*\.\d+$`. That pattern is **copied from `argparse`**, not
-  invented, and deliberately not widened — `-5e3` and `-0x5` are option-like in
-  all three, because a tidier rule here would re-open the divergence. The three
-  exemptions each keep a real invocation working:
+  character, contains no space, and does not **begin** like a number (a dash,
+  an optional `.`, then a digit). The three exemptions each keep a real
+  invocation working:
 
   - a lone `-` is a path, so `-o -` still writes a file named `-` (`L2-CLI-005`)
   - a negative number is a value, so `--mux-field -1` still counts from the end,
@@ -47,10 +45,32 @@ full release workflow.
   **The joined form is unaffected and is the fix**: `--mux-delimiter=--no-mux`
   is unambiguous, remains legal everywhere, and the error message names it.
 
+  Note **begins** like a number, not *is* one: `-1a` is a value, so a mistyped
+  number is reported by the flag itself naming the bad value
+  (`invalid --mux-field: "-1a"`) rather than by the guard, which could only
+  have said it looked like an option.
+
+  **`argparse` does not agree with itself across the Python versions this
+  project supports, and CI is what found that.** The first implementation of
+  this guard matched Python 3.13, because that is what the development machine
+  runs; the Python **3.14** jobs then failed on exactly `-5e3`, `-0x5` and
+  `-1a`. The exemption had changed from an anchored full match
+  (`^-\d+$|^-\d*\.\d+$`, plain decimals only) to a prefix test (`-\.?\d`,
+  anything starting dash-digit). Supporting 3.10 through 3.14 means **no** rule
+  can match every version. Rust and C++ follow **3.14**: simpler to state,
+  where Python is going, and the more permissive of the two, so it cannot newly
+  reject an invocation that used to work.
+
+  `L2-CLI-015` is therefore bounded to the shapes every supported version
+  agrees on — option-name-like tokens are refused; a lone `-`, plain decimals,
+  and space-containing tokens are values. Tokens of the form *dash, digit, then
+  something else* are explicitly outside it and appear in no conformance case.
+
   Verified as a differential sweep over 29 token shapes — decimals, exponent
   and hex forms, embedded spaces, single and double dashes, empty — run against
-  all three binaries: **one** disagreement remains, `--`, and it is a different
-  feature (below). Pinned by 3 conformance cases and 5 Rust / 3 C++ / 11 Python
+  all three binaries: **Rust and C++ agree on every one**. Against Python the
+  remainder is the documented version corner plus `--`, a different feature
+  (below). Pinned by 3 conformance cases and 5 Rust / 3 C++ / 11 Python
   tests. Two new oracles prove the joined form is taken as a *string* rather
   than as the flag: with delimiter `--no-mux` and field `1`, the file
   `alpha--no-muxbravo.mie` yields `MUX=bravo.mie`, which no other reading
