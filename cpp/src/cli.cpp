@@ -97,6 +97,7 @@ struct CliError {
 };
 
 CliError usage_error(const std::string& message) { return CliError(EXIT_USAGE, message); }
+
 CliError config_error(const std::string& message) { return CliError(EXIT_CONFIG, message); }
 CliError runtime_error_(const std::string& message) { return CliError(EXIT_RUNTIME, message); }
 
@@ -426,9 +427,24 @@ struct DecodeArgs {
 DecodeArgs parse_decode(ArgReader& reader) {
     DecodeArgs args;
     std::string value;
+    // POSIX end-of-options: the FIRST `--` is dropped and everything after
+    // it is a path, however it is spelled. A later `--` is an ordinary
+    // positional, which is the only way to name a file called `--`.
+    bool end_of_options = false;
 
     while (!reader.at_end()) {
         const std::string token = reader.peek();
+
+        if (end_of_options) {
+            args.inputs.push_back(token);
+            reader.advance();
+            continue;
+        }
+        if (token == "--") {
+            end_of_options = true;
+            reader.advance();
+            continue;
+        }
 
         if (reader.take_value("-o", "--output", value)) {
             args.output = value;
@@ -586,10 +602,25 @@ struct DumpArgs {
 DumpArgs parse_dump(ArgReader& reader) {
     DumpArgs args;
     bool input_seen = false;
+    bool end_of_options = false;
     std::string value;
 
     while (!reader.at_end()) {
         const std::string token = reader.peek();
+        if (end_of_options) {
+            if (input_seen) {
+                throw usage_error("unexpected positional argument: " + token);
+            }
+            args.input = token;
+            input_seen = true;
+            reader.advance();
+            continue;
+        }
+        if (token == "--") {
+            end_of_options = true;
+            reader.advance();
+            continue;
+        }
         if (reader.take_flag("--raw")) {
             args.raw = true;
         } else if (reader.take_value("--offset", value)) {
@@ -620,10 +651,19 @@ DumpArgs parse_dump(ArgReader& reader) {
 
 std::string parse_count(ArgReader& reader) {
     std::vector<std::string> inputs;
+    bool end_of_options = false;
     while (!reader.at_end()) {
         const std::string token = reader.peek();
-        if (!token.empty() && token[0] == '-' && token != "-") {
-            throw usage_error("unknown option " + token);
+        if (!end_of_options) {
+            // See parse_decode for the end-of-options rule.
+            if (token == "--") {
+                end_of_options = true;
+                reader.advance();
+                continue;
+            }
+            if (!token.empty() && token[0] == '-' && token != "-") {
+                throw usage_error("unknown option " + token);
+            }
         }
         inputs.push_back(token);
         reader.advance();
@@ -1101,9 +1141,11 @@ bool is_version_flag(const std::string& arg) {
     return arg == "-V" || arg == "-v" || text::equals_ignoring_ascii_case(arg, "--version");
 }
 
-bool is_help_flag(const std::string& arg) {
-    return arg == "-h" || text::equals_ignoring_ascii_case(arg, "--help");
-}
+/// Note the asymmetry with `is_version_flag`, which IS case-insensitive:
+/// `--VERSION` is a version request in all three implementations, `--HELP`
+/// is not a help request in any of them. This accepted `--HELP`, which made
+/// C++ the only implementation that did.
+bool is_help_flag(const std::string& arg) { return arg == "-h" || arg == "--help"; }
 
 }  // namespace
 
@@ -1121,7 +1163,14 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
     // Help and version are answered before any other validation, matching the
     // other two implementations: asking a broken invocation for help must
     // produce help, not a usage error about the invocation.
+    //
+    // The scan stops at the FIRST `--`. After the end-of-options separator a
+    // token is a path, not a flag, so `-- --version` asks for a SUBCOMMAND
+    // named "--version" and fails as one, rather than printing the version.
     for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--") {
+            break;
+        }
         if (is_version_flag(args[i])) {
             return write_out(streams.out, version_line() + "\n") ? EXIT_OK : EXIT_RUNTIME;
         }
@@ -1144,6 +1193,14 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
 
         // Global flags may appear before the subcommand.
         while (!reader.at_end()) {
+            if (reader.peek() == "--") {
+                // POSIX end-of-options, scoped to THIS loop: the subcommand
+                // parser gets a fresh scan, so `-- decode rec.mie --no-mux`
+                // still honours `--no-mux`. The next token is the subcommand
+                // NAME, whatever it looks like.
+                reader.advance();
+                break;
+            }
             if (reader.take_value("--config", value)) {
                 globals.config = value;
             } else if (reader.take_value("--log-level", value)) {

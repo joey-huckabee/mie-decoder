@@ -106,6 +106,40 @@ rather than a way to spell "on".
 > tests — `cli-surface-parity` compares flag *names*, which cannot see how a
 > value is attached to one.
 
+### `--`: everything after this is a file name
+
+A file whose name begins with a dash cannot be passed as an ordinary argument —
+the CLI would read it as a flag. `--` marks the end of the options; every token
+after it is a path, whatever it looks like:
+
+```bash
+mie-decoder decode -- -weird-name.mie -o out.csv    # WRONG: -o and out.csv
+                                                     # are also paths now
+mie-decoder decode -o out.csv -- -weird-name.mie    # right: flags first
+```
+
+Put the flags **before** the separator. That is the whole rule, and the first
+example above shows why: `--` is not "escape the next token", it is "stop
+parsing options entirely".
+
+Three details:
+
+- **Only the first `--` is consumed.** A second one is an ordinary path, which
+  is how you decode a file that is genuinely called `--`.
+- **It is scoped to one parser.** A `--` before the subcommand only means "the
+  next word is the subcommand" — `-- decode rec.mie --no-mux` still honours
+  `--no-mux`. It does suppress the global flags, so `-- --version` reports an
+  unknown command instead of printing the version.
+- **It is not a flag value.** `-o -- x.mie` is a usage error; `--` looks like an
+  option, so it is refused as one under the rule above.
+
+> This is `L2-CLI-016`. One corner is **not** identical across implementations:
+> a *trailing* `--` with a flag before it (`decode rec.mie -o out.csv --`) is
+> accepted by Rust and C++ as a no-op but rejected by Python, because
+> `argparse` leaves the separator behind as an unrecognized argument in that
+> interleaving. Put the separator before the paths it applies to and the
+> question does not arise.
+
 ### Global options
 
 Global options are placed **before** the subcommand.

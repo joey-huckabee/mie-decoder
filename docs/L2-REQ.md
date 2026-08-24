@@ -936,6 +936,22 @@ One divergence remains and is **out of scope for this requirement**: `--` as the
 
 **Verification Method**: Test (T)
 
+#### L2-CLI-016
+
+**Parent**: L1-CLI-001
+**Statement**: The CLI SHALL honour `--` as the POSIX end-of-options separator, in every implementation. Within the token stream of a given parser, the **first** `--` SHALL be discarded and every token after it SHALL be treated as a positional argument regardless of spelling; a subsequent `--` is itself an ordinary positional, which is the only way to name a file called `--`.
+
+The separator is **scoped to the parser that consumes it**. A `--` appearing before the subcommand SHALL cause the next token to be taken as the subcommand *name* verbatim — so `-- --version` reports an unknown command rather than printing the version, and `-- -h` does not print help — and SHALL NOT put the subcommand's own parser into end-of-options mode: `-- decode rec.mie --no-mux` still honours `--no-mux`.
+
+`--` SHALL NOT be accepted as a flag's value in the separated form (`-o -- x.mie` is a usage error), which follows from L2-CLI-015 since `--` looks like an option.
+
+**Rationale**: Without it there is no way to decode a file whose name begins with a dash, and the tool is the only thing standing between an operator and a recording they cannot rename. Python inherited the behaviour from `argparse` and had it from the beginning; Rust and C++ reported `--` itself as `unknown option` (exit `4`), so the same command line worked or failed depending on which implementation was installed — precisely the class of drift the CLI-surface-parity gate cannot see, because it compares flag *names*.
+
+The scoping rule is the part worth stating explicitly, because the plausible alternative is wrong: carrying end-of-options across the subcommand boundary would make `-- decode rec.mie --no-mux` silently ignore `--no-mux`, which is the same silent-wrong-answer failure L2-CLI-015 exists to remove.
+
+**Known divergence**: `argparse` is inconsistent about a **trailing** separator when an optional is interleaved before it. `decode rec.mie --` is accepted, but `decode rec.mie -o out.csv --` is a usage error, the `--` surviving as an unrecognized argument. Rust and C++ treat a trailing separator uniformly as a no-op. This is not levelled — it is a defect in `argparse`'s own handling rather than a decision either way — and the conformance suite therefore exercises `--` only in positions where all three agree. The affected shapes are pinned by each implementation's own tests instead.
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-MRG: Multi-file time-sorted merge

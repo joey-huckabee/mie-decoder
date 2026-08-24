@@ -100,12 +100,23 @@ int run_capturing_stdout(const Args& argv, std::string& out) {
 
 TEST_CASE("version and help are answered before anything else", "[cli][L3-CPP-014]") {
     SECTION("every accepted spelling exits 0") {
-        const char* spellings[] = {"--version", "-V", "-v", "--VERSION", "--help", "-h", "--HELP"};
+        // Note the asymmetry: version is case-insensitive, help is not.
+        // That is not a tidiness question -- Rust and Python both reject
+        // `--HELP`, and accepting it made C++ the only one that did.
+        const char* spellings[] = {"--version", "-V", "-v", "--VERSION", "--help", "-h"};
         for (std::size_t i = 0; i < sizeof(spellings) / sizeof(spellings[0]); ++i) {
             std::string out;
             INFO(spellings[i]);
             REQUIRE(run_capturing_stdout(args(spellings[i]), out) == mie::cli::EXIT_OK);
             REQUIRE_FALSE(out.empty());
+        }
+    }
+
+    SECTION("help is case-sensitive, unlike version") {
+        const char* rejected[] = {"--HELP", "--Help", "--hELP"};
+        for (std::size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i) {
+            INFO(rejected[i]);
+            REQUIRE(mie::cli::run(args(rejected[i])) == mie::cli::EXIT_USAGE);
         }
     }
 
@@ -307,6 +318,60 @@ TEST_CASE("the separated form refuses a value that looks like an option",
         // like an option.
         REQUIRE(mie::cli::run(args("decode", input.str(), "--collapse-window-us", "-5")) ==
                 mie::cli::EXIT_USAGE);
+    }
+}
+
+TEST_CASE("`--` ends option parsing", "[cli][L3-CPP-014][L2-CLI-016]") {
+    // POSIX end-of-options. After `--` every token is a path, however it is
+    // spelled -- which is the only way to decode a file whose name begins with
+    // a dash. Python has always honoured it; Rust and C++ used to report `--`
+    // itself as an unknown option.
+    const TempFile input("mie-cli-eoo.mie", valid_recording());
+
+    SECTION("before the subcommand, the next token is the subcommand name") {
+        const TempPath out("mie-cli-eoo-a.csv");
+        REQUIRE(mie::cli::run(args("--", "decode", input.str(), "-o", out.str())) ==
+                mie::cli::EXIT_OK);
+
+        // Scoped to that loop: the subcommand parser gets a fresh scan, so a
+        // flag after the subcommand still acts as a flag.
+        const TempPath out2("mie-cli-eoo-b.csv");
+        REQUIRE(mie::cli::run(args("--", "decode", input.str(), "-o", out2.str(), "--no-mux")) ==
+                mie::cli::EXIT_OK);
+    }
+
+    SECTION("it suppresses the global flags rather than being one") {
+        // `-- --version` asks for a SUBCOMMAND called "--version".
+        REQUIRE(mie::cli::run(args("--", "--version")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("--", "-h")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("--", "--help")) == mie::cli::EXIT_USAGE);
+        // And on its own there is still no subcommand.
+        REQUIRE(mie::cli::run(args("--")) == mie::cli::EXIT_USAGE);
+    }
+
+    SECTION("after it, a flag spelling is a path") {
+        // `--no-mux` becomes a second input, so this fails opening it rather
+        // than quietly disabling the MUX column.
+        const TempPath out("mie-cli-eoo-c.csv");
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--", "--no-mux", "-o", out.str())) !=
+                mie::cli::EXIT_OK);
+    }
+
+    SECTION("only the first marker is consumed") {
+        // A second `--` is an ordinary positional, which is how a file
+        // actually named `--` is named.
+        const TempPath out("mie-cli-eoo-d.csv");
+        REQUIRE(mie::cli::run(args("decode", "--", "--", "-o", out.str())) != mie::cli::EXIT_OK);
+    }
+
+    SECTION("count and dump honour it too") {
+        const TempPath out("mie-cli-eoo-e.csv");
+        REQUIRE(mie::cli::run(args("--", "count", input.str())) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("--", "dump", input.str())) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("count", "--", input.str())) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("dump", "--", input.str())) == mie::cli::EXIT_OK);
+        // One positional each: after `--`, a flag spelling becomes a second.
+        REQUIRE(mie::cli::run(args("dump", "--", input.str(), "--raw")) == mie::cli::EXIT_USAGE);
     }
 }
 

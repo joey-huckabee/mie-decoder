@@ -15,6 +15,114 @@ full release workflow.
 
 ## [Unreleased]
 
+### Added
+
+- **Rust and C++ now honour `--`, the POSIX end-of-options separator.** Without
+  it there is no way to decode a recording whose name begins with a dash — the
+  CLI reads it as a flag — and renaming the file is not always the operator's
+  to do. Python inherited the behaviour from `argparse` and had it from the
+  start; the other two reported `--` itself as an unknown option, so the same
+  command line worked or failed depending on which implementation was
+  installed. Demonstrated end to end: a file called `-weird-name.mie` decodes
+  in all three with `--` and is a usage error in all three without it.
+
+  The **first** `--` in a parser's own token stream is discarded and everything
+  after it is a path, however it is spelled. A later `--` is an ordinary
+  positional — which is the only way to name a file genuinely called `--`.
+
+  The separator is **scoped to the parser that consumes it**, and that is the
+  part worth stating because the plausible alternative is wrong. A `--` before
+  the subcommand means only "the next token is the subcommand name": it makes
+  `-- --version` an unknown command rather than a version request, but it does
+  **not** put the subcommand's parser into end-of-options mode, so
+  `-- decode rec.mie --no-mux` still honours `--no-mux`. Carrying it across the
+  boundary would have made that invocation silently ignore the flag — the same
+  silent-wrong-answer failure the previous entry exists to remove.
+
+  Verified as a 15-shape three-way comparison covering both sides of the
+  subcommand boundary, doubled separators, `count` and `dump`, and `--` offered
+  as a flag's value: all three agree on every one. `L2-CLI-016` states the
+  contract, with 4 Rust / 1 C++ (five sections) / 6 Python tests and 2
+  conformance cases.
+
+  **Known divergence, not levelled:** `argparse` is inconsistent about a
+  *trailing* separator when an optional is interleaved before it —
+  `decode rec.mie --` is accepted but `decode rec.mie -o out.csv --` is a usage
+  error, the `--` surviving as an unrecognized argument. Rust and C++ treat a
+  trailing separator uniformly as a no-op. That is a defect in `argparse`'s own
+  handling rather than a decision either way, so the conformance suite
+  exercises `--` only where all three agree and the affected shapes are pinned
+  by each implementation's own tests.
+
+- **Every flag accepts both `--flag value` and `--flag=value` in all three
+  implementations — and nothing shared proved it.** The two spellings are
+  standard, both have always worked, and neither was mentioned anywhere in the
+  documentation. Coverage was thin and lopsided: three Rust unit tests, one C++
+  test, zero Python tests, and zero conformance cases. `cli-surface-parity`
+  compares `--help` flag *names*, so it cannot see a difference in how a value
+  is attached to one.
+
+  That matters more here than it would in a project using an argument-parsing
+  library, because two of the three parsers are hand-rolled and the `=` form is
+  handled per-flag: Python inherits it from `argparse` for free, C++ resolves it
+  in one place (`ArgReader::take_value`), and **Rust repeats the same
+  `starts_with("--x=")` idiom at 26 separate sites**. A flag added to Rust with
+  only the space form would be a real divergence that every existing gate would
+  report as green.
+
+  Four conformance cases now pin the contract across all three, chosen to cover
+  the parse paths that differ rather than to enumerate flags — a list-valued
+  filter, two numeric flags in one invocation, and a **global** flag:
+
+  - `flag-eq-form-filter` — `--exclude-subaddresses=22`
+  - `flag-eq-form-numeric` — `--time-format=standard --standard-tick-rate-hz=1000000`
+  - `flag-eq-form-global` — `--log-level=ERROR`, before the subcommand
+  - `flag-eq-form-global-rejects-bad-value` — `--log-level=bogus`, expecting exit 4
+
+  The global cases needed a new `global_args` manifest field: the existing
+  `args` is appended *after* the subcommand, so it could never reach a global
+  flag, and Rust parses globals in a **separate loop** from subcommand flags —
+  meaning the `=` spelling had two independent implementations and the suite
+  could only ever have exercised one of them.
+
+- **`L2-CLI-015` states the flag-value contract as a requirement.** The repo
+  already had the precedent: `L2-CLI-005` writes down that `-o -` is a path and
+  not a stdout selector, "because its absence is exactly what let the three
+  drift apart unnoticed". This is the same situation — a contract every
+  implementation was assumed to meet, that none of them stated, and that one of
+  them broke. The new requirement fixes both spellings, the three boundaries
+  above, and the one permitted divergence, and is traced to tests in all three
+  implementations.
+
+- **`docs/CLI-REFERENCE.md` now documents how a value attaches to a flag.**
+  Both spellings have always worked and neither appeared in `CLI-REFERENCE.md`,
+  `USER-GUIDE.md` or the README. The new *Attaching a value to a flag* section
+  states the equivalence and the three rules that each have a defensible
+  opposite: `--flag=` is an empty value the individual flag then accepts or
+  rejects, only the **first** `=` separates (`--mux-delimiter==` sets the
+  delimiter to `=`), and a value-less flag given a value (`--no-mux=true`) is a
+  usage error rather than a way to spell "on". Every claim was measured against
+  all three implementations rather than read off the source.
+
+  It also records the one place they genuinely disagree, which the same probing
+  turned up: given a value spelled like another flag — `--mux-delimiter --no-mux`
+  — Rust and C++ consume `--no-mux` as the value, so it never acts as a flag,
+  while Python's `argparse` refuses to consume a `--`-prefixed token and exits
+  `4`. This is documented rather than fixed: two of three agree, `argparse`
+  cannot be made to accept it without leaving `argparse`, and forcing the other
+  two to refuse would break a legitimate value that happens to start with `--`.
+  The joined form (`--mux-delimiter=--no-mux`) means the same thing in all
+  three, and is the recommendation.
+
+  The last case exists because the third is vacuous on its own. `--log-level`
+  does not change the CSV, so `flag-eq-form-global` passes whether or not the
+  flag ever reaches the binary. The negative case is self-checking: it asserts
+  exit 4 *and* that stderr names the valid levels, which distinguishes "the
+  value `bogus` was rejected" from "the whole token was an unknown option" —
+  the outcome if the `=` form were not parsed. Both were proven by planting a
+  runner that silently drops `global_args`: the positive case still passed, the
+  negative one failed.
+
 ### Changed
 
 - **Rust and C++ no longer swallow a following flag as a flag's value — this is
@@ -120,17 +228,26 @@ full release workflow.
   `argparse`, so nothing looked like it needed proving. It has seven now, so a
   future move away from `argparse` cannot drift silently.
 
-### Known divergence (not fixed)
-
-- **`--` as the POSIX end-of-options marker is Python-only.** `argparse`
-  implements it, so `mie-decoder decode -- rec.mie` succeeds there; Rust and
-  C++ do not implement it at all and report `--` as an unknown option (exit
-  `4`). This is a missing *feature*, not a disagreement about how a value
-  attaches to a flag, so it is recorded rather than absorbed into `L2-CLI-015`.
-  It surfaced from the same differential sweep and is the only shape in it
-  where the three still differ.
-
 ### Fixed
+
+- **C++ answered `--version` anywhere on the command line, and `--HELP` as
+  help.** Both were found while making room for `--`, and in both C++ was the
+  only implementation doing it. The version and help scan ran over the whole
+  argument vector, so `decode rec.mie --version` printed the version and exited
+  `0` where Rust and Python both report an unknown option — and the scan would
+  equally have answered a `--version` sitting *after* a `--`, which is what
+  made it incompatible with the new separator. The scan now stops at the first
+  `--`.
+
+  Separately, `is_help_flag` compared `--help` case-insensitively, so `--HELP`
+  and `--Help` printed help. Version **is** case-insensitive in all three by
+  design; help is not, in any of them. The asymmetry is deliberate and is now
+  spelled out where the predicate is defined.
+
+  Deliberately **not** changed: `decode --nonsense --help` prints help in C++
+  and Python and is a usage error in Rust. That is a pre-existing difference of
+  opinion about whether help outranks a malformed command line, C++ agrees with
+  Python today, and levelling it is a separate decision from adding `--`.
 
 - **C++: `--flag=` (an empty value) was reported as an unknown option, exit 4,
   where Rust and Python exited 0.** Writing the conformance cases above turned
@@ -161,77 +278,6 @@ full release workflow.
 
   Rust and Python are unaffected — no behaviour change in either.
   `flag-eq-form-empty-value` pins it for all three.
-
-### Added
-
-- **Every flag accepts both `--flag value` and `--flag=value` in all three
-  implementations — and nothing shared proved it.** The two spellings are
-  standard, both have always worked, and neither was mentioned anywhere in the
-  documentation. Coverage was thin and lopsided: three Rust unit tests, one C++
-  test, zero Python tests, and zero conformance cases. `cli-surface-parity`
-  compares `--help` flag *names*, so it cannot see a difference in how a value
-  is attached to one.
-
-  That matters more here than it would in a project using an argument-parsing
-  library, because two of the three parsers are hand-rolled and the `=` form is
-  handled per-flag: Python inherits it from `argparse` for free, C++ resolves it
-  in one place (`ArgReader::take_value`), and **Rust repeats the same
-  `starts_with("--x=")` idiom at 26 separate sites**. A flag added to Rust with
-  only the space form would be a real divergence that every existing gate would
-  report as green.
-
-  Four conformance cases now pin the contract across all three, chosen to cover
-  the parse paths that differ rather than to enumerate flags — a list-valued
-  filter, two numeric flags in one invocation, and a **global** flag:
-
-  - `flag-eq-form-filter` — `--exclude-subaddresses=22`
-  - `flag-eq-form-numeric` — `--time-format=standard --standard-tick-rate-hz=1000000`
-  - `flag-eq-form-global` — `--log-level=ERROR`, before the subcommand
-  - `flag-eq-form-global-rejects-bad-value` — `--log-level=bogus`, expecting exit 4
-
-  The global cases needed a new `global_args` manifest field: the existing
-  `args` is appended *after* the subcommand, so it could never reach a global
-  flag, and Rust parses globals in a **separate loop** from subcommand flags —
-  meaning the `=` spelling had two independent implementations and the suite
-  could only ever have exercised one of them.
-
-- **`L2-CLI-015` states the flag-value contract as a requirement.** The repo
-  already had the precedent: `L2-CLI-005` writes down that `-o -` is a path and
-  not a stdout selector, "because its absence is exactly what let the three
-  drift apart unnoticed". This is the same situation — a contract every
-  implementation was assumed to meet, that none of them stated, and that one of
-  them broke. The new requirement fixes both spellings, the three boundaries
-  above, and the one permitted divergence, and is traced to tests in all three
-  implementations.
-
-- **`docs/CLI-REFERENCE.md` now documents how a value attaches to a flag.**
-  Both spellings have always worked and neither appeared in `CLI-REFERENCE.md`,
-  `USER-GUIDE.md` or the README. The new *Attaching a value to a flag* section
-  states the equivalence and the three rules that each have a defensible
-  opposite: `--flag=` is an empty value the individual flag then accepts or
-  rejects, only the **first** `=` separates (`--mux-delimiter==` sets the
-  delimiter to `=`), and a value-less flag given a value (`--no-mux=true`) is a
-  usage error rather than a way to spell "on". Every claim was measured against
-  all three implementations rather than read off the source.
-
-  It also records the one place they genuinely disagree, which the same probing
-  turned up: given a value spelled like another flag — `--mux-delimiter --no-mux`
-  — Rust and C++ consume `--no-mux` as the value, so it never acts as a flag,
-  while Python's `argparse` refuses to consume a `--`-prefixed token and exits
-  `4`. This is documented rather than fixed: two of three agree, `argparse`
-  cannot be made to accept it without leaving `argparse`, and forcing the other
-  two to refuse would break a legitimate value that happens to start with `--`.
-  The joined form (`--mux-delimiter=--no-mux`) means the same thing in all
-  three, and is the recommendation.
-
-  The last case exists because the third is vacuous on its own. `--log-level`
-  does not change the CSV, so `flag-eq-form-global` passes whether or not the
-  flag ever reaches the binary. The negative case is self-checking: it asserts
-  exit 4 *and* that stderr names the valid levels, which distinguishes "the
-  value `bogus` was rejected" from "the whole token was an unknown option" —
-  the outcome if the `=` form were not parsed. Both were proven by planting a
-  runner that silently drops `global_args`: the positive case still passed, the
-  negative one failed.
 
 ## [2.13.0] — 2026-08-23
 

@@ -634,3 +634,69 @@ class TestFlagValueSyntax:
         parser = cli.build_parser()
         parsed = parser.parse_args(["decode", "rec.mie", "-o", "-"])
         assert str(parsed.output) == "-"
+
+
+class TestEndOfOptions:
+    """``--`` ends option parsing (L2-CLI-016).
+
+    ``argparse`` has always honoured the POSIX separator; Rust and C++ used to
+    report ``--`` itself as an unknown option. These tests pin Python's side of
+    the contract, which is the side the other two were made to match.
+    """
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_after_the_marker_every_token_is_a_path(self) -> None:
+        """A flag spelling after ``--`` is an input, not a flag."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "--", "rec.mie", "--no-mux"])
+        assert [str(p) for p in parsed.inputs] == ["rec.mie", "--no-mux"]
+        assert not parsed.no_mux
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_only_the_first_marker_is_consumed(self) -> None:
+        """A second ``--`` is an ordinary positional.
+
+        That is the only way to name a file that is actually called ``--``.
+        """
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "--", "--", "rec.mie"])
+        assert [str(p) for p in parsed.inputs] == ["--", "rec.mie"]
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_flags_before_the_marker_still_work(self) -> None:
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "--no-mux", "--", "rec.mie"])
+        assert parsed.no_mux is True
+        assert [str(p) for p in parsed.inputs] == ["rec.mie"]
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_the_marker_is_scoped_to_one_parser(self) -> None:
+        """A ``--`` before the subcommand does not carry into it.
+
+        The next token is the subcommand *name*; the subcommand then gets a
+        fresh scan, so a flag after it still acts as a flag. Getting this wrong
+        in the other two would have made ``-- decode rec.mie --no-mux`` ignore
+        ``--no-mux``.
+        """
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["--", "decode", "rec.mie", "--no-mux"])
+        assert parsed.command == "decode"
+        assert parsed.no_mux is True
+        assert [str(p) for p in parsed.inputs] == ["rec.mie"]
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_the_marker_suppresses_the_global_flags(self) -> None:
+        """``-- --version`` asks for a subcommand called ``--version``."""
+        parser = cli.build_parser()
+        for token in ("--version", "-h", "--help", "-V"):
+            with pytest.raises(SystemExit) as excinfo:
+                parser.parse_args(["--", token])
+            assert excinfo.value.code != EXIT_OK
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_count_and_dump_honour_it(self) -> None:
+        parser = cli.build_parser()
+        # `count` and `dump` take one path each, under `input` (singular);
+        # only `decode` has the plural `inputs`, which is what feeds the merge.
+        assert str(parser.parse_args(["count", "--", "-weird.mie"]).input) == "-weird.mie"
+        assert str(parser.parse_args(["dump", "--", "-weird.mie"]).input) == "-weird.mie"

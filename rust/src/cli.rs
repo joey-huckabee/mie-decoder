@@ -376,6 +376,22 @@ fn parse_global_flags(
                 println!("mie-decoder {VERSION}");
                 return Err(ExitCode::SUCCESS);
             }
+            // POSIX end-of-options. Scoped to THIS parser: the subcommand
+            // gets a fresh scan, so `-- decode rec.mie --no-mux` still honours
+            // `--no-mux`. The next token becomes the subcommand verbatim, so
+            // `-- --version` is an unknown command rather than a version
+            // request -- which is what argparse does, `--` having turned it
+            // into a positional.
+            "--" if a.bare() => {
+                iter.next(); // the separator itself
+                return match iter.next() {
+                    Some(token) => Ok(token),
+                    None => {
+                        eprint!("{HELP}");
+                        Err(ExitCode::from(exit_code::USAGE))
+                    }
+                };
+            }
             "--log-level" => {
                 iter.next(); // the flag token itself
                 match a.value("--log-level", iter) {
@@ -424,10 +440,12 @@ fn parse_subcommand(cmd_token: &str, iter: &mut ArgIter<'_>) -> Result<Command, 
         ))?))),
         "count" => Ok(Command::Count(parse_or_help(parse_count(iter))?)),
         "dump" => Ok(Command::Dump(Box::new(parse_or_help(parse_dump(iter))?))),
-        "-h" | "--help" => {
-            print!("{HELP}");
-            Err(ExitCode::SUCCESS)
-        }
+        // No `-h`/`--help` arm: `parse_global_flags` intercepts both before a
+        // subcommand token is ever produced, so one here was unreachable — until
+        // `--` made it reachable, and then wrong. After the end-of-options
+        // separator the next token is a subcommand NAME, so `-- -h` must report
+        // an unknown command rather than print help, which is what `argparse`
+        // does (there `-h` becomes a positional and fails the choice check).
         other => Err(die(&format!("Unknown command: {other:?}"))),
     }
 }
@@ -668,8 +686,20 @@ fn parse_bus_filter(v: &str) -> Result<crate::models::Bus, ParseError> {
 
 fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
     let mut args = DecodeArgs::default();
+    // POSIX end-of-options: the FIRST `--` is dropped and everything after it
+    // is a path, however it is spelled. A later `--` is an ordinary
+    // positional, which is the only way to name a file called `--`.
+    let mut end_of_options = false;
 
     while let Some(token) = iter.next() {
+        if end_of_options {
+            args.inputs.push(PathBuf::from(token));
+            continue;
+        }
+        if token == "--" {
+            end_of_options = true;
+            continue;
+        }
         // One arm per flag: `Arg::split` has already resolved `--flag=value`
         // against `--flag value`, so neither spelling appears below.
         let a = Arg::split(token);
@@ -807,7 +837,19 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
 
 fn parse_count(iter: &mut ArgIter<'_>) -> Result<PathBuf, ParseError> {
     let mut path: Option<PathBuf> = None;
+    let mut end_of_options = false;
     for token in iter.by_ref() {
+        if !end_of_options && token == "--" {
+            end_of_options = true;
+            continue;
+        }
+        if end_of_options {
+            if path.is_some() {
+                return Err(format!("unexpected positional argument: {token}").into());
+            }
+            path = Some(PathBuf::from(token));
+            continue;
+        }
         // `count` has no value-taking flag today, but it goes through the same
         // cursor so that adding one cannot reintroduce a per-flag `=` arm.
         let a = Arg::split(token);
@@ -830,8 +872,21 @@ fn parse_count(iter: &mut ArgIter<'_>) -> Result<PathBuf, ParseError> {
 fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, ParseError> {
     let mut args = DumpArgs::default();
     let mut input_seen = false;
+    let mut end_of_options = false;
 
     while let Some(token) = iter.next() {
+        if !end_of_options && token == "--" {
+            end_of_options = true;
+            continue;
+        }
+        if end_of_options {
+            if input_seen {
+                return Err(format!("unexpected positional argument: {token}").into());
+            }
+            args.input = PathBuf::from(token);
+            input_seen = true;
+            continue;
+        }
         let a = Arg::split(token);
         match a.name.as_str() {
             "--raw" if a.bare() => args.raw = true,
@@ -1674,6 +1729,107 @@ mod tests {
     }
 
     /// `--flag=value` syntax with comma-separation.
+    /// POSIX end-of-options. After `--` every token is a path, however it is
+    /// spelled — which is the only way to decode a file whose name begins
+    /// with a dash.
+    /// Requirements: L2-CLI-016
+    #[test]
+    fn end_of_options_makes_every_later_token_positional() {
+        let parsed = parse_decode(&mut args(&["--", "rec.mie", "--no-mux", "-o", "out.csv"]))
+            .expect("everything after -- is an input");
+        assert_eq!(
+            parsed.inputs,
+            vec![
+                PathBuf::from("rec.mie"),
+                PathBuf::from("--no-mux"),
+                PathBuf::from("-o"),
+                PathBuf::from("out.csv"),
+            ]
+        );
+        // None of them acted as a flag.
+        assert!(!parsed.no_mux);
+        assert_eq!(parsed.output, None);
+    }
+
+    /// Only the FIRST `--` is a separator; a later one is an ordinary
+    /// positional, which is how a file actually named `--` is named.
+    /// Requirements: L2-CLI-016
+    #[test]
+    fn only_the_first_end_of_options_marker_is_consumed() {
+        let parsed = parse_decode(&mut args(&["--", "--", "rec.mie"])).unwrap();
+        assert_eq!(
+            parsed.inputs,
+            vec![PathBuf::from("--"), PathBuf::from("rec.mie")]
+        );
+
+        // And before it, flags still work normally.
+        let parsed = parse_decode(&mut args(&["--no-mux", "--", "rec.mie"])).unwrap();
+        assert!(parsed.no_mux);
+        assert_eq!(parsed.inputs, vec![PathBuf::from("rec.mie")]);
+    }
+
+    /// The separator is scoped to the parser that consumes it. A `--` before
+    /// the subcommand means "the next token is the subcommand NAME" — it does
+    /// not put the subcommand's own parser into end-of-options mode, so
+    /// `-- decode rec.mie --no-mux` still honours `--no-mux`.
+    ///
+    /// It also suppresses the global flags, so `-- --version` asks for a
+    /// subcommand called `--version` and is reported as an unknown command.
+    /// Requirements: L2-CLI-016
+    #[test]
+    fn end_of_options_before_the_subcommand_names_it() {
+        let mut globals = GlobalArgs::default();
+        let sub = parse_global_flags(&mut args(&["--", "decode", "rec.mie"]), &mut globals)
+            .expect("-- then a subcommand");
+        assert_eq!(sub, "decode");
+
+        // The subcommand parser gets a fresh scan.
+        let parsed = parse_decode(&mut args(&["rec.mie", "--no-mux"])).unwrap();
+        assert!(parsed.no_mux);
+
+        for token in ["--version", "-h", "--help", "-V"] {
+            let mut globals = GlobalArgs::default();
+            let sub = parse_global_flags(&mut args(&["--", token]), &mut globals)
+                .expect("-- suppresses the global flags");
+            assert_eq!(
+                sub, token,
+                "{token} should be handed back as a command name"
+            );
+        }
+    }
+
+    /// `count` and `dump` take one positional each, so after `--` a second one
+    /// is the same mistake it always was.
+    /// Requirements: L2-CLI-016
+    #[test]
+    fn end_of_options_applies_to_count_and_dump() {
+        let path = parse_count(&mut args(&["--", "-weird.mie"])).unwrap();
+        assert_eq!(path, PathBuf::from("-weird.mie"));
+
+        let err = parse_count(&mut args(&["--", "a.mie", "b.mie"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(
+            msg.contains("unexpected positional argument"),
+            "got {msg:?}"
+        );
+
+        let parsed = parse_dump(&mut args(&["--", "-weird.mie"])).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("-weird.mie"));
+
+        // After `--`, `--records` is a path, so it lands as a second
+        // positional rather than as a flag.
+        let err = parse_dump(&mut args(&["--", "a.mie", "--records"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(
+            msg.contains("unexpected positional argument"),
+            "got {msg:?}"
+        );
+    }
+
     /// The predicate itself, at the boundary, because the parse-level tests
     /// below cannot reach every shape cheaply.
     ///
