@@ -550,3 +550,56 @@ class TestFlagValueSyntax:
         joined = parser.parse_args(["--log-level=ERROR", "decode", "rec.mie"])
         assert vars(separated) == vars(joined)
         assert joined.log_level == "ERROR"
+
+    OPTION_LIKE: tuple[str, ...] = ("--no-mux", "--foo", "-o", "-x", "-5e3", "-0x5", "-1a")
+    VALUE_LIKE: tuple[str, ...] = ("-", "-5", "-5.5", "-.5", "- x")
+
+    @pytest.mark.requirement("L2-CLI-015")
+    @pytest.mark.parametrize("token", OPTION_LIKE)
+    def test_separated_form_refuses_an_option_like_value(self, token: str) -> None:
+        """``--mux-delimiter --no-mux`` is a usage error, not a delimiter.
+
+        This is where Rust and C++ used to disagree: they consumed the
+        following flag as the value, so ``--no-mux`` silently never ran and
+        the decode succeeded with a wrong MUX column. Both now follow this
+        rule. The assertions here are what stops ``argparse``'s side of the
+        contract from drifting if the parser is ever hand-rolled.
+        """
+        parser = cli.build_parser()
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(["decode", "rec.mie", "--mux-delimiter", token])
+        assert excinfo.value.code != EXIT_OK
+
+    @pytest.mark.requirement("L2-CLI-015")
+    @pytest.mark.parametrize("token", VALUE_LIKE)
+    def test_separated_form_accepts_the_exemptions(self, token: str) -> None:
+        """A lone dash, a negative number, and a token with a space are values.
+
+        Each exemption keeps a real invocation working: ``-o -`` writes a file
+        named ``-`` (L2-CLI-005), ``--mux-field -1`` counts from the end, and
+        no option is spelled with a space in it. They are ``argparse``'s rules
+        -- the other two implementations copied them from here, including the
+        exact negative-number pattern, rather than inventing a tidier one.
+        """
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "rec.mie", "--mux-delimiter", token])
+        assert parsed.mux_delimiter == token
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_joined_form_still_takes_an_option_like_value(self) -> None:
+        """The joined form is unambiguous, so it accepts what the separated
+        form refuses -- and is what the refusal should point the user at."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "rec.mie", "--mux-delimiter=--no-mux"])
+        assert parsed.mux_delimiter == "--no-mux"
+        # Falsy, not ``is False``: an unpassed flag is ``None`` here (meaning
+        # "not specified", so a config file still decides) rather than a bool.
+        # What matters is that ``--no-mux`` did not take effect.
+        assert not parsed.no_mux
+
+    @pytest.mark.requirement("L2-CLI-005")
+    def test_a_lone_dash_output_is_a_path_not_stdout(self) -> None:
+        """``-o -`` names a file, and is exempt from the option-like guard."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "rec.mie", "-o", "-"])
+        assert str(parsed.output) == "-"

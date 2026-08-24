@@ -137,6 +137,75 @@ bool write_out(std::FILE* stream, const std::string& text) {
 /// The Rust parser spells both forms out at every flag, which is twenty-odd
 /// near-identical match arms and twenty-odd chances for one of them to drift.
 /// Handling it once here is the same behaviour with one place to be wrong.
+/// Python's argparse `^-\d+$|^-\d*\.\d+$`, hand-rolled: <regex> is banned
+/// outright here (libstdc++ had none until GCC 4.9, see ADR-0001).
+///
+/// Deliberately narrow, matching the original exactly: "-5", "-.5" and "-5.5"
+/// are numbers; "-5e3" and "-0x5" are not, because argparse says they are not.
+/// Widening it would re-open the divergence this closes.
+bool is_negative_number(const std::string& token) {
+    if (token.size() < 2 || token[0] != '-') {
+        return false;
+    }
+    const std::string rest = token.substr(1);
+    const std::string::size_type dot = rest.find('.');
+    if (dot == std::string::npos) {
+        // -\d+
+        for (std::string::size_type i = 0; i < rest.size(); ++i) {
+            if (rest[i] < '0' || rest[i] > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+    // -\d*\.\d+ : at most one point, at least one digit after it.
+    if (rest.find('.', dot + 1) != std::string::npos || dot + 1 >= rest.size()) {
+        return false;
+    }
+    for (std::string::size_type i = 0; i < rest.size(); ++i) {
+        if (i == dot) {
+            continue;
+        }
+        if (rest[i] < '0' || rest[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Does this token look like an option rather than a value?
+///
+/// Decides whether the SEPARATED form may consume the next token. Without
+/// this, `--mux-delimiter --no-mux` set the delimiter to the string
+/// "--no-mux" and the `--no-mux` flag silently never ran -- a wrong decode
+/// that exited 0. Refusing turns that into a usage error, which is the point:
+/// the failure was silent, not merely inconsistent.
+///
+/// The rule is argparse's, deliberately, because Python has always behaved
+/// this way and the alternative was to make two implementations agree with
+/// each other and disagree with the third. Its three exemptions each keep a
+/// real invocation working:
+///
+///   - a lone "-" is a value, so `-o -` writes a file named "-" (L2-CLI-005);
+///   - a negative number is a value, so `--mux-field -1` (a documented
+///     feature: negative indices count from the end) still parses, and
+///     `--collapse-window-us -5` still reaches its own validator to be
+///     refused for being negative rather than for looking like a flag;
+///   - a token containing a space is a value, since no option is spelled so.
+///
+/// The JOINED form is unaffected: `--mux-delimiter=--no-mux` is unambiguous
+/// and stays legal, which is why it is the documented way to pass a value
+/// that looks like a flag.
+bool looks_like_option(const std::string& token) {
+    if (token.size() < 2 || token[0] != '-') {
+        return false;
+    }
+    if (token.find(' ') != std::string::npos) {
+        return false;
+    }
+    return !is_negative_number(token);
+}
+
 class ArgReader {
   public:
     explicit ArgReader(const std::vector<std::string>& args) : args_(args), at_(0) {}
@@ -184,6 +253,11 @@ class ArgReader {
         if (at_end()) {
             throw usage_error(std::string(name) + " requires a value");
         }
+        if (looks_like_option(args_[at_])) {
+            throw usage_error(std::string(name) + " requires a value, but the next argument is" +
+                              " an option: " + args_[at_] + "; to pass it as a value, write " +
+                              name + "=" + args_[at_]);
+        }
         out = args_[at_];
         at_ += 1;
         return true;
@@ -195,6 +269,11 @@ class ArgReader {
             at_ += 1;
             if (at_end()) {
                 throw usage_error(std::string(name) + " requires a value");
+            }
+            if (looks_like_option(args_[at_])) {
+                throw usage_error(std::string(name) + " requires a value, but the next argument" +
+                                  " is an option: " + args_[at_] + "; to pass it as a value," +
+                                  " write " + name + "=" + args_[at_]);
             }
             out = args_[at_];
             at_ += 1;

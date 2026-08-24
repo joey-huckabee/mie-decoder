@@ -455,9 +455,74 @@ impl From<String> for ParseError {
     }
 }
 
+/// Does this token look like an option rather than a value?
+///
+/// Used to decide whether the **separated** form may consume the next token.
+/// Without this, `--mux-delimiter --no-mux` set the delimiter to the string
+/// `"--no-mux"` and the `--no-mux` flag silently never ran — a wrong decode
+/// that exited 0. Refusing turns that into a usage error, which is the whole
+/// value of the check: the failure was silent, not merely inconsistent.
+///
+/// The rule is `argparse`'s, deliberately, because Python has always behaved
+/// this way and the alternative was to make two implementations agree with
+/// each other and disagree with the third. Its three exemptions are not
+/// quirks to be tidied away — each keeps a real invocation working:
+///
+/// * **A lone `-`** is a value. `-o -` writes a file named `-` (L2-CLI-005).
+/// * **A negative number** is a value, matched exactly as `argparse` does it
+///   (`^-\d+$|^-\d*\.\d+$`). `--mux-field -1` is a documented feature —
+///   negative indices count from the end — and `--collapse-window-us -5` must
+///   still reach its own validator to be refused for being negative, rather
+///   than being refused here for looking like a flag.
+/// * **A token containing a space** is a value, since no option is spelled
+///   that way.
+///
+/// Note what this does NOT cover: the joined form. `--mux-delimiter=--no-mux`
+/// is unambiguous and stays legal in all three implementations, which is why
+/// it is the documented way to pass a value that looks like a flag.
+fn looks_like_option(token: &str) -> bool {
+    if !token.starts_with('-') || token.chars().count() < 2 || token.contains(' ') {
+        return false;
+    }
+    !is_negative_number(token)
+}
+
+/// `argparse`'s `^-\d+$|^-\d*\.\d+$`, hand-rolled because this crate has no
+/// regex dependency and is not going to acquire one for four lines.
+///
+/// Deliberately narrow, matching the original: `-5` and `-.5` and `-5.5` are
+/// numbers; `-5e3` and `-0x5` are not, because `argparse` says they are not.
+/// Widening it here would re-open the divergence this closes.
+fn is_negative_number(token: &str) -> bool {
+    let Some(rest) = token.strip_prefix('-') else {
+        return false;
+    };
+    if rest.is_empty() {
+        return false;
+    }
+    match rest.split_once('.') {
+        // `-\d+` — digits only, no point.
+        None => rest.bytes().all(|b| b.is_ascii_digit()),
+        // `-\d*\.\d+` — optional leading digits, then a point, then at least
+        // one digit. A second point makes it not a number.
+        Some((int_part, frac_part)) => {
+            !frac_part.is_empty()
+                && int_part.bytes().all(|b| b.is_ascii_digit())
+                && frac_part.bytes().all(|b| b.is_ascii_digit())
+        }
+    }
+}
+
 fn next_value(name: &str, iter: &mut ArgIter<'_>) -> Result<String, String> {
-    iter.next()
-        .ok_or_else(|| format!("{name} requires a value"))
+    match iter.peek() {
+        None => Err(format!("{name} requires a value")),
+        Some(token) if looks_like_option(token) => Err(format!(
+            "{name} requires a value, but the next argument is an option: {token}; \
+             to pass it as a value, write {name}={token}"
+        )),
+        // `peek` returned `Some`, so `next` cannot be `None`.
+        Some(_) => Ok(iter.next().unwrap_or_default()),
+    }
 }
 
 /// One argument token, split at the first `=`.
@@ -1598,6 +1663,130 @@ mod tests {
     }
 
     /// `--flag=value` syntax with comma-separation.
+    /// The predicate itself, at the boundary, because the parse-level tests
+    /// below cannot reach every shape cheaply. These values are argparse's,
+    /// read out of `ArgumentParser._negative_number_matcher` rather than
+    /// guessed: `-5e3` and `-0x5` really are options to argparse, and this
+    /// must not "improve" on that.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn looks_like_option_matches_argparse() {
+        // Values -- consumed as the argument to a flag.
+        for token in [
+            "", "-", "-5", "-5.5", "-.5", "-0", "-00.5", "- x", "-1 2", "x", "a=b",
+        ] {
+            assert!(
+                !looks_like_option(token),
+                "{token:?} should be treated as a value"
+            );
+        }
+        // Option-like -- refused as the argument to a flag.
+        for token in [
+            "-x",
+            "-o",
+            "-5e3",
+            "-0x5",
+            "-1a",
+            "-.",
+            "-..5",
+            "-5.5.5",
+            "--",
+            "--foo",
+            "--no-mux",
+            "--flag=value",
+        ] {
+            assert!(
+                looks_like_option(token),
+                "{token:?} should be treated as an option"
+            );
+        }
+    }
+
+    /// The separated form must not swallow the following flag.
+    ///
+    /// This was the last cross-implementation divergence in flag parsing:
+    /// `--mux-delimiter --no-mux` set the delimiter to the string "--no-mux"
+    /// in Rust and C++ -- so `--no-mux` silently never ran and the decode
+    /// succeeded with a wrong MUX column -- while Python refused it. A silent
+    /// wrong answer is the worst of the three possible behaviours, so both
+    /// moved to Python's.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn a_flag_like_value_is_refused_in_the_separated_form() {
+        for token in ["--no-mux", "--foo", "-o", "-x"] {
+            let err = parse_decode(&mut args(&["--mux-delimiter", token, "rec.mie"])).unwrap_err();
+            let ParseError::Other(msg) = err else {
+                panic!("{token}: expected a usage error");
+            };
+            assert!(msg.contains("--mux-delimiter"), "{token}: got {msg:?}");
+            // The message has to say how to get what the user probably wanted.
+            assert!(
+                msg.contains(&format!("--mux-delimiter={token}")),
+                "{token}: message should suggest the joined form, got {msg:?}"
+            );
+        }
+    }
+
+    /// The joined form is unambiguous, so it still accepts a flag-like value
+    /// -- and is what the refusal message points at.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn the_joined_form_still_takes_a_flag_like_value() {
+        let parsed = parse_decode(&mut args(&["--mux-delimiter=--no-mux", "rec.mie"])).unwrap();
+        assert_eq!(parsed.mux_delimiter.as_deref(), Some("--no-mux"));
+        // ...and it really is a delimiter, not the flag: `no_mux` stays unset.
+        assert!(!parsed.no_mux);
+    }
+
+    /// The three exemptions, each of which keeps a real invocation working.
+    /// Requirements: L2-CLI-005, L2-CLI-015
+    #[test]
+    fn the_exemptions_are_still_values() {
+        // A lone `-` is a path, not stdout: `-o -` writes a file named `-`.
+        let parsed = parse_decode(&mut args(&["-o", "-", "rec.mie"])).unwrap();
+        assert_eq!(parsed.output, Some(PathBuf::from("-")));
+
+        // A negative number: `--mux-field -1` counts from the end.
+        let parsed = parse_decode(&mut args(&["--mux-field", "-1", "rec.mie"])).unwrap();
+        assert_eq!(parsed.mux_field, Some(-1));
+
+        // A negative number still reaches its OWN validator, so a flag that
+        // forbids negatives refuses it for that reason and not for looking
+        // like an option.
+        let err = parse_decode(&mut args(&["--collapse-window-us", "-5", "rec.mie"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(
+            !msg.contains("is an option"),
+            "should be refused by the validator, not the option guard: {msg:?}"
+        );
+
+        // A token containing a space is a value; no option is spelled so.
+        let parsed = parse_decode(&mut args(&["--mux-delimiter", "- x", "rec.mie"])).unwrap();
+        assert_eq!(parsed.mux_delimiter.as_deref(), Some("- x"));
+    }
+
+    /// Globals are a separate parse loop and need the guard too. Before it,
+    /// `--log-level --config x` made Rust take "--config" as the level, then
+    /// read "x" as the subcommand -- exit 4, but for an unrelated reason and
+    /// with a message that named neither flag.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn global_flags_refuse_a_flag_like_value() {
+        let mut globals = GlobalArgs::default();
+        let err = parse_global_flags(
+            &mut args(&["--log-level", "--config", "x", "decode"]),
+            &mut globals,
+        )
+        .unwrap_err();
+        assert_eq!(err, ExitCode::from(exit_code::USAGE));
+        assert!(
+            globals.log_level.is_none(),
+            "must not have consumed a value"
+        );
+    }
+
     /// Every valued flag, both spellings, compared structurally rather than by
     /// exit code — a spelling that parsed but dropped its value would still
     /// exit 0. `DecodeArgs` has no `PartialEq` (it is private, and deriving one

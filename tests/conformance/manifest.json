@@ -754,6 +754,40 @@
         "--exclude-rts="
       ],
       "expected": "expected/basic-multi-record.csv"
+    },
+    {
+      "name": "flag-like-value-separated-is-refused",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--mux-delimiter",
+        "--no-mux"
+      ],
+      "expected_exit": 4,
+      "expected_stderr_contains": "--mux-delimiter"
+    },
+    {
+      "name": "flag-like-value-joined-is-accepted",
+      "input": "inputs/basic-multi-record.hex",
+      "input_names": [
+        "alpha--no-muxbravo.mie"
+      ],
+      "args": [
+        "--mux-delimiter=--no-mux",
+        "--mux-field=1"
+      ],
+      "expected": "expected/flag-like-value-joined.csv"
+    },
+    {
+      "name": "negative-number-value-is-not-an-option",
+      "input": "inputs/basic-multi-record.hex",
+      "input_names": [
+        "full_loadout.draw.data.1553.aa.unused.mie_irig"
+      ],
+      "args": [
+        "--mux-field",
+        "-1"
+      ],
+      "expected": "expected/negative-mux-field.csv"
     }
   ]
 }

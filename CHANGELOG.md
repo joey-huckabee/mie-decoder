@@ -17,6 +17,45 @@ full release workflow.
 
 ### Changed
 
+- **Rust and C++ no longer swallow a following flag as a flag's value — this is
+  a behaviour change.** `--mux-delimiter --no-mux` used to set the delimiter to
+  the literal string `"--no-mux"`, which meant `--no-mux` **silently never
+  ran** and the decode succeeded, exit `0`, with a wrong `MUX` column. Python's
+  `argparse` had always refused it. An invocation that previously "worked" in
+  those two now exits `4`.
+
+  That is the point. Of the three possible behaviours — refuse, or produce a
+  wrong answer quietly, or disagree across implementations — the one we had was
+  the worst two at once. Levelling toward Python turns a silent wrong result
+  into an immediate usage error and makes all three agree; levelling the other
+  way was not available, since `argparse` cannot be made permissive without
+  abandoning `argparse`.
+
+  A token "looks like an option" when it starts with `-`, is longer than one
+  character, contains no space, and is not a negative number matching
+  `^-\d+$|^-\d*\.\d+$`. That pattern is **copied from `argparse`**, not
+  invented, and deliberately not widened — `-5e3` and `-0x5` are option-like in
+  all three, because a tidier rule here would re-open the divergence. The three
+  exemptions each keep a real invocation working:
+
+  - a lone `-` is a path, so `-o -` still writes a file named `-` (`L2-CLI-005`)
+  - a negative number is a value, so `--mux-field -1` still counts from the end,
+    and `--collapse-window-us -5` still reaches its own validator to be refused
+    for being *negative* rather than for looking like a flag
+  - a token containing a space is a value, since no flag is spelled that way
+
+  **The joined form is unaffected and is the fix**: `--mux-delimiter=--no-mux`
+  is unambiguous, remains legal everywhere, and the error message names it.
+
+  Verified as a differential sweep over 29 token shapes — decimals, exponent
+  and hex forms, embedded spaces, single and double dashes, empty — run against
+  all three binaries: **one** disagreement remains, `--`, and it is a different
+  feature (below). Pinned by 3 conformance cases and 5 Rust / 3 C++ / 11 Python
+  tests. Two new oracles prove the joined form is taken as a *string* rather
+  than as the flag: with delimiter `--no-mux` and field `1`, the file
+  `alpha--no-muxbravo.mie` yields `MUX=bravo.mie`, which no other reading
+  produces.
+
 - **Rust: the `--flag value` / `--flag=value` handling is one cursor instead of
   26 copies.** Every valued flag carried two match arms — an exact-name arm and
   a `starts_with("--flag=")` arm that re-sliced the token by a hard-coded prefix
@@ -60,6 +99,16 @@ full release workflow.
   Python had no tests for either spelling — it gets the joined form free from
   `argparse`, so nothing looked like it needed proving. It has seven now, so a
   future move away from `argparse` cannot drift silently.
+
+### Known divergence (not fixed)
+
+- **`--` as the POSIX end-of-options marker is Python-only.** `argparse`
+  implements it, so `mie-decoder decode -- rec.mie` succeeds there; Rust and
+  C++ do not implement it at all and report `--` as an unknown option (exit
+  `4`). This is a missing *feature*, not a disagreement about how a value
+  attaches to a flag, so it is recorded rather than absorbed into `L2-CLI-015`.
+  It surfaced from the same differential sweep and is the only shape in it
+  where the three still differ.
 
 ### Fixed
 

@@ -262,6 +262,50 @@ TEST_CASE("--flag= is the flag with an empty value, not an unknown option",
     }
 }
 
+TEST_CASE("the separated form refuses a value that looks like an option",
+          "[cli][L3-CPP-014][L2-CLI-015]") {
+    // The last cross-implementation divergence in flag parsing.
+    // `--mux-delimiter --no-mux` set the delimiter to the string "--no-mux"
+    // here and in Rust -- so `--no-mux` silently never ran and the decode
+    // succeeded with a wrong MUX column -- while Python refused it. A silent
+    // wrong answer is the worst of the three possible behaviours, so both
+    // moved to Python's rule.
+    const TempFile input("mie-cli-optlike.mie", valid_recording());
+
+    SECTION("option-like tokens are refused") {
+        const char* tokens[] = {"--no-mux", "--foo", "-o", "-x", "-5e3", "-0x5", "-1a"};
+        for (std::size_t i = 0; i < sizeof(tokens) / sizeof(tokens[0]); ++i) {
+            INFO(tokens[i]);
+            REQUIRE(mie::cli::run(args("decode", input.str(), "--mux-delimiter", tokens[i])) ==
+                    mie::cli::EXIT_USAGE);
+        }
+    }
+
+    SECTION("the joined form is unambiguous and still accepts them") {
+        const TempPath out("mie-cli-optlike-join.csv");
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(),
+                                   "--mux-delimiter=--no-mux")) == mie::cli::EXIT_OK);
+    }
+
+    SECTION("the exemptions are values, not options") {
+        // A lone "-" is a path: `-o -` writes a file named "-" (L2-CLI-005).
+        // A negative number is a value: `--mux-field -1` counts from the end.
+        // A token with a space is a value; no option is spelled that way.
+        const TempPath out("mie-cli-optlike-ok.csv");
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(), "--mux-field", "-1")) ==
+                mie::cli::EXIT_OK);
+        const TempPath out2("mie-cli-optlike-ok2.csv");
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out2.str(), "--mux-delimiter",
+                                   "- x")) == mie::cli::EXIT_OK);
+
+        // A negative number still reaches its OWN validator, so a flag that
+        // forbids negatives refuses it for that reason -- not for looking
+        // like an option.
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--collapse-window-us", "-5")) ==
+                mie::cli::EXIT_USAGE);
+    }
+}
+
 TEST_CASE("numeric flags reject trailing junk", "[cli][L3-CPP-014]") {
     // `strtoll` stops at the first non-digit and reports success, so "4x" would
     // silently become 4. A typo must be refused, not rounded off.

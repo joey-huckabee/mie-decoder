@@ -59,16 +59,34 @@ Three details are worth stating, because each has a defensible opposite:
   (`--mux-delimiter=` is a usage error, exit `4`).
 - **Only the first `=` separates.** `--mux-delimiter==` sets the delimiter to
   `=`. Everything after the first `=` is the value, verbatim.
-- **A value beginning with `-` is fine in either form** — `--mux-delimiter -`
-  and `--mux-delimiter=-` both set the delimiter to `-`.
+- **The separated form will not swallow a following flag.** If the next token
+  looks like an option, it is a usage error (exit `4`) rather than a value:
 
-  The one place the two forms genuinely differ is a value that is spelled like
-  *another flag*, and there the implementations differ too. Given
-  `--mux-delimiter --no-mux`, Rust and C++ consume `--no-mux` as the delimiter's
-  value, so it never acts as a flag; Python's `argparse` refuses to consume a
-  `--`-prefixed token as a value and exits `4`. Prefer the joined form when a
-  value could be mistaken for a flag — `--mux-delimiter=--no-mux` means the same
-  thing in all three.
+  ```bash
+  mie-decoder decode rec.mie --mux-delimiter --no-mux    # error: --mux-delimiter
+                                                         # requires a value
+  mie-decoder decode rec.mie --mux-delimiter=--no-mux    # fine: the delimiter
+                                                         # is the string "--no-mux"
+  ```
+
+  The **joined form always works** for such a value, and the error message says
+  so. This is why it is the right form to generate from a script.
+
+  A token "looks like an option" when it starts with `-`, is more than one
+  character, has no space in it, and is not a negative number. Those exemptions
+  are deliberate — each keeps a real invocation working:
+
+  | Passed as a value | Treated as | Why it matters |
+  |---|---|---|
+  | `-` | value | `-o -` writes a file named `-` |
+  | `-1`, `-5.5`, `-.5` | value | `--mux-field -1` counts from the end |
+  | `- x` | value | no flag is spelled with a space |
+  | `-x`, `-o`, `--foo` | **option → error** | almost always a forgotten value |
+  | `-5e3`, `-0x5` | **option → error** | not a *decimal* negative number |
+
+  The last row is the one that surprises people: only plain decimals are
+  exempt. It is that way because Python's `argparse` draws the line there, and
+  all three implementations follow one rule rather than three similar ones.
 
 Flags that take no value — `--no-mux`, `--separate-errors`, `--allow-partial`
 and the rest — have nothing to attach, and `--no-mux=true` is a usage error
