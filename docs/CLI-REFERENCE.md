@@ -35,6 +35,113 @@ mie-decoder [global options] <subcommand> [subcommand options]
 Subcommands: [`decode`](#decode) (binary → CSV), [`count`](#count) (print a record
 count), [`dump`](#dump) (annotated hex dump).
 
+### Attaching a value to a flag
+
+Every flag that takes a value accepts **both** spellings, in all three
+implementations, for global and subcommand flags alike:
+
+```bash
+mie-decoder decode rec.mie -o out.csv --exclude-rts 3,7     # separated
+mie-decoder decode rec.mie -o out.csv --exclude-rts=3,7     # joined
+```
+
+They are the same invocation and produce byte-identical output. Use whichever
+suits the context — the joined form is the safer one to generate from a script,
+since a variable that expands to nothing cannot silently consume the next
+argument as its value.
+
+Three details are worth stating, because each has a defensible opposite:
+
+- **`--flag=` is the flag carrying an empty value**, not a malformed flag. What
+  happens next is the individual flag's decision: a list flag treats it as an
+  empty list (`--exclude-rts=` excludes nothing and decodes exactly as though
+  the flag were absent), while a flag that requires content rejects it
+  (`--mux-delimiter=` is a usage error, exit `4`).
+- **Only the first `=` separates.** `--mux-delimiter==` sets the delimiter to
+  `=`. Everything after the first `=` is the value, verbatim.
+- **The separated form will not swallow a following flag.** If the next token
+  looks like an option, it is a usage error (exit `4`) rather than a value:
+
+  ```bash
+  mie-decoder decode rec.mie --mux-delimiter --no-mux    # error: --mux-delimiter
+                                                         # requires a value
+  mie-decoder decode rec.mie --mux-delimiter=--no-mux    # fine: the delimiter
+                                                         # is the string "--no-mux"
+  ```
+
+  The **joined form always works** for such a value, and the error message says
+  so. This is why it is the right form to generate from a script.
+
+  A token "looks like an option" when it starts with `-`, is more than one
+  character, has no space in it, and does not begin like a number. Those
+  exemptions are deliberate — each keeps a real invocation working:
+
+  | Passed as a value | Treated as | Why it matters |
+  |---|---|---|
+  | `-` | value | `-o -` writes a file named `-` |
+  | `-1`, `-5.5`, `-.5` | value | `--mux-field -1` counts from the end |
+  | `- x` | value | no flag is spelled with a space |
+  | `-x`, `-o`, `-abc`, `--foo` | **option → error** | almost always a forgotten value |
+
+  Note "begins like a number", not "is a number": `-1a` is treated as a value,
+  so a mistyped number is reported by **the flag itself**, naming the bad value
+  (`--mux-field -1a` → *invalid `--mux-field`: "-1a"*), rather than by the
+  guard, which could only have told you it looked like an option.
+
+  > **One corner is version-dependent in Python.** `argparse` changed how it
+  > recognises number-like tokens in **3.14**: before that, only plain decimals
+  > were exempt, so `-5e3`, `-0x5` and `-1a` were errors. Rust and C++ follow
+  > 3.14's rule, so on Python 3.10–3.13 those particular shapes are rejected
+  > where the other two accept them. Everything above the note is identical on
+  > every supported version. If you need a value of that shape, use the joined
+  > form, which is unambiguous everywhere.
+
+Flags that take no value — `--no-mux`, `--separate-errors`, `--allow-partial`
+and the rest — have nothing to attach, and `--no-mux=true` is a usage error
+rather than a way to spell "on".
+
+> This is `L2-CLI-015`. Both spellings and the rules above are pinned across
+> all three implementations by the `flag-eq-form-*` cases in
+> `tests/conformance/manifest.json`, not merely by each implementation's own
+> tests — `cli-surface-parity` compares flag *names*, which cannot see how a
+> value is attached to one.
+
+### `--`: everything after this is a file name
+
+A file whose name begins with a dash cannot be passed as an ordinary argument —
+the CLI would read it as a flag. `--` marks the end of the options; every token
+after it is a path, whatever it looks like:
+
+```bash
+mie-decoder decode -- -weird-name.mie -o out.csv    # WRONG: -o and out.csv
+                                                     # are also paths now
+mie-decoder decode -o out.csv -- -weird-name.mie    # right: flags first
+```
+
+Put the flags **before** the separator. That is the whole rule, and the first
+example above shows why: `--` is not "escape the next token", it is "stop
+parsing options entirely".
+
+Three details:
+
+- **Only the first `--` is consumed.** A second one is an ordinary path, which
+  is how you decode a file that is genuinely called `--`.
+- **It is scoped to one parser.** A `--` before the subcommand only means "the
+  next word is the subcommand" — `-- decode rec.mie --no-mux` still honours
+  `--no-mux`. It does suppress the global flags, so `-- --version` reports an
+  unknown command instead of printing the version.
+- **It is not a flag value.** `-o -- x.mie` is a usage error; `--` looks like an
+  option, so it is refused as one under the rule above.
+
+> This is `L2-CLI-016`. Put the separator **immediately before the paths it
+> applies to** — `decode -o out.csv -- -weird.mie` — and it behaves identically
+> everywhere. Two other positions are less portable, both because of `argparse`:
+>
+> - **Before the subcommand** (`-- decode rec.mie`) works in Rust, C++, and
+>   Python **3.12+**, but is a usage error on Python 3.10 and 3.11.
+> - **Trailing after a flag** (`decode rec.mie -o out.csv --`) is a no-op in
+>   Rust and C++ and a usage error in Python on every version.
+
 ### Global options
 
 Global options are placed **before** the subcommand.
@@ -44,7 +151,7 @@ Global options are placed **before** the subcommand.
 | `--config PATH` | path | *(none)* | TOML configuration file. Applies to `decode`, `count`, and `dump` (the last consumes only its `[logging]` level). Must be a regular file; missing or unparseable is exit `5`. Any readable location is accepted — see [Trust boundary](CONFIG-REFERENCE.md#trust-boundary). |
 | `--log-level LEVEL` | `DEBUG` \| `INFO` \| `WARNING` \| `WARN` \| `ERROR` \| `CRITICAL` \| `OFF` | `WARNING` | Log verbosity (case-insensitive). Overrides the config file's `[logging] level`. Validated after `--version` / `--help`. |
 | `-V`, `-v`, `--version` | — | — | Print the version and exit. Both short forms are accepted, and `--version` matches in any letter case (`--VERSION`, `--Version`, …). |
-| `-h`, `--help` | — | — | Print help and exit. The two builds differ in *shape*, not in content: Python (`argparse`) prints help for the given subcommand, while Rust prints one combined screen covering every subcommand regardless of where `--help` appears. The flag *surface* is identical either way, and `cli-surface-parity` in `tests/conformance/run.py` enforces that. |
+| `-h`, `--help` | — | — | Print help and exit. Accepted before the subcommand and within one. A pending help flag **outranks a broken command line** — `decode --nonsense --help` prints help rather than reporting the unknown option (`L2-CLI-017`) — but it cannot rescue a flag that could not take its value (`--log-level -h` is a usage error), and after `--` it is a path rather than a request. The two builds differ in *shape*, not in content: Python (`argparse`) prints help for the given subcommand, while Rust prints one combined screen covering every subcommand regardless of where `--help` appears. The flag *surface* is identical either way, and `cli-surface-parity` in `tests/conformance/run.py` enforces that. |
 
 ---
 

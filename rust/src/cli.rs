@@ -354,51 +354,65 @@ fn parse_global_flags(
     globals: &mut GlobalArgs,
 ) -> Result<String, ExitCode> {
     loop {
-        match iter.peek().map(String::as_str) {
-            Some("-h" | "--help") => {
+        // Peek, because the first non-flag token is the SUBCOMMAND and belongs
+        // to the caller. Split a clone so the joined and separated spellings
+        // resolve here exactly as they do for subcommand flags -- globals are
+        // parsed in this separate loop, so before the cursor each spelling had
+        // a second, independent implementation.
+        let Some(peeked) = iter.peek().cloned() else {
+            eprint!("{HELP}");
+            return Err(ExitCode::from(exit_code::USAGE));
+        };
+        let a = Arg::split(peeked);
+        match a.name.as_str() {
+            "-h" | "--help" if a.bare() => {
                 print!("{HELP}");
                 return Err(ExitCode::SUCCESS);
             }
-            Some(s) if is_version_flag(s) => {
+            // `--version=1` is not a version request: it declines here and is
+            // returned below as the subcommand token, reporting itself as an
+            // unknown command.
+            s if a.bare() && is_version_flag(s) => {
                 println!("mie-decoder {VERSION}");
                 return Err(ExitCode::SUCCESS);
             }
-            Some("--log-level") => {
-                iter.next();
-                match iter.next() {
-                    Some(v) => globals.log_level = Some(v),
-                    None => return Err(die("--log-level requires a value")),
+            // POSIX end-of-options. Scoped to THIS parser: the subcommand
+            // gets a fresh scan, so `-- decode rec.mie --no-mux` still honours
+            // `--no-mux`. The next token becomes the subcommand verbatim, so
+            // `-- --version` is an unknown command rather than a version
+            // request -- which is what argparse does, `--` having turned it
+            // into a positional.
+            "--" if a.bare() => {
+                iter.next(); // the separator itself
+                return match iter.next() {
+                    Some(token) => Ok(token),
+                    None => {
+                        eprint!("{HELP}");
+                        Err(ExitCode::from(exit_code::USAGE))
+                    }
+                };
+            }
+            "--log-level" => {
+                iter.next(); // the flag token itself
+                match a.value("--log-level", iter) {
+                    Ok(v) => globals.log_level = Some(v),
+                    Err(_) => return Err(die("--log-level requires a value")),
                 }
             }
-            Some(s) if s.starts_with("--log-level=") => {
-                let Some(v) = iter.next() else {
-                    return Err(die("--log-level requires a value"));
-                };
-                globals.log_level = Some(v["--log-level=".len()..].to_string());
-            }
-            Some("--config") => {
+            "--config" => {
                 iter.next();
-                match iter.next() {
-                    Some(v) => globals.config = Some(PathBuf::from(v)),
-                    None => return Err(die("--config requires a path")),
+                match a.value("--config", iter) {
+                    // Its own message: a path, not a generic value.
+                    Ok(v) => globals.config = Some(PathBuf::from(v)),
+                    Err(_) => return Err(die("--config requires a path")),
                 }
             }
-            Some(s) if s.starts_with("--config=") => {
-                let Some(v) = iter.next() else {
-                    return Err(die("--config requires a path"));
-                };
-                globals.config = Some(PathBuf::from(&v["--config=".len()..]));
-            }
-            Some(_) => {
+            _ => {
                 // `peek` just returned `Some`, so `next` cannot be `None`.
                 // `unwrap_or_default` keeps the function total rather than
                 // introducing a panic site (L1-ROB-001); an empty token would
                 // fall through to the unknown-command arm, which is safe.
                 return Ok(iter.next().unwrap_or_default());
-            }
-            None => {
-                eprint!("{HELP}");
-                return Err(ExitCode::from(exit_code::USAGE));
             }
         }
     }
@@ -406,14 +420,49 @@ fn parse_global_flags(
 
 /// Turn a subcommand parse result into `Command`, or an `Err(code)` for `run`
 /// to return: `HelpRequested` prints help and exits `0`; `Other` dies (usage).
-fn parse_or_help<T>(result: Result<T, ParseError>) -> Result<T, ExitCode> {
+/// Is a help request still pending in the unconsumed arguments?
+///
+/// An operator whose command line is wrong is the one most likely to have
+/// asked for help, so help outranks a *deferred* diagnostic: an unknown
+/// option, or a value this CLI validates after parsing. Python and C++ both
+/// answer help for `decode --nonsense --help`; Rust reported the unknown
+/// option and was the odd one out.
+///
+/// It does NOT outrank a failed value *consumption* -- see `next_value`, which
+/// drains the iterator precisely so this returns `false` there. That split is
+/// `argparse`'s: it raises immediately when it cannot structurally take a
+/// value, and defers everything else until after the help action has had its
+/// chance.
+///
+/// Bounded by `--`, because after the end-of-options separator a `-h` is a
+/// path and not a request (L2-CLI-016).
+fn help_pending(iter: &mut ArgIter<'_>) -> bool {
+    for token in iter.by_ref() {
+        if token == "--" {
+            return false;
+        }
+        if token == "-h" || token == "--help" {
+            return true;
+        }
+    }
+    false
+}
+
+fn parse_or_help<T>(result: Result<T, ParseError>, iter: &mut ArgIter<'_>) -> Result<T, ExitCode> {
     match result {
         Ok(c) => Ok(c),
         Err(ParseError::HelpRequested) => {
             print!("{HELP}");
             Err(ExitCode::SUCCESS)
         }
-        Err(ParseError::Other(e)) => Err(die(&e)),
+        Err(ParseError::Other(e)) => {
+            // A pending `-h` outranks a deferred diagnostic; see `help_pending`.
+            if help_pending(iter) {
+                print!("{HELP}");
+                return Err(ExitCode::SUCCESS);
+            }
+            Err(die(&e))
+        }
     }
 }
 
@@ -421,16 +470,31 @@ fn parse_or_help<T>(result: Result<T, ParseError>) -> Result<T, ExitCode> {
 /// `Command`. `Err(code)` means `run` should return that exit code.
 fn parse_subcommand(cmd_token: &str, iter: &mut ArgIter<'_>) -> Result<Command, ExitCode> {
     match cmd_token {
-        "decode" => Ok(Command::Decode(Box::new(parse_or_help(parse_decode(
+        "decode" => Ok(Command::Decode(Box::new(parse_or_help(
+            parse_decode(iter),
             iter,
-        ))?))),
-        "count" => Ok(Command::Count(parse_or_help(parse_count(iter))?)),
-        "dump" => Ok(Command::Dump(Box::new(parse_or_help(parse_dump(iter))?))),
-        "-h" | "--help" => {
-            print!("{HELP}");
-            Err(ExitCode::SUCCESS)
+        )?))),
+        "count" => Ok(Command::Count(parse_or_help(parse_count(iter), iter)?)),
+        "dump" => Ok(Command::Dump(Box::new(parse_or_help(
+            parse_dump(iter),
+            iter,
+        )?))),
+        // No `-h`/`--help` arm: `parse_global_flags` intercepts both before a
+        // subcommand token is ever produced, so one here was unreachable — until
+        // `--` made it reachable, and then wrong. After the end-of-options
+        // separator the next token is a subcommand NAME, so `-- -h` must report
+        // an unknown command rather than print help, which is what `argparse`
+        // does (there `-h` becomes a positional and fails the choice check).
+        // An unrecognised command is a deferred diagnostic like any other, so a
+        // pending `-h` outranks it: `--nonsense --help` prints help, matching
+        // both of the other implementations.
+        other => {
+            if help_pending(iter) {
+                print!("{HELP}");
+                return Err(ExitCode::SUCCESS);
+            }
+            Err(die(&format!("Unknown command: {other:?}")))
         }
-        other => Err(die(&format!("Unknown command: {other:?}"))),
     }
 }
 
@@ -457,9 +521,173 @@ impl From<String> for ParseError {
     }
 }
 
+/// Does this token look like an option rather than a value?
+///
+/// Used to decide whether the **separated** form may consume the next token.
+/// Without this, `--mux-delimiter --no-mux` set the delimiter to the string
+/// `"--no-mux"` and the `--no-mux` flag silently never ran — a wrong decode
+/// that exited 0. Refusing turns that into a usage error, which is the whole
+/// value of the check: the failure was silent, not merely inconsistent.
+///
+/// The rule is `argparse`'s, deliberately, because Python behaves this way and
+/// the alternative was to make two implementations agree with each other and
+/// disagree with the third. Its three exemptions are not quirks to be tidied
+/// away — each keeps a real invocation working:
+///
+/// * **A lone `-`** is a value. `-o -` writes a file named `-` (L2-CLI-005).
+/// * **Anything beginning like a number** is a value; see
+///   [`starts_like_a_number`], which is also where the one version-dependent
+///   corner of `argparse` is documented. `--mux-field -1` is a documented
+///   feature — negative indices count from the end — and
+///   `--collapse-window-us -5` must still reach its own validator to be
+///   refused for being negative, rather than being refused here for looking
+///   like a flag.
+/// * **A token containing a space** is a value, since no option is spelled
+///   that way.
+///
+/// Note what this does NOT cover: the joined form. `--mux-delimiter=--no-mux`
+/// is unambiguous and stays legal in all three implementations, which is why
+/// it is the documented way to pass a value that looks like a flag.
+fn looks_like_option(token: &str) -> bool {
+    if !token.starts_with('-') || token.chars().count() < 2 || token.contains(' ') {
+        return false;
+    }
+    !starts_like_a_number(token)
+}
+
+/// Does this token begin like a number? `argparse`'s `-\.?\d`, applied as a
+/// **prefix** test the way `re.match` applies it — a dash, an optional decimal
+/// point, then a digit. Hand-rolled because this crate has no regex dependency
+/// and is not going to acquire one for three lines.
+///
+/// This deliberately accepts more than "is a number": `-5e3`, `-0x5` and `-1a`
+/// all begin like one and are therefore values. That is the point. Such a
+/// token is far likelier to be a mistyped number than a flag, and letting it
+/// through means the flag's **own** validator reports it, naming the bad
+/// value — `--mux-field -1a` gives `invalid --mux-field: "-1a"` instead of the
+/// much less helpful "the next argument is an option".
+///
+/// **This rule is version-dependent in Python and we pin the newer one.**
+/// Through 3.13 `argparse` used an anchored full match,
+/// `^-\d+$|^-\d*\.\d+$`, so only plain decimals were exempt; 3.14 replaced
+/// it with the prefix test above. Since this project supports Python 3.10
+/// through 3.14, `argparse` does not agree with *itself* across the supported
+/// range, and no choice here can match all of them. We follow 3.14: it is
+/// simpler, it is where Python is going, and it is the more permissive of the
+/// two, so adopting it cannot newly reject an invocation that used to work.
+///
+/// The shapes this disagrees with Python 3.10-3.13 about — dash, digit, then
+/// junk — are consequently **outside** the specified contract (L2-CLI-015) and
+/// are kept out of the conformance suite. What every version agrees on, and
+/// what the contract does cover, is that a token spelled like an option name
+/// (`-x`, `-o`, `--foo`) is refused and a plain decimal is not.
+fn starts_like_a_number(token: &str) -> bool {
+    let Some(rest) = token.strip_prefix('-') else {
+        return false;
+    };
+    // The decimal point is optional; a digit after it is not.
+    let rest = rest.strip_prefix('.').unwrap_or(rest);
+    rest.bytes().next().is_some_and(|b| b.is_ascii_digit())
+}
+
 fn next_value(name: &str, iter: &mut ArgIter<'_>) -> Result<String, String> {
-    iter.next()
-        .ok_or_else(|| format!("{name} requires a value"))
+    // A flag that cannot get its value is a HARD stop, and the error arms
+    // below drain the iterator to say so. Everything after such a flag is
+    // uninterpretable -- we do not know which tokens were meant to be its
+    // value -- so nothing in it may be honoured, including a `-h`.
+    //
+    // That is the line `argparse` draws too: it raises immediately when it
+    // cannot structurally take a value, so `--log-level -h` and
+    // `--config --help` are usage errors there, while a DEFERRED diagnostic
+    // (an unknown option, or a value validated after parsing) lets a later
+    // help request win. Draining is what makes `help_pending` answer `false`
+    // here, without adding a variant to the public `ParseError`.
+    let failure = match iter.peek() {
+        None => format!("{name} requires a value"),
+        Some(token) if looks_like_option(token) => format!(
+            "{name} requires a value, but the next argument is an option: {token}; \
+             to pass it as a value, write {name}={token}"
+        ),
+        // `peek` returned `Some`, so `next` cannot be `None`.
+        Some(_) => return Ok(iter.next().unwrap_or_default()),
+    };
+    while iter.next().is_some() {}
+    Err(failure)
+}
+
+/// One argument token, split at the first `=`.
+///
+/// `--flag=value` and `--flag value` are the same invocation, and every flag
+/// that takes a value accepts both. Doing that split *once*, here, is what lets
+/// a flag be handled by a single match arm: before this the two spellings were
+/// two arms apiece — an exact-name arm and a `starts_with("--flag=")` arm that
+/// re-sliced the token by a hard-coded prefix length — repeated at 26 sites. A
+/// flag added with only the first arm would silently reject the joined form,
+/// and no gate would have noticed: `cli-surface-parity` compares flag *names*.
+///
+/// Three rules, each load-bearing and each pinned by a test:
+///
+/// * **Only `--` tokens split.** A positional path may contain `=`
+///   (`a=b.mie`), and `-o=out.csv` is not a spelling this CLI accepts — both
+///   must survive untouched.
+/// * **Only the first `=` separates**, so `--mux-delimiter==` sets the
+///   delimiter to `=`.
+/// * **`--flag=` is an empty value, not a missing one.** The flag's own
+///   validator then decides: an empty filter list is fine, an empty delimiter
+///   is not. C++ got this wrong in the other direction and reported an unknown
+///   option where Rust and Python decoded normally.
+///
+/// `raw` is kept because the unknown-option message quotes the token as the
+/// user typed it, and a flag that takes no value rejects `--flag=x` by falling
+/// through to exactly that message.
+struct Arg {
+    /// The token exactly as it arrived.
+    raw: String,
+    /// The flag name: everything before the first `=`, or the whole token.
+    name: String,
+    /// The value that was joined with `=`, if any. `Some("")` for `--flag=`.
+    inline: Option<String>,
+}
+
+impl Arg {
+    fn split(raw: String) -> Self {
+        // Single-dash and bare tokens are never split; see the type docs.
+        if raw.starts_with("--")
+            && let Some(at) = raw.find('=')
+        {
+            return Self {
+                name: raw[..at].to_string(),
+                inline: Some(raw[at + 1..].to_string()),
+                raw,
+            };
+        }
+        Self {
+            name: raw.clone(),
+            inline: None,
+            raw,
+        }
+    }
+
+    /// The value for a flag that requires one: the joined value if there was
+    /// one, otherwise the next token.
+    ///
+    /// `name` is passed rather than read from `self.name` so the "requires a
+    /// value" message names the long form even when the short one was used
+    /// (`-o` reports `--output`), which is what the message did before.
+    fn value(&self, name: &str, iter: &mut ArgIter<'_>) -> Result<String, String> {
+        match &self.inline {
+            Some(v) => Ok(v.clone()),
+            None => next_value(name, iter),
+        }
+    }
+
+    /// True when this token carried no `=`, which is the guard a value-less
+    /// flag needs: `--no-mux=true` must not quietly set the flag and discard
+    /// the value, so the arm declines and the token falls through to the
+    /// unknown-option message carrying `raw`.
+    fn bare(&self) -> bool {
+        self.inline.is_none()
+    }
 }
 
 fn parse_int_value(s: &str, name: &str) -> Result<usize, String> {
@@ -519,203 +747,131 @@ fn parse_bus_filter(v: &str) -> Result<crate::models::Bus, ParseError> {
 
 fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
     let mut args = DecodeArgs::default();
+    // POSIX end-of-options: the FIRST `--` is dropped and everything after it
+    // is a path, however it is spelled. A later `--` is an ordinary
+    // positional, which is the only way to name a file called `--`.
+    let mut end_of_options = false;
 
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
+    while let Some(token) = iter.next() {
+        if end_of_options {
+            args.inputs.push(PathBuf::from(token));
+            continue;
+        }
+        if token == "--" {
+            end_of_options = true;
+            continue;
+        }
+        // One arm per flag: `Arg::split` has already resolved `--flag=value`
+        // against `--flag value`, so neither spelling appears below.
+        let a = Arg::split(token);
+        match a.name.as_str() {
             "-o" | "--output" => {
-                args.output = Some(PathBuf::from(next_value("--output", iter)?));
+                args.output = Some(PathBuf::from(a.value("--output", iter)?));
             }
-            s if s.starts_with("--output=") => {
-                args.output = Some(PathBuf::from(&s["--output=".len()..]));
-            }
-            "--separate-errors" => args.separate_errors = true,
-            "--no-clobber" => args.no_clobber = true,
-            "--allow-partial" => args.allow_partial = true,
-            "--strict" => args.strict = Some(true),
+            // Value-less flags decline a joined value rather than discard it;
+            // `--no-mux=true` falls through to the unknown-option arm.
+            "--separate-errors" if a.bare() => args.separate_errors = true,
+            "--no-clobber" if a.bare() => args.no_clobber = true,
+            "--allow-partial" if a.bare() => args.allow_partial = true,
+            "--strict" if a.bare() => args.strict = Some(true),
+            "--no-mux" if a.bare() => args.no_mux = true,
+            "--collapse-duplicates" if a.bare() => args.collapse_duplicates = true,
             "--time-format" => {
-                let v = next_value("--time-format", iter)?;
-                args.time_format = Some(parse_time_format_arg(&v)?);
-            }
-            s if s.starts_with("--time-format=") => {
-                args.time_format = Some(parse_time_format_arg(&s["--time-format=".len()..])?);
+                args.time_format = Some(parse_time_format_arg(&a.value("--time-format", iter)?)?);
             }
             "--detect-records" => {
-                let v = next_value("--detect-records", iter)?;
-                args.detect_records = Some(parse_detect_records(&v)?);
-            }
-            s if s.starts_with("--detect-records=") => {
-                args.detect_records = Some(parse_detect_records(&s["--detect-records=".len()..])?);
+                args.detect_records =
+                    Some(parse_detect_records(&a.value("--detect-records", iter)?)?);
             }
             "--lookahead-records" => {
-                let v = next_value("--lookahead-records", iter)?;
-                args.lookahead_records = Some(parse_lookahead_records(&v)?);
-            }
-            s if s.starts_with("--lookahead-records=") => {
-                args.lookahead_records =
-                    Some(parse_lookahead_records(&s["--lookahead-records=".len()..])?);
-            }
-            "--standard-tick-rate-hz" => {
-                let v = next_value("--standard-tick-rate-hz", iter)?;
-                args.standard_tick_rate_hz = Some(parse_standard_tick_rate_hz(&v)?);
-            }
-            s if s.starts_with("--standard-tick-rate-hz=") => {
-                args.standard_tick_rate_hz = Some(parse_standard_tick_rate_hz(
-                    &s["--standard-tick-rate-hz=".len()..],
+                args.lookahead_records = Some(parse_lookahead_records(
+                    &a.value("--lookahead-records", iter)?,
                 )?);
             }
-            "--format" => {
-                args.output_format = Some(next_value("--format", iter)?);
+            "--standard-tick-rate-hz" => {
+                args.standard_tick_rate_hz = Some(parse_standard_tick_rate_hz(
+                    &a.value("--standard-tick-rate-hz", iter)?,
+                )?);
             }
-            s if s.starts_with("--format=") => {
-                args.output_format = Some(s["--format=".len()..].to_string());
-            }
-            "--no-mux" => args.no_mux = true,
+            "--format" => args.output_format = Some(a.value("--format", iter)?),
             "--mux-delimiter" => {
-                args.mux_delimiter =
-                    Some(parse_mux_delimiter(&next_value("--mux-delimiter", iter)?)?);
-            }
-            s if s.starts_with("--mux-delimiter=") => {
-                args.mux_delimiter = Some(parse_mux_delimiter(&s["--mux-delimiter=".len()..])?);
+                args.mux_delimiter = Some(parse_mux_delimiter(&a.value("--mux-delimiter", iter)?)?);
             }
             "--mux-field" => {
-                args.mux_field = Some(parse_mux_field(&next_value("--mux-field", iter)?)?);
-            }
-            s if s.starts_with("--mux-field=") => {
-                args.mux_field = Some(parse_mux_field(&s["--mux-field=".len()..])?);
+                args.mux_field = Some(parse_mux_field(&a.value("--mux-field", iter)?)?);
             }
             "--max-sort-group" => {
-                let v = next_value("--max-sort-group", iter)?;
-                args.max_sort_group = Some(parse_max_sort_group(&v)?);
-            }
-            s if s.starts_with("--max-sort-group=") => {
-                args.max_sort_group = Some(parse_max_sort_group(&s["--max-sort-group=".len()..])?);
+                args.max_sort_group =
+                    Some(parse_max_sort_group(&a.value("--max-sort-group", iter)?)?);
             }
             "--delta-scope" => {
-                let v = next_value("--delta-scope", iter)?;
-                args.delta_scope = Some(parse_delta_scope(&v)?);
+                args.delta_scope = Some(parse_delta_scope(&a.value("--delta-scope", iter)?)?);
             }
-            s if s.starts_with("--delta-scope=") => {
-                args.delta_scope = Some(parse_delta_scope(&s["--delta-scope=".len()..])?);
-            }
-            "--collapse-duplicates" => args.collapse_duplicates = true,
             "--collapse-window-us" => {
-                args.collapse_window_us = Some(parse_collapse_window_us(&next_value(
-                    "--collapse-window-us",
-                    iter,
-                )?)?);
-            }
-            s if s.starts_with("--collapse-window-us=") => {
                 args.collapse_window_us = Some(parse_collapse_window_us(
-                    &s["--collapse-window-us=".len()..],
+                    &a.value("--collapse-window-us", iter)?,
                 )?);
             }
             "--manifest" => {
-                args.manifest = Some(PathBuf::from(next_value("--manifest", iter)?));
+                args.manifest = Some(PathBuf::from(a.value("--manifest", iter)?));
             }
-            s if s.starts_with("--manifest=") => {
-                args.manifest = Some(PathBuf::from(&s["--manifest=".len()..]));
-            }
-            "--glob" => {
-                args.glob = Some(next_value("--glob", iter)?);
-            }
-            s if s.starts_with("--glob=") => {
-                args.glob = Some(s["--glob=".len()..].to_string());
-            }
+            "--glob" => args.glob = Some(a.value("--glob", iter)?),
             // Filter flags: each takes ONE value. Multiple values either
             // repeat the flag or comma-separate within one value:
             //   --include-rts 15
             //   --include-rts 15,20,31
             //   --include-rts 15 --include-rts 31
             // Any of those leaves trailing positionals like `file.mie`
-            // free to bind to `args.inputs`. Both space- and `=`-form
-            // value syntax are accepted.
+            // free to bind to `args.inputs`.
             "--exclude-types" => push_filter(
-                &next_value("--exclude-types", iter)?,
-                &mut args.exclude_types,
-                parse_type_filter,
-            )?,
-            s if s.starts_with("--exclude-types=") => push_filter(
-                &s["--exclude-types=".len()..],
+                &a.value("--exclude-types", iter)?,
                 &mut args.exclude_types,
                 parse_type_filter,
             )?,
             "--include-types" => push_filter(
-                &next_value("--include-types", iter)?,
-                &mut args.include_types,
-                parse_type_filter,
-            )?,
-            s if s.starts_with("--include-types=") => push_filter(
-                &s["--include-types=".len()..],
+                &a.value("--include-types", iter)?,
                 &mut args.include_types,
                 parse_type_filter,
             )?,
             "--exclude-rts" => push_filter(
-                &next_value("--exclude-rts", iter)?,
+                &a.value("--exclude-rts", iter)?,
                 &mut args.exclude_rts,
                 |v| parse_u8_value(v, "--exclude-rts").map_err(Into::into),
             )?,
-            s if s.starts_with("--exclude-rts=") => {
-                push_filter(&s["--exclude-rts=".len()..], &mut args.exclude_rts, |v| {
-                    parse_u8_value(v, "--exclude-rts").map_err(Into::into)
-                })?;
-            }
             "--include-rts" => push_filter(
-                &next_value("--include-rts", iter)?,
+                &a.value("--include-rts", iter)?,
                 &mut args.include_rts,
                 |v| parse_u8_value(v, "--include-rts").map_err(Into::into),
             )?,
-            s if s.starts_with("--include-rts=") => {
-                push_filter(&s["--include-rts=".len()..], &mut args.include_rts, |v| {
-                    parse_u8_value(v, "--include-rts").map_err(Into::into)
-                })?;
-            }
             "--exclude-buses" => push_filter(
-                &next_value("--exclude-buses", iter)?,
-                &mut args.exclude_buses,
-                parse_bus_filter,
-            )?,
-            s if s.starts_with("--exclude-buses=") => push_filter(
-                &s["--exclude-buses=".len()..],
+                &a.value("--exclude-buses", iter)?,
                 &mut args.exclude_buses,
                 parse_bus_filter,
             )?,
             "--include-buses" => push_filter(
-                &next_value("--include-buses", iter)?,
-                &mut args.include_buses,
-                parse_bus_filter,
-            )?,
-            s if s.starts_with("--include-buses=") => push_filter(
-                &s["--include-buses=".len()..],
+                &a.value("--include-buses", iter)?,
                 &mut args.include_buses,
                 parse_bus_filter,
             )?,
             "--exclude-subaddresses" => push_filter(
-                &next_value("--exclude-subaddresses", iter)?,
-                &mut args.exclude_subaddresses,
-                |v| parse_u8_value(v, "--exclude-subaddresses").map_err(Into::into),
-            )?,
-            s if s.starts_with("--exclude-subaddresses=") => push_filter(
-                &s["--exclude-subaddresses=".len()..],
+                &a.value("--exclude-subaddresses", iter)?,
                 &mut args.exclude_subaddresses,
                 |v| parse_u8_value(v, "--exclude-subaddresses").map_err(Into::into),
             )?,
             "--include-subaddresses" => push_filter(
-                &next_value("--include-subaddresses", iter)?,
+                &a.value("--include-subaddresses", iter)?,
                 &mut args.include_subaddresses,
                 |v| parse_u8_value(v, "--include-subaddresses").map_err(Into::into),
             )?,
-            s if s.starts_with("--include-subaddresses=") => push_filter(
-                &s["--include-subaddresses=".len()..],
-                &mut args.include_subaddresses,
-                |v| parse_u8_value(v, "--include-subaddresses").map_err(Into::into),
-            )?,
-            "-h" | "--help" => return Err(ParseError::HelpRequested),
-            s if s.starts_with('-') => {
-                return Err(format!("unknown decode option: {s}").into());
+            "-h" | "--help" if a.bare() => return Err(ParseError::HelpRequested),
+            // `raw`, not `name`: the message quotes what was typed, so
+            // `--no-mux=true` reports itself in full.
+            _ if a.name.starts_with('-') => {
+                return Err(format!("unknown decode option: {}", a.raw).into());
             }
             // Positional input path(s). One or more is accepted; more than one
             // resolved input triggers the time-sorted merge (L2-MRG-001).
-            _ => args.inputs.push(PathBuf::from(arg)),
+            _ => args.inputs.push(PathBuf::from(a.raw)),
         }
     }
 
@@ -742,17 +898,32 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
 
 fn parse_count(iter: &mut ArgIter<'_>) -> Result<PathBuf, ParseError> {
     let mut path: Option<PathBuf> = None;
-    for arg in iter.by_ref() {
-        match arg.as_str() {
-            "-h" | "--help" => return Err(ParseError::HelpRequested),
-            s if s.starts_with('-') => {
-                return Err(format!("unknown count option: {s}").into());
+    let mut end_of_options = false;
+    for token in iter.by_ref() {
+        if !end_of_options && token == "--" {
+            end_of_options = true;
+            continue;
+        }
+        if end_of_options {
+            if path.is_some() {
+                return Err(format!("unexpected positional argument: {token}").into());
+            }
+            path = Some(PathBuf::from(token));
+            continue;
+        }
+        // `count` has no value-taking flag today, but it goes through the same
+        // cursor so that adding one cannot reintroduce a per-flag `=` arm.
+        let a = Arg::split(token);
+        match a.name.as_str() {
+            "-h" | "--help" if a.bare() => return Err(ParseError::HelpRequested),
+            _ if a.name.starts_with('-') => {
+                return Err(format!("unknown count option: {}", a.raw).into());
             }
             _ => {
                 if path.is_some() {
-                    return Err(format!("unexpected positional argument: {arg}").into());
+                    return Err(format!("unexpected positional argument: {}", a.raw).into());
                 }
-                path = Some(PathBuf::from(arg));
+                path = Some(PathBuf::from(a.raw));
             }
         }
     }
@@ -762,40 +933,43 @@ fn parse_count(iter: &mut ArgIter<'_>) -> Result<PathBuf, ParseError> {
 fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, ParseError> {
     let mut args = DumpArgs::default();
     let mut input_seen = false;
+    let mut end_of_options = false;
 
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--raw" => args.raw = true,
-            "--offset" => {
-                let v = next_value("--offset", iter)?;
-                args.offset = parse_int_value(&v, "--offset")?;
+    while let Some(token) = iter.next() {
+        if !end_of_options && token == "--" {
+            end_of_options = true;
+            continue;
+        }
+        if end_of_options {
+            if input_seen {
+                return Err(format!("unexpected positional argument: {token}").into());
             }
-            s if s.starts_with("--offset=") => {
-                args.offset = parse_int_value(&s["--offset=".len()..], "--offset")?;
+            args.input = PathBuf::from(token);
+            input_seen = true;
+            continue;
+        }
+        let a = Arg::split(token);
+        match a.name.as_str() {
+            "--raw" if a.bare() => args.raw = true,
+            "--offset" => {
+                args.offset = parse_int_value(&a.value("--offset", iter)?, "--offset")?;
             }
             "--length" => {
-                let v = next_value("--length", iter)?;
-                args.length = Some(parse_int_value(&v, "--length")?);
-            }
-            s if s.starts_with("--length=") => {
-                args.length = Some(parse_int_value(&s["--length=".len()..], "--length")?);
+                args.length = Some(parse_int_value(&a.value("--length", iter)?, "--length")?);
             }
             "--records" => {
-                let v = next_value("--records", iter)?;
-                args.records = Some(parse_int_value(&v, "--records")? as u64);
+                args.records =
+                    Some(parse_int_value(&a.value("--records", iter)?, "--records")? as u64);
             }
-            s if s.starts_with("--records=") => {
-                args.records = Some(parse_int_value(&s["--records=".len()..], "--records")? as u64);
-            }
-            "-h" | "--help" => return Err(ParseError::HelpRequested),
-            s if s.starts_with('-') => {
-                return Err(format!("unknown dump option: {s}").into());
+            "-h" | "--help" if a.bare() => return Err(ParseError::HelpRequested),
+            _ if a.name.starts_with('-') => {
+                return Err(format!("unknown dump option: {}", a.raw).into());
             }
             _ => {
                 if input_seen {
-                    return Err(format!("unexpected positional argument: {arg}").into());
+                    return Err(format!("unexpected positional argument: {}", a.raw).into());
                 }
-                args.input = PathBuf::from(arg);
+                args.input = PathBuf::from(a.raw);
                 input_seen = true;
             }
         }
@@ -1616,6 +1790,491 @@ mod tests {
     }
 
     /// `--flag=value` syntax with comma-separation.
+    /// Help outranks a **deferred** diagnostic.
+    ///
+    /// An operator whose command line is wrong is the one most likely to be
+    /// asking for help. Python and C++ both answered help here; Rust reported
+    /// the unknown option and was the odd one out.
+    /// Requirements: L2-CLI-017
+    #[test]
+    fn help_outranks_a_deferred_diagnostic() {
+        // Unrecognised option, then a help request.
+        assert!(help_pending(&mut args(&["--help"])));
+        assert!(help_pending(&mut args(&["rec.mie", "-h"])));
+
+        // Nothing pending is the ordinary case.
+        assert!(!help_pending(&mut args(&["rec.mie"])));
+        assert!(!help_pending(&mut args(&[])));
+    }
+
+    /// A help flag after `--` is a path, not a request (L2-CLI-016), so it
+    /// cannot rescue a broken command line either.
+    /// Requirements: L2-CLI-016, L2-CLI-017
+    #[test]
+    fn help_after_the_end_of_options_marker_is_not_pending() {
+        assert!(!help_pending(&mut args(&["--", "--help"])));
+        assert!(!help_pending(&mut args(&["--", "-h"])));
+        // ...but before it, it still counts.
+        assert!(help_pending(&mut args(&["-h", "--", "--help"])));
+    }
+
+    /// Help does NOT outrank a failed value **consumption**.
+    ///
+    /// When a flag cannot take a value the rest of the command line is
+    /// uninterpretable — nothing downstream can be attributed to the right
+    /// flag — so `next_value` drains the iterator and a later `-h` is not
+    /// pending. That is `argparse`'s split too: it raises immediately here and
+    /// defers everything else.
+    /// Requirements: L2-CLI-015, L2-CLI-017
+    #[test]
+    fn a_failed_value_consumption_is_not_rescued_by_a_later_help() {
+        // The option-like guard fires, and the drain leaves nothing pending.
+        let mut it = args(&["-h", "--help", "rec.mie"]);
+        let err = next_value("--mux-delimiter", &mut it).unwrap_err();
+        assert!(err.contains("--mux-delimiter"), "got {err:?}");
+        assert!(
+            !help_pending(&mut it),
+            "a consumption failure must consume the rest of the line"
+        );
+
+        // Same when the arguments simply ran out.
+        let mut it = args(&[]);
+        assert!(next_value("--output", &mut it).is_err());
+        assert!(!help_pending(&mut it));
+
+        // And the success path leaves the iterator exactly where it was.
+        let mut it = args(&["value", "--help"]);
+        assert_eq!(next_value("--mux-delimiter", &mut it).unwrap(), "value");
+        assert!(help_pending(&mut it));
+    }
+
+    /// POSIX end-of-options. After `--` every token is a path, however it is
+    /// spelled — which is the only way to decode a file whose name begins
+    /// with a dash.
+    /// Requirements: L2-CLI-016
+    #[test]
+    fn end_of_options_makes_every_later_token_positional() {
+        let parsed = parse_decode(&mut args(&["--", "rec.mie", "--no-mux", "-o", "out.csv"]))
+            .expect("everything after -- is an input");
+        assert_eq!(
+            parsed.inputs,
+            vec![
+                PathBuf::from("rec.mie"),
+                PathBuf::from("--no-mux"),
+                PathBuf::from("-o"),
+                PathBuf::from("out.csv"),
+            ]
+        );
+        // None of them acted as a flag.
+        assert!(!parsed.no_mux);
+        assert_eq!(parsed.output, None);
+    }
+
+    /// Only the FIRST `--` is a separator; a later one is an ordinary
+    /// positional, which is how a file actually named `--` is named.
+    /// Requirements: L2-CLI-016
+    #[test]
+    fn only_the_first_end_of_options_marker_is_consumed() {
+        let parsed = parse_decode(&mut args(&["--", "--", "rec.mie"])).unwrap();
+        assert_eq!(
+            parsed.inputs,
+            vec![PathBuf::from("--"), PathBuf::from("rec.mie")]
+        );
+
+        // And before it, flags still work normally.
+        let parsed = parse_decode(&mut args(&["--no-mux", "--", "rec.mie"])).unwrap();
+        assert!(parsed.no_mux);
+        assert_eq!(parsed.inputs, vec![PathBuf::from("rec.mie")]);
+    }
+
+    /// The separator is scoped to the parser that consumes it. A `--` before
+    /// the subcommand means "the next token is the subcommand NAME" — it does
+    /// not put the subcommand's own parser into end-of-options mode, so
+    /// `-- decode rec.mie --no-mux` still honours `--no-mux`.
+    ///
+    /// It also suppresses the global flags, so `-- --version` asks for a
+    /// subcommand called `--version` and is reported as an unknown command.
+    /// Requirements: L2-CLI-016
+    #[test]
+    fn end_of_options_before_the_subcommand_names_it() {
+        let mut globals = GlobalArgs::default();
+        let sub = parse_global_flags(&mut args(&["--", "decode", "rec.mie"]), &mut globals)
+            .expect("-- then a subcommand");
+        assert_eq!(sub, "decode");
+
+        // The subcommand parser gets a fresh scan.
+        let parsed = parse_decode(&mut args(&["rec.mie", "--no-mux"])).unwrap();
+        assert!(parsed.no_mux);
+
+        for token in ["--version", "-h", "--help", "-V"] {
+            let mut globals = GlobalArgs::default();
+            let sub = parse_global_flags(&mut args(&["--", token]), &mut globals)
+                .expect("-- suppresses the global flags");
+            assert_eq!(
+                sub, token,
+                "{token} should be handed back as a command name"
+            );
+        }
+    }
+
+    /// `count` and `dump` take one positional each, so after `--` a second one
+    /// is the same mistake it always was.
+    /// Requirements: L2-CLI-016
+    #[test]
+    fn end_of_options_applies_to_count_and_dump() {
+        let path = parse_count(&mut args(&["--", "-weird.mie"])).unwrap();
+        assert_eq!(path, PathBuf::from("-weird.mie"));
+
+        let err = parse_count(&mut args(&["--", "a.mie", "b.mie"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(
+            msg.contains("unexpected positional argument"),
+            "got {msg:?}"
+        );
+
+        let parsed = parse_dump(&mut args(&["--", "-weird.mie"])).unwrap();
+        assert_eq!(parsed.input, PathBuf::from("-weird.mie"));
+
+        // After `--`, `--records` is a path, so it lands as a second
+        // positional rather than as a flag.
+        let err = parse_dump(&mut args(&["--", "a.mie", "--records"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(
+            msg.contains("unexpected positional argument"),
+            "got {msg:?}"
+        );
+    }
+
+    /// The predicate itself, at the boundary, because the parse-level tests
+    /// below cannot reach every shape cheaply.
+    ///
+    /// These values are Python 3.14's, read out of its `argparse` source
+    /// rather than guessed: the matcher is `-\.?\d` applied as a **prefix**
+    /// test, so "-5e3", "-0x5" and "-1a" all begin like numbers and are
+    /// values. Python 3.10-3.13 used an anchored full match and called those
+    /// three options instead. We pin 3.14's; `starts_like_a_number` explains
+    /// why, and those shapes are deliberately outside the L2-CLI-015 contract
+    /// because `argparse` does not agree with itself about them.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn looks_like_option_matches_argparse_3_14() {
+        // Values — consumed as the argument to a flag.
+        for token in [
+            "", "-", "-5", "-0", "-5.5", "-.5", "-00.5", "-5.", "- x", "-1 2", "x", "a=b",
+            // Begin like a number, so a value; the flag's own validator gets
+            // to complain about the rest, which is the more useful message.
+            "-5e3", "-0x5", "-1a", "-5.5.5", "-1e-3",
+        ] {
+            assert!(
+                !looks_like_option(token),
+                "{token:?} should be treated as a value"
+            );
+        }
+        // Option-like — refused as the argument to a flag.
+        for token in [
+            "-x",
+            "-o",
+            "-abc",
+            "-.",
+            "-..5",
+            "-+5",
+            "--",
+            "--1",
+            "--foo",
+            "--no-mux",
+            "--flag=value",
+        ] {
+            assert!(
+                looks_like_option(token),
+                "{token:?} should be treated as an option"
+            );
+        }
+    }
+
+    /// The separated form must not swallow the following flag.
+    ///
+    /// This was the last cross-implementation divergence in flag parsing:
+    /// `--mux-delimiter --no-mux` set the delimiter to the string "--no-mux"
+    /// in Rust and C++ -- so `--no-mux` silently never ran and the decode
+    /// succeeded with a wrong MUX column -- while Python refused it. A silent
+    /// wrong answer is the worst of the three possible behaviours, so both
+    /// moved to Python's.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn a_flag_like_value_is_refused_in_the_separated_form() {
+        // Only shapes every supported Python version agrees on; see
+        // `looks_like_option_matches_argparse_3_14` for the corner it does not.
+        for token in ["--no-mux", "--foo", "-o", "-x"] {
+            let err = parse_decode(&mut args(&["--mux-delimiter", token, "rec.mie"])).unwrap_err();
+            let ParseError::Other(msg) = err else {
+                panic!("{token}: expected a usage error");
+            };
+            assert!(msg.contains("--mux-delimiter"), "{token}: got {msg:?}");
+            // The message has to say how to get what the user probably wanted.
+            assert!(
+                msg.contains(&format!("--mux-delimiter={token}")),
+                "{token}: message should suggest the joined form, got {msg:?}"
+            );
+        }
+    }
+
+    /// The joined form is unambiguous, so it still accepts a flag-like value
+    /// -- and is what the refusal message points at.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn the_joined_form_still_takes_a_flag_like_value() {
+        let parsed = parse_decode(&mut args(&["--mux-delimiter=--no-mux", "rec.mie"])).unwrap();
+        assert_eq!(parsed.mux_delimiter.as_deref(), Some("--no-mux"));
+        // ...and it really is a delimiter, not the flag: `no_mux` stays unset.
+        assert!(!parsed.no_mux);
+    }
+
+    /// The three exemptions, each of which keeps a real invocation working.
+    /// Requirements: L2-CLI-005, L2-CLI-015
+    #[test]
+    fn the_exemptions_are_still_values() {
+        // A lone `-` is a path, not stdout: `-o -` writes a file named `-`.
+        let parsed = parse_decode(&mut args(&["-o", "-", "rec.mie"])).unwrap();
+        assert_eq!(parsed.output, Some(PathBuf::from("-")));
+
+        // A negative number: `--mux-field -1` counts from the end.
+        let parsed = parse_decode(&mut args(&["--mux-field", "-1", "rec.mie"])).unwrap();
+        assert_eq!(parsed.mux_field, Some(-1));
+
+        // A negative number still reaches its OWN validator, so a flag that
+        // forbids negatives refuses it for that reason and not for looking
+        // like an option.
+        let err = parse_decode(&mut args(&["--collapse-window-us", "-5", "rec.mie"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(
+            !msg.contains("is an option"),
+            "should be refused by the validator, not the option guard: {msg:?}"
+        );
+
+        // A token containing a space is a value; no option is spelled so.
+        let parsed = parse_decode(&mut args(&["--mux-delimiter", "- x", "rec.mie"])).unwrap();
+        assert_eq!(parsed.mux_delimiter.as_deref(), Some("- x"));
+    }
+
+    /// Globals are a separate parse loop and need the guard too. Before it,
+    /// `--log-level --config x` made Rust take "--config" as the level, then
+    /// read "x" as the subcommand -- exit 4, but for an unrelated reason and
+    /// with a message that named neither flag.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn global_flags_refuse_a_flag_like_value() {
+        let mut globals = GlobalArgs::default();
+        let err = parse_global_flags(
+            &mut args(&["--log-level", "--config", "x", "decode"]),
+            &mut globals,
+        )
+        .unwrap_err();
+        assert_eq!(err, ExitCode::from(exit_code::USAGE));
+        assert!(
+            globals.log_level.is_none(),
+            "must not have consumed a value"
+        );
+    }
+
+    /// Every valued flag, both spellings, compared structurally rather than by
+    /// exit code — a spelling that parsed but dropped its value would still
+    /// exit 0. `DecodeArgs` has no `PartialEq` (it is private, and deriving one
+    /// only for a test is surface for its own sake), so `Debug` stands in: it
+    /// renders every field, which is exactly the comparison wanted.
+    ///
+    /// This sweep is what the `Arg` cursor buys. Before it each of these flags
+    /// carried two match arms, and the test could only have been written as a
+    /// list of near-copies.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn every_valued_flag_accepts_both_spellings() {
+        let cases: &[(&str, &str)] = &[
+            ("--output", "out.csv"),
+            ("--time-format", "irig"),
+            ("--format", "csv"),
+            ("--detect-records", "4"),
+            ("--lookahead-records", "2"),
+            ("--standard-tick-rate-hz", "1000000"),
+            ("--max-sort-group", "64"),
+            ("--mux-delimiter", "_"),
+            ("--mux-field", "0"),
+            ("--delta-scope", "global"),
+            ("--collapse-window-us", "10"),
+            ("--manifest", "list.txt"),
+            ("--glob", "*.mie"),
+            ("--exclude-rts", "31"),
+            ("--include-rts", "15"),
+            ("--exclude-buses", "B"),
+            ("--include-buses", "A"),
+            ("--exclude-subaddresses", "30"),
+            ("--include-subaddresses", "11"),
+            ("--exclude-types", "RT_TO_RT"),
+            ("--include-types", "BC_TO_RT"),
+        ];
+
+        for (flag, value) in cases {
+            // --manifest and --glob are themselves input methods, so adding a
+            // positional would fail the parse for an unrelated reason.
+            let positional: &[&str] = if matches!(*flag, "--manifest" | "--glob") {
+                &[]
+            } else {
+                &["rec.mie"]
+            };
+
+            let mut separated = vec![*flag, *value];
+            separated.extend_from_slice(positional);
+            let joined_flag = format!("{flag}={value}");
+            let mut joined = vec![joined_flag.as_str()];
+            joined.extend_from_slice(positional);
+
+            let a = parse_decode(&mut args(&separated))
+                .unwrap_or_else(|e| panic!("{flag} separated form failed: {e:?}"));
+            let b = parse_decode(&mut args(&joined))
+                .unwrap_or_else(|e| panic!("{flag} joined form failed: {e:?}"));
+            assert_eq!(
+                format!("{a:?}"),
+                format!("{b:?}"),
+                "{flag} spellings differ"
+            );
+        }
+    }
+
+    /// `--flag=` carries an EMPTY value, which the flag's own validator then
+    /// accepts or rejects. It is not a malformed token.
+    ///
+    /// C++ had this wrong in the opposite direction: it required a character
+    /// after the `=`, so `--exclude-rts=` was an "unknown option" (exit 4)
+    /// where Rust and Python decoded normally (exit 0).
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn eq_form_with_empty_value_is_an_empty_value() {
+        // Accepted: an empty filter excludes nothing, so the parse must match
+        // the one that never passed the flag at all.
+        let with = parse_decode(&mut args(&["--exclude-rts=", "rec.mie"])).unwrap();
+        let without = parse_decode(&mut args(&["rec.mie"])).unwrap();
+        assert!(with.exclude_rts.is_empty());
+        assert_eq!(format!("{with:?}"), format!("{without:?}"));
+
+        // Rejected: the validator refuses this, not the cursor.
+        let err = parse_decode(&mut args(&["--mux-delimiter=", "rec.mie"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(
+            msg.contains("--mux-delimiter"),
+            "message should name the flag, got {msg:?}"
+        );
+        assert!(
+            !msg.contains("unknown"),
+            "must reach the validator, not the unknown-option arm: {msg:?}"
+        );
+    }
+
+    /// Only the first `=` separates; the remainder is the value verbatim.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn only_the_first_equals_separates() {
+        let parsed = parse_decode(&mut args(&["--mux-delimiter==", "rec.mie"])).unwrap();
+        assert_eq!(parsed.mux_delimiter.as_deref(), Some("="));
+
+        let parsed = parse_decode(&mut args(&["--glob=a=b*.mie"])).unwrap();
+        assert_eq!(parsed.glob.as_deref(), Some("a=b*.mie"));
+    }
+
+    /// A flag that takes no value must REJECT a joined one rather than set
+    /// itself and silently discard it, and the message quotes the token as it
+    /// was typed.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn a_valueless_flag_rejects_a_joined_value() {
+        for token in [
+            "--no-mux=true",
+            "--no-mux=",
+            "--separate-errors=1",
+            "--strict=false",
+        ] {
+            let err = parse_decode(&mut args(&[token, "rec.mie"])).unwrap_err();
+            let ParseError::Other(msg) = err else {
+                panic!("{token}: expected a usage error");
+            };
+            assert!(
+                msg.contains(token),
+                "{token}: message should quote the whole token, got {msg:?}"
+            );
+        }
+    }
+
+    /// Splitting is confined to `--` tokens: a positional path may contain
+    /// `=`, and `-o=value` is not a spelling this CLI accepts.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn only_double_dash_tokens_are_split() {
+        let parsed = parse_decode(&mut args(&["a=b.mie"])).unwrap();
+        assert_eq!(parsed.inputs, vec![PathBuf::from("a=b.mie")]);
+
+        let err = parse_decode(&mut args(&["-o=out.csv", "rec.mie"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(msg.contains("-o=out.csv"), "got {msg:?}");
+    }
+
+    /// Globals are parsed in their own loop, so both spellings need proving
+    /// there independently. `--version=1` is a value on a flag that takes
+    /// none, so it is NOT a version request: it falls through as the
+    /// subcommand token and is reported as an unknown command.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn global_flags_accept_both_spellings() {
+        for (argv, expected) in [
+            (vec!["--log-level", "ERROR", "decode"], "ERROR"),
+            (vec!["--log-level=ERROR", "decode"], "ERROR"),
+            (vec!["--log-level=", "decode"], ""),
+        ] {
+            let mut globals = GlobalArgs::default();
+            let sub = parse_global_flags(&mut args(&argv), &mut globals)
+                .unwrap_or_else(|_| panic!("{argv:?} should yield a subcommand"));
+            assert_eq!(sub, "decode", "{argv:?}");
+            assert_eq!(globals.log_level.as_deref(), Some(expected), "{argv:?}");
+        }
+
+        for argv in [
+            vec!["--config", "site.toml", "decode"],
+            vec!["--config=site.toml", "decode"],
+        ] {
+            let mut globals = GlobalArgs::default();
+            let sub = parse_global_flags(&mut args(&argv), &mut globals).unwrap();
+            assert_eq!(sub, "decode");
+            assert_eq!(globals.config, Some(PathBuf::from("site.toml")));
+        }
+
+        // Not a version request: handed back as the subcommand token.
+        let mut globals = GlobalArgs::default();
+        let sub = parse_global_flags(&mut args(&["--version=1"]), &mut globals).unwrap();
+        assert_eq!(sub, "--version=1");
+    }
+
+    /// `dump` has its own loop as well.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn dump_flags_accept_both_spellings() {
+        let a = parse_dump(&mut args(&["rec.mie", "--records", "2", "--offset", "8"])).unwrap();
+        let b = parse_dump(&mut args(&["rec.mie", "--records=2", "--offset=8"])).unwrap();
+        assert_eq!(format!("{a:?}"), format!("{b:?}"));
+
+        let err = parse_dump(&mut args(&["rec.mie", "--raw=true"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(msg.contains("--raw=true"), "got {msg:?}");
+    }
+
     /// Requirements: L2-CLI-010
     #[test]
     fn filter_flag_accepts_eq_form() {

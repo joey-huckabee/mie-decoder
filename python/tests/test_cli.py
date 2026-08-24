@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -443,3 +444,331 @@ class TestRunDumpBrokenPipe:
         finally:
             dump_mod.hex_dump_records = original  # type: ignore[assignment]
         assert "Error:" in capsys.readouterr().err
+
+
+class TestFlagValueSyntax:
+    """``--flag value`` and ``--flag=value`` are the same invocation.
+
+    Python gets the joined spelling from :mod:`argparse` for free, which is
+    precisely why it had no test for it: nothing here was written by hand, so
+    nothing looked like it needed proving. The contract is cross-implementation
+    (L2-CLI-015), and the other two parse it by hand -- C++ rejected
+    ``--exclude-rts=`` as an unknown option where this one accepts it. These
+    tests pin Python's side of the contract so a future move away from
+    ``argparse``, or a flag added with a custom action, cannot drift.
+    """
+
+    VALUED: tuple[tuple[str, str], ...] = (
+        ("--time-format", "irig"),
+        ("--format", "csv"),
+        ("--detect-records", "4"),
+        ("--lookahead-records", "2"),
+        ("--standard-tick-rate-hz", "1000000"),
+        ("--max-sort-group", "64"),
+        ("--mux-delimiter", "_"),
+        ("--mux-field", "0"),
+        ("--delta-scope", "global"),
+        ("--collapse-window-us", "10"),
+        ("--exclude-rts", "31"),
+        ("--include-rts", "15"),
+        ("--exclude-buses", "B"),
+        ("--include-buses", "A"),
+        ("--exclude-subaddresses", "30"),
+        ("--include-subaddresses", "11"),
+        ("--exclude-types", "RT_TO_RT"),
+        ("--include-types", "BC_TO_RT"),
+    )
+
+    @pytest.mark.requirement("L2-CLI-015")
+    @pytest.mark.parametrize(("flag", "value"), VALUED)
+    def test_both_spellings_parse_identically(self, flag: str, value: str) -> None:
+        """The two spellings produce the same namespace, field for field.
+
+        Comparing namespaces rather than exit codes matters: a spelling that
+        parsed but dropped its value would still exit 0.
+        """
+        parser = cli.build_parser()
+        separated = parser.parse_args(["decode", "rec.mie", flag, value])
+        joined = parser.parse_args(["decode", "rec.mie", f"{flag}={value}"])
+        assert vars(separated) == vars(joined)
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_eq_form_with_empty_value_is_an_empty_value(self) -> None:
+        """``--flag=`` is the flag carrying an empty value, not a bad token.
+
+        This is the case C++ reported as an unknown option (exit 4) while this
+        implementation accepted it. An empty filter adds nothing, so the decode
+        is the one that never passed the flag.
+
+        The namespaces are deliberately NOT compared. ``argparse`` records the
+        two as different values -- ``[]`` for an explicit empty list, ``None``
+        for an absent flag -- which is a real distinction here and not one
+        Rust can make, since its field is a plain ``Vec``. It is not
+        observable: ``_merge_filter_overrides`` UNIONS CLI filters onto
+        config-file filters rather than replacing them, so an empty list
+        contributes nothing either way. Asserting on the namespace would pin
+        an internal representation instead of the contract.
+        """
+        parser = cli.build_parser()
+        with_flag = parser.parse_args(["decode", "rec.mie", "--exclude-rts="])
+        without = parser.parse_args(["decode", "rec.mie"])
+
+        assert with_flag.exclude_rts == []
+        assert without.exclude_rts is None
+
+        # What actually matters: neither adds an exclusion.
+        assert cli._filter_overrides(with_flag).get("exclude_rts") == []
+        assert "exclude_rts" not in cli._filter_overrides(without)
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_only_the_first_equals_separates(self) -> None:
+        """``--mux-delimiter==`` sets the delimiter to ``=``, not to empty."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "rec.mie", "--mux-delimiter=="])
+        assert parsed.mux_delimiter == "="
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_a_valueless_flag_rejects_a_joined_value(self) -> None:
+        """``--no-mux=true`` is a usage error, not a way to spell "on"."""
+        parser = cli.build_parser()
+        for token in ("--no-mux=true", "--separate-errors=1", "--strict=false"):
+            with pytest.raises(SystemExit) as excinfo:
+                parser.parse_args(["decode", "rec.mie", token])
+            assert excinfo.value.code != EXIT_OK
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_a_positional_path_may_contain_an_equals(self) -> None:
+        """Splitting is confined to flags; ``a=b.mie`` is an input path."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "a=b.mie"])
+        assert [str(p) for p in parsed.inputs] == ["a=b.mie"]
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_global_flags_accept_both_spellings(self) -> None:
+        """Globals precede the subcommand and take both spellings too."""
+        parser = cli.build_parser()
+        separated = parser.parse_args(["--log-level", "ERROR", "decode", "rec.mie"])
+        joined = parser.parse_args(["--log-level=ERROR", "decode", "rec.mie"])
+        assert vars(separated) == vars(joined)
+        assert joined.log_level == "ERROR"
+
+    # Only shapes every supported interpreter agrees on. ``argparse``'s
+    # negative-number matcher changed in 3.14 -- an anchored full match
+    # (``^-\d+$|^-\d*\.\d+$``) became a prefix test (``-\.?\d``) -- so
+    # "-5e3", "-0x5" and "-1a" are options on 3.10-3.13 and values on 3.14.
+    # This project supports 3.10 through 3.14, so those shapes are outside the
+    # L2-CLI-015 contract and are asserted nowhere; see
+    # ``test_the_version_dependent_corner_is_not_asserted`` below.
+    OPTION_LIKE: tuple[str, ...] = ("--no-mux", "--foo", "-o", "-x", "-abc", "--1")
+    VALUE_LIKE: tuple[str, ...] = ("-", "-5", "-5.5", "-.5", "- x")
+
+    @pytest.mark.requirement("L2-CLI-015")
+    @pytest.mark.parametrize("token", OPTION_LIKE)
+    def test_separated_form_refuses_an_option_like_value(self, token: str) -> None:
+        """``--mux-delimiter --no-mux`` is a usage error, not a delimiter.
+
+        This is where Rust and C++ used to disagree: they consumed the
+        following flag as the value, so ``--no-mux`` silently never ran and
+        the decode succeeded with a wrong MUX column. Both now follow this
+        rule. The assertions here are what stops ``argparse``'s side of the
+        contract from drifting if the parser is ever hand-rolled.
+        """
+        parser = cli.build_parser()
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(["decode", "rec.mie", "--mux-delimiter", token])
+        assert excinfo.value.code != EXIT_OK
+
+    @pytest.mark.requirement("L2-CLI-015")
+    @pytest.mark.parametrize("token", VALUE_LIKE)
+    def test_separated_form_accepts_the_exemptions(self, token: str) -> None:
+        """A lone dash, a negative number, and a token with a space are values.
+
+        Each exemption keeps a real invocation working: ``-o -`` writes a file
+        named ``-`` (L2-CLI-005), ``--mux-field -1`` counts from the end, and
+        no option is spelled with a space in it. They are ``argparse``'s rules
+        -- the other two implementations copied them from here, including the
+        exact negative-number pattern, rather than inventing a tidier one.
+        """
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "rec.mie", "--mux-delimiter", token])
+        assert parsed.mux_delimiter == token
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_joined_form_still_takes_an_option_like_value(self) -> None:
+        """The joined form is unambiguous, so it accepts what the separated
+        form refuses -- and is what the refusal should point the user at."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "rec.mie", "--mux-delimiter=--no-mux"])
+        assert parsed.mux_delimiter == "--no-mux"
+        # Falsy, not ``is False``: an unpassed flag is ``None`` here (meaning
+        # "not specified", so a config file still decides) rather than a bool.
+        # What matters is that ``--no-mux`` did not take effect.
+        assert not parsed.no_mux
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_the_version_dependent_corner_is_not_asserted(self) -> None:
+        """Pin *that* the corner is version-dependent, not which way it falls.
+
+        ``argparse`` classifies "-5e3" as an option on Python 3.10-3.13 and as
+        a value on 3.14, because the negative-number matcher went from an
+        anchored full match to a prefix test. Rust and C++ follow 3.14. This
+        test asserts only that the interpreter's answer matches its own
+        matcher, so it passes on every supported version and would fail if a
+        future release changed the rule again -- which is the signal that the
+        cross-implementation choice needs revisiting.
+        """
+        parser = cli.build_parser()
+        prefix_test = bool(parser._negative_number_matcher.match("-5e3"))
+
+        if prefix_test:
+            # 3.14+: begins like a number, therefore a value.
+            parsed = parser.parse_args(["decode", "rec.mie", "--mux-delimiter", "-5e3"])
+            assert parsed.mux_delimiter == "-5e3"
+        else:
+            # 3.13 and earlier: not a full-match number, therefore an option.
+            with pytest.raises(SystemExit):
+                parser.parse_args(["decode", "rec.mie", "--mux-delimiter", "-5e3"])
+
+    @pytest.mark.requirement("L2-CLI-005")
+    def test_a_lone_dash_output_is_a_path_not_stdout(self) -> None:
+        """``-o -`` names a file, and is exempt from the option-like guard."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "rec.mie", "-o", "-"])
+        assert str(parsed.output) == "-"
+
+
+class TestEndOfOptions:
+    """``--`` ends option parsing (L2-CLI-016).
+
+    ``argparse`` has always honoured the POSIX separator; Rust and C++ used to
+    report ``--`` itself as an unknown option. These tests pin Python's side of
+    the contract, which is the side the other two were made to match.
+    """
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_after_the_marker_every_token_is_a_path(self) -> None:
+        """A flag spelling after ``--`` is an input, not a flag."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "--", "rec.mie", "--no-mux"])
+        assert [str(p) for p in parsed.inputs] == ["rec.mie", "--no-mux"]
+        assert not parsed.no_mux
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_only_the_first_marker_is_consumed(self) -> None:
+        """A second ``--`` is an ordinary positional.
+
+        That is the only way to name a file that is actually called ``--``.
+        """
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "--", "--", "rec.mie"])
+        assert [str(p) for p in parsed.inputs] == ["--", "rec.mie"]
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_flags_before_the_marker_still_work(self) -> None:
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "--no-mux", "--", "rec.mie"])
+        assert parsed.no_mux is True
+        assert [str(p) for p in parsed.inputs] == ["rec.mie"]
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_the_marker_is_scoped_to_one_parser(self) -> None:
+        """A ``--`` before the subcommand does not carry into it.
+
+        The next token is the subcommand *name*; the subcommand then gets a
+        fresh scan, so a flag after it still acts as a flag. Getting this wrong
+        in the other two would have made ``-- decode rec.mie --no-mux`` ignore
+        ``--no-mux``.
+
+        **This position is Python 3.12+.** Before that, ``argparse`` did not
+        strip a leading ``--`` ahead of a subparser choice and passed ``--``
+        itself as the subcommand name, so the invocation is a usage error on
+        3.10 and 3.11. Rust and C++ support it on every version; the contract
+        (L2-CLI-016) therefore binds only the *post*-subcommand position, which
+        every supported interpreter handles the same way, and the conformance
+        suite uses that one. Asserting the interpreter's own answer here keeps
+        the test honest on all five versions.
+        """
+        parser = cli.build_parser()
+        argv = ["--", "decode", "rec.mie", "--no-mux"]
+
+        if sys.version_info < (3, 12):
+            with pytest.raises(SystemExit):
+                parser.parse_args(argv)
+            return
+
+        parsed = parser.parse_args(argv)
+        assert parsed.command == "decode"
+        assert parsed.no_mux is True
+        assert [str(p) for p in parsed.inputs] == ["rec.mie"]
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_the_marker_suppresses_the_global_flags(self) -> None:
+        """``-- --version`` asks for a subcommand called ``--version``.
+
+        A usage error on every supported version, though for two different
+        reasons: 3.12+ takes ``--version`` as an invalid subcommand name, while
+        3.10 and 3.11 never strip the ``--`` and reject *that* as the name.
+        Either way the version is not printed, which is the property that
+        matters and the one Rust and C++ were made to match.
+        """
+        parser = cli.build_parser()
+        for token in ("--version", "-h", "--help", "-V"):
+            with pytest.raises(SystemExit) as excinfo:
+                parser.parse_args(["--", token])
+            assert excinfo.value.code != EXIT_OK
+
+    @pytest.mark.requirement("L2-CLI-016")
+    def test_count_and_dump_honour_it(self) -> None:
+        parser = cli.build_parser()
+        # `count` and `dump` take one path each, under `input` (singular);
+        # only `decode` has the plural `inputs`, which is what feeds the merge.
+        assert str(parser.parse_args(["count", "--", "-weird.mie"]).input) == "-weird.mie"
+        assert str(parser.parse_args(["dump", "--", "-weird.mie"]).input) == "-weird.mie"
+
+
+class TestHelpPrecedence:
+    """A pending ``-h``/``--help`` outranks a *deferred* diagnostic
+    (L2-CLI-017).
+
+    ``argparse`` gives this for free: the help action fires while parsing,
+    whereas unrecognised arguments are reported afterwards. Rust reported the
+    unknown option instead and was the odd one out until it was changed to
+    match. These tests pin Python's side so the reference cannot drift.
+    """
+
+    @pytest.mark.requirement("L2-CLI-017")
+    def test_help_wins_over_an_unrecognised_option(self) -> None:
+        """The operator with a broken command line is the one asking."""
+        parser = cli.build_parser()
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(["decode", "rec.mie", "--nonsense", "--help"])
+        assert excinfo.value.code == EXIT_OK
+
+    @pytest.mark.requirement("L2-CLI-017")
+    def test_help_does_not_rescue_a_failed_value_consumption(self) -> None:
+        """A flag that cannot take a value is a hard stop.
+
+        ``argparse`` raises immediately rather than deferring, so the help
+        action is never reached. Rust reproduces this by draining its argument
+        iterator at the same point; C++ does not, and answers help here — the
+        one shape in this area where it is the outlier, which is why there is
+        no conformance case for it yet.
+        """
+        parser = cli.build_parser()
+        for argv in (
+            ["--log-level", "-h", "decode", "rec.mie"],
+            ["--config", "--help", "decode", "rec.mie"],
+            ["decode", "rec.mie", "--mux-delimiter", "-h", "--help"],
+        ):
+            with pytest.raises(SystemExit) as excinfo:
+                parser.parse_args(argv)
+            assert excinfo.value.code != EXIT_OK, argv
+
+    @pytest.mark.requirement("L2-CLI-016", "L2-CLI-017")
+    def test_help_after_the_end_of_options_marker_is_a_path(self) -> None:
+        """``--`` demotes a later help flag to an argument, so it cannot
+        rescue a broken command line."""
+        parser = cli.build_parser()
+        with pytest.raises(SystemExit) as excinfo:
+            parser.parse_args(["decode", "--nonsense", "--", "--help"])
+        assert excinfo.value.code != EXIT_OK

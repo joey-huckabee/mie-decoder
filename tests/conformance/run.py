@@ -50,6 +50,16 @@ FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     # contract can be pinned: `no_clobber` is off by default, so a decode must
     # replace an unrelated existing file rather than refuse it.
     "pre_existing_output": str,
+    # Arguments placed BEFORE the subcommand. `args` goes after it, so a
+    # global flag -- `--log-level`, `--config` -- cannot be exercised through
+    # it. Rust parses globals in a separate loop from subcommand flags, so
+    # without this the `--flag=value` spelling was only ever covered on one of
+    # the two code paths.
+    "global_args": list,
+    # Arguments placed immediately AFTER the subcommand and BEFORE the input
+    # paths. `args` goes after the paths (and after `-o`), which is too late
+    # to exercise anything positional -- `--` in particular.
+    "subcommand_args": list,
 }
 ALLOWED_MODES: frozenset[str] = frozenset({"decode", "count", "dump"})
 # Modes whose payload is stdout rather than a written file. `dump` joined them
@@ -328,13 +338,21 @@ def _build_command(
     """
     if config := case.get("config"):
         command += ["--config", str((SUITE / config).resolve())]
+    # Before the subcommand, which is what makes these GLOBAL.
+    command += case.get("global_args", [])
     mode = case.get("mode", "decode")
     if mode in _STDOUT_MODES:
         # `count` and `dump` write their result to stdout and take exactly one
         # input, so there is no -o and no second positional.
-        command += [mode, str(sources[0])]
+        command += [mode, *case.get("subcommand_args", []), str(sources[0])]
     else:
-        command += ["decode", *(str(s) for s in sources), "-o", str(output)]
+        command += [
+            "decode",
+            *case.get("subcommand_args", []),
+            *(str(s) for s in sources),
+            "-o",
+            str(output),
+        ]
     command += case.get("args", [])
     return command
 

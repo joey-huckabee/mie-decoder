@@ -97,6 +97,7 @@ struct CliError {
 };
 
 CliError usage_error(const std::string& message) { return CliError(EXIT_USAGE, message); }
+
 CliError config_error(const std::string& message) { return CliError(EXIT_CONFIG, message); }
 CliError runtime_error_(const std::string& message) { return CliError(EXIT_RUNTIME, message); }
 
@@ -137,6 +138,71 @@ bool write_out(std::FILE* stream, const std::string& text) {
 /// The Rust parser spells both forms out at every flag, which is twenty-odd
 /// near-identical match arms and twenty-odd chances for one of them to drift.
 /// Handling it once here is the same behaviour with one place to be wrong.
+/// Does this token begin like a number? Python 3.14 argparse's `-\.?\d`,
+/// applied as a PREFIX test the way re.match applies it -- a dash, an optional
+/// decimal point, then a digit. Hand-rolled because <regex> is banned outright
+/// here (libstdc++ had none until GCC 4.9, see ADR-0001).
+///
+/// This deliberately accepts more than "is a number": "-5e3", "-0x5" and "-1a"
+/// all begin like one and are therefore values. That is the point -- such a
+/// token is far likelier to be a mistyped number than a flag, and letting it
+/// through means the flag's OWN validator reports it, so `--mux-field -1a`
+/// says "requires a number, got -1a" rather than the much less helpful "the
+/// next argument is an option".
+///
+/// THIS RULE IS VERSION-DEPENDENT IN PYTHON AND WE PIN THE NEWER ONE. Through
+/// 3.13 argparse used an anchored full match, `^-\d+$|^-\d*\.\d+$`, so only
+/// plain decimals were exempt; 3.14 replaced it with the prefix test above.
+/// This project supports Python 3.10 through 3.14, so argparse does not agree
+/// with itself across the supported range and no choice here can match all of
+/// them. We follow 3.14: simpler, where Python is going, and the more
+/// permissive of the two, so adopting it cannot newly reject an invocation
+/// that used to work. The shapes it disagrees with 3.10-3.13 about are
+/// consequently outside the specified contract (L2-CLI-015) and are kept out
+/// of the conformance suite.
+bool starts_like_a_number(const std::string& token) {
+    if (token.size() < 2 || token[0] != '-') {
+        return false;
+    }
+    // The decimal point is optional; a digit after it is not.
+    const std::string::size_type at = (token[1] == '.') ? 2 : 1;
+    return at < token.size() && token[at] >= '0' && token[at] <= '9';
+}
+
+/// Does this token look like an option rather than a value?
+///
+/// Decides whether the SEPARATED form may consume the next token. Without
+/// this, `--mux-delimiter --no-mux` set the delimiter to the string
+/// "--no-mux" and the `--no-mux` flag silently never ran -- a wrong decode
+/// that exited 0. Refusing turns that into a usage error, which is the point:
+/// the failure was silent, not merely inconsistent.
+///
+/// The rule is argparse's, deliberately, because Python has always behaved
+/// this way and the alternative was to make two implementations agree with
+/// each other and disagree with the third. Its three exemptions each keep a
+/// real invocation working:
+///
+///   - a lone "-" is a value, so `-o -` writes a file named "-" (L2-CLI-005);
+///   - anything beginning like a number is a value (see
+///     starts_like_a_number), so `--mux-field -1` (a documented feature:
+///     negative indices count from the end) still parses, and
+///     `--collapse-window-us -5` still reaches its own validator to be
+///     refused for being negative rather than for looking like a flag;
+///   - a token containing a space is a value, since no option is spelled so.
+///
+/// The JOINED form is unaffected: `--mux-delimiter=--no-mux` is unambiguous
+/// and stays legal, which is why it is the documented way to pass a value
+/// that looks like a flag.
+bool looks_like_option(const std::string& token) {
+    if (token.size() < 2 || token[0] != '-') {
+        return false;
+    }
+    if (token.find(' ') != std::string::npos) {
+        return false;
+    }
+    return !starts_like_a_number(token);
+}
+
 class ArgReader {
   public:
     explicit ArgReader(const std::vector<std::string>& args) : args_(args), at_(0) {}
@@ -164,7 +230,15 @@ class ArgReader {
         }
         const std::string& token = args_[at_];
         const std::string prefix = std::string(name) + "=";
-        if (token.size() > prefix.size() && token.compare(0, prefix.size(), prefix) == 0) {
+        // `>=`, not `>`: `--flag=` is the flag carrying an EMPTY value, not an
+        // unknown option. Rust and Python both hand the empty string to the
+        // flag's own validator and let it decide -- `--exclude-rts=` is an
+        // empty filter and decodes fine, while `--mux-delimiter=` is rejected
+        // as non-empty-required. With `>` this branch could never yield an
+        // empty value, so C++ answered "unknown option" (exit 4) where the
+        // other two exited 0. `compare` clamps its length, so a token shorter
+        // than the prefix still compares unequal.
+        if (token.size() >= prefix.size() && token.compare(0, prefix.size(), prefix) == 0) {
             out = token.substr(prefix.size());
             at_ += 1;
             return true;
@@ -175,6 +249,11 @@ class ArgReader {
         at_ += 1;
         if (at_end()) {
             throw usage_error(std::string(name) + " requires a value");
+        }
+        if (looks_like_option(args_[at_])) {
+            throw usage_error(std::string(name) + " requires a value, but the next argument is" +
+                              " an option: " + args_[at_] + "; to pass it as a value, write " +
+                              name + "=" + args_[at_]);
         }
         out = args_[at_];
         at_ += 1;
@@ -187,6 +266,11 @@ class ArgReader {
             at_ += 1;
             if (at_end()) {
                 throw usage_error(std::string(name) + " requires a value");
+            }
+            if (looks_like_option(args_[at_])) {
+                throw usage_error(std::string(name) + " requires a value, but the next argument" +
+                                  " is an option: " + args_[at_] + "; to pass it as a value," +
+                                  " write " + name + "=" + args_[at_]);
             }
             out = args_[at_];
             at_ += 1;
@@ -343,9 +427,24 @@ struct DecodeArgs {
 DecodeArgs parse_decode(ArgReader& reader) {
     DecodeArgs args;
     std::string value;
+    // POSIX end-of-options: the FIRST `--` is dropped and everything after
+    // it is a path, however it is spelled. A later `--` is an ordinary
+    // positional, which is the only way to name a file called `--`.
+    bool end_of_options = false;
 
     while (!reader.at_end()) {
         const std::string token = reader.peek();
+
+        if (end_of_options) {
+            args.inputs.push_back(token);
+            reader.advance();
+            continue;
+        }
+        if (token == "--") {
+            end_of_options = true;
+            reader.advance();
+            continue;
+        }
 
         if (reader.take_value("-o", "--output", value)) {
             args.output = value;
@@ -503,10 +602,25 @@ struct DumpArgs {
 DumpArgs parse_dump(ArgReader& reader) {
     DumpArgs args;
     bool input_seen = false;
+    bool end_of_options = false;
     std::string value;
 
     while (!reader.at_end()) {
         const std::string token = reader.peek();
+        if (end_of_options) {
+            if (input_seen) {
+                throw usage_error("unexpected positional argument: " + token);
+            }
+            args.input = token;
+            input_seen = true;
+            reader.advance();
+            continue;
+        }
+        if (token == "--") {
+            end_of_options = true;
+            reader.advance();
+            continue;
+        }
         if (reader.take_flag("--raw")) {
             args.raw = true;
         } else if (reader.take_value("--offset", value)) {
@@ -537,10 +651,19 @@ DumpArgs parse_dump(ArgReader& reader) {
 
 std::string parse_count(ArgReader& reader) {
     std::vector<std::string> inputs;
+    bool end_of_options = false;
     while (!reader.at_end()) {
         const std::string token = reader.peek();
-        if (!token.empty() && token[0] == '-' && token != "-") {
-            throw usage_error("unknown option " + token);
+        if (!end_of_options) {
+            // See parse_decode for the end-of-options rule.
+            if (token == "--") {
+                end_of_options = true;
+                reader.advance();
+                continue;
+            }
+            if (!token.empty() && token[0] == '-' && token != "-") {
+                throw usage_error("unknown option " + token);
+            }
         }
         inputs.push_back(token);
         reader.advance();
@@ -1018,9 +1141,11 @@ bool is_version_flag(const std::string& arg) {
     return arg == "-V" || arg == "-v" || text::equals_ignoring_ascii_case(arg, "--version");
 }
 
-bool is_help_flag(const std::string& arg) {
-    return arg == "-h" || text::equals_ignoring_ascii_case(arg, "--help");
-}
+/// Note the asymmetry with `is_version_flag`, which IS case-insensitive:
+/// `--VERSION` is a version request in all three implementations, `--HELP`
+/// is not a help request in any of them. This accepted `--HELP`, which made
+/// C++ the only implementation that did.
+bool is_help_flag(const std::string& arg) { return arg == "-h" || arg == "--help"; }
 
 }  // namespace
 
@@ -1038,7 +1163,14 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
     // Help and version are answered before any other validation, matching the
     // other two implementations: asking a broken invocation for help must
     // produce help, not a usage error about the invocation.
+    //
+    // The scan stops at the FIRST `--`. After the end-of-options separator a
+    // token is a path, not a flag, so `-- --version` asks for a SUBCOMMAND
+    // named "--version" and fails as one, rather than printing the version.
     for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "--") {
+            break;
+        }
         if (is_version_flag(args[i])) {
             return write_out(streams.out, version_line() + "\n") ? EXIT_OK : EXIT_RUNTIME;
         }
@@ -1061,6 +1193,14 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
 
         // Global flags may appear before the subcommand.
         while (!reader.at_end()) {
+            if (reader.peek() == "--") {
+                // POSIX end-of-options, scoped to THIS loop: the subcommand
+                // parser gets a fresh scan, so `-- decode rec.mie --no-mux`
+                // still honours `--no-mux`. The next token is the subcommand
+                // NAME, whatever it looks like.
+                reader.advance();
+                break;
+            }
             if (reader.take_value("--config", value)) {
                 globals.config = value;
             } else if (reader.take_value("--log-level", value)) {

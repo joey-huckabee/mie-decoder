@@ -98,14 +98,25 @@ int run_capturing_stdout(const Args& argv, std::string& out) {
 
 }  // namespace
 
-TEST_CASE("version and help are answered before anything else", "[cli][L3-CPP-014]") {
+TEST_CASE("version and help are answered before anything else", "[cli][L3-CPP-014][L2-CLI-017]") {
     SECTION("every accepted spelling exits 0") {
-        const char* spellings[] = {"--version", "-V", "-v", "--VERSION", "--help", "-h", "--HELP"};
+        // Note the asymmetry: version is case-insensitive, help is not.
+        // That is not a tidiness question -- Rust and Python both reject
+        // `--HELP`, and accepting it made C++ the only one that did.
+        const char* spellings[] = {"--version", "-V", "-v", "--VERSION", "--help", "-h"};
         for (std::size_t i = 0; i < sizeof(spellings) / sizeof(spellings[0]); ++i) {
             std::string out;
             INFO(spellings[i]);
             REQUIRE(run_capturing_stdout(args(spellings[i]), out) == mie::cli::EXIT_OK);
             REQUIRE_FALSE(out.empty());
+        }
+    }
+
+    SECTION("help is case-sensitive, unlike version") {
+        const char* rejected[] = {"--HELP", "--Help", "--hELP"};
+        for (std::size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i) {
+            INFO(rejected[i]);
+            REQUIRE(mie::cli::run(args(rejected[i])) == mie::cli::EXIT_USAGE);
         }
     }
 
@@ -170,7 +181,7 @@ TEST_CASE("a valued flag given no value is a usage error", "[cli][L3-CPP-014]") 
     REQUIRE(mie::cli::run(args("decode", "in.mie", "-o")) == mie::cli::EXIT_USAGE);
 }
 
-TEST_CASE("--flag=value and --flag value are the same thing", "[cli][L3-CPP-014]") {
+TEST_CASE("--flag=value and --flag value are the same thing", "[cli][L3-CPP-014][L2-CLI-015]") {
     // Both spellings go through one cursor rather than being written out per
     // flag, so this sweep is what proves the cursor -- not twenty near-copies.
     const TempFile input("mie-cli-forms.mie", valid_recording());
@@ -218,6 +229,149 @@ TEST_CASE("--flag=value and --flag value are the same thing", "[cli][L3-CPP-014]
         REQUIRE(mie_test::read_file(separated.str(), a));
         REQUIRE(mie_test::read_file(joined.str(), b));
         REQUIRE(a == b);
+    }
+}
+
+TEST_CASE("--flag= is the flag with an empty value, not an unknown option",
+          "[cli][L3-CPP-014][L2-CLI-015]") {
+    // The sweep above only ever passes NON-EMPTY values, so it cannot reach
+    // this boundary. `take_value` matched on `token.size() > prefix.size()`,
+    // one character too strict: `--exclude-rts=` fell past the `=` branch and
+    // past the exact-name check and was reported as an unknown option, exit 4,
+    // where Rust and Python both exited 0 having applied an empty filter.
+    //
+    // The contract is that `--flag=` hands the empty string to the flag's own
+    // validator and lets it decide -- which is why the two halves below differ.
+    const TempFile input("mie-cli-empty-eq.mie", valid_recording());
+
+    SECTION("a validator that accepts empty: an empty filter decodes") {
+        const TempPath joined("mie-cli-empty-join.csv");
+        const TempPath omitted("mie-cli-empty-omit.csv");
+
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", joined.str(), "--exclude-rts=")) ==
+                mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", omitted.str())) ==
+                mie::cli::EXIT_OK);
+
+        // An empty exclusion excludes nothing, so the bytes must match the run
+        // that never passed the flag at all.
+        std::string a;
+        std::string b;
+        REQUIRE(mie_test::read_file(joined.str(), a));
+        REQUIRE(mie_test::read_file(omitted.str(), b));
+        REQUIRE(a == b);
+    }
+
+    SECTION("a validator that rejects empty still rejects it") {
+        // These already returned EXIT_USAGE before the fix -- but as "unknown
+        // option", never reaching the validator. Same code, different reason,
+        // which is why the exit code alone could not have caught the bug.
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--mux-delimiter=")) ==
+                mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--max-sort-group=")) ==
+                mie::cli::EXIT_USAGE);
+    }
+}
+
+TEST_CASE("the separated form refuses a value that looks like an option",
+          "[cli][L3-CPP-014][L2-CLI-015]") {
+    // The last cross-implementation divergence in flag parsing.
+    // `--mux-delimiter --no-mux` set the delimiter to the string "--no-mux"
+    // here and in Rust -- so `--no-mux` silently never ran and the decode
+    // succeeded with a wrong MUX column -- while Python refused it. A silent
+    // wrong answer is the worst of the three possible behaviours, so both
+    // moved to Python's rule.
+    const TempFile input("mie-cli-optlike.mie", valid_recording());
+
+    SECTION("option-like tokens are refused") {
+        // Only shapes every supported Python version agrees on. "-5e3",
+        // "-0x5" and "-1a" begin like numbers under the 3.14 matcher and are
+        // values; 3.10-3.13 called them options, so they are outside the
+        // contract and not asserted here.
+        const char* tokens[] = {"--no-mux", "--foo", "-o", "-x", "-abc", "--1"};
+        for (std::size_t i = 0; i < sizeof(tokens) / sizeof(tokens[0]); ++i) {
+            INFO(tokens[i]);
+            REQUIRE(mie::cli::run(args("decode", input.str(), "--mux-delimiter", tokens[i])) ==
+                    mie::cli::EXIT_USAGE);
+        }
+    }
+
+    SECTION("the joined form is unambiguous and still accepts them") {
+        const TempPath out("mie-cli-optlike-join.csv");
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(),
+                                   "--mux-delimiter=--no-mux")) == mie::cli::EXIT_OK);
+    }
+
+    SECTION("the exemptions are values, not options") {
+        // A lone "-" is a path: `-o -` writes a file named "-" (L2-CLI-005).
+        // A negative number is a value: `--mux-field -1` counts from the end.
+        // A token with a space is a value; no option is spelled that way.
+        const TempPath out("mie-cli-optlike-ok.csv");
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(), "--mux-field", "-1")) ==
+                mie::cli::EXIT_OK);
+        const TempPath out2("mie-cli-optlike-ok2.csv");
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out2.str(), "--mux-delimiter",
+                                   "- x")) == mie::cli::EXIT_OK);
+
+        // A negative number still reaches its OWN validator, so a flag that
+        // forbids negatives refuses it for that reason -- not for looking
+        // like an option.
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--collapse-window-us", "-5")) ==
+                mie::cli::EXIT_USAGE);
+    }
+}
+
+TEST_CASE("`--` ends option parsing", "[cli][L3-CPP-014][L2-CLI-016]") {
+    // POSIX end-of-options. After `--` every token is a path, however it is
+    // spelled -- which is the only way to decode a file whose name begins with
+    // a dash. Python has always honoured it; Rust and C++ used to report `--`
+    // itself as an unknown option.
+    const TempFile input("mie-cli-eoo.mie", valid_recording());
+
+    SECTION("before the subcommand, the next token is the subcommand name") {
+        const TempPath out("mie-cli-eoo-a.csv");
+        REQUIRE(mie::cli::run(args("--", "decode", input.str(), "-o", out.str())) ==
+                mie::cli::EXIT_OK);
+
+        // Scoped to that loop: the subcommand parser gets a fresh scan, so a
+        // flag after the subcommand still acts as a flag.
+        const TempPath out2("mie-cli-eoo-b.csv");
+        REQUIRE(mie::cli::run(args("--", "decode", input.str(), "-o", out2.str(), "--no-mux")) ==
+                mie::cli::EXIT_OK);
+    }
+
+    SECTION("it suppresses the global flags rather than being one") {
+        // `-- --version` asks for a SUBCOMMAND called "--version".
+        REQUIRE(mie::cli::run(args("--", "--version")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("--", "-h")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("--", "--help")) == mie::cli::EXIT_USAGE);
+        // And on its own there is still no subcommand.
+        REQUIRE(mie::cli::run(args("--")) == mie::cli::EXIT_USAGE);
+    }
+
+    SECTION("after it, a flag spelling is a path") {
+        // `--no-mux` becomes a second input, so this fails opening it rather
+        // than quietly disabling the MUX column.
+        const TempPath out("mie-cli-eoo-c.csv");
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--", "--no-mux", "-o", out.str())) !=
+                mie::cli::EXIT_OK);
+    }
+
+    SECTION("only the first marker is consumed") {
+        // A second `--` is an ordinary positional, which is how a file
+        // actually named `--` is named.
+        const TempPath out("mie-cli-eoo-d.csv");
+        REQUIRE(mie::cli::run(args("decode", "--", "--", "-o", out.str())) != mie::cli::EXIT_OK);
+    }
+
+    SECTION("count and dump honour it too") {
+        const TempPath out("mie-cli-eoo-e.csv");
+        REQUIRE(mie::cli::run(args("--", "count", input.str())) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("--", "dump", input.str())) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("count", "--", input.str())) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("dump", "--", input.str())) == mie::cli::EXIT_OK);
+        // One positional each: after `--`, a flag spelling becomes a second.
+        REQUIRE(mie::cli::run(args("dump", "--", input.str(), "--raw")) == mie::cli::EXIT_USAGE);
     }
 }
 
