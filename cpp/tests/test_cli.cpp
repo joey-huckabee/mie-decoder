@@ -170,7 +170,7 @@ TEST_CASE("a valued flag given no value is a usage error", "[cli][L3-CPP-014]") 
     REQUIRE(mie::cli::run(args("decode", "in.mie", "-o")) == mie::cli::EXIT_USAGE);
 }
 
-TEST_CASE("--flag=value and --flag value are the same thing", "[cli][L3-CPP-014]") {
+TEST_CASE("--flag=value and --flag value are the same thing", "[cli][L3-CPP-014][L2-CLI-015]") {
     // Both spellings go through one cursor rather than being written out per
     // flag, so this sweep is what proves the cursor -- not twenty near-copies.
     const TempFile input("mie-cli-forms.mie", valid_recording());
@@ -222,7 +222,7 @@ TEST_CASE("--flag=value and --flag value are the same thing", "[cli][L3-CPP-014]
 }
 
 TEST_CASE("--flag= is the flag with an empty value, not an unknown option",
-          "[cli][L3-CPP-014]") {
+          "[cli][L3-CPP-014][L2-CLI-015]") {
     // The sweep above only ever passes NON-EMPTY values, so it cannot reach
     // this boundary. `take_value` matched on `token.size() > prefix.size()`,
     // one character too strict: `--exclude-rts=` fell past the `=` branch and
@@ -237,8 +237,8 @@ TEST_CASE("--flag= is the flag with an empty value, not an unknown option",
         const TempPath joined("mie-cli-empty-join.csv");
         const TempPath omitted("mie-cli-empty-omit.csv");
 
-        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", joined.str(),
-                                   "--exclude-rts=")) == mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", joined.str(), "--exclude-rts=")) ==
+                mie::cli::EXIT_OK);
         REQUIRE(mie::cli::run(args("decode", input.str(), "-o", omitted.str())) ==
                 mie::cli::EXIT_OK);
 

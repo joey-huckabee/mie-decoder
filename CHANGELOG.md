@@ -15,6 +15,52 @@ full release workflow.
 
 ## [Unreleased]
 
+### Changed
+
+- **Rust: the `--flag value` / `--flag=value` handling is one cursor instead of
+  26 copies.** Every valued flag carried two match arms — an exact-name arm and
+  a `starts_with("--flag=")` arm that re-sliced the token by a hard-coded prefix
+  length — across four separate parse loops (globals, `decode`, `count`,
+  `dump`). C++ already resolved both spellings in one place
+  (`ArgReader::take_value`) and Python inherits it from `argparse`; Rust was the
+  outlier, and a flag added with only the first arm would silently reject the
+  joined spelling with nothing to catch it.
+
+  `Arg::split` now resolves the token once and each flag gets a single arm.
+  `parse_decode` went from 202 lines to 113. Three rules the split has to get
+  right, each of which had an established behaviour worth preserving exactly:
+
+  - **Only `--` tokens split**, so a positional path may contain `=`
+    (`a=b.mie`) and `-o=out.csv` remains the non-spelling it always was.
+  - **Only the first `=` separates**, so `--mux-delimiter==` sets the delimiter
+    to `=`.
+  - **A value-less flag declines a joined value** rather than setting itself
+    and discarding it. `--no-mux=true` was already a usage error; the arm now
+    guards on `bare()` so the token falls through to the same unknown-option
+    message, quoting itself in full.
+
+  The same guard is what keeps `--version=1` from being read as a version
+  request: it declines in the global loop and is handed back as the subcommand
+  token, reporting `Unknown command: "--version=1"` exactly as before.
+
+  **No behaviour change.** A 177-case battery — every valued flag in both
+  spellings with a good value, a bad value, an empty value and a missing value;
+  the value-less flags; both globals; and the shapes where the two forms could
+  part company — was recorded from a binary built at the previous commit and
+  replayed against the refactored one, comparing exit code, the first two lines
+  of stderr, stdout, and the SHA of any CSV produced. All 177 identical.
+
+  Seven Rust tests now cover this directly, where there were three. The sweep
+  compares *parsed structures* rather than exit codes, because a spelling that
+  parsed but dropped its value would still exit 0 — and it is only writable as
+  a sweep because the cursor exists. Both were proven non-vacuous by planting:
+  disabling the split fails 7 tests, and porting C++'s exact off-by-one into
+  Rust fails precisely the two empty-value tests.
+
+  Python had no tests for either spelling — it gets the joined form free from
+  `argparse`, so nothing looked like it needed proving. It has seven now, so a
+  future move away from `argparse` cannot drift silently.
+
 ### Fixed
 
 - **C++: `--flag=` (an empty value) was reported as an unknown option, exit 4,
@@ -79,6 +125,15 @@ full release workflow.
   flag, and Rust parses globals in a **separate loop** from subcommand flags —
   meaning the `=` spelling had two independent implementations and the suite
   could only ever have exercised one of them.
+
+- **`L2-CLI-015` states the flag-value contract as a requirement.** The repo
+  already had the precedent: `L2-CLI-005` writes down that `-o -` is a path and
+  not a stdout selector, "because its absence is exactly what let the three
+  drift apart unnoticed". This is the same situation — a contract every
+  implementation was assumed to meet, that none of them stated, and that one of
+  them broke. The new requirement fixes both spellings, the three boundaries
+  above, and the one permitted divergence, and is traced to tests in all three
+  implementations.
 
 - **`docs/CLI-REFERENCE.md` now documents how a value attaches to a flag.**
   Both spellings have always worked and neither appeared in `CLI-REFERENCE.md`,

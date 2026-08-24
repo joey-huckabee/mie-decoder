@@ -443,3 +443,110 @@ class TestRunDumpBrokenPipe:
         finally:
             dump_mod.hex_dump_records = original  # type: ignore[assignment]
         assert "Error:" in capsys.readouterr().err
+
+
+class TestFlagValueSyntax:
+    """``--flag value`` and ``--flag=value`` are the same invocation.
+
+    Python gets the joined spelling from :mod:`argparse` for free, which is
+    precisely why it had no test for it: nothing here was written by hand, so
+    nothing looked like it needed proving. The contract is cross-implementation
+    (L2-CLI-015), and the other two parse it by hand -- C++ rejected
+    ``--exclude-rts=`` as an unknown option where this one accepts it. These
+    tests pin Python's side of the contract so a future move away from
+    ``argparse``, or a flag added with a custom action, cannot drift.
+    """
+
+    VALUED: tuple[tuple[str, str], ...] = (
+        ("--time-format", "irig"),
+        ("--format", "csv"),
+        ("--detect-records", "4"),
+        ("--lookahead-records", "2"),
+        ("--standard-tick-rate-hz", "1000000"),
+        ("--max-sort-group", "64"),
+        ("--mux-delimiter", "_"),
+        ("--mux-field", "0"),
+        ("--delta-scope", "global"),
+        ("--collapse-window-us", "10"),
+        ("--exclude-rts", "31"),
+        ("--include-rts", "15"),
+        ("--exclude-buses", "B"),
+        ("--include-buses", "A"),
+        ("--exclude-subaddresses", "30"),
+        ("--include-subaddresses", "11"),
+        ("--exclude-types", "RT_TO_RT"),
+        ("--include-types", "BC_TO_RT"),
+    )
+
+    @pytest.mark.requirement("L2-CLI-015")
+    @pytest.mark.parametrize(("flag", "value"), VALUED)
+    def test_both_spellings_parse_identically(self, flag: str, value: str) -> None:
+        """The two spellings produce the same namespace, field for field.
+
+        Comparing namespaces rather than exit codes matters: a spelling that
+        parsed but dropped its value would still exit 0.
+        """
+        parser = cli.build_parser()
+        separated = parser.parse_args(["decode", "rec.mie", flag, value])
+        joined = parser.parse_args(["decode", "rec.mie", f"{flag}={value}"])
+        assert vars(separated) == vars(joined)
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_eq_form_with_empty_value_is_an_empty_value(self) -> None:
+        """``--flag=`` is the flag carrying an empty value, not a bad token.
+
+        This is the case C++ reported as an unknown option (exit 4) while this
+        implementation accepted it. An empty filter adds nothing, so the decode
+        is the one that never passed the flag.
+
+        The namespaces are deliberately NOT compared. ``argparse`` records the
+        two as different values -- ``[]`` for an explicit empty list, ``None``
+        for an absent flag -- which is a real distinction here and not one
+        Rust can make, since its field is a plain ``Vec``. It is not
+        observable: ``_merge_filter_overrides`` UNIONS CLI filters onto
+        config-file filters rather than replacing them, so an empty list
+        contributes nothing either way. Asserting on the namespace would pin
+        an internal representation instead of the contract.
+        """
+        parser = cli.build_parser()
+        with_flag = parser.parse_args(["decode", "rec.mie", "--exclude-rts="])
+        without = parser.parse_args(["decode", "rec.mie"])
+
+        assert with_flag.exclude_rts == []
+        assert without.exclude_rts is None
+
+        # What actually matters: neither adds an exclusion.
+        assert cli._filter_overrides(with_flag).get("exclude_rts") == []
+        assert "exclude_rts" not in cli._filter_overrides(without)
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_only_the_first_equals_separates(self) -> None:
+        """``--mux-delimiter==`` sets the delimiter to ``=``, not to empty."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "rec.mie", "--mux-delimiter=="])
+        assert parsed.mux_delimiter == "="
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_a_valueless_flag_rejects_a_joined_value(self) -> None:
+        """``--no-mux=true`` is a usage error, not a way to spell "on"."""
+        parser = cli.build_parser()
+        for token in ("--no-mux=true", "--separate-errors=1", "--strict=false"):
+            with pytest.raises(SystemExit) as excinfo:
+                parser.parse_args(["decode", "rec.mie", token])
+            assert excinfo.value.code != EXIT_OK
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_a_positional_path_may_contain_an_equals(self) -> None:
+        """Splitting is confined to flags; ``a=b.mie`` is an input path."""
+        parser = cli.build_parser()
+        parsed = parser.parse_args(["decode", "a=b.mie"])
+        assert [str(p) for p in parsed.inputs] == ["a=b.mie"]
+
+    @pytest.mark.requirement("L2-CLI-015")
+    def test_global_flags_accept_both_spellings(self) -> None:
+        """Globals precede the subcommand and take both spellings too."""
+        parser = cli.build_parser()
+        separated = parser.parse_args(["--log-level", "ERROR", "decode", "rec.mie"])
+        joined = parser.parse_args(["--log-level=ERROR", "decode", "rec.mie"])
+        assert vars(separated) == vars(joined)
+        assert joined.log_level == "ERROR"

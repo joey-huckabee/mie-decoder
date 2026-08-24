@@ -907,6 +907,25 @@ The `count` and `dump` commands inherit `0`, `1`, `2`, `4`, and `5` but SHALL NO
 **Rationale**: The report is data, not decoration: it is piped, redirected, and diffed against another implementation's. Three properties were each violated before this was written down. The Python report used box-drawing (`─`), arrow (`→`) and en-dash (`–`) characters where Rust and C++ used `-`, `->` and `-`, so 11 of 34 lines differed on a typical fixture. Those characters could not be encoded on a redirected Windows stdout at the cp1252 code page — they raised `UnicodeEncodeError` and aborted the dump — which had been worked around by forcing the stream to UTF-8 rather than by removing the cause. And that workaround reconfigured the encoding only, leaving text-mode newline translation in place, so **every stdout payload from the Python CLI emitted CRLF on Windows**, including CSV written with `-o -`, in violation of L2-WRT-012. ASCII removes the encoding hazard at its source and needs no console-codepage manipulation — which matters most for the C++ implementation, whose platform layer is deliberately confined and which is targeted at a console (SLES 12 SP5) where a UTF-8 assumption is least safe.
 **Verification Method**: Test (T)
 
+#### L2-CLI-015
+
+**Parent**: L1-CLI-001
+**Statement**: Every CLI flag that takes a value SHALL accept both the separated spelling (`--flag value`) and the joined spelling (`--flag=value`), identically, in every implementation, for global flags as well as subcommand flags. The two spellings SHALL be indistinguishable in effect: same exit code, same diagnostics, byte-identical output. Three boundaries are part of the contract:
+
+- `--flag=` SHALL be the flag carrying an **empty value**, not an unknown option. The flag's own validator then decides — an empty filter list is accepted (and excludes nothing), an empty `--mux-delimiter` is rejected as a usage error.
+- Only the **first** `=` SHALL separate; the remainder is the value verbatim, so `--mux-delimiter==` sets the delimiter to `=`.
+- A flag that takes **no** value SHALL reject a joined value (`--no-mux=true` is a usage error) rather than set the flag and discard the value.
+
+Splitting SHALL apply only to `--` tokens, so a positional path may contain `=` and `-o=value` is not an accepted spelling.
+
+**Rationale**: Both spellings are standard, both have always worked, and nothing shared proved it — three Rust unit tests, one C++ test, no Python tests, no conformance cases. The CLI-surface-parity gate compares flag *names*, so it cannot see how a value attaches to one, exactly as it could not see the `-o -` divergence recorded in L2-CLI-005.
+
+The risk is asymmetric because two of the three parsers are hand-rolled. Python inherits the joined form from `argparse`; C++ resolves it in one place; Rust repeated a per-flag `starts_with("--flag=")` arm at 26 sites, where a flag added with only the separated arm would silently reject the joined form. C++ failed the first boundary above in the opposite direction: it required at least one character after the `=`, so `--exclude-rts=` was reported as an unknown option (exit 4) where Rust and Python applied an empty filter and decoded normally (exit 0).
+
+One divergence is **known and permitted**: given a value spelled like another flag (`--mux-delimiter --no-mux`), Rust and C++ consume the following token as the value while Python's `argparse` refuses it and exits 4. This is not levelled because `argparse` cannot be made to accept it without abandoning `argparse`, and forcing the other two to refuse would break a legitimate value beginning with `--`. The joined spelling means the same thing in all three and is the documented recommendation.
+
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-MRG: Multi-file time-sorted merge

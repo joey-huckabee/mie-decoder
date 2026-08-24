@@ -354,51 +354,49 @@ fn parse_global_flags(
     globals: &mut GlobalArgs,
 ) -> Result<String, ExitCode> {
     loop {
-        match iter.peek().map(String::as_str) {
-            Some("-h" | "--help") => {
+        // Peek, because the first non-flag token is the SUBCOMMAND and belongs
+        // to the caller. Split a clone so the joined and separated spellings
+        // resolve here exactly as they do for subcommand flags -- globals are
+        // parsed in this separate loop, so before the cursor each spelling had
+        // a second, independent implementation.
+        let Some(peeked) = iter.peek().cloned() else {
+            eprint!("{HELP}");
+            return Err(ExitCode::from(exit_code::USAGE));
+        };
+        let a = Arg::split(peeked);
+        match a.name.as_str() {
+            "-h" | "--help" if a.bare() => {
                 print!("{HELP}");
                 return Err(ExitCode::SUCCESS);
             }
-            Some(s) if is_version_flag(s) => {
+            // `--version=1` is not a version request: it declines here and is
+            // returned below as the subcommand token, reporting itself as an
+            // unknown command.
+            s if a.bare() && is_version_flag(s) => {
                 println!("mie-decoder {VERSION}");
                 return Err(ExitCode::SUCCESS);
             }
-            Some("--log-level") => {
-                iter.next();
-                match iter.next() {
-                    Some(v) => globals.log_level = Some(v),
-                    None => return Err(die("--log-level requires a value")),
+            "--log-level" => {
+                iter.next(); // the flag token itself
+                match a.value("--log-level", iter) {
+                    Ok(v) => globals.log_level = Some(v),
+                    Err(_) => return Err(die("--log-level requires a value")),
                 }
             }
-            Some(s) if s.starts_with("--log-level=") => {
-                let Some(v) = iter.next() else {
-                    return Err(die("--log-level requires a value"));
-                };
-                globals.log_level = Some(v["--log-level=".len()..].to_string());
-            }
-            Some("--config") => {
+            "--config" => {
                 iter.next();
-                match iter.next() {
-                    Some(v) => globals.config = Some(PathBuf::from(v)),
-                    None => return Err(die("--config requires a path")),
+                match a.value("--config", iter) {
+                    // Its own message: a path, not a generic value.
+                    Ok(v) => globals.config = Some(PathBuf::from(v)),
+                    Err(_) => return Err(die("--config requires a path")),
                 }
             }
-            Some(s) if s.starts_with("--config=") => {
-                let Some(v) = iter.next() else {
-                    return Err(die("--config requires a path"));
-                };
-                globals.config = Some(PathBuf::from(&v["--config=".len()..]));
-            }
-            Some(_) => {
+            _ => {
                 // `peek` just returned `Some`, so `next` cannot be `None`.
                 // `unwrap_or_default` keeps the function total rather than
                 // introducing a panic site (L1-ROB-001); an empty token would
                 // fall through to the unknown-command arm, which is safe.
                 return Ok(iter.next().unwrap_or_default());
-            }
-            None => {
-                eprint!("{HELP}");
-                return Err(ExitCode::from(exit_code::USAGE));
             }
         }
     }
@@ -462,6 +460,81 @@ fn next_value(name: &str, iter: &mut ArgIter<'_>) -> Result<String, String> {
         .ok_or_else(|| format!("{name} requires a value"))
 }
 
+/// One argument token, split at the first `=`.
+///
+/// `--flag=value` and `--flag value` are the same invocation, and every flag
+/// that takes a value accepts both. Doing that split *once*, here, is what lets
+/// a flag be handled by a single match arm: before this the two spellings were
+/// two arms apiece — an exact-name arm and a `starts_with("--flag=")` arm that
+/// re-sliced the token by a hard-coded prefix length — repeated at 26 sites. A
+/// flag added with only the first arm would silently reject the joined form,
+/// and no gate would have noticed: `cli-surface-parity` compares flag *names*.
+///
+/// Three rules, each load-bearing and each pinned by a test:
+///
+/// * **Only `--` tokens split.** A positional path may contain `=`
+///   (`a=b.mie`), and `-o=out.csv` is not a spelling this CLI accepts — both
+///   must survive untouched.
+/// * **Only the first `=` separates**, so `--mux-delimiter==` sets the
+///   delimiter to `=`.
+/// * **`--flag=` is an empty value, not a missing one.** The flag's own
+///   validator then decides: an empty filter list is fine, an empty delimiter
+///   is not. C++ got this wrong in the other direction and reported an unknown
+///   option where Rust and Python decoded normally.
+///
+/// `raw` is kept because the unknown-option message quotes the token as the
+/// user typed it, and a flag that takes no value rejects `--flag=x` by falling
+/// through to exactly that message.
+struct Arg {
+    /// The token exactly as it arrived.
+    raw: String,
+    /// The flag name: everything before the first `=`, or the whole token.
+    name: String,
+    /// The value that was joined with `=`, if any. `Some("")` for `--flag=`.
+    inline: Option<String>,
+}
+
+impl Arg {
+    fn split(raw: String) -> Self {
+        // Single-dash and bare tokens are never split; see the type docs.
+        if raw.starts_with("--")
+            && let Some(at) = raw.find('=')
+        {
+            return Self {
+                name: raw[..at].to_string(),
+                inline: Some(raw[at + 1..].to_string()),
+                raw,
+            };
+        }
+        Self {
+            name: raw.clone(),
+            inline: None,
+            raw,
+        }
+    }
+
+    /// The value for a flag that requires one: the joined value if there was
+    /// one, otherwise the next token.
+    ///
+    /// `name` is passed rather than read from `self.name` so the "requires a
+    /// value" message names the long form even when the short one was used
+    /// (`-o` reports `--output`), which is what the message did before.
+    fn value(&self, name: &str, iter: &mut ArgIter<'_>) -> Result<String, String> {
+        match &self.inline {
+            Some(v) => Ok(v.clone()),
+            None => next_value(name, iter),
+        }
+    }
+
+    /// True when this token carried no `=`, which is the guard a value-less
+    /// flag needs: `--no-mux=true` must not quietly set the flag and discard
+    /// the value, so the arm declines and the token falls through to the
+    /// unknown-option message carrying `raw`.
+    fn bare(&self) -> bool {
+        self.inline.is_none()
+    }
+}
+
 fn parse_int_value(s: &str, name: &str) -> Result<usize, String> {
     let s = s.trim();
     let parsed = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -520,202 +593,118 @@ fn parse_bus_filter(v: &str) -> Result<crate::models::Bus, ParseError> {
 fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
     let mut args = DecodeArgs::default();
 
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
+    while let Some(token) = iter.next() {
+        // One arm per flag: `Arg::split` has already resolved `--flag=value`
+        // against `--flag value`, so neither spelling appears below.
+        let a = Arg::split(token);
+        match a.name.as_str() {
             "-o" | "--output" => {
-                args.output = Some(PathBuf::from(next_value("--output", iter)?));
+                args.output = Some(PathBuf::from(a.value("--output", iter)?));
             }
-            s if s.starts_with("--output=") => {
-                args.output = Some(PathBuf::from(&s["--output=".len()..]));
-            }
-            "--separate-errors" => args.separate_errors = true,
-            "--no-clobber" => args.no_clobber = true,
-            "--allow-partial" => args.allow_partial = true,
-            "--strict" => args.strict = Some(true),
+            // Value-less flags decline a joined value rather than discard it;
+            // `--no-mux=true` falls through to the unknown-option arm.
+            "--separate-errors" if a.bare() => args.separate_errors = true,
+            "--no-clobber" if a.bare() => args.no_clobber = true,
+            "--allow-partial" if a.bare() => args.allow_partial = true,
+            "--strict" if a.bare() => args.strict = Some(true),
+            "--no-mux" if a.bare() => args.no_mux = true,
+            "--collapse-duplicates" if a.bare() => args.collapse_duplicates = true,
             "--time-format" => {
-                let v = next_value("--time-format", iter)?;
-                args.time_format = Some(parse_time_format_arg(&v)?);
-            }
-            s if s.starts_with("--time-format=") => {
-                args.time_format = Some(parse_time_format_arg(&s["--time-format=".len()..])?);
+                args.time_format = Some(parse_time_format_arg(&a.value("--time-format", iter)?)?);
             }
             "--detect-records" => {
-                let v = next_value("--detect-records", iter)?;
-                args.detect_records = Some(parse_detect_records(&v)?);
-            }
-            s if s.starts_with("--detect-records=") => {
-                args.detect_records = Some(parse_detect_records(&s["--detect-records=".len()..])?);
+                args.detect_records =
+                    Some(parse_detect_records(&a.value("--detect-records", iter)?)?);
             }
             "--lookahead-records" => {
-                let v = next_value("--lookahead-records", iter)?;
-                args.lookahead_records = Some(parse_lookahead_records(&v)?);
-            }
-            s if s.starts_with("--lookahead-records=") => {
-                args.lookahead_records =
-                    Some(parse_lookahead_records(&s["--lookahead-records=".len()..])?);
-            }
-            "--standard-tick-rate-hz" => {
-                let v = next_value("--standard-tick-rate-hz", iter)?;
-                args.standard_tick_rate_hz = Some(parse_standard_tick_rate_hz(&v)?);
-            }
-            s if s.starts_with("--standard-tick-rate-hz=") => {
-                args.standard_tick_rate_hz = Some(parse_standard_tick_rate_hz(
-                    &s["--standard-tick-rate-hz=".len()..],
+                args.lookahead_records = Some(parse_lookahead_records(
+                    &a.value("--lookahead-records", iter)?,
                 )?);
             }
-            "--format" => {
-                args.output_format = Some(next_value("--format", iter)?);
+            "--standard-tick-rate-hz" => {
+                args.standard_tick_rate_hz = Some(parse_standard_tick_rate_hz(
+                    &a.value("--standard-tick-rate-hz", iter)?,
+                )?);
             }
-            s if s.starts_with("--format=") => {
-                args.output_format = Some(s["--format=".len()..].to_string());
-            }
-            "--no-mux" => args.no_mux = true,
+            "--format" => args.output_format = Some(a.value("--format", iter)?),
             "--mux-delimiter" => {
-                args.mux_delimiter =
-                    Some(parse_mux_delimiter(&next_value("--mux-delimiter", iter)?)?);
-            }
-            s if s.starts_with("--mux-delimiter=") => {
-                args.mux_delimiter = Some(parse_mux_delimiter(&s["--mux-delimiter=".len()..])?);
+                args.mux_delimiter = Some(parse_mux_delimiter(&a.value("--mux-delimiter", iter)?)?);
             }
             "--mux-field" => {
-                args.mux_field = Some(parse_mux_field(&next_value("--mux-field", iter)?)?);
-            }
-            s if s.starts_with("--mux-field=") => {
-                args.mux_field = Some(parse_mux_field(&s["--mux-field=".len()..])?);
+                args.mux_field = Some(parse_mux_field(&a.value("--mux-field", iter)?)?);
             }
             "--max-sort-group" => {
-                let v = next_value("--max-sort-group", iter)?;
-                args.max_sort_group = Some(parse_max_sort_group(&v)?);
-            }
-            s if s.starts_with("--max-sort-group=") => {
-                args.max_sort_group = Some(parse_max_sort_group(&s["--max-sort-group=".len()..])?);
+                args.max_sort_group =
+                    Some(parse_max_sort_group(&a.value("--max-sort-group", iter)?)?);
             }
             "--delta-scope" => {
-                let v = next_value("--delta-scope", iter)?;
-                args.delta_scope = Some(parse_delta_scope(&v)?);
+                args.delta_scope = Some(parse_delta_scope(&a.value("--delta-scope", iter)?)?);
             }
-            s if s.starts_with("--delta-scope=") => {
-                args.delta_scope = Some(parse_delta_scope(&s["--delta-scope=".len()..])?);
-            }
-            "--collapse-duplicates" => args.collapse_duplicates = true,
             "--collapse-window-us" => {
-                args.collapse_window_us = Some(parse_collapse_window_us(&next_value(
-                    "--collapse-window-us",
-                    iter,
-                )?)?);
-            }
-            s if s.starts_with("--collapse-window-us=") => {
                 args.collapse_window_us = Some(parse_collapse_window_us(
-                    &s["--collapse-window-us=".len()..],
+                    &a.value("--collapse-window-us", iter)?,
                 )?);
             }
             "--manifest" => {
-                args.manifest = Some(PathBuf::from(next_value("--manifest", iter)?));
+                args.manifest = Some(PathBuf::from(a.value("--manifest", iter)?));
             }
-            s if s.starts_with("--manifest=") => {
-                args.manifest = Some(PathBuf::from(&s["--manifest=".len()..]));
-            }
-            "--glob" => {
-                args.glob = Some(next_value("--glob", iter)?);
-            }
-            s if s.starts_with("--glob=") => {
-                args.glob = Some(s["--glob=".len()..].to_string());
-            }
+            "--glob" => args.glob = Some(a.value("--glob", iter)?),
             // Filter flags: each takes ONE value. Multiple values either
             // repeat the flag or comma-separate within one value:
             //   --include-rts 15
             //   --include-rts 15,20,31
             //   --include-rts 15 --include-rts 31
             // Any of those leaves trailing positionals like `file.mie`
-            // free to bind to `args.inputs`. Both space- and `=`-form
-            // value syntax are accepted.
+            // free to bind to `args.inputs`.
             "--exclude-types" => push_filter(
-                &next_value("--exclude-types", iter)?,
-                &mut args.exclude_types,
-                parse_type_filter,
-            )?,
-            s if s.starts_with("--exclude-types=") => push_filter(
-                &s["--exclude-types=".len()..],
+                &a.value("--exclude-types", iter)?,
                 &mut args.exclude_types,
                 parse_type_filter,
             )?,
             "--include-types" => push_filter(
-                &next_value("--include-types", iter)?,
-                &mut args.include_types,
-                parse_type_filter,
-            )?,
-            s if s.starts_with("--include-types=") => push_filter(
-                &s["--include-types=".len()..],
+                &a.value("--include-types", iter)?,
                 &mut args.include_types,
                 parse_type_filter,
             )?,
             "--exclude-rts" => push_filter(
-                &next_value("--exclude-rts", iter)?,
+                &a.value("--exclude-rts", iter)?,
                 &mut args.exclude_rts,
                 |v| parse_u8_value(v, "--exclude-rts").map_err(Into::into),
             )?,
-            s if s.starts_with("--exclude-rts=") => {
-                push_filter(&s["--exclude-rts=".len()..], &mut args.exclude_rts, |v| {
-                    parse_u8_value(v, "--exclude-rts").map_err(Into::into)
-                })?;
-            }
             "--include-rts" => push_filter(
-                &next_value("--include-rts", iter)?,
+                &a.value("--include-rts", iter)?,
                 &mut args.include_rts,
                 |v| parse_u8_value(v, "--include-rts").map_err(Into::into),
             )?,
-            s if s.starts_with("--include-rts=") => {
-                push_filter(&s["--include-rts=".len()..], &mut args.include_rts, |v| {
-                    parse_u8_value(v, "--include-rts").map_err(Into::into)
-                })?;
-            }
             "--exclude-buses" => push_filter(
-                &next_value("--exclude-buses", iter)?,
-                &mut args.exclude_buses,
-                parse_bus_filter,
-            )?,
-            s if s.starts_with("--exclude-buses=") => push_filter(
-                &s["--exclude-buses=".len()..],
+                &a.value("--exclude-buses", iter)?,
                 &mut args.exclude_buses,
                 parse_bus_filter,
             )?,
             "--include-buses" => push_filter(
-                &next_value("--include-buses", iter)?,
-                &mut args.include_buses,
-                parse_bus_filter,
-            )?,
-            s if s.starts_with("--include-buses=") => push_filter(
-                &s["--include-buses=".len()..],
+                &a.value("--include-buses", iter)?,
                 &mut args.include_buses,
                 parse_bus_filter,
             )?,
             "--exclude-subaddresses" => push_filter(
-                &next_value("--exclude-subaddresses", iter)?,
-                &mut args.exclude_subaddresses,
-                |v| parse_u8_value(v, "--exclude-subaddresses").map_err(Into::into),
-            )?,
-            s if s.starts_with("--exclude-subaddresses=") => push_filter(
-                &s["--exclude-subaddresses=".len()..],
+                &a.value("--exclude-subaddresses", iter)?,
                 &mut args.exclude_subaddresses,
                 |v| parse_u8_value(v, "--exclude-subaddresses").map_err(Into::into),
             )?,
             "--include-subaddresses" => push_filter(
-                &next_value("--include-subaddresses", iter)?,
+                &a.value("--include-subaddresses", iter)?,
                 &mut args.include_subaddresses,
                 |v| parse_u8_value(v, "--include-subaddresses").map_err(Into::into),
             )?,
-            s if s.starts_with("--include-subaddresses=") => push_filter(
-                &s["--include-subaddresses=".len()..],
-                &mut args.include_subaddresses,
-                |v| parse_u8_value(v, "--include-subaddresses").map_err(Into::into),
-            )?,
-            "-h" | "--help" => return Err(ParseError::HelpRequested),
-            s if s.starts_with('-') => {
-                return Err(format!("unknown decode option: {s}").into());
+            "-h" | "--help" if a.bare() => return Err(ParseError::HelpRequested),
+            // `raw`, not `name`: the message quotes what was typed, so
+            // `--no-mux=true` reports itself in full.
+            _ if a.name.starts_with('-') => {
+                return Err(format!("unknown decode option: {}", a.raw).into());
             }
             // Positional input path(s). One or more is accepted; more than one
             // resolved input triggers the time-sorted merge (L2-MRG-001).
-            _ => args.inputs.push(PathBuf::from(arg)),
+            _ => args.inputs.push(PathBuf::from(a.raw)),
         }
     }
 
@@ -742,17 +731,20 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
 
 fn parse_count(iter: &mut ArgIter<'_>) -> Result<PathBuf, ParseError> {
     let mut path: Option<PathBuf> = None;
-    for arg in iter.by_ref() {
-        match arg.as_str() {
-            "-h" | "--help" => return Err(ParseError::HelpRequested),
-            s if s.starts_with('-') => {
-                return Err(format!("unknown count option: {s}").into());
+    for token in iter.by_ref() {
+        // `count` has no value-taking flag today, but it goes through the same
+        // cursor so that adding one cannot reintroduce a per-flag `=` arm.
+        let a = Arg::split(token);
+        match a.name.as_str() {
+            "-h" | "--help" if a.bare() => return Err(ParseError::HelpRequested),
+            _ if a.name.starts_with('-') => {
+                return Err(format!("unknown count option: {}", a.raw).into());
             }
             _ => {
                 if path.is_some() {
-                    return Err(format!("unexpected positional argument: {arg}").into());
+                    return Err(format!("unexpected positional argument: {}", a.raw).into());
                 }
-                path = Some(PathBuf::from(arg));
+                path = Some(PathBuf::from(a.raw));
             }
         }
     }
@@ -763,39 +755,29 @@ fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, ParseError> {
     let mut args = DumpArgs::default();
     let mut input_seen = false;
 
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--raw" => args.raw = true,
+    while let Some(token) = iter.next() {
+        let a = Arg::split(token);
+        match a.name.as_str() {
+            "--raw" if a.bare() => args.raw = true,
             "--offset" => {
-                let v = next_value("--offset", iter)?;
-                args.offset = parse_int_value(&v, "--offset")?;
-            }
-            s if s.starts_with("--offset=") => {
-                args.offset = parse_int_value(&s["--offset=".len()..], "--offset")?;
+                args.offset = parse_int_value(&a.value("--offset", iter)?, "--offset")?;
             }
             "--length" => {
-                let v = next_value("--length", iter)?;
-                args.length = Some(parse_int_value(&v, "--length")?);
-            }
-            s if s.starts_with("--length=") => {
-                args.length = Some(parse_int_value(&s["--length=".len()..], "--length")?);
+                args.length = Some(parse_int_value(&a.value("--length", iter)?, "--length")?);
             }
             "--records" => {
-                let v = next_value("--records", iter)?;
-                args.records = Some(parse_int_value(&v, "--records")? as u64);
+                args.records =
+                    Some(parse_int_value(&a.value("--records", iter)?, "--records")? as u64);
             }
-            s if s.starts_with("--records=") => {
-                args.records = Some(parse_int_value(&s["--records=".len()..], "--records")? as u64);
-            }
-            "-h" | "--help" => return Err(ParseError::HelpRequested),
-            s if s.starts_with('-') => {
-                return Err(format!("unknown dump option: {s}").into());
+            "-h" | "--help" if a.bare() => return Err(ParseError::HelpRequested),
+            _ if a.name.starts_with('-') => {
+                return Err(format!("unknown dump option: {}", a.raw).into());
             }
             _ => {
                 if input_seen {
-                    return Err(format!("unexpected positional argument: {arg}").into());
+                    return Err(format!("unexpected positional argument: {}", a.raw).into());
                 }
-                args.input = PathBuf::from(arg);
+                args.input = PathBuf::from(a.raw);
                 input_seen = true;
             }
         }
@@ -1616,6 +1598,199 @@ mod tests {
     }
 
     /// `--flag=value` syntax with comma-separation.
+    /// Every valued flag, both spellings, compared structurally rather than by
+    /// exit code — a spelling that parsed but dropped its value would still
+    /// exit 0. `DecodeArgs` has no `PartialEq` (it is private, and deriving one
+    /// only for a test is surface for its own sake), so `Debug` stands in: it
+    /// renders every field, which is exactly the comparison wanted.
+    ///
+    /// This sweep is what the `Arg` cursor buys. Before it each of these flags
+    /// carried two match arms, and the test could only have been written as a
+    /// list of near-copies.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn every_valued_flag_accepts_both_spellings() {
+        let cases: &[(&str, &str)] = &[
+            ("--output", "out.csv"),
+            ("--time-format", "irig"),
+            ("--format", "csv"),
+            ("--detect-records", "4"),
+            ("--lookahead-records", "2"),
+            ("--standard-tick-rate-hz", "1000000"),
+            ("--max-sort-group", "64"),
+            ("--mux-delimiter", "_"),
+            ("--mux-field", "0"),
+            ("--delta-scope", "global"),
+            ("--collapse-window-us", "10"),
+            ("--manifest", "list.txt"),
+            ("--glob", "*.mie"),
+            ("--exclude-rts", "31"),
+            ("--include-rts", "15"),
+            ("--exclude-buses", "B"),
+            ("--include-buses", "A"),
+            ("--exclude-subaddresses", "30"),
+            ("--include-subaddresses", "11"),
+            ("--exclude-types", "RT_TO_RT"),
+            ("--include-types", "BC_TO_RT"),
+        ];
+
+        for (flag, value) in cases {
+            // --manifest and --glob are themselves input methods, so adding a
+            // positional would fail the parse for an unrelated reason.
+            let positional: &[&str] = if matches!(*flag, "--manifest" | "--glob") {
+                &[]
+            } else {
+                &["rec.mie"]
+            };
+
+            let mut separated = vec![*flag, *value];
+            separated.extend_from_slice(positional);
+            let joined_flag = format!("{flag}={value}");
+            let mut joined = vec![joined_flag.as_str()];
+            joined.extend_from_slice(positional);
+
+            let a = parse_decode(&mut args(&separated))
+                .unwrap_or_else(|e| panic!("{flag} separated form failed: {e:?}"));
+            let b = parse_decode(&mut args(&joined))
+                .unwrap_or_else(|e| panic!("{flag} joined form failed: {e:?}"));
+            assert_eq!(
+                format!("{a:?}"),
+                format!("{b:?}"),
+                "{flag} spellings differ"
+            );
+        }
+    }
+
+    /// `--flag=` carries an EMPTY value, which the flag's own validator then
+    /// accepts or rejects. It is not a malformed token.
+    ///
+    /// C++ had this wrong in the opposite direction: it required a character
+    /// after the `=`, so `--exclude-rts=` was an "unknown option" (exit 4)
+    /// where Rust and Python decoded normally (exit 0).
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn eq_form_with_empty_value_is_an_empty_value() {
+        // Accepted: an empty filter excludes nothing, so the parse must match
+        // the one that never passed the flag at all.
+        let with = parse_decode(&mut args(&["--exclude-rts=", "rec.mie"])).unwrap();
+        let without = parse_decode(&mut args(&["rec.mie"])).unwrap();
+        assert!(with.exclude_rts.is_empty());
+        assert_eq!(format!("{with:?}"), format!("{without:?}"));
+
+        // Rejected: the validator refuses this, not the cursor.
+        let err = parse_decode(&mut args(&["--mux-delimiter=", "rec.mie"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(
+            msg.contains("--mux-delimiter"),
+            "message should name the flag, got {msg:?}"
+        );
+        assert!(
+            !msg.contains("unknown"),
+            "must reach the validator, not the unknown-option arm: {msg:?}"
+        );
+    }
+
+    /// Only the first `=` separates; the remainder is the value verbatim.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn only_the_first_equals_separates() {
+        let parsed = parse_decode(&mut args(&["--mux-delimiter==", "rec.mie"])).unwrap();
+        assert_eq!(parsed.mux_delimiter.as_deref(), Some("="));
+
+        let parsed = parse_decode(&mut args(&["--glob=a=b*.mie"])).unwrap();
+        assert_eq!(parsed.glob.as_deref(), Some("a=b*.mie"));
+    }
+
+    /// A flag that takes no value must REJECT a joined one rather than set
+    /// itself and silently discard it, and the message quotes the token as it
+    /// was typed.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn a_valueless_flag_rejects_a_joined_value() {
+        for token in [
+            "--no-mux=true",
+            "--no-mux=",
+            "--separate-errors=1",
+            "--strict=false",
+        ] {
+            let err = parse_decode(&mut args(&[token, "rec.mie"])).unwrap_err();
+            let ParseError::Other(msg) = err else {
+                panic!("{token}: expected a usage error");
+            };
+            assert!(
+                msg.contains(token),
+                "{token}: message should quote the whole token, got {msg:?}"
+            );
+        }
+    }
+
+    /// Splitting is confined to `--` tokens: a positional path may contain
+    /// `=`, and `-o=value` is not a spelling this CLI accepts.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn only_double_dash_tokens_are_split() {
+        let parsed = parse_decode(&mut args(&["a=b.mie"])).unwrap();
+        assert_eq!(parsed.inputs, vec![PathBuf::from("a=b.mie")]);
+
+        let err = parse_decode(&mut args(&["-o=out.csv", "rec.mie"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(msg.contains("-o=out.csv"), "got {msg:?}");
+    }
+
+    /// Globals are parsed in their own loop, so both spellings need proving
+    /// there independently. `--version=1` is a value on a flag that takes
+    /// none, so it is NOT a version request: it falls through as the
+    /// subcommand token and is reported as an unknown command.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn global_flags_accept_both_spellings() {
+        for (argv, expected) in [
+            (vec!["--log-level", "ERROR", "decode"], "ERROR"),
+            (vec!["--log-level=ERROR", "decode"], "ERROR"),
+            (vec!["--log-level=", "decode"], ""),
+        ] {
+            let mut globals = GlobalArgs::default();
+            let sub = parse_global_flags(&mut args(&argv), &mut globals)
+                .unwrap_or_else(|_| panic!("{argv:?} should yield a subcommand"));
+            assert_eq!(sub, "decode", "{argv:?}");
+            assert_eq!(globals.log_level.as_deref(), Some(expected), "{argv:?}");
+        }
+
+        for argv in [
+            vec!["--config", "site.toml", "decode"],
+            vec!["--config=site.toml", "decode"],
+        ] {
+            let mut globals = GlobalArgs::default();
+            let sub = parse_global_flags(&mut args(&argv), &mut globals).unwrap();
+            assert_eq!(sub, "decode");
+            assert_eq!(globals.config, Some(PathBuf::from("site.toml")));
+        }
+
+        // Not a version request: handed back as the subcommand token.
+        let mut globals = GlobalArgs::default();
+        let sub = parse_global_flags(&mut args(&["--version=1"]), &mut globals).unwrap();
+        assert_eq!(sub, "--version=1");
+    }
+
+    /// `dump` has its own loop as well.
+    /// Requirements: L2-CLI-015
+    #[test]
+    fn dump_flags_accept_both_spellings() {
+        let a = parse_dump(&mut args(&["rec.mie", "--records", "2", "--offset", "8"])).unwrap();
+        let b = parse_dump(&mut args(&["rec.mie", "--records=2", "--offset=8"])).unwrap();
+        assert_eq!(format!("{a:?}"), format!("{b:?}"));
+
+        let err = parse_dump(&mut args(&["rec.mie", "--raw=true"])).unwrap_err();
+        let ParseError::Other(msg) = err else {
+            panic!("expected a usage error");
+        };
+        assert!(msg.contains("--raw=true"), "got {msg:?}");
+    }
+
     /// Requirements: L2-CLI-010
     #[test]
     fn filter_flag_accepts_eq_form() {

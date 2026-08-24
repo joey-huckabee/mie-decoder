@@ -74,10 +74,10 @@ Flags that take no value — `--no-mux`, `--separate-errors`, `--allow-partial`
 and the rest — have nothing to attach, and `--no-mux=true` is a usage error
 rather than a way to spell "on".
 
-> Both spellings and the empty-value rule are pinned across all three
-> implementations by the `flag-eq-form-*` cases in
+> This is `L2-CLI-015`. Both spellings and the rules above are pinned across
+> all three implementations by the `flag-eq-form-*` cases in
 > `tests/conformance/manifest.json`, not merely by each implementation's own
-> tests. `cli-surface-parity` compares flag *names*, which cannot see how a
+> tests — `cli-surface-parity` compares flag *names*, which cannot see how a
 > value is attached to one.
 
 ### Global options
