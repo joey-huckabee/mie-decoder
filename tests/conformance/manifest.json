@@ -790,21 +790,33 @@
       "expected": "expected/negative-mux-field.csv"
     },
     {
-      "name": "end-of-options-before-decode",
+      "name": "end-of-options-before-input-decode",
       "input": "inputs/basic-multi-record.hex",
-      "global_args": [
+      "subcommand_args": [
         "--"
       ],
-      "expected": "expected/basic-multi-record.csv"
+      "expected_exit": 1
     },
     {
-      "name": "end-of-options-before-count",
+      "name": "end-of-options-before-input-count",
       "input": "inputs/multi-record-then-terminator.hex",
       "mode": "count",
-      "global_args": [
+      "subcommand_args": [
         "--"
       ],
       "expected": "expected/count-multi-record-then-terminator.txt"
+    },
+    {
+      "name": "end-of-options-before-input-dump",
+      "input": "inputs/basic-multi-record.hex",
+      "input_names": [
+        "dump-records-basic-in0.mie"
+      ],
+      "mode": "dump",
+      "subcommand_args": [
+        "--"
+      ],
+      "expected": "expected/dump-records-basic.txt"
     }
   ]
 }

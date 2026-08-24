@@ -56,6 +56,10 @@ FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     # without this the `--flag=value` spelling was only ever covered on one of
     # the two code paths.
     "global_args": list,
+    # Arguments placed immediately AFTER the subcommand and BEFORE the input
+    # paths. `args` goes after the paths (and after `-o`), which is too late
+    # to exercise anything positional -- `--` in particular.
+    "subcommand_args": list,
 }
 ALLOWED_MODES: frozenset[str] = frozenset({"decode", "count", "dump"})
 # Modes whose payload is stdout rather than a written file. `dump` joined them
@@ -340,9 +344,15 @@ def _build_command(
     if mode in _STDOUT_MODES:
         # `count` and `dump` write their result to stdout and take exactly one
         # input, so there is no -o and no second positional.
-        command += [mode, str(sources[0])]
+        command += [mode, *case.get("subcommand_args", []), str(sources[0])]
     else:
-        command += ["decode", *(str(s) for s in sources), "-o", str(output)]
+        command += [
+            "decode",
+            *case.get("subcommand_args", []),
+            *(str(s) for s in sources),
+            "-o",
+            str(output),
+        ]
     command += case.get("args", [])
     return command
 

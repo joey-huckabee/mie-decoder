@@ -943,13 +943,20 @@ One divergence remains and is **out of scope for this requirement**: `--` as the
 
 The separator is **scoped to the parser that consumes it**. A `--` appearing before the subcommand SHALL cause the next token to be taken as the subcommand *name* verbatim — so `-- --version` reports an unknown command rather than printing the version, and `-- -h` does not print help — and SHALL NOT put the subcommand's own parser into end-of-options mode: `-- decode rec.mie --no-mux` still honours `--no-mux`.
 
+The **binding position is after the subcommand** (`decode -- rec.mie`), which is the position operators actually need and the only one every supported Python version handles identically. The pre-subcommand position is required of Rust and C++ and is available on Python **3.12+**; see the divergences below.
+
 `--` SHALL NOT be accepted as a flag's value in the separated form (`-o -- x.mie` is a usage error), which follows from L2-CLI-015 since `--` looks like an option.
 
 **Rationale**: Without it there is no way to decode a file whose name begins with a dash, and the tool is the only thing standing between an operator and a recording they cannot rename. Python inherited the behaviour from `argparse` and had it from the beginning; Rust and C++ reported `--` itself as `unknown option` (exit `4`), so the same command line worked or failed depending on which implementation was installed — precisely the class of drift the CLI-surface-parity gate cannot see, because it compares flag *names*.
 
 The scoping rule is the part worth stating explicitly, because the plausible alternative is wrong: carrying end-of-options across the subcommand boundary would make `-- decode rec.mie --no-mux` silently ignore `--no-mux`, which is the same silent-wrong-answer failure L2-CLI-015 exists to remove.
 
-**Known divergence**: `argparse` is inconsistent about a **trailing** separator when an optional is interleaved before it. `decode rec.mie --` is accepted, but `decode rec.mie -o out.csv --` is a usage error, the `--` surviving as an unrecognized argument. Rust and C++ treat a trailing separator uniformly as a no-op. This is not levelled — it is a defect in `argparse`'s own handling rather than a decision either way — and the conformance suite therefore exercises `--` only in positions where all three agree. The affected shapes are pinned by each implementation's own tests instead.
+**Known divergences**, both in `argparse` and neither levelled. Each was found by CI rather than by inspection, and each is a reason the contract binds the post-subcommand position only:
+
+1. **A pre-subcommand `--` is Python 3.12+.** Before that `argparse` did not strip a leading `--` ahead of a subparser choice and passed `--` itself as the subcommand name, so `-- decode rec.mie` is a usage error on 3.10 and 3.11. Rust and C++ support the position on every version. Levelling downward would mean removing a working capability from two implementations to match the oldest supported interpreter; levelling upward is not possible without leaving `argparse`.
+2. **A trailing separator behind an optional is rejected on every version.** `decode rec.mie --` is accepted, but `decode rec.mie -o out.csv --` is a usage error, the `--` surviving as an unrecognized argument. This one is consistent across 3.10–3.14, so it is a defect in `argparse` rather than a version split. Rust and C++ treat a trailing separator uniformly as a no-op.
+
+The conformance suite therefore exercises `--` only immediately before the input paths, which all three implementations and all five interpreters handle identically. The affected shapes are pinned by each implementation's own tests, and the Python tests assert the *interpreter's own* answer so they stay honest across the supported range.
 **Verification Method**: Test (T)
 
 ---

@@ -133,12 +133,14 @@ Three details:
 - **It is not a flag value.** `-o -- x.mie` is a usage error; `--` looks like an
   option, so it is refused as one under the rule above.
 
-> This is `L2-CLI-016`. One corner is **not** identical across implementations:
-> a *trailing* `--` with a flag before it (`decode rec.mie -o out.csv --`) is
-> accepted by Rust and C++ as a no-op but rejected by Python, because
-> `argparse` leaves the separator behind as an unrecognized argument in that
-> interleaving. Put the separator before the paths it applies to and the
-> question does not arise.
+> This is `L2-CLI-016`. Put the separator **immediately before the paths it
+> applies to** — `decode -o out.csv -- -weird.mie` — and it behaves identically
+> everywhere. Two other positions are less portable, both because of `argparse`:
+>
+> - **Before the subcommand** (`-- decode rec.mie`) works in Rust, C++, and
+>   Python **3.12+**, but is a usage error on Python 3.10 and 3.11.
+> - **Trailing after a flag** (`decode rec.mie -o out.csv --`) is a no-op in
+>   Rust and C++ and a usage error in Python on every version.
 
 ### Global options
 

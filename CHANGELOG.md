@@ -42,17 +42,30 @@ full release workflow.
   Verified as a 15-shape three-way comparison covering both sides of the
   subcommand boundary, doubled separators, `count` and `dump`, and `--` offered
   as a flag's value: all three agree on every one. `L2-CLI-016` states the
-  contract, with 4 Rust / 1 C++ (five sections) / 6 Python tests and 2
+  contract, with 4 Rust / 1 C++ (five sections) / 6 Python tests and 3
   conformance cases.
 
-  **Known divergence, not levelled:** `argparse` is inconsistent about a
-  *trailing* separator when an optional is interleaved before it —
-  `decode rec.mie --` is accepted but `decode rec.mie -o out.csv --` is a usage
-  error, the `--` surviving as an unrecognized argument. Rust and C++ treat a
-  trailing separator uniformly as a no-op. That is a defect in `argparse`'s own
-  handling rather than a decision either way, so the conformance suite
-  exercises `--` only where all three agree and the affected shapes are pinned
-  by each implementation's own tests.
+  **The contract binds the position immediately before the input paths**
+  (`decode -- rec.mie`), which is the position operators actually need and the
+  only one every supported interpreter handles identically. Two other positions
+  are less portable, both because of `argparse`, and neither is levelled:
+
+  - **Before the subcommand** (`-- decode rec.mie`) works in Rust, C++ and
+    Python **3.12+**. Earlier `argparse` did not strip a leading `--` ahead of a
+    subparser choice and passed `--` itself as the subcommand name, so it is a
+    usage error on 3.10 and 3.11. Levelling downward would mean deleting a
+    working capability from two implementations to match the oldest supported
+    interpreter.
+  - **Trailing behind a flag** (`decode rec.mie -o out.csv --`) is a no-op in
+    Rust and C++ and a usage error in Python on *every* version — consistent
+    across 3.10–3.14, so a defect rather than a version split.
+
+  The first of those was found the same way the `-5e3` corner was: CI failed on
+  the versions the development machine does not run. Python 3.10 and 3.11
+  rejected a conformance case that passed locally on 3.12. The cases now use
+  the portable position, and the Python tests assert the **interpreter's own**
+  answer rather than a fixed one, so they stay honest across all five versions
+  instead of encoding whichever happened to be installed.
 
 - **Every flag accepts both `--flag value` and `--flag=value` in all three
   implementations — and nothing shared proved it.** The two spellings are

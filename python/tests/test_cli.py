@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -677,16 +678,39 @@ class TestEndOfOptions:
         fresh scan, so a flag after it still acts as a flag. Getting this wrong
         in the other two would have made ``-- decode rec.mie --no-mux`` ignore
         ``--no-mux``.
+
+        **This position is Python 3.12+.** Before that, ``argparse`` did not
+        strip a leading ``--`` ahead of a subparser choice and passed ``--``
+        itself as the subcommand name, so the invocation is a usage error on
+        3.10 and 3.11. Rust and C++ support it on every version; the contract
+        (L2-CLI-016) therefore binds only the *post*-subcommand position, which
+        every supported interpreter handles the same way, and the conformance
+        suite uses that one. Asserting the interpreter's own answer here keeps
+        the test honest on all five versions.
         """
         parser = cli.build_parser()
-        parsed = parser.parse_args(["--", "decode", "rec.mie", "--no-mux"])
+        argv = ["--", "decode", "rec.mie", "--no-mux"]
+
+        if sys.version_info < (3, 12):
+            with pytest.raises(SystemExit):
+                parser.parse_args(argv)
+            return
+
+        parsed = parser.parse_args(argv)
         assert parsed.command == "decode"
         assert parsed.no_mux is True
         assert [str(p) for p in parsed.inputs] == ["rec.mie"]
 
     @pytest.mark.requirement("L2-CLI-016")
     def test_the_marker_suppresses_the_global_flags(self) -> None:
-        """``-- --version`` asks for a subcommand called ``--version``."""
+        """``-- --version`` asks for a subcommand called ``--version``.
+
+        A usage error on every supported version, though for two different
+        reasons: 3.12+ takes ``--version`` as an invalid subcommand name, while
+        3.10 and 3.11 never strip the ``--`` and reject *that* as the name.
+        Either way the version is not printed, which is the property that
+        matters and the one Rust and C++ were made to match.
+        """
         parser = cli.build_parser()
         for token in ("--version", "-h", "--help", "-V"):
             with pytest.raises(SystemExit) as excinfo:
