@@ -573,46 +573,75 @@ jobs:
 
       - name: Download pinned PlantUML jar
         env:
-          # NOTE: this pin does NOT match the committed SVGs, and this
-          # job does not currently verify them. The committed files carry
-          # <?plantuml 1.2026.7beta11?>, a build published only under
-          # PlantUML's rolling `snapshot` pre-release (asset name
-          # plantuml-SNAPSHOT.jar, overwritten in place) and therefore not
-          # pinnable by URL. It is also the only build tested that renders
-          # all three diagrams without crashing: on this pinned stable
-          # release, component.puml dies in the smetana layout engine and
-          # PlantUML still exits 0.
-          #
-          # The verify step below cannot catch any of that, because
-          # PlantUML names its output after `@startuml <name>` rather than
-          # the source file — the render lands in untracked
-          # "MIE-Decoder Class Diagram.svg" and friends, leaving the
-          # tracked *.svg untouched, so `git diff` is trivially clean.
-          # Kept running (it is harmless and downloads the jar we would
-          # need) while the real fix is scoped; see the "Diagram
-          # rendering" section of docs/ROADMAP.md for the three defects
-          # and the reproducibility constraint on any replacement.
-          PLANTUML_VERSION: 1.2026.5
+          # 1.2026.7, released 2026-08-25, is the first STABLE build that
+          # renders all three diagrams. The previous pin (1.2026.5) died in
+          # the smetana layout engine on component.puml and **still exited
+          # 0**, leaving a 14,489-byte stub where a whole diagram is ~60 KB.
+          # 1.2026.6 fails the same way. The only build that worked before
+          # this release was the rolling `snapshot` pre-release
+          # (1.2026.7beta11), whose asset name carries no version and is
+          # overwritten in place, so it could not be pinned by URL — which is
+          # why the pin was knowingly left on a crashing version. That is now
+          # fixed: 1.2026.7 is pinnable and correct, and the render step below
+          # fails the build if a future version regresses.
+          PLANTUML_VERSION: 1.2026.7
         run: |
           mkdir -p "$HOME/plantuml"
           curl -fsSL --retry 3 -o "$HOME/plantuml/plantuml.jar" \
             "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
           echo "PLANTUML_JAR=$HOME/plantuml/plantuml.jar" >> "$GITHUB_ENV"
 
-      - name: Re-render PUML sources to SVG
+      # This job renders the diagrams to prove they still PARSE and still
+      # RENDER. It deliberately does NOT check the committed *.svg for
+      # staleness, and the step that used to claim it did has been removed.
+      #
+      # Why staleness cannot be checked here: PlantUML lays out using the JVM's
+      # font metrics, so the same jar on a different host reflows an unchanged
+      # source (component.puml measured 3350x1490 locally against 3370x1537 in
+      # CI). A byte-diff between a CI render and a locally-committed SVG is
+      # therefore a coin toss, and wiring one up would fail every PR rather
+      # than catch anything. A real staleness gate needs one fixed rendering
+      # environment -- a pinned container, or CI as the sole renderer that
+      # commits the output. See the "Diagram rendering" section of
+      # docs/ROADMAP.md.
+      #
+      # What IS checked is worth having and was never checked before:
+      # PlantUML exits 0 on a crashed render, leaving a truncated SVG behind,
+      # so a broken .puml has always been able to land silently.
+      - name: Render PUML sources (parse + crash check)
         run: |
+          set -o pipefail
+          outdir="$RUNNER_TEMP/puml-render"
+          mkdir -p "$outdir"
           java -Djava.awt.headless=true -jar "$PLANTUML_JAR" \
-            -tsvg -o "$PWD/docs/diagrams" docs/diagrams/*.puml
+            -tsvg -o "$outdir" docs/diagrams/*.puml 2>&1 | tee "$RUNNER_TEMP/puml.log"
 
-      # Known no-op — see the PLANTUML_VERSION comment above and
-      # docs/ROADMAP.md. Left in place so the intent stays visible in the
-      # workflow rather than only in the roadmap.
-      - name: Verify committed SVGs match rendered output
-        run: |
-          if ! git diff --exit-code -- docs/diagrams/*.svg; then
-            echo "::error::Committed docs/diagrams/*.svg are stale relative to the *.puml sources."
-            echo "::error::Regenerate locally with: plantuml -tsvg docs/diagrams/*.puml"
-            echo "::error::Then commit both the *.puml change and the regenerated *.svg in the same commit"
-            echo "::error::(MAINTAINER-GUIDE.md section 3)."
+          # PlantUML reports a failed render in its output while still
+          # exiting 0, so the log is the signal, not the exit code.
+          if grep -qiE 'exception|error' "$RUNNER_TEMP/puml.log"; then
+            echo "::error::PlantUML reported an error while rendering docs/diagrams/*.puml:"
+            sed 's/^/::error::/' "$RUNNER_TEMP/puml.log"
             exit 1
           fi
+
+          # A crashed render leaves a stub. Every real diagram here is tens of
+          # kilobytes; 20 KB is comfortably below the smallest and far above a
+          # truncated one.
+          rendered=$(find "$outdir" -name '*.svg' | wc -l)
+          sources=$(ls docs/diagrams/*.puml | wc -l)
+          if [ "$rendered" -ne "$sources" ]; then
+            echo "::error::rendered $rendered SVG(s) from $sources source(s) — a diagram failed to render."
+            exit 1
+          fi
+          # Not `find ... | while read`: a pipeline runs the loop in a
+          # subshell, so an `exit 1` inside it cannot fail the step.
+          stub=0
+          while IFS= read -r -d '' path; do
+            size=$(stat -c '%s' "$path")
+            echo "rendered $path ($size bytes)"
+            if [ "$size" -lt 20480 ]; then
+              echo "::error::$path is only $size bytes — that is a truncated render, not a diagram."
+              stub=1
+            fi
+          done < <(find "$outdir" -name '*.svg' -print0)
+          [ "$stub" -eq 0 ] || exit 1

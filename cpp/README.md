@@ -27,10 +27,14 @@ development convenience (ADR-0003).
 > as well -- eight cases in the manifest -- since the report characters were
 > reconciled across the three.
 >
-> **What is genuinely outstanding is tooling and release work, not decoder
-> code:** there are no libFuzzer targets and no coverage gate
-> (see `docs/ROADMAP.md`), and
-> Phase 3 release artifacts and the `cpp-vX.Y.Z` scheme are undecided (#4).
+> **What is genuinely outstanding is release-artifact work, not decoder code:**
+> Phase 3 prebuilt artifacts and the static-CRT question are undecided (#4).
+> Coverage and fuzzing are **not** outstanding -- both are wired and gating; see
+> "CI tiers" below. There are no libFuzzer targets, but that is a decided design
+> rather than a gap: all three implementations run the same deterministic,
+> identically-seeded `xorshift64` harness, so they see the same bytes and a
+> divergence is detectable. libFuzzer would need clang, which would skip the
+> GCC 4.8.5 tier this implementation exists for.
 > Static analysis is now wired: CodeQL analyses `c-cpp` and SonarCloud analyses
 > `cpp/src` and `cpp/include` from the `bear` compilation database.
 
@@ -166,12 +170,23 @@ Python implementations:
 | `gcc:4.8` container | C++11 conformance on the SLES 12 system compiler — **runs the full suite, not just a compile** |
 | MSVC on `windows-2022` | the shipping Windows artifact, at `/W4 /WX /permissive-` |
 | static analysis | clang-tidy 20, cppcheck, CodeQL `c-cpp`, SonarCloud CFamily |
+| coverage (gcovr) | 90% line / 76% branch floors, from `COVERAGE_MIN_*` in the Makefile |
+| fuzz burn-in | the L1-ROB-001 harness at a raised iteration count (`fuzz.yml`) |
 | real SLES 12 SP5 | deployability. Not in CI — verified by hand on hardware |
 
-There is deliberately **no fuzz tier**, despite the delivery plan listing one:
-the targets are unwritten and the gate's shape is an open decision (#2). It is
-listed here as absent rather than omitted silently, because a missing tier that
-nobody names reads like a tier that passes.
+**On the fuzz tier.** This section previously said there was deliberately *no*
+fuzz tier and that "the targets are unwritten". Both statements were wrong by
+the time they were read: `fuzz.yml` runs a `fuzz-cpp` burn-in job, and the
+harness it runs is an ordinary Catch2 case, so it already executes on **every**
+tier above — modern g++, the GCC 4.8.5 fidelity tier, MSVC, and again under
+ASan/UBSan and Valgrind, which is where a real memory fault on random input
+actually surfaces. What does not exist is a *separate libFuzzer target*, and
+that is a decision rather than a gap (see the note at the top of this file).
+
+The branch floor is lower than the line floor on purpose: gcov branch counts
+vary by several points with compiler version, and one portable number keeps a
+developer's `make coverage` and the CI job the same invocation with the same
+threshold. See `MAINTAINER-GUIDE.md` §10 for the ratchet plan.
 
 `gcc:4.8` is a *proxy* for the target, not the target: Debian 7 "wheezy" with
 glibc 2.13 against SUSE's 2.22. Older, not merely different — which makes it a

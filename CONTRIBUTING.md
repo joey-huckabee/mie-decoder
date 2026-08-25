@@ -442,7 +442,7 @@ GitHub Actions runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on
 every push and pull request:
 
 - **Rust:** `cargo fmt --check`, Clippy with warnings denied, all-target tests,
-  and the `cargo cov-ci` 87% line / 86% region coverage gate.
+  and the `cargo cov-ci` 90% line / 89% region coverage gate.
 - **Python 3.10 through 3.14:** locked dependency synchronization and the full
   pytest suite on every supported minor version.
 - **Python 3.12:** strict package/lockfile validation and wheel + source
@@ -488,8 +488,8 @@ bash scripts/coverage.sh
 
 `cargo cov-ci` enforces:
 
-- **Lines: 87%** floor
-- **Regions: 86%** floor
+- **Lines: 90%** floor
+- **Regions: 89%** floor
 
 These have been ratcheted up from the original 70/70 floor to roughly
 two percentage points below the current baseline, so routine refactors

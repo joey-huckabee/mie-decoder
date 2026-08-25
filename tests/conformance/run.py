@@ -413,10 +413,18 @@ def prepare_python_bin(args: argparse.Namespace) -> None:
     so the runner fails fast with a clear error rather than emitting a
     confusing ``No module named mie_decoder`` for every case.
     """
+    # absolute(), NOT resolve(): a virtualenv's bin/python is a SYMLINK to the
+    # base interpreter, and resolving it throws the venv away. `python3 -m venv
+    # /tmp/v && /tmp/v/bin/pip install -e ./python` then failed with
+    # "mie_decoder is not importable from /usr/bin/python3.10" -- naming an
+    # interpreter the caller never asked for, which reads as the package being
+    # uninstalled rather than the path being rewritten. CI never hit it because
+    # Poetry's Windows venv python is a real file and CI's Linux job installs
+    # into the system interpreter. absolute() still normalises a relative path.
     if args.python_bin:
-        args.python_bin = args.python_bin.resolve()
+        args.python_bin = args.python_bin.absolute()
     else:
-        args.python_bin = Path(sys.executable).resolve()
+        args.python_bin = Path(sys.executable).absolute()
 
     if not args.python_bin.exists():
         raise RuntimeError(f"Python interpreter was not found: {args.python_bin}")

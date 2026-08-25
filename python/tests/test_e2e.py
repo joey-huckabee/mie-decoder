@@ -958,8 +958,11 @@ class TestAtomicWriteSafety:
         assert main(["decode", str(fpath), "--format", "csv", "-o", str(out)]) == 0
         assert out.exists()
 
+        # L1-EXIT-007: an unsupported --format is an invalid FLAG VALUE, so it
+        # is a usage error (4), not a runtime error. It returned 1 through
+        # v2.14.0 because the check ran after the config merge.
         out2 = tmp_path / "out2.csv"
-        assert main(["decode", str(fpath), "--format", "json", "-o", str(out2)]) == 1
+        assert main(["decode", str(fpath), "--format", "json", "-o", str(out2)]) == 4
         assert not out2.exists()
 
     @pytest.mark.requirement("L2-WRT-017")

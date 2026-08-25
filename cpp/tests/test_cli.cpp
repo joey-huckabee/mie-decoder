@@ -785,11 +785,23 @@ TEST_CASE("exit codes classify the failure", "[cli][L3-CPP-016]") {
                 mie::cli::EXIT_CONFIG);
     }
 
-    SECTION("an unsupported output format is a runtime error") {
+    // L1-EXIT-007: an unsupported --format is an invalid FLAG VALUE, so it is
+    // a USAGE error. It was EXIT_RUNTIME through v2.14.0 because the check ran
+    // after the config merge rather than at parse time -- which put one
+    // mistake on three different exit codes depending on where it was written
+    // (4 for --time-format, 1 for --format, 5 for the same value in a config
+    // file). The config-file spelling is still 5; only this one moved.
+    SECTION("an unsupported output format is a usage error") {
         const TempFile input("mie-cli-fmt.mie", valid_recording());
         const TempPath out("mie-cli-fmt.csv");
         REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(), "--format",
-                                   "parquet")) == mie::cli::EXIT_RUNTIME);
+                                   "parquet")) == mie::cli::EXIT_USAGE);
+        // Both spellings, since the joined form takes a different parse path.
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(), "--format=parquet")) ==
+                mie::cli::EXIT_USAGE);
+        // csv is still accepted.
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(), "--format", "csv")) ==
+                mie::cli::EXIT_OK);
     }
 }
 

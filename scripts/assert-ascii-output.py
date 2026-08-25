@@ -216,6 +216,19 @@ def _scan_python(src: str) -> list[Literal]:
     an escape or two characters. Docstrings are string literals syntactically
     but are not output, so they are dropped by position: a docstring is the
     entire body of its own expression statement.
+
+    **F-strings need their own arm, and the reason is a version split.** Under
+    PEP 701 (Python 3.12+) an f-string is no longer one ``STRING`` token: it
+    arrives as ``FSTRING_START`` / ``FSTRING_MIDDLE`` / ``FSTRING_END``, so a
+    scanner that looks only at ``STRING`` sees every f-string as empty. On 3.11
+    and earlier the same source yields a single ``STRING`` and is scanned.
+
+    That is not hypothetical. This gate shipped in v2.15.0's predecessor with
+    only the ``STRING`` arm, was run on 3.12, and reported the tree clean while
+    five non-ASCII f-strings sat in ``python/src`` -- including the Python twins
+    of two C++ messages the same release had just fixed. It was caught by
+    running the identical gate under 3.10. Handling both shapes is therefore
+    load-bearing, not tidiness.
     """
     import io
     import tokenize
@@ -224,11 +237,39 @@ def _scan_python(src: str) -> list[Literal]:
     offsets = [0]
     for ln in src.splitlines(keepends=True):
         offsets.append(offsets[-1] + len(ln))
+
+    def offset_of(row: int, col: int) -> int:
+        return offsets[row - 1] + col
+
     try:
         toks = list(tokenize.generate_tokens(io.StringIO(src).readline))
     except (tokenize.TokenError, IndentationError, SyntaxError):
         return out
+
+    # FSTRING_* exist only on 3.12+; getattr keeps this importable on 3.10/3.11,
+    # where the STRING arm alone already covers f-strings.
+    fstring_start = getattr(tokenize, "FSTRING_START", None)
+    fstring_middle = getattr(tokenize, "FSTRING_MIDDLE", None)
+
+    fstring_raw = False
     for idx, tok in enumerate(toks):
+        if fstring_start is not None and tok.type == fstring_start:
+            # Prefix of the f-string being opened, e.g. `f"`, `rf"`, `fr"""`.
+            fstring_raw = "r" in _py_prefix(tok.string)
+            continue
+        if fstring_middle is not None and tok.type == fstring_middle:
+            # The literal text between replacement fields. Never a docstring:
+            # an f-string is not a documentation string.
+            out.append(
+                Literal(
+                    tok.string,
+                    tok.start[0],
+                    raw=fstring_raw,
+                    start=offset_of(*tok.start),
+                    end=offset_of(*tok.end),
+                )
+            )
+            continue
         if tok.type != tokenize.STRING:
             continue
         if _is_docstring(toks, idx):
@@ -238,8 +279,8 @@ def _scan_python(src: str) -> list[Literal]:
                 tok.string,
                 tok.start[0],
                 raw="r" in _py_prefix(tok.string),
-                start=offsets[tok.start[0] - 1] + tok.start[1],
-                end=offsets[tok.end[0] - 1] + tok.end[1],
+                start=offset_of(*tok.start),
+                end=offset_of(*tok.end),
             )
         )
     return out

@@ -6,18 +6,23 @@ Decoder for DDC MIL-STD-1553 MIE binary recording files.
 
 MIE-Decoder reads proprietary binary files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI recording cards and outputs decoded messages in CSV format compatible with DDC's own recording software output.
 
-MIE-Decoder is maintained in two implementations:
+MIE-Decoder is maintained in three implementations:
 
 - **Rust** — streaming CSV writer (constant memory), hand-rolled CLI, single
   native release binary. See [`rust/README.md`](rust/README.md).
 - **Python** — the Python package and CLI. See
   [`python/README.md`](python/README.md).
+- **C++** — C++11 as accepted by GCC 4.8.5, so **SLES 12 SP5** is a first-class
+  deployment target rather than a documented exception; the same source ships a
+  Windows binary via MSVC. See [`cpp/README.md`](cpp/README.md).
 
-Both implementations ship together as a joint cut from a single
-repository tag. Future releases may diverge via impl-prefixed tags
-(`rust-vX.Y.Z`, `python-vX.Y.Z`). The implementations share the MIE format
-documentation, the vendor-compatible CSV behavior, and a byte-exact
-cross-implementation conformance suite (`tests/conformance/`). See
+All three ship together as a joint cut from a single repository tag, at one
+version number — a CI gate fails the build if they disagree. Future releases
+may diverge via impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`,
+`cpp-vX.Y.Z`). The implementations share the MIE format documentation, the
+vendor-compatible CSV behavior, an identical CLI flag surface, and a byte-exact
+cross-implementation conformance suite (`tests/conformance/`) that every one of
+them must pass. See
 [`CHANGELOG.md`](CHANGELOG.md) for the release history.
 
 ## Building
@@ -28,6 +33,8 @@ Build, install, and library-usage instructions live with each implementation:
   library API, `cargo` workflow.
 - **Python** — [`python/README.md`](python/README.md): `mie-decoder` CLI plus the
   importable `mie_decoder` package, Poetry workflow.
+- **C++** — [`cpp/README.md`](cpp/README.md): `make` on Linux (authoritative),
+  CMake/MSVC on Windows, and the GCC 4.8.5 fidelity tier.
 
 The CLI surface, configuration schema, and CSV output documented below are
 shared by both implementations.

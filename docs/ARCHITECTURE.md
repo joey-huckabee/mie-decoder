@@ -3,7 +3,7 @@
 **Document ID:** MIE-ARCH-001
 **Version:** 2.0.0
 
-How the decoder is organized to turn an MIE binary recording into vendor-compatible CSV. Covers the module structure, the cross-implementation correspondence between the Rust and Python crates, the synchronization strategy, the error pipeline, the structural-invariants subsystem, the output-safety machinery, and the streaming-vs-buffered trade-offs.
+How the decoder is organized to turn an MIE binary recording into vendor-compatible CSV. Covers the module structure, the cross-implementation correspondence between the Rust, Python and C++ trees, the synchronization strategy, the error pipeline, the structural-invariants subsystem, the output-safety machinery, and the streaming-vs-buffered trade-offs.
 
 Companion docs: [`MIE-FORMAT.md`](MIE-FORMAT.md) (binary format reference), [`ERROR-CATALOG.md`](ERROR-CATALOG.md) (every error class), [`MAINTAINER-GUIDE.md`](MAINTAINER-GUIDE.md) (how to add things), [`L1-REQ.md`](L1-REQ.md) / [`L2-REQ.md`](L2-REQ.md) / [`L3-REQ.md`](L3-REQ.md) (the spec).
 
@@ -13,16 +13,16 @@ Companion docs: [`MIE-FORMAT.md`](MIE-FORMAT.md) (binary format reference), [`ER
 
 MIE-Decoder ships as a Rust crate (`rust/src/`), a Python package (`python/src/mie_decoder/`) and a C++ implementation (`cpp/`). They are independent implementations that satisfy the same shared specification and produce byte-identical CSV output (verified by the cross-implementation conformance suite under `tests/conformance/`). The module structure is intentionally aligned so the architecture description fits all three.
 
-> **The C++ implementation is mid-port.** Its module column below names where each concern lives or will live; `cpp/README.md` is authoritative on what is actually implemented today, and the prose in the rest of this document is still written against Rust and Python. Do not read a filled-in cell as a shipped feature.
+> **The port is complete.** Every concern below is implemented in all three, and the C++ build passes the whole shared conformance manifest on Linux and Windows. The prose in the rest of this document is written against Rust and Python for readability; where it names a Rust module, the C++ and Python equivalents in the same row behave identically unless the text says otherwise.
 
 | Concern | Rust module | Python module | C++ module |
 |---------|-------------|---------------|------------|
-| CLI / argument parsing | `rust/src/cli.rs` | `python/src/mie_decoder/cli.py` | `cpp/src/cli.cpp` *(planned)* |
+| CLI / argument parsing | `rust/src/cli.rs` | `python/src/mie_decoder/cli.py` | `cpp/src/cli.cpp` |
 | TOML configuration loader | `rust/src/config.rs` | `python/src/mie_decoder/config.py` | `cpp/src/config.cpp` + `cpp/src/toml.cpp` |
 | Message filtering | `rust/src/filter.rs` | `python/src/mie_decoder/filters.py` | `cpp/src/filter.cpp` |
 | Canonical row order (equal-timestamp ties) | `rust/src/order.rs` | `python/src/mie_decoder/order.py` | `cpp/src/order.cpp` |
 | Reader pipeline (mmap → records) | `rust/src/reader.rs` | `python/src/mie_decoder/reader.py` | `cpp/src/reader.cpp` |
-| Multi-file time-sorted merge | `rust/src/merge.rs` | `python/src/mie_decoder/merge.py` | `cpp/src/merge.cpp` *(planned)* |
+| Multi-file time-sorted merge | `rust/src/merge.rs` | `python/src/mie_decoder/merge.py` | `cpp/src/merge.cpp` |
 | Per-RT/MSG `DELTA` tracking | `rust/src/delta.rs` | `python/src/mie_decoder/delta.py` | `cpp/src/delta.cpp` |
 | Pure decode (bit-level field extraction) | `rust/src/decode.rs` | `python/src/mie_decoder/decode.py` | `cpp/src/decode.cpp` |
 | Sync helpers (validate, find first, recover) | `rust/src/sync.rs` | `python/src/mie_decoder/sync.py` | `cpp/src/sync.cpp` |
@@ -30,11 +30,11 @@ MIE-Decoder ships as a Rust crate (`rust/src/`), a Python package (`python/src/m
 | Error types | `rust/src/error.rs` (single enum) | `python/src/mie_decoder/exceptions.py` (class hierarchy) | `cpp/src/error.cpp` (single enum + kind) |
 | CSV writer | `rust/src/writer.rs` (streaming) | `python/src/mie_decoder/writer.py` (streaming, stdlib `csv`) | `cpp/src/writer.cpp` (streaming) |
 | Logging | `rust/src/log.rs` (hand-rolled) | `python/src/mie_decoder/logger.py` (stdlib `logging`) | `cpp/src/log.cpp` (hand-rolled) |
-| Hex dump | `rust/src/dump.rs` | `python/src/mie_decoder/dump.py` | `cpp/src/dump.cpp` *(planned)* |
+| Hex dump | `rust/src/dump.rs` | `python/src/mie_decoder/dump.py` | `cpp/src/dump.cpp` |
 
-The sync helpers (`sync.rs` / `sync.py`) are **pure** in both implementations — no logging, no I/O. Everything an operator sees about header detection, sync loss, and recovery is emitted by the reader, which is what keeps the two implementations' log output aligned and stops a helper from narrating an outcome the caller has more context about.
+The sync helpers (`sync.rs` / `sync.py` / `sync.cpp`) are **pure** in all three implementations — no logging, no I/O. Everything an operator sees about header detection, sync loss, and recovery is emitted by the reader, which is what keeps the two implementations' log output aligned and stops a helper from narrating an outcome the caller has more context about.
 
-Per L1-CONF-001 the two implementations must remain aligned on shared format and CSV semantics. Per-implementation requirements (`L3-PY-*` / `L3-RS-*`) cover the technology-specific obligations (stdlib `csv` / tomllib for Python; memmap2 / streaming `BufWriter` for Rust). See [`L3-REQ.md`](L3-REQ.md) for the per-impl details.
+Per L1-CONF-001 all three implementations must remain aligned on shared format and CSV semantics. Per-implementation requirements (`L3-PY-*` / `L3-RS-*` / `L3-CPP-*`) cover the technology-specific obligations (stdlib `csv` / tomllib for Python; memmap2 / streaming `BufWriter` for Rust). See [`L3-REQ.md`](L3-REQ.md) for the per-impl details.
 
 The `MUX` column value (L2-WRT-020) is resolved **once per input file** from its name when the reader is constructed (config → `ReaderOptions` / reader kwargs), and attached to every `MieMessage` the reader yields — Rust as a shared `Arc<str>` (a refcount-bump clone per record), Python as a shared `str` reference. The value therefore rides along through the filter and merge iterators unchanged (so a merged stream keeps each record's source-file MUX), and the writer emits it without any extra per-record allocation — preserving the O(1)-in-record-count streaming guarantee.
 

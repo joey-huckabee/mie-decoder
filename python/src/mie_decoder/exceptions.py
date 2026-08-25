@@ -310,8 +310,8 @@ class MieUnknownTypeWordError(MieRecordError):
             offset,
             f"Unknown message type 0x{message_type:02X} in Type Word "
             f"0x{raw_type_word:04X}. Known types: 0x01 (Mode Command), "
-            f"0x02 (BC→RT), 0x04 (RT→BC), 0x08 (RT→RT), "
-            f"0x10 (Broadcast BC→RT), 0x18 (Broadcast RT→RT), "
+            f"0x02 (BC->RT), 0x04 (RT->BC), 0x08 (RT->RT), "
+            f"0x10 (Broadcast BC->RT), 0x18 (Broadcast RT->RT), "
             f"0x20 (Spurious Data).",
         )
 

@@ -468,6 +468,88 @@ if [[ -n "$PY_BIN" ]]; then
     fi
 fi
 
+# ── 16. Coverage floors agree between the gate and the docs ───────────
+#
+# Each implementation's floor lives in exactly one enforcing file. The docs
+# then repeat the numbers in prose, and prose drifts silently: through v2.14.0
+# the Rust gate enforced 90 lines / 89 regions while rust/README.md,
+# CONTRIBUTING.md (twice) and MAINTAINER-GUIDE.md all said 87/86 -- and so did
+# the rationale comment sitting three lines above the alias in the very file
+# that sets them. Nothing failed, because nothing compared them.
+#
+# Enforcing sources, in order: the `cov-ci` alias in rust/.cargo/config.toml,
+# `fail_under` in python/pyproject.toml, COVERAGE_MIN_* in cpp/Makefile.
+step "documented coverage floors match the gates that enforce them"
+rust_lines=$(grep -oE 'fail-under-lines[[:space:]]+[0-9]+' rust/.cargo/config.toml \
+             | grep -oE '[0-9]+' | head -1)
+rust_regions=$(grep -oE 'fail-under-regions[[:space:]]+[0-9]+' rust/.cargo/config.toml \
+               | grep -oE '[0-9]+' | head -1)
+py_floor=$(grep -oE '^fail_under[[:space:]]*=[[:space:]]*[0-9]+' python/pyproject.toml \
+           | grep -oE '[0-9]+' | head -1)
+cpp_line=$(grep -oE '^COVERAGE_MIN_LINE[[:space:]]*\?=[[:space:]]*[0-9]+' cpp/Makefile \
+           | grep -oE '[0-9]+' | head -1)
+cpp_branch=$(grep -oE '^COVERAGE_MIN_BRANCH[[:space:]]*\?=[[:space:]]*[0-9]+' cpp/Makefile \
+             | grep -oE '[0-9]+' | head -1)
+
+if [[ -z "$rust_lines" || -z "$rust_regions" || -z "$py_floor" || -z "$cpp_line" || -z "$cpp_branch" ]]; then
+    bad "could not read a coverage floor from its enforcing file (rust/.cargo/config.toml, python/pyproject.toml, cpp/Makefile)"
+else
+    offenders=()
+    # A doc that names a coverage floor must name the CURRENT one. Match the
+    # "<n>% line / <m>% region" shape the docs use, and compare both numbers.
+    while IFS= read -r hit; do
+        file=${hit%%:*}
+        pair=$(printf '%s' "$hit" | grep -oE '[0-9]+% line / [0-9]+% region' | head -1)
+        [[ -n "$pair" ]] || continue
+        got_l=$(printf '%s' "$pair" | grep -oE '^[0-9]+')
+        got_r=$(printf '%s' "$pair" | sed -E 's|^[0-9]+% line / ([0-9]+)% region|\1|')
+        if [[ "$got_l" != "$rust_lines" || "$got_r" != "$rust_regions" ]]; then
+            offenders+=("$file: says ${got_l}/${got_r}, gate enforces ${rust_lines}/${rust_regions}")
+        fi
+    done < <(grep -rnE '[0-9]+% line / [0-9]+% region' \
+                 rust/README.md CONTRIBUTING.md docs/MAINTAINER-GUIDE.md 2>/dev/null || true)
+
+    # CONTRIBUTING spells the same pair out as a bulleted pair of floors.
+    con_l=$(grep -oE '^- \*\*Lines: [0-9]+%\*\* floor' CONTRIBUTING.md | grep -oE '[0-9]+' | head -1)
+    con_r=$(grep -oE '^- \*\*Regions: [0-9]+%\*\* floor' CONTRIBUTING.md | grep -oE '[0-9]+' | head -1)
+    if [[ -n "$con_l" && "$con_l" != "$rust_lines" ]]; then
+        offenders+=("CONTRIBUTING.md: 'Lines: ${con_l}%' but the gate enforces ${rust_lines}%")
+    fi
+    if [[ -n "$con_r" && "$con_r" != "$rust_regions" ]]; then
+        offenders+=("CONTRIBUTING.md: 'Regions: ${con_r}%' but the gate enforces ${rust_regions}%")
+    fi
+
+    # Python and C++ floors, as the CI table states them.
+    if ! grep -qE "${py_floor}% combined line\+branch floor" docs/MAINTAINER-GUIDE.md; then
+        offenders+=("docs/MAINTAINER-GUIDE.md: python floor is ${py_floor}% (fail_under) but the CI table does not say so")
+    fi
+    if ! grep -qE "${cpp_line}% lines and ${cpp_branch}% branches" docs/MAINTAINER-GUIDE.md; then
+        offenders+=("docs/MAINTAINER-GUIDE.md: C++ floors are ${cpp_line}/${cpp_branch} (cpp/Makefile) but the CI table does not say so")
+    fi
+
+    if (( ${#offenders[@]} )); then
+        list "${offenders[@]}"
+        bad "documented coverage floors disagree with the gates that enforce them"
+    fi
+fi
+
+# ── 17. cpp/README does not deny a gate that exists ───────────────────
+#
+# It claimed "no coverage gate" while cpp/Makefile set COVERAGE_MIN_* and
+# cpp-ci.yml ran a gcovr job, and "deliberately no fuzz tier" while fuzz.yml
+# ran a fuzz-cpp burn-in. A README that under-claims is as misleading as one
+# that over-claims: it sends a contributor looking for work already done.
+step "cpp/README does not deny the coverage or fuzz tiers it has"
+offenders=()
+grep -qiE 'no coverage gate' cpp/README.md \
+    && offenders+=("cpp/README.md claims 'no coverage gate'; cpp/Makefile sets COVERAGE_MIN_* and cpp-ci.yml runs gcovr")
+grep -qiE 'deliberately \*\*no fuzz tier\*\*|no fuzz tier' cpp/README.md \
+    && offenders+=("cpp/README.md claims 'no fuzz tier'; .github/workflows/fuzz.yml runs a fuzz-cpp job")
+if (( ${#offenders[@]} )); then
+    list "${offenders[@]}"
+    bad "cpp/README.md understates the tiers that actually run"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2

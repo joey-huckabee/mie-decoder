@@ -5,15 +5,154 @@ All notable changes to MIE-Decoder are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Versioning model: **v1.0.0 is a joint cut** — both the Rust crate and
-the Python package ship from a single repository tag (`v1.0.0`).
-Subsequent releases may diverge in version via impl-prefixed tags
-(`rust-vX.Y.Z`, `python-vX.Y.Z`); the cross-implementation conformance
-contract (byte-exact CSV equivalence on shared behavior) holds at any
-compatible version pair. See `docs/MAINTAINER-GUIDE.md` §11 for the
-full release workflow.
+Versioning model: **a release is a joint cut** — the Rust crate, the
+Python package and the C++ implementation all ship from a single
+repository tag at one version number, and a CI gate fails the build if
+they disagree. (C++ joined the joint cut at v2.13.0; releases before
+that were Rust + Python.) Subsequent releases may diverge in version via
+impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`, `cpp-vX.Y.Z`); the
+cross-implementation conformance contract (byte-exact CSV equivalence on
+shared behavior) holds at any compatible version pair. See
+`docs/MAINTAINER-GUIDE.md` §11 for the full release workflow.
 
 ## [Unreleased]
+
+## [2.15.0] — 2026-08-25
+
+### Changed
+
+- **An unsupported `--format` is now a usage error (exit `4`), not a runtime
+  error (exit `1`).** `L1-EXIT-007` says an invalid flag value exits `4`, and
+  all three CLIs returned `1` — because the check ran *after* the config layer
+  had merged CLI overrides rather than at parse time. One mistake therefore
+  produced three different exit codes depending on where it was written: `4`
+  for a bad `--time-format`, `1` for a bad `--format`, and `5` for the same
+  value in a config file. Only the middle one was wrong.
+
+  The CLI value is now validated where every other flag value is validated, and
+  the post-merge check is gone rather than left unreachable. **A config-file
+  `[output] format` is unchanged and still exits `5`** — a bad value in a file
+  is a configuration error, not a mistyped command. Two conformance cases pin
+  both spellings (`--format json` and `--format=json`) across all three.
+
+  `docs/CONFIG-REFERENCE.md` had codified the exit-`1` behaviour as a
+  deliberate exception; that paragraph is replaced rather than deleted, so the
+  history of the decision stays readable.
+
+### Fixed
+
+- **Two Rust tests that validated `config/default.toml` had never validated
+  anything.** Both used `Path::new("config/default.toml")`, which looks right
+  but is relative to the process working directory — and cargo runs test
+  binaries from the package root, so it resolved to `rust/config/default.toml`,
+  a path that has never existed. Both bodies sat behind `if path.exists()`, so
+  they passed by skipping, silently, from the day they were written. Meanwhile
+  `docs/TRACE-MATRIX.md` reported **L2-CFG-008 as Implemented on the strength of
+  one of them**, which made a verified requirement out of a test that ran no
+  assertions.
+
+  They now resolve from `CARGO_MANIFEST_DIR` and the skip guard is gone, so an
+  absent file fails loudly. Python's equivalent resolved correctly but skipped
+  if the file was missing; that guard is also gone. C++ had no such test at all.
+
+  The real fix is cross-implementation: a new conformance case decodes a fixture
+  with `--config config/default.toml` and compares against the existing oracle,
+  so **all three** now prove the shipped starter config parses *and* reproduces
+  default behaviour byte-for-byte.
+
+- **`L2-SYN-026` and `L2-SYN-005` specified a look-ahead default of `8`; every
+  implementation ships `2`.** A normative requirement contradicting the code —
+  and contradicting the L2-CFG schema table in the same document, which has
+  always said `2`, as do `config/default.toml`, `CONFIG-REFERENCE.md` and
+  `CLI-REFERENCE.md`.
+
+  The code is right. The raise to `8` was reverted in the same work that
+  introduced it: once continuous per-record validation stopped performing
+  look-ahead, the depth no longer cost `N-1` valid records per corruption site,
+  and raising it became a pure operator choice via `--lookahead-records`. The
+  requirement text was left behind. It now says `2` and records why.
+
+  The gap that let this persist was that **no implementation had a test pinning
+  the default value** — every look-ahead test passes an explicit depth, so the
+  default could disagree with the specification and nothing would notice. All
+  three now pin it, deliberately as a literal rather than by reference to the
+  constant, which would reproduce the blind spot.
+
+- **The ASCII gate was blind to f-strings on Python 3.12+, and five non-ASCII
+  Python messages had survived the v2.14.0 sweep because of it.** Under PEP 701
+  an f-string is no longer a single `STRING` token — 3.12 emits
+  `FSTRING_START` / `FSTRING_MIDDLE` / `FSTRING_END` — and
+  `scripts/assert-ascii-output.py` inspected only `STRING`. Run on 3.12 it
+  reported the tree clean; run on 3.10, where an f-string is still one `STRING`,
+  it reported five failures.
+
+  The five were real, and two of them were the **Python twins of C++ messages
+  v2.14.0 had just fixed**: the `BC→RT` / `RT→BC` invariant diagnostics in
+  `decode.py` and `exceptions.py`, and the empty-recording `count` message in
+  `cli.py`. Python operators were still seeing mojibake on a Windows console
+  for exactly the lines the previous release claimed to have fixed everywhere.
+
+  The gate now handles both token shapes, so it gives the same answer on every
+  supported interpreter. Found by running the identical gate under both 3.12
+  (Windows) and 3.10 (WSL2) — a single-environment run would have missed it in
+  either direction.
+
+- **`tests/conformance/run.py --python-bin` could not point at a virtualenv.**
+  It called `.resolve()` on the interpreter path, and a virtualenv's
+  `bin/python` is a *symlink* to the base interpreter — so the venv was thrown
+  away and the runner failed with "mie_decoder is not importable from
+  /usr/bin/python3.10", naming an interpreter the caller never asked for. It
+  now uses `.absolute()`, which normalises a relative path without following
+  symlinks. CI never hit this: Poetry's Windows venv python is a real file, and
+  the Linux job installs into the system interpreter.
+
+- **The `diagrams` CI job pinned a PlantUML version that crashes, and reported
+  success anyway.** The pin was `1.2026.5`, on which `component.puml` dies in
+  the smetana layout engine and PlantUML **still exits `0`**, leaving a
+  14,489-byte stub where the whole diagram is 59,904. Nothing noticed, because
+  the job's verification step compared nothing (below).
+
+  Pinned to **`1.2026.7`**, released 2026-08-25 — the first *stable* build that
+  renders all three diagrams. Until it existed, the only working build was the
+  rolling `snapshot` pre-release, whose asset name carries no version and is
+  overwritten in place, which is why the pin had been knowingly left on a
+  crashing release. The job now scans the render log for exceptions and requires
+  every output SVG to exceed 20 KB; both halves were checked against `1.2026.5`,
+  which they correctly reject.
+
+- **Coverage floors: the docs said 87% lines / 86% regions; the gate enforces
+  90 / 89.** Four places were stale, including the rationale comment sitting
+  three lines above the alias that sets them, in the same file. A new
+  `repo-hygiene.sh` check compares each documented floor against the file that
+  enforces it (`cov-ci` in `rust/.cargo/config.toml`, `fail_under` in
+  `python/pyproject.toml`, `COVERAGE_MIN_*` in `cpp/Makefile`), so prose and
+  gate cannot diverge again. Python's and C++'s documented numbers were correct.
+
+### Changed
+
+- **The documentation now describes the three-implementation product it
+  actually is.** `README.md`, `docs/L1-REQ.md` (the normative scope statement),
+  `tests/conformance/README.md` and `docs/ARCHITECTURE.md` still defined a
+  Rust-and-Python product. ARCHITECTURE additionally warned that C++ was
+  "mid-port" and marked `cli.cpp`, `merge.cpp` and `dump.cpp` as *planned* —
+  all three have been implemented and conformance-gated since v2.13.0.
+
+  **C++ ships as source in the joint cut**, and that is now stated rather than
+  asked. `docs/ROADMAP.md` still posed "does the C++ implementation ship in the
+  next joint cut?" as open, months after v2.13.0 and v2.14.0 had both shipped
+  with all three version-aligned and a CI gate failing the build when they
+  disagree. The genuinely open Phase 3 questions — prebuilt artifacts, the
+  static-CRT choice — remain open and are unchanged. `MAINTAINER-GUIDE.md` §11
+  gains the C++ build commands alongside Rust and Python.
+
+- **`cpp/README.md` no longer denies tiers it has.** It claimed "no coverage
+  gate" (`cpp/Makefile` sets 90% line / 76% branch floors and `cpp-ci.yml` runs
+  a gcovr job) and "deliberately **no fuzz tier**… the targets are unwritten"
+  (`fuzz.yml` runs a `fuzz-cpp` burn-in over the existing L1-ROB-001 harness).
+  A README that under-claims sends a contributor looking for work already done.
+  The absence of *libFuzzer* targets is real and is now presented as the design
+  decision it is. A second hygiene check fails the build if either claim
+  returns.
 
 ## [2.14.0] — 2026-08-24
 
@@ -4696,7 +4835,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.14.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.0...HEAD
+[2.15.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.14.0...v2.15.0
 [2.14.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...v2.12.0
