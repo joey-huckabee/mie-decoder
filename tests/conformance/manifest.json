@@ -854,6 +854,31 @@
       ],
       "expected_exit": 4,
       "expected_stderr_contains": "--HELP"
+    },
+    {
+      "name": "shipped-default-config-is-default-behaviour",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/basic-multi-record.csv",
+      "config": "../../config/default.toml"
+    },
+    {
+      "name": "unsupported-format-is-a-usage-error",
+      "input": "inputs/basic-multi-record.hex",
+      "subcommand_args": [
+        "--format",
+        "json"
+      ],
+      "expected_exit": 4,
+      "expected_stderr_contains": "--format"
+    },
+    {
+      "name": "unsupported-format-joined-is-a-usage-error",
+      "input": "inputs/basic-multi-record.hex",
+      "subcommand_args": [
+        "--format=json"
+      ],
+      "expected_exit": 4,
+      "expected_stderr_contains": "--format"
     }
   ]
 }

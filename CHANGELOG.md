@@ -5,15 +5,76 @@ All notable changes to MIE-Decoder are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Versioning model: **v1.0.0 is a joint cut** — both the Rust crate and
-the Python package ship from a single repository tag (`v1.0.0`).
-Subsequent releases may diverge in version via impl-prefixed tags
-(`rust-vX.Y.Z`, `python-vX.Y.Z`); the cross-implementation conformance
-contract (byte-exact CSV equivalence on shared behavior) holds at any
-compatible version pair. See `docs/MAINTAINER-GUIDE.md` §11 for the
-full release workflow.
+Versioning model: **a release is a joint cut** — the Rust crate, the
+Python package and the C++ implementation all ship from a single
+repository tag at one version number, and a CI gate fails the build if
+they disagree. (C++ joined the joint cut at v2.13.0; releases before
+that were Rust + Python.) Subsequent releases may diverge in version via
+impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`, `cpp-vX.Y.Z`); the
+cross-implementation conformance contract (byte-exact CSV equivalence on
+shared behavior) holds at any compatible version pair. See
+`docs/MAINTAINER-GUIDE.md` §11 for the full release workflow.
 
 ## [Unreleased]
+
+### Changed
+
+- **An unsupported `--format` is now a usage error (exit `4`), not a runtime
+  error (exit `1`).** `L1-EXIT-007` says an invalid flag value exits `4`, and
+  all three CLIs returned `1` — because the check ran *after* the config layer
+  had merged CLI overrides rather than at parse time. One mistake therefore
+  produced three different exit codes depending on where it was written: `4`
+  for a bad `--time-format`, `1` for a bad `--format`, and `5` for the same
+  value in a config file. Only the middle one was wrong.
+
+  The CLI value is now validated where every other flag value is validated, and
+  the post-merge check is gone rather than left unreachable. **A config-file
+  `[output] format` is unchanged and still exits `5`** — a bad value in a file
+  is a configuration error, not a mistyped command. Two conformance cases pin
+  both spellings (`--format json` and `--format=json`) across all three.
+
+  `docs/CONFIG-REFERENCE.md` had codified the exit-`1` behaviour as a
+  deliberate exception; that paragraph is replaced rather than deleted, so the
+  history of the decision stays readable.
+
+### Fixed
+
+- **Two Rust tests that validated `config/default.toml` had never validated
+  anything.** Both used `Path::new("config/default.toml")`, which looks right
+  but is relative to the process working directory — and cargo runs test
+  binaries from the package root, so it resolved to `rust/config/default.toml`,
+  a path that has never existed. Both bodies sat behind `if path.exists()`, so
+  they passed by skipping, silently, from the day they were written. Meanwhile
+  `docs/TRACE-MATRIX.md` reported **L2-CFG-008 as Implemented on the strength of
+  one of them**, which made a verified requirement out of a test that ran no
+  assertions.
+
+  They now resolve from `CARGO_MANIFEST_DIR` and the skip guard is gone, so an
+  absent file fails loudly. Python's equivalent resolved correctly but skipped
+  if the file was missing; that guard is also gone. C++ had no such test at all.
+
+  The real fix is cross-implementation: a new conformance case decodes a fixture
+  with `--config config/default.toml` and compares against the existing oracle,
+  so **all three** now prove the shipped starter config parses *and* reproduces
+  default behaviour byte-for-byte.
+
+- **`L2-SYN-026` and `L2-SYN-005` specified a look-ahead default of `8`; every
+  implementation ships `2`.** A normative requirement contradicting the code —
+  and contradicting the L2-CFG schema table in the same document, which has
+  always said `2`, as do `config/default.toml`, `CONFIG-REFERENCE.md` and
+  `CLI-REFERENCE.md`.
+
+  The code is right. The raise to `8` was reverted in the same work that
+  introduced it: once continuous per-record validation stopped performing
+  look-ahead, the depth no longer cost `N-1` valid records per corruption site,
+  and raising it became a pure operator choice via `--lookahead-records`. The
+  requirement text was left behind. It now says `2` and records why.
+
+  The gap that let this persist was that **no implementation had a test pinning
+  the default value** — every look-ahead test passes an explicit depth, so the
+  default could disagree with the specification and nothing would notice. All
+  three now pin it, deliberately as a literal rather than by reference to the
+  constant, which would reproduce the blind spot.
 
 ## [2.14.0] — 2026-08-24
 

@@ -756,15 +756,24 @@ def _validate_nonempty(value: str, flag: str) -> str:
 
 
 def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
-    """Build the passthrough CLI overrides that need no validation.
+    """Build the CLI overrides that map straight onto config fields.
 
     A boolean flag flips a value on; its absence leaves the config value intact
     (there is no "off" form on the CLI). ``--separate-errors`` flips error_mode to
     SEPARATE; the default IS inline.
 
+    Two of these do carry a validation: ``--time-format`` (via
+    ``parse_timestamp_format``) and ``--format``. Both are value-set checks that
+    belong at parse time, because an invalid flag value is a usage error
+    (exit 4, L1-EXIT-007) rather than a runtime or configuration one.
+
     Returns:
         The override mapping. Only flags actually given are present, so an
         absent flag leaves the config value intact.
+
+    Raises:
+        ValueError: if a flag's value is outside its accepted set. The caller
+            maps this to EXIT_USAGE.
     """
     from mie_decoder.models import ErrorMode, parse_timestamp_format
 
@@ -780,6 +789,15 @@ def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
     if args.strict is not None:
         overrides["strict"] = args.strict
     if args.format is not None:
+        # L1-EXIT-007: validated here, alongside every other flag value, so an
+        # unsupported format is a USAGE error (exit 4). The caller maps this
+        # ValueError to EXIT_USAGE. It used to be checked after the config
+        # merge, which made it a runtime error (exit 1) and contradicted the
+        # requirement. The config-file spelling stays a load-time error
+        # (exit 5, L2-CFG-010): a bad value in a file is a configuration
+        # problem, not a mistyped command.
+        if args.format != "csv":
+            raise ValueError(f"invalid --format: {args.format!r}; valid: csv")
         overrides["output_format"] = args.format
     if args.no_mux:
         overrides["mux_enabled"] = False
@@ -1231,16 +1249,10 @@ def _run_decode(args: argparse.Namespace) -> int:
 
     config = config.with_overrides(**overrides)
 
-    # L2-CFG-010 mirror of the Rust runtime check (rust/src/cli.rs): a config-file
-    # output.format is validated at load time (exit 5), but a --format override
-    # is applied after load, so re-check here. Non-csv is a runtime error
-    # (exit 1), matching the Rust CLI.
-    if config.output_format != "csv":
-        print(
-            f"Error: output format {config.output_format!r} not yet supported (only 'csv')",
-            file=sys.stderr,
-        )
-        return EXIT_RUNTIME
+    # No post-merge output_format check: both ways of setting it are rejected
+    # before this point -- the CLI value at parse time (exit 4, in
+    # _build_decode_overrides) and the config-file value at load time (exit 5,
+    # L2-CFG-010). A third check here would be unreachable.
 
     # ── Resolve the input set (positionals / --manifest / --glob) ──
     try:

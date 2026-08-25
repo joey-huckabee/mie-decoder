@@ -793,7 +793,9 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
                     &a.value("--standard-tick-rate-hz", iter)?,
                 )?);
             }
-            "--format" => args.output_format = Some(a.value("--format", iter)?),
+            "--format" => {
+                args.output_format = Some(parse_output_format_arg(&a.value("--format", iter)?)?);
+            }
             "--mux-delimiter" => {
                 args.mux_delimiter = Some(parse_mux_delimiter(&a.value("--mux-delimiter", iter)?)?);
             }
@@ -984,6 +986,25 @@ fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, ParseError> {
 fn parse_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
     TimestampFormat::from_name_ci(s)
         .ok_or_else(|| format!("invalid --time-format: {s:?}; valid: auto, irig, standard"))
+}
+
+/// L1-EXIT-007: validate `--format` where every other flag value is validated
+/// -- at parse time, so an unsupported value is a **usage** error (exit `4`).
+///
+/// This used to be checked after the config layer had merged CLI overrides,
+/// which made `--format json` a *runtime* error (exit `1`) and put the CLI in
+/// direct contradiction with L1-EXIT-007's "invalid flag value SHALL exit 4".
+/// The three exit codes for one mistake were: `4` for a bad `--time-format`,
+/// `1` for a bad `--format`, and `5` for the same value in a config file.
+/// Only the middle one was wrong.
+///
+/// The config-file spelling stays a **load-time** error (exit `5`, L2-CFG-010)
+/// -- a bad value in a file is a configuration error, not a mistyped command.
+fn parse_output_format_arg(s: &str) -> Result<String, String> {
+    if s == "csv" {
+        return Ok(s.to_string());
+    }
+    Err(format!("invalid --format: {s:?}; valid: csv"))
 }
 
 /// L2-DEC-015: validate the `--detect-records` argument against the
@@ -1303,12 +1324,10 @@ fn run_decode(globals: GlobalArgs, mut args: DecodeArgs) -> Result<ExitCode, Cli
     let overrides = build_config_overrides(&mut args, globals.log_level.clone());
     let cfg = cfg.with_overrides(overrides);
 
-    if cfg.output_format != "csv" {
-        return Err(CliError::runtime(format!(
-            "output format {:?} not yet supported (only 'csv')",
-            cfg.output_format
-        )));
-    }
+    // No post-load `output_format` check: both ways of setting it are now
+    // rejected before this point -- the CLI value at parse time (exit `4`,
+    // `parse_output_format_arg`) and the config-file value at load time
+    // (exit `5`, L2-CFG-010). A third check here would be unreachable.
 
     // Open a reader per resolved input file (L2-MRG-001). `input_paths` was
     // resolved above, before `with_overrides` consumed the filter fields.
@@ -1651,6 +1670,38 @@ mod tests {
             Err(ParseError::HelpRequested) => {}
             other => panic!("expected HelpRequested, got {other:?}"),
         }
+    }
+
+    /// L1-EXIT-007: an unsupported `--format` is an invalid FLAG VALUE, so it
+    /// is a usage error (exit `4`) settled at parse time.
+    ///
+    /// It was a runtime error (exit `1`) through v2.14.0 because the check ran
+    /// after the config layer merged CLI overrides. That put one mistake on
+    /// three different exit codes depending on where it was written: `4` for a
+    /// bad `--time-format`, `1` for a bad `--format`, `5` for the same value in
+    /// a config file. Only the middle one was wrong; the config-file spelling
+    /// is still `5` (L2-CFG-010).
+    /// Requirements: L2-CLI-011
+    #[test]
+    fn output_format_arg_rejects_anything_but_csv() {
+        assert_eq!(parse_output_format_arg("csv").unwrap(), "csv");
+        for bad in ["json", "parquet", "CSV", "", " csv"] {
+            let err = parse_output_format_arg(bad).unwrap_err();
+            assert!(err.contains("--format"), "got: {err}");
+        }
+        // Through the parser, both spellings, since the joined form takes a
+        // different path. A usage error here is what maps to exit 4.
+        for argv in [
+            vec!["--format", "json", "rec.mie"],
+            vec!["--format=json", "rec.mie"],
+        ] {
+            let err = parse_decode(&mut args(&argv)).unwrap_err();
+            let ParseError::Other(msg) = err else {
+                panic!("{argv:?}: expected a usage error");
+            };
+            assert!(msg.contains("--format"), "{argv:?}: got {msg:?}");
+        }
+        assert!(parse_decode(&mut args(&["--format", "csv", "rec.mie"])).is_ok());
     }
 
     /// `--time-format` accepts any letter case (auto/irig/standard), matching

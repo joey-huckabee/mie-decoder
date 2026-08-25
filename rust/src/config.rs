@@ -1170,6 +1170,38 @@ fn push_quoted_char(c: char, cur: &mut String, prev_backslash: bool) -> (bool, b
 mod tests {
     use super::*;
 
+    /// Absolute path to the repo-root `config/default.toml`.
+    ///
+    /// Anchored to `CARGO_MANIFEST_DIR` (the directory holding `Cargo.toml`,
+    /// i.e. `rust/`) rather than to the process working directory. Cargo runs
+    /// test binaries from the package root, so a bare relative
+    /// `"config/default.toml"` silently meant `rust/config/default.toml` --
+    /// a path that has never existed.
+    fn shared_default_toml() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../config/default.toml")
+    }
+
+    /// L2-SYN-026 / L2-DEC-015: the shipped *default values* of the two
+    /// record-count knobs, pinned as values rather than as "whatever the
+    /// constant says".
+    ///
+    /// Nothing asserted these before v2.15.0. Every look-ahead test passed an
+    /// explicit depth, so the default could disagree with the specification
+    /// and no test would notice -- which is exactly what happened:
+    /// L2-SYN-026 read "default `8`" while all three implementations shipped
+    /// `2`. Referencing the constant here would reproduce the blind spot, so
+    /// the literals are deliberate. If you are changing one, change
+    /// `docs/L2-REQ.md`, `docs/CONFIG-REFERENCE.md`, `docs/CLI-REFERENCE.md`
+    /// and `config/default.toml` in the same commit.
+    /// Requirements: L2-SYN-026
+    #[test]
+    fn shipped_defaults_for_the_record_count_knobs() {
+        let cfg = DecoderConfig::default();
+        assert_eq!(cfg.lookahead_records, 2, "L2-SYN-026 default");
+        assert_eq!(cfg.detect_records, 8, "L2-DEC-015 default");
+        assert_eq!(crate::sync::DEFAULT_LOOKAHEAD_RECORDS, 2);
+    }
+
     /// Requirements: L2-CFG-001
     #[test]
     fn parse_minimal_doc() {
@@ -1562,19 +1594,31 @@ exclude_types = ["UNICORN"]
     }
 
     /// Requirements: L2-CFG-008
+    /// The shipped starter config must parse, and must parse to the defaults.
+    ///
+    /// Resolved from `CARGO_MANIFEST_DIR`, not from the process working
+    /// directory. `Path::new("config/default.toml")` looked right but was
+    /// relative to `rust/` -- cargo runs tests from the package root -- so it
+    /// resolved to a `rust/config/` that has never existed. The body sat behind
+    /// `if path.exists()`, so this test and its neighbour **passed without
+    /// asserting anything** from the day they were written, while
+    /// `docs/TRACE-MATRIX.md` reported L2-CFG-008 as verified on the strength
+    /// of this one artifact. The guard is gone: an absent file now fails.
+    /// Requirements: L2-CFG-008
     #[test]
     fn parses_default_toml_from_disk() {
-        let path = Path::new("config/default.toml");
-        if path.exists() {
-            let cfg = load_config(Some(path)).unwrap();
-            assert_eq!(cfg.output_format, "csv");
-            // The four keys added to keep the starter file complete must
-            // parse to their documented defaults (correct section + type).
-            assert!(!cfg.allow_partial);
-            assert!(!cfg.no_clobber);
-            assert_eq!(cfg.detect_records, 8);
-            assert_eq!(cfg.lookahead_records, 2);
-        }
+        let path = shared_default_toml();
+        let cfg = load_config(Some(&path)).unwrap();
+        assert_eq!(cfg.output_format, "csv");
+        // The four keys added to keep the starter file complete must
+        // parse to their documented defaults (correct section + type).
+        assert!(!cfg.allow_partial);
+        assert!(!cfg.no_clobber);
+        assert_eq!(cfg.detect_records, 8);
+        assert_eq!(
+            cfg.lookahead_records,
+            crate::sync::DEFAULT_LOOKAHEAD_RECORDS
+        );
     }
 
     /// `--config` is operator-supplied, so the path is validated before it is
@@ -1738,11 +1782,8 @@ exclude_types = ["UNICORN"]
     /// Requirements: L2-CFG-001
     #[test]
     fn default_toml_documents_every_schema_key() {
-        let path = Path::new("config/default.toml");
-        if !path.exists() {
-            return;
-        }
-        let text = std::fs::read_to_string(path).unwrap();
+        let path = shared_default_toml();
+        let text = std::fs::read_to_string(&path).unwrap();
         let documents = |key: &str| {
             text.lines().any(|line| {
                 let line = line.trim_start_matches('#').trim_start();

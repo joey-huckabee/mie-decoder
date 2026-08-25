@@ -545,6 +545,14 @@ DecodeArgs parse_decode(ArgReader& reader) {
             }
             args.overrides.time_format = format;
         } else if (reader.take_value("--format", value)) {
+            // L1-EXIT-007: validated here, with every other flag value, so an
+            // unsupported format is a USAGE error (exit 4). It used to be
+            // checked after the config merge, which made it a runtime error
+            // (exit 1) and contradicted the requirement. The config-file
+            // spelling stays a load-time error (exit 5, L2-CFG-010).
+            if (value != "csv") {
+                throw usage_error("--format must be csv, got \"" + value + "\"");
+            }
             args.overrides.output_format = value;
         } else if (reader.take_value("--detect-records", value)) {
             args.overrides.detect_records =
@@ -985,10 +993,10 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     }
     const DecoderConfig config = with_overrides(base, args.overrides);
 
-    if (config.output_format != "csv") {
-        throw runtime_error_("output format \"" + config.output_format +
-                             "\" is not supported (only csv)");
-    }
+    // No post-merge output_format check: both ways of setting it are rejected
+    // before this point -- the CLI value at parse time (exit 4) and the
+    // config-file value at load time (exit 5, L2-CFG-010). A third check here
+    // would be unreachable.
 
     const std::vector<std::string> inputs = resolve_inputs(args);
     const bool merging = inputs.size() > 1;

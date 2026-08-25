@@ -1047,9 +1047,12 @@ class TestSharedDefaultConfig:
 
     @pytest.mark.requirement("L2-CFG-001")
     def test_loads_shared_default_toml(self) -> None:
+        # No skip-if-absent guard: the file is tracked, so its absence is a
+        # broken checkout and should fail loudly. The Rust mirror of this test
+        # skipped silently on a path that could never resolve, and passed
+        # without asserting anything for its whole life (L2-CFG-008).
         default_toml = Path(__file__).resolve().parents[2] / "config" / "default.toml"
-        if not default_toml.exists():
-            pytest.skip("config/default.toml not present in this checkout")
+        assert default_toml.is_file(), f"missing shared starter config: {default_toml}"
         cfg = load_config(default_toml)
         # The four keys added to keep the starter file complete must parse to
         # their documented defaults under the Python loader too.
@@ -1059,6 +1062,24 @@ class TestSharedDefaultConfig:
         assert cfg.lookahead_records == DEFAULT_LOOKAHEAD_RECORDS
         assert cfg.output_format == "csv"
         assert cfg.max_sort_group == 4096
+
+    @pytest.mark.requirement("L2-SYN-026")
+    def test_shipped_defaults_for_the_record_count_knobs(self) -> None:
+        """The shipped *default values*, pinned as literals.
+
+        Nothing asserted these before v2.15.0. Every look-ahead test passes an
+        explicit depth, so the default could disagree with the specification
+        without any test noticing -- which is what happened: L2-SYN-026 read
+        "default 8" while all three implementations shipped 2. Referencing the
+        constant would reproduce the blind spot, so the literals are
+        deliberate. Changing one means changing docs/L2-REQ.md,
+        docs/CONFIG-REFERENCE.md, docs/CLI-REFERENCE.md and
+        config/default.toml in the same commit.
+        """
+        cfg = DecoderConfig()
+        assert cfg.lookahead_records == 2, "L2-SYN-026 default"
+        assert cfg.detect_records == 8, "L2-DEC-015 default"
+        assert DEFAULT_LOOKAHEAD_RECORDS == 2
 
 
 class TestConfigPathValidation:

@@ -21,6 +21,8 @@
 
 #include <catch2/catch.hpp>
 
+#include "mie/sync.hpp"
+
 #include <string>
 #include <vector>
 
@@ -599,4 +601,22 @@ TEST_CASE("a bad config path says WHICH way it was bad", "[config][L3-CPP-031]")
         const mie::DecoderConfig config = mie::load_config(mie::Optional<std::string>(good.str()));
         CHECK(config.strict);
     }
+}
+
+// L2-SYN-026 / L2-DEC-015: the shipped *default values* of the two
+// record-count knobs, pinned as literals rather than by reference to the
+// constants they come from.
+//
+// Nothing asserted these before v2.15.0. Every look-ahead test passes an
+// explicit depth, so the default could disagree with the specification and no
+// test would notice -- which is what happened: L2-SYN-026 read "default 8"
+// while all three implementations shipped 2. Asserting against the constant
+// would reproduce the blind spot, so the literals are deliberate. Changing one
+// means changing docs/L2-REQ.md, docs/CONFIG-REFERENCE.md,
+// docs/CLI-REFERENCE.md and config/default.toml in the same commit.
+TEST_CASE("the shipped defaults for the record-count knobs", "[config][L2-SYN-026]") {
+    const mie::DecoderConfig config;
+    CHECK(config.lookahead_records == 2u);
+    CHECK(config.detect_records == 8u);
+    CHECK(mie::sync::DEFAULT_LOOKAHEAD_RECORDS == 2u);
 }

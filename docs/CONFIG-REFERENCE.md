@@ -240,9 +240,11 @@ mie-decoder decode rec.mie -o out.csv --time-format standard --standard-tick-rat
 
 Output file format. `csv` is currently the only valid value. Reserved for future Parquet support (see [`ROADMAP.md`](ROADMAP.md)).
 
-A config-file value is validated at load time (exit `5`); a `--format` override is applied *after* load, so an unsupported value passed on the CLI surfaces as a runtime error (exit `1`) instead.
+A config-file value is validated at load time (exit `5`); a `--format` value on the CLI is validated at **parse** time and an unsupported value is a usage error (exit `4`), like any other invalid flag value.
 
-**Validation:** rejected at load time if not `csv`.
+Through v2.14.0 the CLI form surfaced as a runtime error (exit `1`) because the check ran after the config layer had merged the override. That put one mistake on three different exit codes depending on where it was written — `4` for a bad `--time-format`, `1` for a bad `--format`, `5` for the same value in a config file — and contradicted L1-EXIT-007. Only the middle one was wrong; the config-file spelling is unchanged.
+
+**Validation:** rejected at load time if not `csv` (config file, exit `5`) or at parse time (CLI flag, exit `4`).
 
 ### `no_clobber`
 
