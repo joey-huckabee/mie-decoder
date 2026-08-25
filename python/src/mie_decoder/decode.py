@@ -741,7 +741,7 @@ def validate_structural_invariants(
             kind=WhichInvariant.DIRECTION_BC_TO_RT,
             severity=InvariantSeverity.REJECT,
             detail=(
-                f"Type 0x02 (BC→RT) requires Cmd direction = Receive; "
+                f"Type 0x02 (BC->RT) requires Cmd direction = Receive; "
                 f"got Transmit (raw Cmd = 0x{command_word.raw:04X})"
             ),
         )
@@ -753,7 +753,7 @@ def validate_structural_invariants(
             kind=WhichInvariant.DIRECTION_RT_TO_BC,
             severity=InvariantSeverity.REJECT,
             detail=(
-                f"Type 0x04 (RT→BC) requires Cmd direction = Transmit; "
+                f"Type 0x04 (RT->BC) requires Cmd direction = Transmit; "
                 f"got Receive (raw Cmd = 0x{command_word.raw:04X})"
             ),
         )

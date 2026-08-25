@@ -1380,7 +1380,7 @@ def _run_count(args: argparse.Namespace) -> int:
     print(count)
     if reader.empty_recording:
         print(
-            f"no records in {reader.path.name} (empty recording — opens on "
+            f"no records in {reader.path.name} (empty recording -- opens on "
             f"the end-of-records terminator)",
             file=sys.stderr,
         )

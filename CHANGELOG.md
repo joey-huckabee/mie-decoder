@@ -76,6 +76,25 @@ shared behavior) holds at any compatible version pair. See
   three now pin it, deliberately as a literal rather than by reference to the
   constant, which would reproduce the blind spot.
 
+- **The ASCII gate was blind to f-strings on Python 3.12+, and five non-ASCII
+  Python messages had survived the v2.14.0 sweep because of it.** Under PEP 701
+  an f-string is no longer a single `STRING` token — 3.12 emits
+  `FSTRING_START` / `FSTRING_MIDDLE` / `FSTRING_END` — and
+  `scripts/assert-ascii-output.py` inspected only `STRING`. Run on 3.12 it
+  reported the tree clean; run on 3.10, where an f-string is still one `STRING`,
+  it reported five failures.
+
+  The five were real, and two of them were the **Python twins of C++ messages
+  v2.14.0 had just fixed**: the `BC→RT` / `RT→BC` invariant diagnostics in
+  `decode.py` and `exceptions.py`, and the empty-recording `count` message in
+  `cli.py`. Python operators were still seeing mojibake on a Windows console
+  for exactly the lines the previous release claimed to have fixed everywhere.
+
+  The gate now handles both token shapes, so it gives the same answer on every
+  supported interpreter. Found by running the identical gate under both 3.12
+  (Windows) and 3.10 (WSL2) — a single-environment run would have missed it in
+  either direction.
+
 - **The `diagrams` CI job pinned a PlantUML version that crashes, and reported
   success anyway.** The pin was `1.2026.5`, on which `component.puml` dies in
   the smetana layout engine and PlantUML **still exits `0`**, leaving a

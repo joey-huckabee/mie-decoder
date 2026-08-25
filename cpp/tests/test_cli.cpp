@@ -797,8 +797,8 @@ TEST_CASE("exit codes classify the failure", "[cli][L3-CPP-016]") {
         REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(), "--format",
                                    "parquet")) == mie::cli::EXIT_USAGE);
         // Both spellings, since the joined form takes a different parse path.
-        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(),
-                                   "--format=parquet")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(), "--format=parquet")) ==
+                mie::cli::EXIT_USAGE);
         // csv is still accepted.
         REQUIRE(mie::cli::run(args("decode", input.str(), "-o", out.str(), "--format", "csv")) ==
                 mie::cli::EXIT_OK);
