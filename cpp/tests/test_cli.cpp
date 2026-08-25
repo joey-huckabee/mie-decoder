@@ -156,6 +156,65 @@ TEST_CASE("the help text is pure ASCII", "[cli][L2-CLI-014]") {
     }
 }
 
+// `decode --nonsense --help` exits through the CliError catch, which sees a
+// pending help flag -- so it never reaches the `throw HelpRequested()` inside
+// the subcommand parsers. Those are reached only by a help flag on an OTHERWISE
+// VALID subcommand line, which is the plainest way an operator asks for help
+// about one command, and which nothing exercised until this case.
+TEST_CASE("help asked for on a valid subcommand line prints help",
+          "[cli][L3-CPP-014][L2-CLI-017]") {
+    const char* commands[] = {"decode", "count", "dump"};
+    for (std::size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
+        std::string out;
+        INFO(commands[i]);
+        REQUIRE(run_capturing_stdout(args(commands[i], "--help"), out) == mie::cli::EXIT_OK);
+        REQUIRE(out.find("USAGE") != std::string::npos);
+
+        // And with the input present, so the flag is reached mid-parse rather
+        // than as the parser's first token.
+        std::string with_input;
+        REQUIRE(run_capturing_stdout(args(commands[i], "rec.mie", "--help"), with_input) ==
+                mie::cli::EXIT_OK);
+        REQUIRE(with_input.find("USAGE") != std::string::npos);
+    }
+}
+
+// A SUBCOMMAND flag whose value looks like an option. The global flags take a
+// different path, so `--log-level -h` (covered above) does not reach this one:
+// the diagnostic here is the ArgReader's, and it names the joined spelling as
+// the way to pass the value deliberately.
+TEST_CASE("a subcommand flag refuses an option-like value", "[cli][L2-CLI-015]") {
+    std::string out;
+    std::string err;
+    REQUIRE(run_capturing(args("decode", "--mux-delimiter", "-h", "rec.mie"), out, err) ==
+            mie::cli::EXIT_USAGE);
+    INFO(err);
+    REQUIRE(err.find("--mux-delimiter") != std::string::npos);
+    REQUIRE(err.find("is an option") != std::string::npos);
+    // The diagnostic points at the joined spelling, which remains legal.
+    REQUIRE(err.find("--mux-delimiter=-h") != std::string::npos);
+}
+
+// `count` on a valid but EMPTY recording: the count goes to stdout, and the
+// human sentence naming the empty capture goes to stderr. The sentence is one
+// of the messages that carried a non-ASCII em dash (L2-CLI-014).
+TEST_CASE("count names an empty recording on stderr", "[cli][L1-EXIT-010][L2-CLI-014]") {
+    std::vector<uint8_t> terminator_only;
+    terminator_only.push_back(0x00);
+    terminator_only.push_back(0x00);
+    const TempFile input("mie-cli-empty.mie", terminator_only);
+
+    std::string out;
+    std::string err;
+    REQUIRE(run_capturing(args("count", input.str()), out, err) == mie::cli::EXIT_OK);
+    REQUIRE(out == "0\n");
+    INFO(err);
+    REQUIRE(err.find("empty recording") != std::string::npos);
+    for (std::string::const_iterator it = err.begin(); it != err.end(); ++it) {
+        REQUIRE(static_cast<unsigned char>(*it) < 0x80);
+    }
+}
+
 TEST_CASE("a bare invocation is a usage error, not a success", "[cli][L3-CPP-014]") {
     // Exit 0 here would let a script that forgot to pass its arguments look
     // like it had done its job.

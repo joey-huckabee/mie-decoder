@@ -2631,15 +2631,22 @@ mod tests {
     /// `scripts/assert-ascii-output.py` enforces this across all three trees at
     /// the source level. This test is the runtime half, on the string that is
     /// actually written.
+    ///
+    /// Written as a computed value plus one assertion rather than a `panic!`
+    /// arm: a failure branch is by definition never taken while the property
+    /// holds, so it reads as uncovered new code on every release that does not
+    /// break it.
     #[test]
     fn help_text_is_pure_ascii() {
-        if let Some((i, ch)) = HELP.char_indices().find(|(_, c)| !c.is_ascii()) {
-            let line = HELP[..i].lines().count();
-            panic!(
-                "HELP line {line} contains non-ASCII {ch:?} (U+{:04X})",
-                ch as u32
-            );
-        }
+        let offenders: Vec<(usize, char)> = HELP
+            .char_indices()
+            .filter(|(_, c)| !c.is_ascii())
+            .map(|(i, c)| (HELP[..i].lines().count(), c))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "HELP carries non-ASCII at (line, char): {offenders:?}"
+        );
     }
 
     /// Requirements: L2-CLI-014
