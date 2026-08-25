@@ -1811,6 +1811,84 @@ class TestDumpDiagnostics:
         # The defining property: identical under a legacy codepage and UTF-8.
         assert payload.decode("cp1252") == payload.decode("utf-8")
 
+    @pytest.mark.requirement("L2-CLI-014")
+    def test_help_text_is_pure_ascii(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Help text is *prose*, and L2-CLI-014 binds prose to the same ASCII
+        rule as payload.
+
+        It did not always. The rule originally exempted stderr prose on the
+        reasoning that a payload is piped and diffed while prose is merely read
+        by a human -- which inverts the risk, because a human reads it on
+        whatever console they have. A stock Windows console runs at the OEM code
+        page, not UTF-8, so the U+2014 em dash this banner opened with arrived as
+        three unrelated CP437 glyphs and was reported as memory corruption.
+
+        ``scripts/assert-ascii-output.py`` enforces the rule at the source across
+        all three implementations; this is the runtime half, on the bytes that
+        actually reach the stream.
+        """
+        import sys
+
+        from mie_decoder.cli import main
+
+        raw = io.BytesIO()
+        monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252", newline=""))
+
+        with pytest.raises(SystemExit) as exc:
+            main(["--help"])
+        sys.stdout.flush()
+
+        assert exc.value.code == 0
+        payload = raw.getvalue()
+        assert payload, "--help produced no output"
+
+        high = [b for b in payload if b > 0x7F]
+        assert not high, f"--help emitted {len(high)} non-ASCII byte(s): {high[:8]}"
+
+    @pytest.mark.requirement("L2-CLI-014")
+    def test_diagnostics_are_pure_ascii(self, tmp_path: Path, multi_record_data: bytes) -> None:
+        """The other kind of prose: a diagnostic an operator reads on stderr.
+
+        The IRIG day-of-year advisory ended ``... -- see
+        docs/VENDOR-CSV-DIFFS.md section 5``; both the dash and the section sign
+        were non-ASCII, so the line ended in mojibake on a Windows console.
+        Rust and C++ emit the identical wording.
+        """
+        import logging
+
+        from mie_decoder.exceptions import MieRecordError
+        from mie_decoder.reader import MieFileReader
+
+        messages = [
+            str(MieRecordError(0x40, "First record after header detection is truncated")),
+        ]
+
+        # And the live log path, which is where the advisory actually surfaced.
+        fpath = tmp_path / "irig.mie"
+        fpath.write_bytes(multi_record_data)
+        records = logging.getLogger("mie_decoder")
+        captured: list[str] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                captured.append(record.getMessage())
+
+        handler = _Capture()
+        records.addHandler(handler)
+        try:
+            list(MieFileReader(fpath))
+        finally:
+            records.removeHandler(handler)
+
+        messages.extend(captured)
+        assert captured, "the decode emitted no log messages to check"
+        # Pin the advisory itself: it carried BOTH non-ASCII characters that
+        # survived the payload-only rule, so it is the strongest single line.
+        assert any("day-of-year" in m for m in captured), captured
+
+        for message in messages:
+            assert message.isascii(), f"diagnostic is not ASCII: {message!r}"
+
     @pytest.mark.requirement("L2-CLI-009")
     def test_dump_annotates_errored_record_with_code_and_format(self, tmp_path: Path) -> None:
         """The record-aware dump surfaces the bit-14 error flag, the classified

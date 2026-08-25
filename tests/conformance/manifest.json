@@ -817,6 +817,43 @@
         "--"
       ],
       "expected": "expected/dump-records-basic.txt"
+    },
+    {
+      "name": "help-outranks-a-deferred-diagnostic",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--nonsense",
+        "--help"
+      ],
+      "expected_stdout_contains": "decode"
+    },
+    {
+      "name": "help-does-not-rescue-a-failed-value-consumption",
+      "input": "inputs/basic-multi-record.hex",
+      "global_args": [
+        "--log-level",
+        "-h"
+      ],
+      "expected_exit": 4,
+      "expected_stderr_contains": "--log-level"
+    },
+    {
+      "name": "version-after-the-subcommand-is-an-unknown-option",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--version"
+      ],
+      "expected_exit": 4,
+      "expected_stderr_contains": "--version"
+    },
+    {
+      "name": "help-is-case-sensitive-unlike-version",
+      "input": "inputs/basic-multi-record.hex",
+      "global_args": [
+        "--HELP"
+      ],
+      "expected_exit": 4,
+      "expected_stderr_contains": "--HELP"
     }
   ]
 }

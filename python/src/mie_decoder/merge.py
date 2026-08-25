@@ -516,7 +516,7 @@ def _check_monotonic_input(
         warned[idx] = True
         logger.warning(
             "merge: input #%d (%s) is not internally time-sorted: "
-            "timestamp stepped backward (prev_us=%d curr_us=%d) — "
+            "timestamp stepped backward (prev_us=%d curr_us=%d) -- "
             "merged output may be out of order for this input "
             "(further occurrences suppressed)",
             idx,

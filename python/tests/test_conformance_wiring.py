@@ -123,9 +123,16 @@ def test_conformance_manifest_has_cases_with_oracles() -> None:
         specs = case.get("inputs") or ([case["input"]] if "input" in case else None)
         assert specs, f"case {name!r} missing 'input' or 'inputs'"
         # Negative cases (expected_exit != 0) may not have an oracle. Positive
-        # cases carry one: a main-output 'expected', or an 'expected_partial' for
-        # an --allow-partial case (whose output lands at <output>.partial).
-        if case.get("expected_exit", 0) == 0:
+        # cases carry one of three:
+        #   'expected'                 — the main output, byte-exact;
+        #   'expected_partial'         — an --allow-partial case, whose output
+        #                                lands at <output>.partial;
+        #   'expected_stdout_contains' — a substring, for output that is not
+        #                                byte-comparable across implementations.
+        #                                Help text is the case it exists for:
+        #                                its shape differs by design, so only
+        #                                its presence can be asserted.
+        if case.get("expected_exit", 0) == 0 and "expected_stdout_contains" not in case:
             oracle_key = "expected" if "expected" in case else "expected_partial"
             assert oracle_key in case, f"case {name!r} missing 'expected'/'expected_partial'"
             oracle = expected_dir / Path(case[oracle_key]).name

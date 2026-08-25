@@ -228,6 +228,26 @@ if (( need_trace == 1 )); then
     fi
 fi
 
+# ── 8b. Shipped output stays ASCII ────────────────────────────────────
+# L2-CLI-014. A non-ASCII byte in a log message or help banner renders as
+# mojibake on a Windows console, which runs at the OEM code page rather than
+# UTF-8 -- and mojibake in a decoder's own diagnostics reads as memory
+# corruption. Catching it here matters more than for most checks because the
+# offending form is invisible to review: C++ spells its em dash
+# "\xE2\x80\x94", which looks like ASCII in the diff.
+need_ascii=0
+for file in "${STAGED[@]}"; do
+    case "$file" in
+        cpp/src/*|cpp/include/*|rust/src/*|python/src/*) need_ascii=1; break ;;
+    esac
+done
+if (( need_ascii == 1 )) && [ -n "$PY_BIN" ]; then
+    step "$PY_BIN scripts/assert-ascii-output.py"
+    if ! "$PY_BIN" scripts/assert-ascii-output.py; then
+        fail "non-ASCII string literal in a shipped source file (L2-CLI-014)"
+    fi
+fi
+
 # ── Skip cargo checks if no Rust/TOML changes ─────────────────────────
 need_cargo=0
 for file in "${STAGED[@]}"; do

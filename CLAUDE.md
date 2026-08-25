@@ -221,6 +221,27 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
   classifies characters with explicit ASCII ranges rather than `<cctype>`.
   `scripts/assert-locale-free.sh` enforces it. Rust and Python get this by
   construction; C++ is the only one where it has to be checked.
+- **Everything written to stdout or stderr is ASCII, in all three
+  implementations** (`L2-CLI-014`). Not just payload — log messages, usage
+  errors and help text too. A Windows console runs at the OEM code page (437 in
+  a US install), not UTF-8, so a single em dash reaches the operator as `ΓÇö`;
+  mojibake in a decoder's own diagnostics gets reported as memory corruption.
+  Use `--`, `->`, `section`. The rule once exempted stderr prose, and that
+  carve-out is exactly how 46 sites accumulated across the three trees. Never
+  fix a rendering problem with `SetConsoleOutputCP` or by reconfiguring a
+  stream's encoding — that is per-platform, leaves redirected output wrong, and
+  adds OS surface to a platform layer confined to five concerns.
+  `scripts/assert-ascii-output.py` enforces it (wired into
+  `scripts/repo-hygiene.sh` and the pre-commit hook). It parses string literals
+  rather than grepping bytes, because C++ had spelled the character
+  `"\xE2\x80\x94"` — ASCII on disk, non-ASCII on the wire. Comments and doc
+  comments are exempt and may use whatever punctuation reads best. The separate
+  test trees (`cpp/tests`, `rust/tests`, `python/tests`) are not scanned, since
+  they legitimately build non-ASCII strings to prove the decoder handles them
+  (the UTF-8 `?` glob cases). Rust's `#[cfg(test)]` modules live inside `src/`
+  and so *are* scanned — deliberately: an assertion message only prints on
+  failure, so ASCII costs nothing there, and excluding them would mean tracking
+  module attributes through the scanner.
 - **`cpp/sources.txt` is the one source list.** The Makefile (authoritative on
   Linux) and CMakeLists (authoritative on Windows) both read it, because the
   gcc:4.8 fidelity container ships CMake 2.8 and cannot run a modern

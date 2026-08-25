@@ -917,7 +917,7 @@ mod tests {
         buf.extend_from_slice(&[0xFF, 0xFF, 0x00, 0x00]); // record 3 start: invalid Type Word
         assert!(
             validate_record(&buf, 0, buf.len(), None, 2),
-            "N=2 only checks records 1 and 2 (both valid) — accepts"
+            "N=2 only checks records 1 and 2 (both valid) -- accepts"
         );
         assert!(
             !validate_record(&buf, 0, buf.len(), None, 4),

@@ -136,6 +136,26 @@ TEST_CASE("version and help are answered before anything else", "[cli][L3-CPP-01
     }
 }
 
+// Help text is prose on a stream, and L2-CLI-014 binds prose to the same ASCII
+// rule as payload. It did not always: the rule exempted stderr prose, and this
+// banner opened with a U+2014 em dash spelled "\xE2\x80\x94" -- ASCII in the
+// source, three bytes on the wire. A stock Windows console runs at the OEM code
+// page rather than UTF-8 and drew them as three unrelated glyphs, which was
+// reported as memory corruption.
+//
+// scripts/assert-ascii-output.py enforces this at the source across all three
+// implementations; this is the runtime half, on the bytes actually written.
+// Rust and Python carry the same test against their own help text.
+TEST_CASE("the help text is pure ASCII", "[cli][L2-CLI-014]") {
+    const std::string help = mie::cli::help_text();
+    REQUIRE_FALSE(help.empty());
+    for (std::string::const_iterator it = help.begin(); it != help.end(); ++it) {
+        const unsigned char byte = static_cast<unsigned char>(*it);
+        INFO("byte 0x" << mie::text::hex_upper(byte, 2) << " at offset " << (it - help.begin()));
+        REQUIRE(byte < 0x80);
+    }
+}
+
 TEST_CASE("a bare invocation is a usage error, not a success", "[cli][L3-CPP-014]") {
     // Exit 0 here would let a script that forgot to pass its arguments look
     // like it had done its job.
@@ -372,6 +392,61 @@ TEST_CASE("`--` ends option parsing", "[cli][L3-CPP-014][L2-CLI-016]") {
         REQUIRE(mie::cli::run(args("dump", "--", input.str())) == mie::cli::EXIT_OK);
         // One positional each: after `--`, a flag spelling becomes a second.
         REQUIRE(mie::cli::run(args("dump", "--", input.str(), "--raw")) == mie::cli::EXIT_USAGE);
+    }
+}
+
+TEST_CASE("help outranks a deferred diagnostic but not a missing value",
+          "[cli][L3-CPP-014][L2-CLI-017]") {
+    // This used to be answered by a scan over the whole argument vector, which
+    // could not tell a help token apart from a token being consumed as some
+    // flag's VALUE, and did not know where the subcommand began. Both mistakes
+    // made C++ the only implementation doing them.
+    const TempFile input("mie-cli-help.mie", valid_recording());
+
+    SECTION("a deferred diagnostic yields to a pending help request") {
+        // An unrecognised option, and a value rejected AFTER it was taken:
+        // both are deferred, so help wins.
+        std::string out;
+        REQUIRE(run_capturing_stdout(args("decode", input.str(), "--nonsense", "--help"), out) ==
+                mie::cli::EXIT_OK);
+        REQUIRE(out.find("USAGE") != std::string::npos);
+
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--time-format", "bad", "--help")) ==
+                mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("count", input.str(), "--nonsense", "--help")) ==
+                mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("dump", input.str(), "--nonsense", "--help")) ==
+                mie::cli::EXIT_OK);
+    }
+
+    SECTION("a failed value consumption does not yield to it") {
+        // `take_value` abandons the rest of the line here, so nothing is
+        // pending. Without that these all printed help and exited 0, where
+        // Rust and Python reported the usage error.
+        REQUIRE(mie::cli::run(args("--log-level", "-h", "decode", input.str())) ==
+                mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("--config", "--help", "decode", input.str())) ==
+                mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--mux-delimiter", "-h")) ==
+                mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--mux-delimiter", "-h", "--help")) ==
+                mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("--log-level", "--nonsense", "--help")) == mie::cli::EXIT_USAGE);
+    }
+
+    SECTION("version is global-only") {
+        // After the subcommand it belongs to that subcommand, and every one of
+        // them calls it an unknown option. The old scan answered it anywhere.
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--version")) == mie::cli::EXIT_USAGE);
+        REQUIRE(mie::cli::run(args("count", input.str(), "--version")) == mie::cli::EXIT_USAGE);
+        std::string out;
+        REQUIRE(run_capturing_stdout(args("--version"), out) == mie::cli::EXIT_OK);
+        REQUIRE(out.find("mie-decoder") != std::string::npos);
+    }
+
+    SECTION("help after `--` is a path, so it rescues nothing") {
+        REQUIRE(mie::cli::run(args("decode", "--nonsense", "--", "--help")) ==
+                mie::cli::EXIT_USAGE);
     }
 }
 

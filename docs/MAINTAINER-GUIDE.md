@@ -46,6 +46,10 @@ mie-decoder/
 │   ├── pytest-by-requirement.py runs pytest filtered by requirement marker
 │   ├── diagnose-vendor-delta.py identifies which DELTA rule a vendor CSV follows
 │   ├── repo-hygiene.sh          CI backstop for the pre-commit file checks
+│   ├── assert-ascii-output.py   no non-ASCII in any shipped string literal
+│   ├── assert-platform-confined.sh  OS headers only in the C++ platform backends
+│   ├── assert-locale-free.sh    no setlocale / <cctype> in the C++ tree
+│   ├── assert-sources-agree.sh  Makefile and CMake resolve the same C++ sources
 │   ├── coverage.sh              local coverage run (Rust + Python)
 │   └── install-hooks.sh         points core.hooksPath at .githooks/
 ├── docs/
@@ -503,7 +507,7 @@ shows up as a gap rather than silently drifting:
 | `python-coverage` | `poetry run pytest --cov` — 92% combined line+branch floor (`fail_under` in `python/pyproject.toml`) | `ubuntu-latest` (3.12) | Block merge |
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py --skip cpp` — every fixture, Rust and Python. The opt-out is explicit: the runner defaults to every registered implementation and fails if one is missing, so this job cannot pass by silently testing fewer | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
-| `repo-hygiene` | `bash scripts/repo-hygiene.sh` — re-runs the pre-commit hook's file-level checks (final newline, CRLF, merge markers, 1 MB cap, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:`) over the whole tracked tree, so a `--no-verify` commit is still caught, plus the doc-drift checks that have no hook counterpart (this table lists every `ci.yml` job; the config-key set agrees across its three text sources; no TRACE-MATRIX row claims Implemented with no artifact; the declared Rust MSRV agrees across `Cargo.toml`, CI and the docs; `ROADMAP.md` doesn't restate a `TRACE-MATRIX.md` status; the Python exception hierarchy matches its ASCII-tree and UML drawings) | `ubuntu-latest` | Block merge |
+| `repo-hygiene` | `bash scripts/repo-hygiene.sh` — re-runs the pre-commit hook's file-level checks (final newline, CRLF, merge markers, 1 MB cap, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:`) over the whole tracked tree, so a `--no-verify` commit is still caught, plus the doc-drift checks that have no hook counterpart (this table lists every `ci.yml` job; the config-key set agrees across its three text sources; no TRACE-MATRIX row claims Implemented with no artifact; the declared Rust MSRV agrees across `Cargo.toml`, CI and the docs; `ROADMAP.md` doesn't restate a `TRACE-MATRIX.md` status; the Python exception hierarchy matches its ASCII-tree and UML drawings; every shipped string literal in all three implementations is ASCII, via `scripts/assert-ascii-output.py` — L2-CLI-014) | `ubuntu-latest` | Block merge |
 | `diagrams` | Re-renders every `docs/diagrams/*.puml` with the pinned PlantUML version and runs `git diff --exit-code` against the committed `*.svg`. **Currently a no-op** — PlantUML names its output after `@startuml <name>`, so the render lands in untracked files and the tracked `*.svg` are never compared; see the "Diagram rendering" section of `ROADMAP.md` | `ubuntu-latest` | Passes regardless |
 
 The jobs above are `.github/workflows/ci.yml`, which gates the Rust and Python

@@ -191,6 +191,7 @@ knowing which is which:
 |---|---|
 | Whitespace (`--check`) | `repo-hygiene` (final newline), plus `cargo fmt` for Rust |
 | Missing final newline, CRLF, merge markers, large file, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:` | **`repo-hygiene`** job |
+| Non-ASCII in a shipped string literal (L2-CLI-014) | **`repo-hygiene`** job |
 | Trace matrix | `trace-matrix` job |
 | `cargo fmt` / `clippy` / tests / doctests | `rust` job |
 | `shellcheck` | *nothing* — hook-only, and skipped there too unless installed |

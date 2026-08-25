@@ -28,7 +28,7 @@ namespace {
 const char* const kVersion = "2.13.0";
 
 const char* const kHelp =
-    "mie-decoder \xE2\x80\x94 DDC MIL-STD-1553 MIE binary decoder\n"
+    "mie-decoder -- DDC MIL-STD-1553 MIE binary decoder\n"
     "\n"
     "USAGE:\n"
     "    mie-decoder [GLOBAL] <COMMAND> [OPTIONS]\n"
@@ -97,6 +97,25 @@ struct CliError {
 };
 
 CliError usage_error(const std::string& message) { return CliError(EXIT_USAGE, message); }
+
+/// Thrown by a subcommand parser when it sees `-h`/`--help`.
+///
+/// Help is a SUCCESSFUL outcome, not an error, so it cannot travel as a
+/// CliError -- run() prints "Error: ..." for those and would turn help into
+/// a diagnostic. Mirrors Rust's `ParseError::HelpRequested`.
+struct HelpRequested {};
+
+// Defined here rather than beside run(): the subcommand parsers need
+// is_help_flag, and in C++ a name must be declared before it is used.
+bool is_version_flag(const std::string& arg) {
+    return arg == "-V" || arg == "-v" || text::equals_ignoring_ascii_case(arg, "--version");
+}
+
+/// Note the asymmetry with `is_version_flag`, which IS case-insensitive:
+/// `--VERSION` is a version request in all three implementations, `--HELP`
+/// is not a help request in any of them. This accepted `--HELP`, which made
+/// C++ the only implementation that did.
+bool is_help_flag(const std::string& arg) { return arg == "-h" || arg == "--help"; }
 
 CliError config_error(const std::string& message) { return CliError(EXIT_CONFIG, message); }
 CliError runtime_error_(const std::string& message) { return CliError(EXIT_RUNTIME, message); }
@@ -211,6 +230,31 @@ class ArgReader {
     const std::string& peek() const { return args_[at_]; }
     void advance() { at_ += 1; }
 
+    /// Abandon every remaining argument.
+    ///
+    /// Used when a flag cannot take its value. From that point the command
+    /// line is uninterpretable -- nothing downstream can be attributed to
+    /// the right flag -- so nothing in it may be honoured, including a `-h`.
+    /// `help_pending` then answers false, which is what keeps
+    /// `--log-level -h` a usage error.
+    void abandon_rest() { at_ = args_.size(); }
+
+    /// Is a help request still pending in the unconsumed arguments?
+    ///
+    /// Bounded by `--`: after the end-of-options separator a `-h` is a path
+    /// and not a request (L2-CLI-016).
+    bool help_pending() const {
+        for (std::size_t i = at_; i < args_.size(); ++i) {
+            if (args_[i] == "--") {
+                return false;
+            }
+            if (is_help_flag(args_[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// Consume the current token if it is exactly `name`.
     bool take_flag(const char* name) {
         if (at_end() || args_[at_] != name) {
@@ -248,12 +292,16 @@ class ArgReader {
         }
         at_ += 1;
         if (at_end()) {
+            abandon_rest();
             throw usage_error(std::string(name) + " requires a value");
         }
         if (looks_like_option(args_[at_])) {
+            // Hard stop: see abandon_rest(). A later `-h` must not rescue this.
+            const std::string offender = args_[at_];
+            abandon_rest();
             throw usage_error(std::string(name) + " requires a value, but the next argument is" +
-                              " an option: " + args_[at_] + "; to pass it as a value, write " +
-                              name + "=" + args_[at_]);
+                              " an option: " + offender + "; to pass it as a value, write " + name +
+                              "=" + offender);
         }
         out = args_[at_];
         at_ += 1;
@@ -265,12 +313,16 @@ class ArgReader {
         if (!at_end() && args_[at_] == short_name) {
             at_ += 1;
             if (at_end()) {
+                abandon_rest();
                 throw usage_error(std::string(name) + " requires a value");
             }
             if (looks_like_option(args_[at_])) {
+                // Hard stop: see abandon_rest().
+                const std::string offender = args_[at_];
+                abandon_rest();
                 throw usage_error(std::string(name) + " requires a value, but the next argument" +
-                                  " is an option: " + args_[at_] + "; to pass it as a value," +
-                                  " write " + name + "=" + args_[at_]);
+                                  " is an option: " + offender + "; to pass it as a value," +
+                                  " write " + name + "=" + offender);
             }
             out = args_[at_];
             at_ += 1;
@@ -444,6 +496,9 @@ DecodeArgs parse_decode(ArgReader& reader) {
             end_of_options = true;
             reader.advance();
             continue;
+        }
+        if (is_help_flag(token)) {
+            throw HelpRequested();
         }
 
         if (reader.take_value("-o", "--output", value)) {
@@ -621,6 +676,9 @@ DumpArgs parse_dump(ArgReader& reader) {
             reader.advance();
             continue;
         }
+        if (is_help_flag(token)) {
+            throw HelpRequested();
+        }
         if (reader.take_flag("--raw")) {
             args.raw = true;
         } else if (reader.take_value("--offset", value)) {
@@ -660,6 +718,9 @@ std::string parse_count(ArgReader& reader) {
                 end_of_options = true;
                 reader.advance();
                 continue;
+            }
+            if (is_help_flag(token)) {
+                throw HelpRequested();
             }
             if (!token.empty() && token[0] == '-' && token != "-") {
                 throw usage_error("unknown option " + token);
@@ -1126,26 +1187,15 @@ int run_count(const Streams& streams, const GlobalArgs& globals, const std::stri
     // interactive operator sees it without opting into INFO.
     (void)write_out(streams.out, text::decimal(count) + "\n");
     if (file_reader.empty_recording()) {
-        (void)write_out(streams.err,
-                        "no records in " + file_reader.path() +
-                            " (empty recording \xE2\x80\x94 opens on the end-of-records "
-                            "terminator)\n");
+        (void)write_out(streams.err, "no records in " + file_reader.path() +
+                                         " (empty recording -- opens on the end-of-records "
+                                         "terminator)\n");
     } else {
         (void)write_out(streams.err, "counted " + text::decimal(count) + " messages in " +
                                          file_reader.path() + "\n");
     }
     return EXIT_OK;
 }
-
-bool is_version_flag(const std::string& arg) {
-    return arg == "-V" || arg == "-v" || text::equals_ignoring_ascii_case(arg, "--version");
-}
-
-/// Note the asymmetry with `is_version_flag`, which IS case-insensitive:
-/// `--VERSION` is a version request in all three implementations, `--HELP`
-/// is not a help request in any of them. This accepted `--HELP`, which made
-/// C++ the only implementation that did.
-bool is_help_flag(const std::string& arg) { return arg == "-h" || arg == "--help"; }
 
 }  // namespace
 
@@ -1160,25 +1210,6 @@ Streams::Streams(std::FILE* out_, std::FILE* err_) : out(out_), err(err_) {}
 int run(const std::vector<std::string>& args) { return run(args, Streams()); }
 
 int run(const std::vector<std::string>& args, const Streams& streams) {
-    // Help and version are answered before any other validation, matching the
-    // other two implementations: asking a broken invocation for help must
-    // produce help, not a usage error about the invocation.
-    //
-    // The scan stops at the FIRST `--`. After the end-of-options separator a
-    // token is a path, not a flag, so `-- --version` asks for a SUBCOMMAND
-    // named "--version" and fails as one, rather than printing the version.
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (args[i] == "--") {
-            break;
-        }
-        if (is_version_flag(args[i])) {
-            return write_out(streams.out, version_line() + "\n") ? EXIT_OK : EXIT_RUNTIME;
-        }
-        if (is_help_flag(args[i])) {
-            return write_out(streams.out, kHelp) ? EXIT_OK : EXIT_RUNTIME;
-        }
-    }
-
     if (args.empty()) {
         // Help, but a non-zero exit: a script that invokes the tool with no
         // arguments has a bug, and exiting 0 would hide it.
@@ -1186,14 +1217,36 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
         return EXIT_USAGE;
     }
 
+    // Declared outside the `try` so the handler can ask whether a help request
+    // is still pending at the point the parse gave up.
+    ArgReader reader(args);
     try {
-        ArgReader reader(args);
         GlobalArgs globals;
         std::string value;
 
-        // Global flags may appear before the subcommand.
+        // Global flags, help and version, all resolved POSITIONALLY. This used
+        // to be a scan over the whole argument vector, which was wrong in two
+        // ways that made C++ the only implementation doing them: it answered
+        // `--version` AFTER the subcommand, where the other two report an
+        // unknown option, and it answered a help or version token that was
+        // being consumed as some flag's VALUE, so `--log-level -h` printed
+        // help instead of failing.
+        //
+        // Help remaining reachable from a BROKEN command line -- the case the
+        // scan existed for -- is now the handler's job below, which asks
+        // whether a help request is still pending rather than assuming one
+        // anywhere on the line counts.
         while (!reader.at_end()) {
-            if (reader.peek() == "--") {
+            const std::string token = reader.peek();
+            if (is_help_flag(token)) {
+                return write_out(streams.out, kHelp) ? EXIT_OK : EXIT_RUNTIME;
+            }
+            // Version is global-only: after the subcommand it belongs to that
+            // subcommand, and every one of them calls it an unknown option.
+            if (is_version_flag(token)) {
+                return write_out(streams.out, version_line() + "\n") ? EXIT_OK : EXIT_RUNTIME;
+            }
+            if (token == "--") {
                 // POSIX end-of-options, scoped to THIS loop: the subcommand
                 // parser gets a fresh scan, so `-- decode rec.mie --no-mux`
                 // still honours `--no-mux`. The next token is the subcommand
@@ -1237,7 +1290,17 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
             return run_dump(streams, globals, parse_dump(reader));
         }
         throw usage_error("unknown command \"" + command + "\"; expected decode, count or dump");
+    } catch (const HelpRequested&) {
+        return write_out(streams.out, kHelp) ? EXIT_OK : EXIT_RUNTIME;
     } catch (const CliError& error) {
+        // A pending `-h` outranks a DEFERRED diagnostic -- an unrecognised
+        // option, or a value rejected after it was taken. It does not outrank
+        // a failed value CONSUMPTION, because `take_value` abandons the rest
+        // of the line there, so nothing is pending. That split is argparse's
+        // and is what the other two implementations do (L2-CLI-017).
+        if (error.code == EXIT_USAGE && reader.help_pending()) {
+            return write_out(streams.out, kHelp) ? EXIT_OK : EXIT_RUNTIME;
+        }
         MIE_LOG_ERROR(error.message);
         (void)write_out(streams.err, "Error: " + error.message + "\n");
         if (error.code == EXIT_USAGE) {

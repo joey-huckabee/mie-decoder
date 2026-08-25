@@ -658,7 +658,7 @@ def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
     if methods > 1:
         raise ValueError(
             "decode accepts only one input method: positional paths, "
-            "--manifest, or --glob — not a combination"
+            "--manifest, or --glob -- not a combination"
         )
 
     if args.manifest is not None:

@@ -448,7 +448,7 @@ class MieFileReader:
         # preserving the guard against genuinely non-MIE inputs.
         if file_len >= 2 and is_terminator_type_word(read_u16(mm, 0)):
             logger.warning(
-                "%s: recording contains no records — the stream "
+                "%s: recording contains no records -- the stream "
                 "opens on the end-of-records terminator (empty "
                 "capture); writing header-only output",
                 self._path.name,
@@ -486,7 +486,7 @@ class MieFileReader:
             logger.warning(
                 "First record after header detection is "
                 "truncated at 0x%X: declared %d bytes, "
-                "only %d available — lenient mode terminates "
+                "only %d available -- lenient mode terminates "
                 "cleanly with zero records",
                 offset_t,
                 record_bytes,
@@ -593,7 +593,7 @@ class MieFileReader:
             logger.info(
                 "Auto-detected timestamp format: %s "
                 "(Marginal: IRIG=%d STD=%d over %d "
-                "record(s)) — pass --time-format to force "
+                "record(s)) -- pass --time-format to force "
                 "the choice if this is wrong",
                 outcome.format.name,
                 outcome.irig_score,
@@ -610,7 +610,7 @@ class MieFileReader:
                 logger.error(
                     "Timestamp-format auto-detection is "
                     "ambiguous in %s starting at offset "
-                    "0x%X: IRIG=%d STD=%d over %d record(s) — "
+                    "0x%X: IRIG=%d STD=%d over %d record(s) -- "
                     "strict mode rejects ambiguous files; "
                     "pass --time-format to force the choice",
                     self._path.name,
@@ -628,7 +628,7 @@ class MieFileReader:
             logger.warning(
                 "Auto-detected timestamp format: %s "
                 "(Ambiguous: IRIG=%d STD=%d over %d "
-                "record(s)) — using best guess; pass "
+                "record(s)) -- using best guess; pass "
                 "--time-format to force the choice or "
                 "--strict to reject ambiguous files",
                 outcome.format.name,
@@ -669,7 +669,7 @@ class MieFileReader:
                     "Forced timestamp format %s contradicts the "
                     "recording in %s at offset 0x%X: detection is "
                     "decisive for %s (IRIG=%d STD=%d over %d "
-                    "record(s)) — strict mode rejects the mismatch; "
+                    "record(s)) -- strict mode rejects the mismatch; "
                     "drop --time-format to auto-detect",
                     resolved_format.name,
                     self._path.name,
@@ -688,7 +688,7 @@ class MieFileReader:
             logger.warning(
                 "Forced timestamp format %s contradicts the "
                 "recording at offset 0x%X: detection is decisive "
-                "for %s (IRIG=%d STD=%d over %d record(s)) — "
+                "for %s (IRIG=%d STD=%d over %d record(s)) -- "
                 "decoding with the forced format anyway; drop "
                 "--time-format to auto-detect or pass --strict to "
                 "reject the mismatch",
@@ -927,8 +927,8 @@ class MieFileReader:
                     "IRIG day-of-year decoded for this recording; the "
                     "day-of-year field has a known firmware-dependent "
                     "discrepancy on some DDC cards (hour/minute/second/"
-                    "microsecond are unaffected) — see "
-                    "docs/VENDOR-CSV-DIFFS.md §5"
+                    "microsecond are unaffected) -- see "
+                    "docs/VENDOR-CSV-DIFFS.md section 5"
                 )
             return irig
         return decode_standard_timestamp(
@@ -1070,7 +1070,7 @@ class MieFileReader:
             msg_fmt = classify_message_format(tw.message_type, cmd, tw.word_count, ts_words)
         except ValueError as exc:
             logger.warning(
-                "Cannot classify at 0x%X: %s — skipping",
+                "Cannot classify at 0x%X: %s -- skipping",
                 offset,
                 exc,
             )

@@ -45,6 +45,12 @@ FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "mode": str,
     "args": list,
     "expected_stderr_contains": str,
+    # Substring the payload on STDOUT must contain. Lets a case assert an
+    # exit-0 outcome whose output is not byte-comparable across
+    # implementations -- help text, whose shape differs by design (Python
+    # prints per-subcommand help, Rust one combined screen). Supplying it
+    # stands in for "expected", which such a case cannot have.
+    "expected_stdout_contains": str,
     "expected_exit": int,
     # Content written to the destination BEFORE the run, so the overwrite
     # contract can be pinned: `no_clobber` is off by default, so a decode must
@@ -262,6 +268,7 @@ def run_command(
     implementation: str,
     expected_exit: int = 0,
     read_path: Path | None = None,
+    payload_is_stdout: bool = False,
 ) -> tuple[bytes | None, str]:
     """Run one implementation's CLI and assert its exit code matches.
 
@@ -310,6 +317,12 @@ def run_command(
         # useful for diagnosing why a positive case unexpectedly fell
         # into this branch.
         return None, result.stderr
+    if payload_is_stdout:
+        # The case asserts on stdout instead of a CSV -- see
+        # ``expected_stdout_contains``. `decode` still needs its `-o`, so the
+        # destination exists and is simply not what is being compared; a run
+        # that printed help never created it, and that is not a failure here.
+        return result.stdout.encode("utf-8"), result.stderr
     if output is None:
         # Stdout-comparison mode (e.g. `count`). Encode to bytes so the
         # comparison helpers downstream can treat all payloads uniformly.
@@ -798,7 +811,43 @@ def main() -> int:
                     impl.label,
                     expected_exit=expected_exit,
                     read_path=read_path,
+                    payload_is_stdout="expected_stdout_contains" in case,
                 )
+
+            # Optional stderr substring assertion. Used by ``count`` mode to pin
+            # the "counted N messages in <path>" status line without a byte-exact
+            # comparison, and by negative cases to pin WHICH error was produced
+            # rather than merely that one was.
+            #
+            # This runs BEFORE the negative-case short-circuit below. It used to
+            # sit after it, so on any case with a non-zero ``expected_exit`` the
+            # needle was never evaluated: seven cases carried an assertion that
+            # could not fail, including the ones meant to tell "the value was
+            # rejected" apart from "the whole token was unknown". Proven by
+            # planting an impossible needle -- the case still passed.
+            stderr_needle = case.get("expected_stderr_contains")
+            if stderr_needle:
+                for impl in running:
+                    captured = captured_stderr[impl.name]
+                    if stderr_needle not in captured:
+                        raise AssertionError(
+                            f"{name}: {impl.label} stderr does not contain "
+                            f"{stderr_needle!r}\n--- stderr ---\n{captured}"
+                        )
+
+            stdout_needle = case.get("expected_stdout_contains")
+            if stdout_needle:
+                for impl in running:
+                    payload = produced[impl.name]
+                    text = payload.decode("utf-8", "replace") if payload else ""
+                    if stdout_needle not in text:
+                        raise AssertionError(
+                            f"{name}: {impl.label} stdout does not contain "
+                            f"{stdout_needle!r}; got {text[:400]!r}"
+                        )
+                passed += 1
+                print(f"PASS {name} (stdout contains {stdout_needle!r})")
+                continue
 
             if expected_exit != 0:
                 # Negative case -- exit code alone is the assertion. No CSV
@@ -821,20 +870,6 @@ def main() -> int:
                     f"{name} {reference.label} output",
                     f"{name} {impl.label} output",
                 )
-
-            # Optional stderr substring assertion. Used by ``count`` mode to pin
-            # the "counted N messages in <path>" human-readable status line in
-            # every implementation without requiring a byte-exact comparison
-            # (the path basename varies with the temp directory).
-            stderr_needle = case.get("expected_stderr_contains")
-            if stderr_needle:
-                for impl in running:
-                    captured = captured_stderr[impl.name]
-                    if stderr_needle not in captured:
-                        raise AssertionError(
-                            f"{name}: {impl.label} stderr does not contain "
-                            f"{stderr_needle!r}\n--- stderr ---\n{captured}"
-                        )
 
             expected_path = SUITE / (case.get("expected_partial") or case["expected"])
             if args.update_expected:

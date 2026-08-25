@@ -319,16 +319,23 @@ TEST_CASE("the offset is uppercase hex with no padding", "[error][message]") {
           "Record error at offset 0xABCDEF: x");
 }
 
-TEST_CASE("the first-record message carries an em dash", "[error][message]") {
-    // U+2014, written as explicit UTF-8 bytes in the source. Rust emits the
-    // same character, and the two strings get compared -- so an editor that
-    // "helpfully" re-encoded it would show up here rather than in a
-    // conformance diff.
+TEST_CASE("the first-record message is pure ASCII", "[error][message][L2-CLI-014]") {
+    // This message used to carry U+2014, written as explicit UTF-8 bytes, and
+    // this test used to assert that it did. It now asserts the opposite.
+    //
+    // A Windows console runs at the OEM code page, not UTF-8, so those three
+    // bytes reached an operator as three unrelated CP437 glyphs -- reported,
+    // reasonably, as "garbage characters" that looked like memory corruption.
+    // L2-CLI-014 now binds stderr prose to the same ASCII rule as stdout
+    // payload; scripts/assert-ascii-output.py enforces it across all three
+    // implementations. Rust and Python emit the identical wording.
     const std::string msg = mie::MieError::first_record_truncated(0x40, 80, 12).message();
     CHECK(msg ==
           "Record error at offset 0x40: First record after header detection is truncated "
-          "\xE2\x80\x94 Type Word declares 80 bytes but only 12 bytes remain in file");
-    CHECK(msg.find("\xE2\x80\x94") != std::string::npos);
+          "-- Type Word declares 80 bytes but only 12 bytes remain in file");
+    for (std::string::const_iterator it = msg.begin(); it != msg.end(); ++it) {
+        CHECK(static_cast<unsigned char>(*it) < 0x80);
+    }
 }
 
 TEST_CASE("file-level messages match the Rust wording", "[error][message]") {

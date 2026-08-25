@@ -449,6 +449,25 @@ if (( ${#offenders[@]} )); then
     bad "TRACE-MATRIX rows claim Implemented with no verification artifact"
 fi
 
+# ── 15. Shipped output is ASCII in all three implementations ──────────
+#
+# L2-CLI-014. A Windows console runs at the OEM code page (437 in a US
+# install), not UTF-8, so a non-ASCII byte in a log message or help banner
+# reaches the operator as mojibake -- and mojibake in a decoder's own
+# diagnostics reads as memory corruption, which is how it was reported.
+#
+# The check is delegated because it needs a real string-literal parser rather
+# than a grep: C++ had spelled its em dash "\xE2\x80\x94", which is pure ASCII
+# on disk and non-ASCII on the wire, so a byte-level scan of the tree reported
+# it clean while the console showed garbage.
+step "shipped string literals are ASCII (cpp, rust, python)"
+if [[ -n "$PY_BIN" ]]; then
+    if ! "$PY_BIN" scripts/assert-ascii-output.py >/dev/null 2>&1; then
+        "$PY_BIN" scripts/assert-ascii-output.py 2>&1 >/dev/null | sed 's/^/  /' >&2
+        bad "non-ASCII string literal in a shipped source file (L2-CLI-014)"
+    fi
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2

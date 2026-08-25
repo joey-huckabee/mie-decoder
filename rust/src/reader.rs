@@ -303,7 +303,7 @@ impl MieFileReader {
             DetectionConfidence::Marginal => {
                 log_info!(
                     "auto-detected timestamp format: {:?} \
-                     (Marginal: IRIG={} STD={} over {} record(s)) — \
+                     (Marginal: IRIG={} STD={} over {} record(s)) -- \
                      pass --time-format to force the choice if this is wrong",
                     outcome.format,
                     outcome.irig_score,
@@ -316,7 +316,7 @@ impl MieFileReader {
                 log_error!(
                     "timestamp-format auto-detection is ambiguous in {} \
                      starting at offset 0x{:X}: IRIG={} STD={} over {} \
-                     record(s) — strict mode rejects ambiguous files; \
+                     record(s) -- strict mode rejects ambiguous files; \
                      pass --time-format to force the choice",
                     self.path.display(),
                     hit.offset,
@@ -334,7 +334,7 @@ impl MieFileReader {
             DetectionConfidence::Ambiguous => {
                 log_warn!(
                     "auto-detected timestamp format: {:?} \
-                     (Ambiguous: IRIG={} STD={} over {} record(s)) — \
+                     (Ambiguous: IRIG={} STD={} over {} record(s)) -- \
                      using best guess; pass --time-format to force the \
                      choice or --strict to reject ambiguous files",
                     outcome.format,
@@ -365,7 +365,7 @@ impl MieFileReader {
             log_error!(
                 "forced timestamp format {:?} contradicts the recording in {} \
                  at offset 0x{:X}: detection is decisive for {:?} (IRIG={} \
-                 STD={} over {} record(s)) — strict mode rejects the mismatch; \
+                 STD={} over {} record(s)) -- strict mode rejects the mismatch; \
                  drop --time-format to auto-detect",
                 self.time_format,
                 self.path.display(),
@@ -385,7 +385,7 @@ impl MieFileReader {
             log_warn!(
                 "forced timestamp format {:?} contradicts the recording at \
                  offset 0x{:X}: detection is decisive for {:?} (IRIG={} STD={} \
-                 over {} record(s)) — decoding with the forced format anyway; \
+                 over {} record(s)) -- decoding with the forced format anyway; \
                  drop --time-format to auto-detect or pass --strict to reject \
                  the mismatch",
                 self.time_format,
@@ -416,7 +416,7 @@ impl MieFileReader {
         // through to the wrong-file diagnosis, preserving that guard.
         if read_u16(data, 0).is_some_and(is_terminator_type_word) {
             log_warn!(
-                "{}: recording contains no records — the stream opens on \
+                "{}: recording contains no records -- the stream opens on \
                  the end-of-records terminator (empty capture); writing \
                  header-only output",
                 self.path.display()
@@ -448,7 +448,7 @@ impl MieFileReader {
             Some((trunc_offset, record_bytes, available)) => {
                 log_warn!(
                     "first record after header detection is truncated \
-                     at 0x{:X}: declared {} bytes, only {} available — \
+                     at 0x{:X}: declared {} bytes, only {} available -- \
                      lenient mode terminates cleanly with zero records",
                     trunc_offset,
                     record_bytes,
@@ -922,8 +922,8 @@ impl RecordIter<'_> {
                     log_warn!(
                         "IRIG day-of-year decoded for this recording; the day-of-year field \
                          has a known firmware-dependent discrepancy on some DDC cards \
-                         (hour/minute/second/microsecond are unaffected) — see \
-                         docs/VENDOR-CSV-DIFFS.md §5"
+                         (hour/minute/second/microsecond are unaffected) -- see \
+                         docs/VENDOR-CSV-DIFFS.md section 5"
                     );
                 }
                 Some(Timestamp::Irig(irig))
