@@ -95,6 +95,15 @@ shared behavior) holds at any compatible version pair. See
   (Windows) and 3.10 (WSL2) — a single-environment run would have missed it in
   either direction.
 
+- **`tests/conformance/run.py --python-bin` could not point at a virtualenv.**
+  It called `.resolve()` on the interpreter path, and a virtualenv's
+  `bin/python` is a *symlink* to the base interpreter — so the venv was thrown
+  away and the runner failed with "mie_decoder is not importable from
+  /usr/bin/python3.10", naming an interpreter the caller never asked for. It
+  now uses `.absolute()`, which normalises a relative path without following
+  symlinks. CI never hit this: Poetry's Windows venv python is a real file, and
+  the Linux job installs into the system interpreter.
+
 - **The `diagrams` CI job pinned a PlantUML version that crashes, and reported
   success anyway.** The pin was `1.2026.5`, on which `component.puml` dies in
   the smetana layout engine and PlantUML **still exits `0`**, leaving a
