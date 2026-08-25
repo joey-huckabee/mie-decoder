@@ -30,7 +30,7 @@ mie-decoder/
 │       ├── cli.rs           CLI acceptance tests (built binary as a subprocess)
 │       └── integration.rs   cargo integration tests (multi-record, fuzz harness)
 ├── tests/
-│   └── conformance/        cross-implementation suite (Rust ↔ Python)
+│   └── conformance/        cross-implementation suite (Rust / Python / C++)
 │       ├── manifest.json   case catalog
 │       ├── inputs/*.hex    reviewable hex fixtures (NOT committed binaries)
 │       ├── expected/*.csv  byte-exact CSV oracles
@@ -96,7 +96,7 @@ poetry -C python run pytest
 
 The Python package is installed in editable mode via `poetry sync`'s root-package step. If `python -m mie_decoder` ever fails to import in your local Poetry env, re-run sync.
 
-### Cross-impl conformance (needs both)
+### Cross-impl conformance (needs all three)
 
 ```bash
 # Build the Rust binary first so the runner doesn't have to:
@@ -105,9 +105,9 @@ The Python package is installed in editable mode via `poetry sync`'s root-packag
 poetry -C python run python ../tests/conformance/run.py
 ```
 
-The runner reads `tests/conformance/manifest.json`, materializes each `.hex` fixture into a temp `.mie` file, invokes both CLIs against it, and diffs the produced CSVs against the checked-in oracle (or asserts the exit code for negative cases).
+The runner reads `tests/conformance/manifest.json`, materializes each `.hex` fixture into a temp `.mie` file, invokes every registered CLI against it, and diffs the produced CSVs against the checked-in oracle (or asserts the exit code for negative cases).
 
-When both CLIs are present, the runner additionally cross-checks the two **config parsers** (`tomllib` vs the hand-rolled Rust parser accept different TOML subsets): a curated corpus (`config_parity.py`) plus a differential **fuzzer** (`config_fuzz.py`) that generates config documents and asserts both implementations agree on accept/reject. Both run inside `run.py` — there is no separate command. The fuzzer is deterministic (fixed seed + `MIE_CONFIG_FUZZ_ITERS` iterations, default 100); for a deeper local sweep run `MIE_CONFIG_FUZZ_ITERS=5000 poetry -C python run python ../tests/conformance/run.py` (a *distinct* knob from the reader/dump `MIE_FUZZ_ITERATIONS` in §11's fuzz workflow). A divergence prints the exact config to pin in `config_parity.py`. See `tests/conformance/README.md`.
+The runner additionally cross-checks the **config parsers** (`tomllib` vs the hand-rolled Rust parser accept different TOML subsets): a curated corpus (`config_parity.py`) plus a differential **fuzzer** (`config_fuzz.py`) that generates config documents and asserts both implementations agree on accept/reject. Both run inside `run.py` — there is no separate command. The fuzzer is deterministic (fixed seed + `MIE_CONFIG_FUZZ_ITERS` iterations, default 100); for a deeper local sweep run `MIE_CONFIG_FUZZ_ITERS=5000 poetry -C python run python ../tests/conformance/run.py` (a *distinct* knob from the reader/dump `MIE_FUZZ_ITERATIONS` in §11's fuzz workflow). A divergence prints the exact config to pin in `config_parity.py`. See `tests/conformance/README.md`.
 
 A third guard, `config_path_parity.py`, covers the layer above the parsers: the `--config` **path** rather than its contents. The other two never vary the path, so what counts as a usable config file — and which exit code and message a bad one produces — was pinned only by per-implementation unit tests that could drift apart unnoticed. It compares the **exact exit code** (not just accept/reject) and requires the promised message text from both CLIs, over the surface documented in `CONFIG-REFERENCE.md` §"Trust boundary": regular files only, missing/unusable is exit `5`, and any readable location is accepted (spaces, non-ASCII names, `..` segments). Platform-dependent cases (character devices, symlinks) skip themselves and report the skip, so a corpus that quietly shrinks on one OS is visible.
 
@@ -161,8 +161,9 @@ poetry -C python run mie-decoder decode path/to/recording.mie -o decoded.csv
 
 Commit each `docs/diagrams/*.puml` source with its matching rendered
 `docs/diagrams/*.svg`. Regenerate the SVG whenever the PlantUML source changes —
-**nothing in CI will catch you if you don't** (the `diagrams` job is a known
-no-op; see §9 and `ROADMAP.md`).
+**CI will not catch a stale SVG** (it cannot; see §9 and `ROADMAP.md`). It
+*will* catch a source that stops parsing or renders truncated, which the job
+could not do before v2.15.0.
 
 Two traps when regenerating:
 
@@ -174,9 +175,11 @@ Two traps when regenerating:
   should contain every type declared in `class.puml`; a whole
   `component.svg` is ~60 KB, a crashed one ~14 KB).
 
-The committed SVGs are rendered with PlantUML **1.2026.7beta11**, from the
-project's rolling `snapshot` pre-release — on the stable releases tested,
-`component.puml` crashes in the smetana layout engine. Read the
+Render with PlantUML **1.2026.7** or newer — the version CI pins. It is the
+first *stable* release on which `component.puml` does not crash in the smetana
+layout engine; 1.2026.5 and 1.2026.6 both produce a truncated stub while
+exiting 0. The committed SVGs predate it and carry `1.2026.7beta11`, the
+rolling snapshot that was the only working build at the time. Read the
 `<?plantuml VERSION?>` processing instruction inside any committed `*.svg` to
 confirm what produced it. Note also that PlantUML lays out using the JVM's font
 metrics, so re-rendering an *unchanged* source on a different machine will
@@ -493,7 +496,7 @@ shows up as a gap rather than silently drifting:
 
 | Job | What it gates | Platforms | Failure cost |
 |-----|---------------|-----------|--------------|
-| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `rust/tests/integration.rs` + `rust/tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (87% line / 86% region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
+| `rust` | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --all-targets` (unit + `rust/tests/integration.rs` + `rust/tests/cli.rs` CLI acceptance suite — see section 5 for the test pyramid); `cargo cov-ci` (90% line / 89% region coverage floors) Linux-only | `ubuntu-latest`, `windows-latest` | Block merge |
 | `rust-doc` | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` — fails on broken intra-doc links and other rustdoc lints in the doc-heavy crate | `ubuntu-latest` | Block merge |
 | `rust-msrv` | `cargo check --all-targets` on the pinned **1.88** toolchain — enforces the declared `rust-version` (the main `rust` job builds on stable) | `ubuntu-latest` | Block merge |
 | `cargo-deny` | `cargo deny check` — RustSec advisories, license allow-list, bans (duplicates/wildcards), and crates.io-only sources (config in `rust/deny.toml`) | `ubuntu-latest` | Block merge |
@@ -508,7 +511,7 @@ shows up as a gap rather than silently drifting:
 | `conformance` | `pip install -e ./python` then `python tests/conformance/run.py --skip cpp` — every fixture, Rust and Python. The opt-out is explicit: the runner defaults to every registered implementation and fails if one is missing, so this job cannot pass by silently testing fewer | `ubuntu-latest`, `windows-latest` | Block merge |
 | `trace-matrix` | `python scripts/build-trace-matrix.py --check` — fails if `docs/TRACE-MATRIX.md` is stale relative to the spec docs + test markers | `ubuntu-latest` | Block merge |
 | `repo-hygiene` | `bash scripts/repo-hygiene.sh` — re-runs the pre-commit hook's file-level checks (final newline, CRLF, merge markers, 1 MB cap, `*.mie`, `Cargo.lock` parity, `dbg!()`, `unsafe`/`SAFETY:`) over the whole tracked tree, so a `--no-verify` commit is still caught, plus the doc-drift checks that have no hook counterpart (this table lists every `ci.yml` job; the config-key set agrees across its three text sources; no TRACE-MATRIX row claims Implemented with no artifact; the declared Rust MSRV agrees across `Cargo.toml`, CI and the docs; `ROADMAP.md` doesn't restate a `TRACE-MATRIX.md` status; the Python exception hierarchy matches its ASCII-tree and UML drawings; every shipped string literal in all three implementations is ASCII, via `scripts/assert-ascii-output.py` — L2-CLI-014) | `ubuntu-latest` | Block merge |
-| `diagrams` | Re-renders every `docs/diagrams/*.puml` with the pinned PlantUML version and runs `git diff --exit-code` against the committed `*.svg`. **Currently a no-op** — PlantUML names its output after `@startuml <name>`, so the render lands in untracked files and the tracked `*.svg` are never compared; see the "Diagram rendering" section of `ROADMAP.md` | `ubuntu-latest` | Passes regardless |
+| `diagrams` | Renders every `docs/diagrams/*.puml` with the pinned PlantUML version into a scratch directory and fails if any source does not parse or does not render whole — the log is scanned for exceptions (PlantUML **exits 0 on a crashed render**) and every output SVG must exceed 20 KB (a crashed `component.puml` yields a ~14 KB stub against a ~60 KB whole one). It does **not** check the committed `*.svg` for staleness: PlantUML lays out with the JVM's font metrics, so a CI render never byte-matches a locally-committed SVG and such a diff would fail every PR. See the "Diagram rendering" section of `ROADMAP.md` | `ubuntu-latest` | Block merge |
 
 The jobs above are `.github/workflows/ci.yml`, which gates the Rust and Python
 implementations. The C++ implementation gates separately in
@@ -558,7 +561,7 @@ A separate scheduled workflow, `.github/workflows/fuzz.yml`, runs a deeper L1-RO
 
 All three harnesses use the **same xorshift64 generator with the same seed**, so they see the same inputs — which is what makes a divergence between implementations on identical bytes detectable, rather than three incomparable robustness efforts. C++ deliberately does **not** use libFuzzer: it needs clang, so it would skip the GCC 4.8.5 fidelity tier this implementation exists for, and its non-determinism would make a required gate fail on inputs no change produced. The C++ harness is an ordinary Catch2 case (`cpp/tests/test_fuzz.cpp`), so it rides along on every tier including MSVC, ASan/UBSan and Valgrind, with no separate target and no committed corpus. Because the PRNG seed is fixed, the burn-in is a strict superset of the default run and any failure prints a reproducible seed. To reproduce locally: `MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic` or `MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness`.
 
-Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, rust/Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs, and neither does CI in practice — the `diagrams` job is a known no-op (§9), so a stale SVG is currently caught by nobody. Re-render by hand, following §3.
+Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, rust/Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs, and neither does CI — the `diagrams` job renders to a scratch directory to check the sources parse, but cannot detect a stale committed SVG (§9). Re-render by hand, following §3.
 
 ---
 
@@ -652,9 +655,22 @@ poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P n
 
 This produces `python/dist/mie_decoder-<version>.tar.gz` and `mie_decoder-<version>-py3-none-any.whl`.
 
+### C++ implementation
+
+```bash
+cd cpp
+make all                 # Linux; the Makefile is authoritative there (ADR-0002)
+make check               # build + full Catch2 suite, -Werror
+make check-gcc48         # SLES 12 SP5 fidelity: full suite on GCC 4.8.5, in a container
+```
+
+Windows uses CMake/MSVC (`cmake --build build-msvc --config Release`); `cpp/README.md` carries both paths in full.
+
+C++ **ships as source in the joint cut**, at the same version as the other two — that is what has happened since v2.13.0, and `repo-hygiene.sh` fails the build if the three disagree. No release attaches prebuilt binaries, for any implementation; whether to start doing so is the open Phase 3 question in `ROADMAP.md`.
+
 ### Version coordination
 
-**v1.0.0 is a joint release** — both implementations ship together at v1.0.0 from a single repository tag (`v1.0.0`). Subsequent releases may diverge in version, but the cross-implementation conformance contract (CSV byte-for-byte equivalence on shared behavior) holds at any compatible version pair.
+**A release is a joint cut** — all three implementations ship together at one version from a single repository tag. Subsequent releases may diverge in version, but the cross-implementation conformance contract (CSV byte-for-byte equivalence on shared behavior) holds at any compatible version pair.
 
 Tagging scheme:
 

@@ -1,12 +1,14 @@
 # Cross-Implementation Conformance
 
-This suite verifies behavior shared by the Rust and Python implementations.
+This suite verifies behavior shared by the Rust, Python and C++
+implementations. The runner defaults to **every** registered implementation and
+fails if one is missing, so a case cannot quietly test fewer than all three.
 Each case provides:
 
 - a text-based hexadecimal MIE input under `inputs/`;
 - optional shared TOML configuration under `configs/`;
 - expected vendor-compatible CSV output under `expected/`; and
-- optional extra CLI arguments in `manifest.json` (the `args` field), passed verbatim to both CLIs — they share one identical argument surface.
+- optional extra CLI arguments in `manifest.json` (the `args` field), passed verbatim to all three CLIs — they share one identical argument surface, which the `cli-surface-parity` gate compares across every implementation.
 
 The runner materializes temporary `.mie` files, invokes both CLIs, and requires
 both outputs to match the checked-in CSV oracle byte-for-byte.

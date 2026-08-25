@@ -76,6 +76,54 @@ shared behavior) holds at any compatible version pair. See
   three now pin it, deliberately as a literal rather than by reference to the
   constant, which would reproduce the blind spot.
 
+- **The `diagrams` CI job pinned a PlantUML version that crashes, and reported
+  success anyway.** The pin was `1.2026.5`, on which `component.puml` dies in
+  the smetana layout engine and PlantUML **still exits `0`**, leaving a
+  14,489-byte stub where the whole diagram is 59,904. Nothing noticed, because
+  the job's verification step compared nothing (below).
+
+  Pinned to **`1.2026.7`**, released 2026-08-25 — the first *stable* build that
+  renders all three diagrams. Until it existed, the only working build was the
+  rolling `snapshot` pre-release, whose asset name carries no version and is
+  overwritten in place, which is why the pin had been knowingly left on a
+  crashing release. The job now scans the render log for exceptions and requires
+  every output SVG to exceed 20 KB; both halves were checked against `1.2026.5`,
+  which they correctly reject.
+
+- **Coverage floors: the docs said 87% lines / 86% regions; the gate enforces
+  90 / 89.** Four places were stale, including the rationale comment sitting
+  three lines above the alias that sets them, in the same file. A new
+  `repo-hygiene.sh` check compares each documented floor against the file that
+  enforces it (`cov-ci` in `rust/.cargo/config.toml`, `fail_under` in
+  `python/pyproject.toml`, `COVERAGE_MIN_*` in `cpp/Makefile`), so prose and
+  gate cannot diverge again. Python's and C++'s documented numbers were correct.
+
+### Changed
+
+- **The documentation now describes the three-implementation product it
+  actually is.** `README.md`, `docs/L1-REQ.md` (the normative scope statement),
+  `tests/conformance/README.md` and `docs/ARCHITECTURE.md` still defined a
+  Rust-and-Python product. ARCHITECTURE additionally warned that C++ was
+  "mid-port" and marked `cli.cpp`, `merge.cpp` and `dump.cpp` as *planned* —
+  all three have been implemented and conformance-gated since v2.13.0.
+
+  **C++ ships as source in the joint cut**, and that is now stated rather than
+  asked. `docs/ROADMAP.md` still posed "does the C++ implementation ship in the
+  next joint cut?" as open, months after v2.13.0 and v2.14.0 had both shipped
+  with all three version-aligned and a CI gate failing the build when they
+  disagree. The genuinely open Phase 3 questions — prebuilt artifacts, the
+  static-CRT choice — remain open and are unchanged. `MAINTAINER-GUIDE.md` §11
+  gains the C++ build commands alongside Rust and Python.
+
+- **`cpp/README.md` no longer denies tiers it has.** It claimed "no coverage
+  gate" (`cpp/Makefile` sets 90% line / 76% branch floors and `cpp-ci.yml` runs
+  a gcovr job) and "deliberately **no fuzz tier**… the targets are unwritten"
+  (`fuzz.yml` runs a `fuzz-cpp` burn-in over the existing L1-ROB-001 harness).
+  A README that under-claims sends a contributor looking for work already done.
+  The absence of *libFuzzer* targets is real and is now presented as the design
+  decision it is. A second hygiene check fails the build if either claim
+  returns.
+
 ## [2.14.0] — 2026-08-24
 
 ### Added

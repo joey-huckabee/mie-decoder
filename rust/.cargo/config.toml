@@ -17,10 +17,17 @@
 # (85.98% lines / 85.08% regions at the v1.4.1 measurement), which put the
 # gate at baseline-2pp (84 lines / 83 regions). The v2.9.0 canonical-row-order
 # work (L1-OUT-003) added `order.rs` at 100% lines / 99.63% regions and lifted
-# the crate to 89.50% lines / 88.63% regions, so the gate is re-ratcheted to
-# baseline-2pp again (87 lines / 86 regions). The crate has no
-# platform-gated (`cfg(windows/unix)`) code, so the Linux CI number
+# the crate to 89.50% lines / 88.63% regions, so the gate was re-ratcheted to
+# baseline-2pp again (87 lines / 86 regions). It has since been ratcheted once
+# more, to the current **90 lines / 89 regions** in the alias below. The crate
+# has no platform-gated (`cfg(windows/unix)`) code, so the Linux CI number
 # matches local runs — there is no cross-platform slack to budget for.
+#
+# THE ALIAS BELOW IS THE ONLY SOURCE OF TRUTH for these numbers. This comment
+# said 87/86 while the alias enforced 90/89, and rust/README.md, CONTRIBUTING.md
+# and MAINTAINER-GUIDE.md all repeated the stale pair. If you ratchet the gate,
+# update those three and this paragraph in the same commit —
+# `scripts/repo-hygiene.sh` now fails the build when they disagree.
 
 [alias]
 cov      = 'llvm-cov --html --open --ignore-filename-regex=bin[\\/]mie-decoder\.rs$'

@@ -205,10 +205,16 @@ entry still unresolved. Nothing here is built.
 `CLAUDE.md` anticipates impl-prefixed tags (`rust-vX.Y.Z`, `python-vX.Y.Z`,
 `cpp-vX.Y.Z`) while every release so far has been a joint cut from one tag.
 
-**Needs deciding:**
+**Decided — C++ ships in the joint cut, as source.** It has shipped that way
+since **v2.13.0**: all three implementations declare one version from one tag,
+and `scripts/repo-hygiene.sh` fails the build when they disagree. No `cpp-v*`
+tag is needed unless the implementations later diverge. This entry asked the
+question long after the facts had answered it; recorded here as settled so it
+is not re-opened. Note the scope: *source* ships, in the sense every release so
+far has shipped — no release attaches prebuilt binaries for any implementation.
 
-- Does the C++ implementation ship in the next joint cut, or take its own
-  `cpp-v*` tag first?
+**Still needs deciding** (the artifact questions, which are genuinely open):
+
 - Linux artifact built in the `gcc:4.8` container (runs on glibc 2.13 and up,
   so SLES 12 SP5 is covered) -- confirm that is the intended build host.
 - Windows artifact: MSVC Release x64. Is a static CRT wanted so the binary does
@@ -252,28 +258,36 @@ that will not expire — a C API signature, the C++11 floor, a documented design
 decision, or a tool that cannot parse the alternative. Those are catalogued at
 the suppression list itself.
 
-## Diagram rendering: make the SVG guard real (deferred)
+## Diagram rendering: staleness detection still deferred (two of three causes fixed)
 
-The `diagrams` CI job re-renders `docs/diagrams/*.puml` and byte-diffs the
-result against the committed `*.svg`. It has never actually verified anything,
-for three independent reasons found on 2026-08-09. The job still runs and is
-harmless; what follows is what it would take to make it mean something.
+The `diagrams` CI job used to re-render `docs/diagrams/*.puml` and byte-diff the
+result against the committed `*.svg`, and never verified anything, for three
+independent reasons found on 2026-08-09.
+
+**As of v2.15.0 the job no longer claims to check staleness.** The misleading
+step is gone; what replaced it verifies what is actually checkable and
+deterministic — that every source still parses and renders whole. Two of the
+three causes below are now resolved, and the remaining one is the reason
+staleness detection is still deferred rather than merely unfinished.
 
 - **PlantUML names its output after the diagram, not the source file.** Every
   source opens `@startuml MIE-Decoder Class Diagram`, so `-o docs/diagrams`
   writes `MIE-Decoder Class Diagram.svg` and never touches the tracked
   `class.svg`. `git diff --exit-code` only inspects tracked files, so the
-  untracked renders are invisible and the step passes unconditionally. Fix:
-  render into a scratch directory and map `@startuml` names back to source
-  basenames explicitly.
+  untracked renders are invisible and the step passes unconditionally.
+  **Moot for the current job**, which renders into a scratch directory and
+  never diffs; it returns the moment a staleness guard is attempted, and the
+  fix then is to map `@startuml` names back to source basenames explicitly.
+  Note that fixing *only* this, while leaving the reproducibility problem
+  below, converts a step that always passes into one that always fails.
 - **PlantUML exits 0 on a failed render.** `component.puml` crashes in the
   smetana layout engine (`java.lang.IllegalStateException` in
   `smetana.core.JUtils.qsort`, reached from `dot_mincross`) on stable 1.2026.5
   and 1.2026.6, emitting a truncated ~14 KB SVG where a whole one is ~60 KB —
-  and the process still returns 0. Any fix has to scan the render output for
-  exceptions, and should assert each expected file was rewritten, rather than
-  trusting the exit code. Upstream bug worth reporting with `component.puml` as
-  the repro.
+  and the process still returns 0. **Fixed in v2.15.0**: the job scans the
+  render log for exceptions and asserts every source produced a non-trivial
+  SVG (>20 KB), because the exit code cannot be trusted. Both halves were
+  verified against 1.2026.5, which the new check correctly rejects.
 - **The pinned version has never matched the committed SVGs, and the version
   that does can't be pinned.** CI pins stable `1.2026.5`; all three committed
   SVGs carry `<?plantuml 1.2026.7beta11?>`, a build published only under

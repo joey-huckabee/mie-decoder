@@ -66,7 +66,7 @@ cargo clippy --all-targets  # Lint (if installed)
 
 Three coverage aliases are pre-wired in `.cargo/config.toml`: `cargo cov`
 (local HTML report), `cargo cov-lcov` (writes `lcov.info`), and `cargo cov-ci`
-(the enforced 87% line / 86% region gate). See
+(the enforced 90% line / 89% region gate). See
 [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the full development workflow and
 [`docs/MAINTAINER-GUIDE.md`](../docs/MAINTAINER-GUIDE.md) for repo conventions.
 

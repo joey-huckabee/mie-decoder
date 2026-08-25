@@ -2,13 +2,15 @@
 
 ## Purpose
 
-This document establishes the Level 1 (L1) SHALL-statement requirements for MIE-Decoder: maintained Rust and Python libraries plus CLIs that decode proprietary binary recording files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI cards into CSV output that is column-compatible with DDC's own recording software.
+This document establishes the Level 1 (L1) SHALL-statement requirements for MIE-Decoder: maintained Rust, Python and C++ libraries plus CLIs that decode proprietary binary recording files produced by Data Device Corporation (DDC) MIL-STD-1553 PCI cards into CSV output that is column-compatible with DDC's own recording software.
 
 L1 requirements define **what** the product must do at the highest level of abstraction. They are the root of the requirements tree; L2 requirements decompose each L1 into architectural decisions, and L3 requirements decompose each L2 into implementation-level obligations. All three levels are traced through `docs/TRACE-MATRIX.md`.
 
 ## Scope
 
-This document covers the active two-implementation release (Rust under `rust/`, Python under `python/`). Items explicitly out of scope are recorded in the **Non-Requirements** section below. Items deferred to future releases are recorded in `docs/ROADMAP.md` rather than in this document.
+This document covers the active **three-implementation** release: Rust under `rust/`, Python under `python/`, and C++ under `cpp/`. All three ship from a single repository tag at one version number, and every requirement below binds all three unless it names an implementation explicitly. Where a statement below says "both implementations" it predates the C++ port and is to be read as binding all three; the cross-implementation conformance suite (`tests/conformance/`) runs every registered implementation and fails if one is missing, so the binding is enforced rather than asserted.
+
+Items explicitly out of scope are recorded in the **Non-Requirements** section below. Items deferred to future releases are recorded in `docs/ROADMAP.md` rather than in this document.
 
 ## Conventions
 
