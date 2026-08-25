@@ -25,7 +25,7 @@ namespace cli {
 
 namespace {
 
-const char* const kVersion = "2.14.0";
+const char* const kVersion = "2.15.0";
 
 const char* const kHelp =
     "mie-decoder -- DDC MIL-STD-1553 MIE binary decoder\n"

@@ -17,6 +17,8 @@ shared behavior) holds at any compatible version pair. See
 
 ## [Unreleased]
 
+## [2.15.0] — 2026-08-25
+
 ### Changed
 
 - **An unsupported `--format` is now a usage error (exit `4`), not a runtime
@@ -4833,7 +4835,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.14.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.0...HEAD
+[2.15.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.14.0...v2.15.0
 [2.14.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...v2.12.0
