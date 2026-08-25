@@ -295,7 +295,7 @@ impl fmt::Display for MieError {
             } => write!(
                 f,
                 "Record error at offset 0x{offset:X}: \
-                 First record after header detection is truncated — \
+                 First record after header detection is truncated -- \
                  Type Word declares {record_bytes} bytes but only \
                  {available_bytes} bytes remain in file"
             ),

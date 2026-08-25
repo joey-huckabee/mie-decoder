@@ -405,7 +405,7 @@ void MergedSource::advance(std::size_t file_index) {
             MIE_LOG_WARN("merge: input #" + text::decimal(file_index) + " (" + paths_[file_index] +
                          ") is not internally time-sorted: timestamp stepped backward (prev_us=" +
                          text::decimal(prev_us_[file_index]) + " curr_us=" + text::decimal(us) +
-                         ") — merged output may be out of order for this input (further "
+                         ") -- merged output may be out of order for this input (further "
                          "occurrences suppressed)");
         }
     }

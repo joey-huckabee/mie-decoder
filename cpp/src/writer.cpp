@@ -483,7 +483,7 @@ WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
             MIE_LOG_INFO("wrote " + text::decimal(error_rows) + " error/spurious rows to " +
                          errors_path);
         } else {
-            MIE_LOG_INFO("no error/spurious records \xE2\x80\x94 error file not created");
+            MIE_LOG_INFO("no error/spurious records -- error file not created");
         }
         return outcome;
     }

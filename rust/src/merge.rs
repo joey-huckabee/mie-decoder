@@ -481,7 +481,7 @@ impl<'a> MergedRecordIter<'a> {
                         self.warned_backward[file_index] = true;
                         log_warn!(
                             "merge: input #{} ({}) is not internally time-sorted: \
-                                 timestamp stepped backward (prev_us={} curr_us={}) — merged \
+                                 timestamp stepped backward (prev_us={} curr_us={}) -- merged \
                                  output may be out of order for this input \
                                  (further occurrences suppressed)",
                             file_index,

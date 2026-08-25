@@ -701,7 +701,7 @@ def _write_csv_to_stream(
         # here with one is defensive).
         if not is_broken_pipe(exc):
             raise
-        logger.info("Stdout consumer closed early (broken pipe) — exit 0")
+        logger.info("Stdout consumer closed early (broken pipe) -- exit 0")
         return WriteOutcome(normal_count=writer.rows_written, error_count=0, partial=None)
     except MieUnrecoverableSyncLossError:
         if not opts.allow_partial:
@@ -832,7 +832,7 @@ def _commit_split_outputs(
             errors_atomic.commit()
             logger.info("wrote %d error/spurious rows to %s", error_count, error_path)
         else:
-            logger.info("no error/spurious records — error file not created")
+            logger.info("no error/spurious records -- error file not created")
         return WriteOutcome(normal_count=normal_count, error_count=error_count, partial=None)
 
     # Partial path: commit each file as .partial (errors first, then main,

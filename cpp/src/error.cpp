@@ -159,7 +159,7 @@ MieError MieError::first_record_truncated(uint64_t offset, uint64_t record_bytes
     // Rust emits the same character here, and the two strings are compared.
     MieError e(KIND_FIRST_RECORD_TRUNCATED,
                record_prefix(offset) +
-                   "First record after header detection is truncated \xE2\x80\x94 Type Word "
+                   "First record after header detection is truncated -- Type Word "
                    "declares " +
                    text::decimal(record_bytes) + " bytes but only " +
                    text::decimal(available_bytes) + " bytes remain in file");

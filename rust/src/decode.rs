@@ -305,7 +305,7 @@ pub fn validate_structural_invariants(
             kind: WhichInvariant::DirectionBcToRt,
             severity: InvariantSeverity::Reject,
             detail: format!(
-                "Type 0x02 (BC→RT) requires Cmd direction = Receive; got Transmit \
+                "Type 0x02 (BC->RT) requires Cmd direction = Receive; got Transmit \
                  (raw Cmd = 0x{:04X})",
                 cmd.raw
             ),
@@ -316,7 +316,7 @@ pub fn validate_structural_invariants(
             kind: WhichInvariant::DirectionRtToBc,
             severity: InvariantSeverity::Reject,
             detail: format!(
-                "Type 0x04 (RT→BC) requires Cmd direction = Transmit; got Receive \
+                "Type 0x04 (RT->BC) requires Cmd direction = Transmit; got Receive \
                  (raw Cmd = 0x{:04X})",
                 cmd.raw
             ),

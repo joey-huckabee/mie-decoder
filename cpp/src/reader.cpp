@@ -291,13 +291,13 @@ TimestampFormat MieFileReader::resolve_auto_format(const sync::ScanHit& hit,
         case decode::CONFIDENCE_MARGINAL:
             MIE_LOG_INFO(std::string("auto-detected timestamp format: ") +
                          timestamp_format_name(outcome.format) + " (Marginal: " + scores +
-                         ") \xE2\x80\x94 pass --time-format to force the choice if this is wrong");
+                         ") -- pass --time-format to force the choice if this is wrong");
             break;
         case decode::CONFIDENCE_AMBIGUOUS:
             if (strict_) {
                 MIE_LOG_ERROR("timestamp-format auto-detection is ambiguous in " + path_ +
                               " starting at offset " + hex(hit.offset) + ": " + scores +
-                              " \xE2\x80\x94 strict mode rejects ambiguous files; pass "
+                              " -- strict mode rejects ambiguous files; pass "
                               "--time-format to force the choice");
                 error.reset(new MieError(MieError::timestamp_format_mismatch(
                     static_cast<uint64_t>(hit.offset), outcome.irig_score, outcome.std_score,
@@ -305,7 +305,7 @@ TimestampFormat MieFileReader::resolve_auto_format(const sync::ScanHit& hit,
             } else {
                 MIE_LOG_WARN(std::string("auto-detected timestamp format: ") +
                              timestamp_format_name(outcome.format) + " (Ambiguous: " + scores +
-                             ") \xE2\x80\x94 using best guess; pass --time-format to force the "
+                             ") -- using best guess; pass --time-format to force the "
                              "choice or --strict to reject ambiguous files");
             }
             break;
@@ -337,7 +337,7 @@ TimestampFormat MieFileReader::check_forced_format(const sync::ScanHit& hit,
                       timestamp_format_name(time_format_) + " contradicts the recording in " +
                       path_ + " at offset " + hex(hit.offset) + ": detection is decisive for " +
                       timestamp_format_name(outcome.format) + " (" + scores +
-                      ") \xE2\x80\x94 strict mode rejects the mismatch; drop --time-format to "
+                      ") -- strict mode rejects the mismatch; drop --time-format to "
                       "auto-detect");
         error.reset(new MieError(MieError::timestamp_format_mismatch(
             static_cast<uint64_t>(hit.offset), outcome.irig_score, outcome.std_score,
@@ -347,7 +347,7 @@ TimestampFormat MieFileReader::check_forced_format(const sync::ScanHit& hit,
                      " contradicts the recording at offset " + hex(hit.offset) +
                      ": detection is decisive for " + timestamp_format_name(outcome.format) + " (" +
                      scores +
-                     ") \xE2\x80\x94 decoding with the forced format anyway; drop --time-format to "
+                     ") -- decoding with the forced format anyway; drop --time-format to "
                      "auto-detect or pass --strict to reject the mismatch");
     }
 
@@ -369,7 +369,7 @@ bool MieFileReader::diagnose_no_records(const Optional<TimestampFormat>& format_
     uint16_t lead = 0;
     if (decode::read_u16(data, file_len, 0, lead) && decode::is_terminator_type_word(lead)) {
         MIE_LOG_WARN(path_ +
-                     ": recording contains no records \xE2\x80\x94 the stream opens on the "
+                     ": recording contains no records -- the stream opens on the "
                      "end-of-records terminator (empty capture); writing header-only output");
         empty_recording_ = true;
         return true;
@@ -395,7 +395,7 @@ bool MieFileReader::diagnose_no_records(const Optional<TimestampFormat>& format_
         }
         MIE_LOG_WARN("first record after header detection is truncated at " + hex(trunc_offset) +
                      ": declared " + dec(record_bytes) + " bytes, only " + dec(available) +
-                     " available \xE2\x80\x94 lenient mode terminates cleanly with zero records");
+                     " available -- lenient mode terminates cleanly with zero records");
         return true;
     }
 
@@ -716,11 +716,7 @@ bool RecordIter::decode_timestamp_at(TimestampFormat resolved, Timestamp& out) {
         MIE_LOG_WARN(
             "IRIG day-of-year decoded for this recording; the day-of-year field has a known "
             "firmware-dependent discrepancy on some DDC cards (hour/minute/second/microsecond "
-            // The section sign is split from the digit that follows it on purpose: a hex
-            // escape in C++ is greedy, so "\xA75" is ONE out-of-range escape rather than
-            // the section sign followed by a 5. GCC rejects it; MSVC accepts it.
-            "are unaffected) \xE2\x80\x94 see docs/VENDOR-CSV-DIFFS.md \xC2\xA7"
-            "5");
+            "are unaffected) -- see docs/VENDOR-CSV-DIFFS.md section 5");
     }
     out = Timestamp::from_irig(irig);
     return true;

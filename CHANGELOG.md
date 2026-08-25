@@ -15,6 +15,8 @@ full release workflow.
 
 ## [Unreleased]
 
+## [2.14.0] — 2026-08-24
+
 ### Added
 
 - **Rust and C++ now honour `--`, the POSIX end-of-options separator.** Without
@@ -242,6 +244,101 @@ full release workflow.
   future move away from `argparse` cannot drift silently.
 
 ### Fixed
+
+- **Help text and log messages rendered as garbage on a Windows console.**
+  `mie-decoder --help` opened with `mie-decoder ΓÇö DDC MIL-STD-1553 MIE binary
+  decoder`, and the IRIG day-of-year advisory ended `... ΓÇö see
+  docs/VENDOR-CSV-DIFFS.md ┬º5`. All three implementations did it, identically.
+
+  Nothing was wrong with the bytes. Every implementation writes UTF-8
+  unconditionally, and a stock Windows console runs at the OEM code page — 437
+  in a US install — where the em dash's three UTF-8 bytes `e2 80 94` are drawn
+  as three unrelated glyphs. It is worth naming the real cost: unexplained
+  characters in a decoder's own diagnostics look like a memory-safety bug, and
+  that is how this was reported. The C++ suite passes clean under ASan, UBSan,
+  LSan and Valgrind; the same three bytes come out of the Rust binary.
+
+  Only three characters were ever involved — U+2014 em dash, U+2192 arrow,
+  U+00A7 section sign — over 46 sites. They are now `--`, `->` and `section`.
+  Wording is unchanged otherwise, and all three implementations still emit
+  byte-identical text.
+
+  **This had been half-fixed once already, and the half is the interesting
+  part.** `L2-CLI-014` (v2.12.0) moved the `dump` report to ASCII but wrote an
+  explicit carve-out: stdout *payload* was bound by the rule, stderr *prose*
+  was not, on the reasoning that payload is piped and diffed while prose is
+  merely read. That inverts the risk. A payload is usually read by a program,
+  which either copes or fails loudly; prose is read by a person, on whatever
+  console they have. Every one of the 46 sites was in the exempted half. The
+  requirement now binds **every byte written to stdout or stderr**, and forbids
+  fixing a rendering problem with `SetConsoleOutputCP` or a stream-encoding
+  reconfiguration — both are per-platform, both leave redirected output wrong,
+  and the former adds OS surface to a platform layer confined to five concerns.
+
+  Enforced by `scripts/assert-ascii-output.py`, wired into
+  `scripts/repo-hygiene.sh` and the pre-commit hook. It parses string literals
+  rather than grepping bytes, which is what the previous pass needed and did
+  not have: C++ spelled its em dash `"\xE2\x80\x94"`, pure ASCII on disk and
+  non-ASCII on the wire, so a byte-level scan of the tree reported it clean.
+  Comments and doc comments are exempt — they are never written to a stream —
+  and test sources are not scanned, since they legitimately build non-ASCII
+  strings to prove the decoder handles them (the UTF-8 `?` glob cases).
+
+  Removing the characters also retired two C++ workarounds that existed only to
+  survive them. C++ hex escapes are greedy, so `"\x92BC"` is one out-of-range
+  escape rather than an arrow followed by `BC`; two literals had been split
+  mid-word to dodge it, one of them with a comment noting that the neighbouring
+  near-identical string did not need the split only because `R` is not a hex
+  digit.
+
+- **C++ answered help and version from a scan over the whole command line.**
+  It could not tell a help token apart from one being consumed as a flag's
+  **value**, and did not know where the subcommand began. C++ was the only
+  implementation doing either, on six shapes:
+
+  | invocation | was | now (and in the other two) |
+  |---|---|---|
+  | `decode rec.mie --version` | prints version, `0` | unknown option, `4` |
+  | `--log-level -h` | prints help, `0` | usage error, `4` |
+  | `--config --help` | prints help, `0` | usage error, `4` |
+  | `decode --mux-delimiter -h rec.mie` | prints help, `0` | usage error, `4` |
+  | `decode --mux-delimiter -h --help` | prints help, `0` | usage error, `4` |
+  | `--log-level --nonsense --help` | prints help, `0` | usage error, `4` |
+
+  Help and version are now resolved **positionally**, and the property the
+  scan actually existed for — help remaining reachable from a broken command
+  line — is kept by asking whether a help request is still *pending* when the
+  parse gives up, rather than assuming one anywhere on the line counts. The
+  deferred-versus-consumption split is expressed exactly as in Rust: the
+  argument reader abandons the rest of the line when a flag cannot take its
+  value, so `--log-level -h` has nothing pending.
+
+  Across a 26-shape three-way matrix, outliers went from **7 to 1**. The
+  survivor is `--max-sort-group abc --help`, where Python exits `4` because
+  `argparse` wires that one flag's conversion in via `type=int` — an
+  implementation accident, recorded in `L2-CLI-017` rather than reproduced.
+
+  Four conformance cases now pin this cross-implementation; none of them could
+  be written before, because pinning requires all three to agree. Both
+  directions were proven non-vacuous by planting: making the reader's abandon
+  a no-op fails the consumption case, and making "is help pending" always
+  false fails the deferred case.
+
+- **`expected_stderr_contains` was never evaluated on a negative conformance
+  case.** The assertion sat *after* the `expected_exit != 0` short-circuit, so
+  on any case with a non-zero expected exit the needle could not fail. **Seven
+  cases** carried a dormant assertion — five of them pre-existing, including
+  the ones meant to pin *which* error a strict-mode or merge-incompatible run
+  produces rather than merely that one occurred.
+
+  Found while adding a case that depended on it, and proven by planting an
+  impossible needle: the case still passed. All seven turn out to have been
+  correct, so nothing was hiding behind it — but the check now runs, and the
+  same plant fails.
+
+  This is the third gate in this area found to be asserting less than it
+  appeared to, after the trace-matrix collector dropping requirement ids and
+  the diagrams job never comparing its renders.
 
 - **Rust reported the error instead of answering a pending `--help`.**
   `decode --nonsense --help` printed help in C++ and Python and reported the
@@ -4599,7 +4696,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.13.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.14.0...HEAD
+[2.14.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.1...v2.12.0
 [2.11.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.11.0...v2.11.1

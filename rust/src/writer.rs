@@ -797,7 +797,7 @@ fn commit_split_outputs(
                 error_path.display()
             );
         } else {
-            log_info!("no error/spurious records — error file not created");
+            log_info!("no error/spurious records -- error file not created");
         }
         return Ok(WriteOutcome {
             normal_count,

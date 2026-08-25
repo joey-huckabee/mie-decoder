@@ -255,24 +255,16 @@ bool validate_structural_invariants(const TypeWord& tw, const CommandWord& cmd,
     // L2-SYN-020: BC-to-RT must be a Receive command.
     if (tw.message_type == MESSAGE_TYPE_BC_TO_RT && cmd.direction != DIRECTION_RECEIVE) {
         out = InvariantViolation(INVARIANT_DIRECTION_BC_TO_RT, SEVERITY_REJECT,
-                                 "Type 0x02 (BC\xE2\x86\x92RT) requires Cmd direction = Receive; "
+                                 "Type 0x02 (BC->RT) requires Cmd direction = Receive; "
                                  "got Transmit (raw Cmd = 0x" +
                                      text::hex_upper(cmd.raw, 4) + ")");
         return false;
     }
 
     // L2-SYN-021: RT-to-BC must be a Transmit command.
-    //
-    // The arrow is U+2192, written as UTF-8 bytes. The literal is SPLIT after
-    // the escape because a hex escape in C++ is greedy: "\x92BC" parses as one
-    // escape with value 0x92BC, which is out of range for a char and is a
-    // -Werror diagnostic. The BC-to-RT message above happens not to need the
-    // split only because 'R' is not a hex digit -- which makes this a trap that
-    // fires on one of two adjacent, near-identical strings.
     if (tw.message_type == MESSAGE_TYPE_RT_TO_BC && cmd.direction != DIRECTION_TRANSMIT) {
         out = InvariantViolation(INVARIANT_DIRECTION_RT_TO_BC, SEVERITY_REJECT,
-                                 "Type 0x04 (RT\xE2\x86\x92"
-                                 "BC) requires Cmd direction = Transmit; "
+                                 "Type 0x04 (RT->BC) requires Cmd direction = Transmit; "
                                  "got Receive (raw Cmd = 0x" +
                                      text::hex_upper(cmd.raw, 4) + ")");
         return false;

@@ -25,13 +25,13 @@ use crate::{log_error, log_info, log_warn};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const HELP: &str = "\
-mie-decoder — DDC MIL-STD-1553 MIE binary decoder
+mie-decoder -- DDC MIL-STD-1553 MIE binary decoder
 
 USAGE:
   mie-decoder [--log-level L] [--config PATH] <command> [options]
 
 COMMANDS:
-  decode <INPUT>... Decode MIE file(s) to CSV (2+ inputs → time-sorted merge)
+  decode <INPUT>... Decode MIE file(s) to CSV (2+ inputs -> time-sorted merge)
   count  <INPUT>    Print message count (no CSV)
   dump   <INPUT>    Hex dump (raw or record-aware)
 
@@ -74,7 +74,7 @@ DECODE OPTIONS:
                                         When set, Standard timestamps are
                                         converted to microseconds and join
                                         DELTA tracking. Must be > 0
-                                        (default: unset → empty DELTA for
+                                        (default: unset -> empty DELTA for
                                         Standard). L2-DEC-017.
   --strict                              Raise on invalid records
   --format csv                          Output format (csv only at present)
@@ -888,7 +888,7 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
     }
     if methods > 1 {
         return Err(
-            "decode accepts only one input method: positional paths, --manifest, or --glob — not a combination"
+            "decode accepts only one input method: positional paths, --manifest, or --glob -- not a combination"
                 .to_string()
                 .into(),
         );
@@ -1586,7 +1586,7 @@ fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), CliError> {
     println!("{count}");
     if reader.empty_recording() {
         eprintln!(
-            "no records in {} (empty recording — opens on the end-of-records terminator)",
+            "no records in {} (empty recording -- opens on the end-of-records terminator)",
             reader.path().display()
         );
     } else {
@@ -2617,6 +2617,59 @@ mod tests {
                 );
             }
             Ok(_) => panic!("expected over-cap usage error"),
+        }
+    }
+
+    /// Requirements: L2-CLI-014
+    ///
+    /// The help banner is prose on a stream, and L2-CLI-014 binds prose to the
+    /// same ASCII rule as payload. It did not always: the rule once exempted
+    /// stderr prose, and this banner opened with a U+2014 em dash that a
+    /// Windows console -- which runs at the OEM code page, not UTF-8 -- drew
+    /// as three unrelated glyphs. Operators reported it as memory corruption.
+    ///
+    /// `scripts/assert-ascii-output.py` enforces this across all three trees at
+    /// the source level. This test is the runtime half, on the string that is
+    /// actually written.
+    ///
+    /// Written as a computed value plus one assertion rather than a `panic!`
+    /// arm: a failure branch is by definition never taken while the property
+    /// holds, so it reads as uncovered new code on every release that does not
+    /// break it.
+    #[test]
+    fn help_text_is_pure_ascii() {
+        let offenders: Vec<(usize, char)> = HELP
+            .char_indices()
+            .filter(|(_, c)| !c.is_ascii())
+            .map(|(i, c)| (HELP[..i].lines().count(), c))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "HELP carries non-ASCII at (line, char): {offenders:?}"
+        );
+    }
+
+    /// Requirements: L2-CLI-014
+    ///
+    /// The same rule, on the other kind of prose: a diagnostic an operator sees
+    /// on stderr. Both were mojibake on a stock Windows console.
+    #[test]
+    fn error_messages_are_pure_ascii() {
+        let messages = [
+            MieError::FirstRecordTruncated {
+                offset: 0x40,
+                record_bytes: 80,
+                available_bytes: 12,
+            }
+            .to_string(),
+            MieError::NoValidRecords {
+                path: PathBuf::from("rec.mie"),
+                scan_bytes: 4096,
+            }
+            .to_string(),
+        ];
+        for message in &messages {
+            assert!(message.is_ascii(), "diagnostic is not ASCII: {message}");
         }
     }
 }
