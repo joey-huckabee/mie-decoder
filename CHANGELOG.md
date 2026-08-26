@@ -17,6 +17,92 @@ shared behavior) holds at any compatible version pair. See
 
 ## [Unreleased]
 
+## [2.15.1] — 2026-08-25
+
+Test and CI infrastructure only. No decoder, library-API or CLI behaviour
+changes; the three implementations decode exactly what they decoded at 2.15.0.
+
+### Fixed
+
+- **The fuzz burn-in's `stream_logs` input only ever controlled one of the three
+  jobs.** It was documented as choosing whether the harnesses' WARN/ERROR
+  diagnostics stream into the job log, implemented as `cargo test --nocapture` /
+  `pytest -s`. Neither flag reaches the code that writes: Rust's `log::emit`
+  goes through `std::io::stderr().lock()` and libtest's capture only intercepts
+  the `print!` / `eprint!` macros, and the C++ logger writes to the stderr file
+  descriptor, which Catch2 does not redirect. So the Rust and C++ jobs streamed
+  unconditionally — a measured ~43 MB and ~40 MB per scheduled run — while
+  pytest captured Python's and showed 257 lines total. The input controlled the
+  one job whose output it was hardest to see.
+
+  Silencing is now the harness's job. All three read `MIE_FUZZ_STREAM_LOGS`, and
+  default to setting the decoder's log level to `OFF` — which also skips the
+  formatting work, not just the write. Python previously formatted every one of
+  roughly a quarter-million WARN records before pytest discarded them.
+
+- **A Catch2 test-ordering hazard, found by the above.** Silencing the C++
+  logger inside the fuzz case left the process-global level at `OFF` for every
+  case that ran after it, and `test_log.cpp`'s "the default level is WARN"
+  failed with `4 == 2` — pointing at a file the fuzz harness never touches. The
+  level is now set through an RAII guard, so a `FAIL` unwinding past it still
+  restores. Rust deliberately does *not* restore: libtest runs that binary's
+  tests in parallel threads, where a scope guard would restore the level while a
+  sibling test was still running.
+
+### Changed
+
+- **The C++ burn-in runs the fuzz cases only.** It ran `make -C cpp check` — the
+  whole suite, from a cold build — so a job whose entire purpose was to raise the
+  fuzz iteration count spent most of its wall time elsewhere, and Catch2 reports
+  no per-case duration without `-d yes` to recover the fuzz portion from the
+  total. New `make -C cpp check-fuzz` target runs `[fuzz]`; `make check` is
+  unchanged and still the single unparameterised command a developer runs, with
+  the fuzz cases riding along in it at their default iteration count.
+
+- **The burn-in covers Windows as well as Linux.** The C++ platform layer is
+  entirely different code there — file mapping, path identity, binary stdout
+  (ADR-0003) — and mapping a file is the first thing every one of these
+  harnesses does with its garbage input. Rust's and Python's mapping paths
+  differ by platform too. `ci.yml` and `cpp-ci.yml` already built and tested all
+  three on Windows, but only ever at the 256-iteration default; the deep sweep
+  ran on Linux alone.
+
+### Added
+
+- **Every fuzz harness now emits one `FUZZ-SUMMARY` line, and a new
+  `fuzz-compare` job diffs them all-pairs.** The three harnesses have always
+  shared a generator — same xorshift64, same seed, same draw order, so iteration
+  N is the same bytes in all three — but they never shared an assertion: each
+  proved, in its own process and its own framework, that it did not crash. Three
+  implementations could each survive the same input while decoding it
+  differently and nothing would notice. The summary reports inputs, bytes
+  generated, readers opened, records yielded and errors, and
+  `scripts/compare-fuzz-summaries.py` fails the run if any two disagree — no
+  majority rule and no reference implementation, the same reasoning recorded in
+  `tests/conformance/differential.py`.
+
+  It is a coarse check by design: it compares run *totals*, so it catches a
+  disagreement about how many records a file yields but not two implementations
+  decoding the same record to different values. Per-input differential fuzzing
+  is the follow-on, written up in `docs/FUZZING.md` 6.1.
+
+  Every counter is path-independent, which is not a detail: the first version
+  counted dump output in bytes and Rust and Python disagreed by a constant
+  offset that turned out to be the length of the input path in the dump header.
+  The harnesses count output *lines*.
+
+- **`docs/FUZZING.md`** — the map of what is fuzzed, by which implementation,
+  under which driver, and what is deliberately not fuzzed yet. Records the two
+  fuzzing architectures in the repo (per-language in-process harnesses versus
+  the shared all-pairs differential drivers in `tests/conformance/`), the parity
+  gaps, and the rule that governs the area: **a fuzz surface is exercised by all
+  three implementations or by none.**
+
+- **`repo-hygiene.sh` now scans `fuzz.yml` for undocumented CI jobs.** The
+  MAINTAINER-GUIDE §9 check covered `ci.yml`, `cpp-ci.yml` and
+  `differential.yml`, so the fuzz jobs were the one set nothing required to be
+  described. Verified to fail on a planted violation as well as to pass clean.
+
 ## [2.15.0] — 2026-08-25
 
 ### Changed
@@ -4835,7 +4921,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.1...HEAD
+[2.15.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.14.0...v2.15.0
 [2.14.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.12.0...v2.13.0
