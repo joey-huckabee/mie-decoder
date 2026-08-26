@@ -345,6 +345,25 @@ jobs:
             # repository rather than only in SonarCloud so it survives for
             # someone reading the source.
             #
+            # ----------------------------------------------------------------
+            # merge.py: the same flow, at its SOURCE
+            # ----------------------------------------------------------------
+            #
+            # S8707 fires again on `read_manifest`, which is where the taint
+            # the reader.py entry above describes actually enters: the CONTENTS
+            # of a --manifest file. The justification is identical and is
+            # written out there -- a manifest's contents are exactly as trusted
+            # as the operator who chose that manifest, and reading the files it
+            # lists is the documented purpose of --manifest (L2-MRG-001).
+            #
+            # WHY IT IS HERE NOW AND WAS NOT BEFORE. It was resolved Won't Fix
+            # in SonarCloud against merge.py:58. v2.16.0 rewrote that function
+            # to open the stream with `newline=""` (the manifest grammar fix),
+            # the line moved, and the finding came back as NEW code -- failing
+            # a gate on a judgement that had already been made. That is exactly
+            # the failure mode the comment above warns about: a resolution that
+            # lives only in SonarCloud does not survive the code being edited.
+            # Recording it here makes it survive.
             # This is the first S2083 suppression in this repository, taken
             # deliberately rather than as a step in a release -- which is what
             # docs/ROADMAP.md asked for. Both entries stay scoped to one rule in
@@ -563,7 +582,7 @@ jobs:
             #   cppcheck 2.13 cannot parse `throw() = default` and reports
             #   internalAstError, degrading its analysis of the whole file.
             #   Attempted twice, reverted twice; the sites carry NOLINT now.
-            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,dumpEmitTaint,tempFilePermissions,cppMemberInitNsdmi,readerMsvcCast,decodeSectionBanner,cppRawForLoop,cppHiddenFriend,cppEnumClass,cppCArray,cppLogModuleMacro,cppParamCount,cppCognitiveComplexity,cppNestedBreak,cppMutableGlobal,cppRelaxedAtomic,cppEqualsDefaultThrow,cppOptionalImplicit,cppPlatformVoidPtr,cppTopLevelCatch,cppEmptyCatch,cppCatchAll,cppLookaheadLoop,cppNonOwningIter,cppSinkFnPointer,cppReinterpretFd,cppMunmapConstCast,cppRealpathFree"
+            "-Dsonar.issue.ignore.multicriteria=agenticPathInjection,readerPathInjection,readerAgenticPathInjection,mergeAgenticPathInjection,dumpEmitTaint,tempFilePermissions,cppMemberInitNsdmi,readerMsvcCast,decodeSectionBanner,cppRawForLoop,cppHiddenFriend,cppEnumClass,cppCArray,cppLogModuleMacro,cppParamCount,cppCognitiveComplexity,cppNestedBreak,cppMutableGlobal,cppRelaxedAtomic,cppEqualsDefaultThrow,cppOptionalImplicit,cppPlatformVoidPtr,cppTopLevelCatch,cppEmptyCatch,cppCatchAll,cppLookaheadLoop,cppNonOwningIter,cppSinkFnPointer,cppReinterpretFd,cppMunmapConstCast,cppRealpathFree"
             "-Dsonar.issue.ignore.multicriteria.cppHiddenFriend.ruleKey=cpp:S2807"
             "-Dsonar.issue.ignore.multicriteria.cppHiddenFriend.resourceKey=cpp/**"
             "-Dsonar.issue.ignore.multicriteria.cppEnumClass.ruleKey=cpp:S3642"
@@ -624,6 +643,8 @@ jobs:
             "-Dsonar.issue.ignore.multicriteria.readerPathInjection.resourceKey=python/src/mie_decoder/reader.py"
             "-Dsonar.issue.ignore.multicriteria.readerAgenticPathInjection.ruleKey=pythonsecurity:S8707"
             "-Dsonar.issue.ignore.multicriteria.readerAgenticPathInjection.resourceKey=python/src/mie_decoder/reader.py"
+            "-Dsonar.issue.ignore.multicriteria.mergeAgenticPathInjection.ruleKey=pythonsecurity:S8707"
+            "-Dsonar.issue.ignore.multicriteria.mergeAgenticPathInjection.resourceKey=python/src/mie_decoder/merge.py"
           )
 
           # A manual or scheduled run on a NON-default ref must be labelled as
