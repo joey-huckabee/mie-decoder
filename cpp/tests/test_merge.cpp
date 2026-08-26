@@ -120,6 +120,103 @@ TEST_CASE("glob_match implements exactly the documented wildcards", "[merge][L3-
     }
 }
 
+/// The manifest grammar, pinned exactly, because leaving it at "one path per
+/// line" is how three implementations came to disagree four different ways.
+///
+/// Every one was found by the merge fuzz harness comparing its FUZZ-SUMMARY
+/// counters against Rust's and Python's, and every one is now spelled out in
+/// L2-MRG-001:
+///
+///   * `\n` is the ONLY line separator. Python used `str.splitlines()`, which
+///     also breaks on vertical tab, form feed, U+0085 and U+2028/9 -- none of
+///     which ends a line in a manifest, all of which are legal in a POSIX
+///     filename.
+///   * At most ONE trailing `\r` is stripped, so CRLF works and a filename
+///     containing a bare CR survives. THIS implementation dropped every `\r`
+///     in the line, and Python's reader translated a lone `\r` to `\n` before
+///     the parser ever saw it.
+///   * Trimming is ASCII space and tab ONLY. Rust's `str::trim` and Python's
+///     `str.strip` also remove U+00A0, U+3000 and the rest; this
+///     implementation is locale-free by rule and cannot, so two
+///     implementations silently edited a filename the third passed through.
+///   * A manifest is a TEXT file. This one accepted arbitrary bytes as paths;
+///     the other two refuse ill-formed UTF-8, and 498 of 512 generated
+///     manifests were rejected there and decoded here.
+///
+/// Mirrors `read_manifest_grammar_is_exactly_specified` in Rust and Python.
+TEST_CASE("read_manifest grammar is exactly specified", "[merge][L2-MRG-001][L3-CPP-019]") {
+    SECTION("only newline separates lines") {
+        // A form feed, a vertical tab and U+0085 are all part of the filename.
+        const TempFile ff("mie-manifest-ff.txt", std::string("a.mie\014b.mie\n"));
+        std::vector<std::string> paths;
+        mie::platform::OsError err;
+        REQUIRE(mie::merge::read_manifest(ff.str(), paths, err));
+        REQUIRE(paths.size() == 1u);
+        CHECK(paths[0] == std::string("a.mie\014b.mie"));
+
+        const TempFile nel("mie-manifest-nel.txt", std::string("a.mie\302\205b.mie\n"));
+        REQUIRE(mie::merge::read_manifest(nel.str(), paths, err));
+        REQUIRE(paths.size() == 1u);
+        CHECK(paths[0] == std::string("a.mie\302\205b.mie"));
+    }
+
+    SECTION("one trailing carriage return is the terminator, an interior one is not") {
+        const TempFile crlf("mie-manifest-crlf.txt", std::string("a.mie\r\nb.mie\r\n"));
+        std::vector<std::string> paths;
+        mie::platform::OsError err;
+        REQUIRE(mie::merge::read_manifest(crlf.str(), paths, err));
+        REQUIRE(paths.size() == 2u);
+        CHECK(paths[0] == "a.mie");
+        CHECK(paths[1] == "b.mie");
+
+        const TempFile inner("mie-manifest-cr.txt", std::string("a\rb.mie\n"));
+        REQUIRE(mie::merge::read_manifest(inner.str(), paths, err));
+        REQUIRE(paths.size() == 1u);
+        CHECK(paths[0] == std::string("a\rb.mie"));
+    }
+
+    SECTION("ASCII blanks are trimmed and Unicode spaces are not") {
+        const TempFile blanks("mie-manifest-blank.txt", std::string(" \ta.mie\t \n"));
+        std::vector<std::string> paths;
+        mie::platform::OsError err;
+        REQUIRE(mie::merge::read_manifest(blanks.str(), paths, err));
+        REQUIRE(paths.size() == 1u);
+        CHECK(paths[0] == "a.mie");
+
+        // U+00A0 NO-BREAK SPACE is part of the name, not padding.
+        const TempFile nbsp("mie-manifest-nbsp.txt", std::string("\302\240a.mie\n"));
+        REQUIRE(mie::merge::read_manifest(nbsp.str(), paths, err));
+        REQUIRE(paths.size() == 1u);
+        CHECK(paths[0] == std::string("\302\240a.mie"));
+    }
+
+    SECTION("ill-formed UTF-8 is refused, not decoded") {
+        std::vector<std::string> paths;
+        mie::platform::OsError err;
+
+        const TempFile bad("mie-manifest-bad.txt", std::string("\377\376\na.mie\n"));
+        CHECK_FALSE(mie::merge::read_manifest(bad.str(), paths, err));
+        CHECK_FALSE(err.ok());
+
+        // The shapes a length-driven decoder waves through: an overlong
+        // encoding of '/', a lone surrogate half, and a truncated sequence.
+        const TempFile overlong("mie-manifest-overlong.txt", std::string("\xC0\xAF\n"));
+        CHECK_FALSE(mie::merge::read_manifest(overlong.str(), paths, err));
+
+        const TempFile surrogate("mie-manifest-surrogate.txt", std::string("\xED\xA0\x80\n"));
+        CHECK_FALSE(mie::merge::read_manifest(surrogate.str(), paths, err));
+
+        const TempFile truncated("mie-manifest-truncated.txt", std::string("a\xE4\xB8"));
+        CHECK_FALSE(mie::merge::read_manifest(truncated.str(), paths, err));
+
+        // Well-formed multi-byte content still parses.
+        const TempFile good("mie-manifest-utf8.txt", std::string("\xE4\xB8\xAD.mie\n"));
+        REQUIRE(mie::merge::read_manifest(good.str(), paths, err));
+        REQUIRE(paths.size() == 1u);
+        CHECK(paths[0] == std::string("\xE4\xB8\xAD.mie"));
+    }
+}
+
 TEST_CASE("read_manifest keeps order and ignores comments", "[merge][L3-CPP-019]") {
     SECTION("blank lines, comments and surrounding blanks are dropped") {
         const TempFile manifest("mie-manifest.txt",
