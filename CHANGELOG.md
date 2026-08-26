@@ -17,6 +17,98 @@ shared behavior) holds at any compatible version pair. See
 
 ## [Unreleased]
 
+## [2.16.0] — 2026-08-26
+
+Closes the fuzzing parity gaps v2.15.1 opened a ledger for, and adds the
+per-input differential fuzzer that ledger pointed at. Doing so found **four real
+divergences in `read_manifest`**, in all three implementations — the first time
+this project has had a check capable of finding them.
+
+### Changed — behaviour
+
+- **The `--manifest` grammar is now specified exactly, and all three
+  implementations obey it.** L2-MRG-001 said only "one path per line; blank lines
+  and `#`-prefixed comment lines ignored", and each implementation filled the
+  gaps with whatever its standard library made easy. They filled them four
+  different ways:
+
+  | Gap | What happened | Outlier |
+  |---|---|---|
+  | Text vs bytes | A `std::string` validates nothing, so C++ accepted arbitrary bytes as paths. 498 of 512 generated manifests were rejected by Rust and Python and decoded by C++. | C++ |
+  | Line separators | `str.splitlines()` also breaks on vertical tab, form feed, U+0085 and U+2028/9 — none of which ends a line in a manifest, all legal in a POSIX filename. One file became two nonexistent ones. | Python |
+  | Carriage returns | C++ dropped **every** `\r` in a line, editing a filename containing one; Python's reader translated a lone `\r` to `\n` before the parser saw it, splitting one path into two. | C++, Python |
+  | Trimming | `str::trim` and `str.strip` remove Unicode whitespace (U+00A0, U+3000, …); the locale-free C++ implementation cannot, so two implementations edited a filename the third passed through. | Rust, Python |
+
+  The grammar is now normative in L2-MRG-001: **UTF-8 required**, `\n` the only
+  separator, at most one trailing `\r` stripped, trimming of **ASCII space and
+  tab only**, blank and `#` lines ignored. The last rule resolves *toward* the
+  constrained implementation — C++ cannot classify Unicode whitespace without
+  embedding a table, and "trim spaces and tabs" is what the format needs.
+
+  **What this changes for you.** A manifest that is not valid UTF-8 is now
+  rejected by C++ as it always was by the other two. A manifest containing a
+  form feed, vertical tab, U+0085 or U+2028 resolves to *one* path in Python now,
+  not two. A path padded with non-breaking spaces keeps them in Rust and Python.
+  Ordinary manifests — UTF-8, one path per line, LF or CRLF — are unaffected.
+
+### Added — fuzzing parity (Stage 2)
+
+- **C++ gained `dump` and merge-input-resolution fuzz harnesses.** It had only
+  the reader one, so the tree with manual bounds arithmetic and no borrow checker
+  was the one fuzzing least. `make check-fuzz` now runs all three.
+- **The merge harness is real fuzzing in all three now.** Python's seeded
+  `random.Random` and covered only the manifest; it now shares the xorshift64
+  generator and drives the glob matcher too. Patterns are drawn from a shared
+  alphabet weighted toward `*` and `?` — the first version drew uniformly over
+  patterns up to 95 characters and matched a probe **zero** times in 512
+  iterations, which is to say it fuzzed the reject path and nothing else. Two
+  alphabet entries and two probes are non-ASCII, because Rust and Python match
+  over scalar values while C++ advances `?` by a whole UTF-8 character.
+- **Python gained the exhaustive decode-digest check** (`L3-PY-017`), which the
+  C++ tree has had since it joined the joint cut. Every one of the 65 536 Type
+  Words, every Command Word and every timestamp field bit is swept through an
+  FNV-1a digest against the constants `rust/examples/decode_digest.rs` prints.
+  All four matched on the first run.
+- **The burn-in now has an instrumented deep run** (`fuzz-cpp-asan`). Until now
+  the raised iteration count applied only to the uninstrumented `-O2` build — the
+  sweep ran precisely where a non-faulting out-of-bounds read goes unnoticed.
+  Valgrind deliberately stays at the default count: one to two orders of
+  magnitude slower for the same fault class here.
+- **The cross-implementation comparison runs on every push**, not only in the
+  nightly burn-in. `differential.yml` runs all three implementations' harnesses
+  at default counts and compares the summaries. A PR introducing a divergence now
+  fails that PR.
+
+### Added — differential record fuzzing (Stage 3)
+
+- **`tests/conformance/record_fuzz.py`** — the record-stream twin of
+  `config_fuzz.py`, and the only check anywhere that compares what the three
+  *decoders produce* on input nobody wrote. It generates a recording, runs
+  `decode` through every implementation's CLI, and compares the exit-code class
+  **and the CSV bytes** all-pairs.
+
+  It is **structure-aware**, because uniform noise is the wrong tool: across a
+  25 000-iteration burn-in random bytes never once produced enough consecutive
+  equal-timestamp records to reach the canonical-order cap branch that all three
+  harnesses' comments claimed they reached "often". The generator instead starts
+  from the committed hex fixtures — every valid record shape the project knows
+  about — concatenates one to three, and then damages them: bit flips,
+  truncation, appended noise, zeroed words, duplicated slices, spliced runs.
+
+  All implementations read **one shared input file**, which is not tidiness:
+  `MUX` is populated from the input file name (L2-WRT-020), so per-implementation
+  copies would put a different value in every CSV and the comparison would fail
+  on the harness rather than on the decoders. On a divergence it prints the input
+  as a ready-to-commit `inputs/*.hex` fixture and names the first differing CSV
+  line.
+
+### Fixed
+
+- **A summary counter that could never have agreed.** `python/tests/` gained
+  `fuzz_support.py` so the generator, the knobs and the summary writer live in
+  one place. They were private helpers on a test class, which is how the merge
+  harness came to use a different PRNG from every other harness in the project.
+
 ## [2.15.1] — 2026-08-25
 
 Test and CI infrastructure only. No decoder, library-API or CLI behaviour
@@ -4921,7 +5013,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.1...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.16.0...HEAD
+[2.16.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.1...v2.16.0
 [2.15.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.14.0...v2.15.0
 [2.14.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.13.0...v2.14.0
