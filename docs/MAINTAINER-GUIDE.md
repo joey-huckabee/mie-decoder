@@ -61,6 +61,7 @@ mie-decoder/
 │   ├── DATA-SCENARIOS.md   data conditions -> CSV / log / exit outcomes
 │   ├── ERROR-CATALOG.md    operator reference for every error / exit code
 │   ├── EXAMPLES.md         runnable cookbook of operator tasks
+│   ├── FUZZING.md          fuzz surfaces, per-impl coverage, parity gaps
 │   ├── MIE-FORMAT.md       comprehensive binary format + CSV column reference
 │   ├── ROADMAP.md          forward-looking roadmap (planned work + commitments)
 │   ├── USER-GUIDE.md       end-to-end walkthrough for analysts / operators
@@ -68,7 +69,8 @@ mie-decoder/
 │   ├── MAINTAINER-GUIDE.md (this file)
 │   └── diagrams/           PlantUML sources and rendered SVGs
 ├── config/default.toml     fully-commented reference TOML schema
-└── .github/workflows/      ci.yml, fuzz.yml
+└── .github/workflows/      ci.yml, cpp-ci.yml, differential.yml, fuzz.yml,
+                            codeql.yml, sonarcloud.yml
 ```
 
 ---
@@ -557,9 +559,39 @@ The Rust and Python deployment targets are Linux. Windows cells exist to catch p
 
 The `diagrams` job pins PlantUML to `1.2026.5`, which is **not** the version that produced the committed SVGs (`1.2026.7beta11`, from the unpinnable rolling `snapshot` pre-release — read the `<?plantuml VERSION?>` processing instruction inside any `docs/diagrams/*.svg`). That mismatch went unnoticed because the job never compares the tracked files at all. Three independent defects and the reproducibility constraint on any replacement are written up under "Diagram rendering" in `ROADMAP.md`.
 
-A separate scheduled workflow, `.github/workflows/fuzz.yml`, runs a deeper L1-ROB-001 fuzz burn-in daily (and on manual `workflow_dispatch`), across **all three** implementations. The normal `rust` / `python` / C++ suites run the fixed 256-iteration default; the burn-in sets `MIE_FUZZ_ITERATIONS` (default 25 000) so the deterministic harness sweeps a much larger input space.
+A separate scheduled workflow, `.github/workflows/fuzz.yml`, runs a deeper L1-ROB-001 fuzz burn-in daily (and on manual `workflow_dispatch`), across **all three** implementations and on **both** Linux and Windows. The normal `rust` / `python` / C++ suites run the fixed 256-iteration default; the burn-in sets `MIE_FUZZ_ITERATIONS` (default 25 000) so the deterministic harness sweeps a much larger input space. `docs/FUZZING.md` is the full map of what is fuzzed and what is not; this section covers the CI wiring.
 
-All three harnesses use the **same xorshift64 generator with the same seed**, so they see the same inputs — which is what makes a divergence between implementations on identical bytes detectable, rather than three incomparable robustness efforts. C++ deliberately does **not** use libFuzzer: it needs clang, so it would skip the GCC 4.8.5 fidelity tier this implementation exists for, and its non-determinism would make a required gate fail on inputs no change produced. The C++ harness is an ordinary Catch2 case (`cpp/tests/test_fuzz.cpp`), so it rides along on every tier including MSVC, ASan/UBSan and Valgrind, with no separate target and no committed corpus. Because the PRNG seed is fixed, the burn-in is a strict superset of the default run and any failure prints a reproducible seed. To reproduce locally: `MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic` or `MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness`.
+| Workflow / job | Covers | Notes |
+|-----|--------------|--------|
+| `fuzz-rust` | `ubuntu-latest`, `windows-latest` | Reader and dump harnesses as **separate steps**, so the Actions UI shows pass/fail and duration per harness. |
+| `fuzz-cpp` | `ubuntu-24.04` | `make -C cpp check-fuzz` — the `[fuzz]` cases only. It ran `make check` (the whole suite, from a cold build) until v2.15.1, so its wall time was mostly not fuzzing, and Catch2 reports no per-case duration without `-d yes` to recover it from. `make check` stays the single unparameterised command a developer runs, and the fuzz cases still ride along in it. |
+| `fuzz-cpp-msvc` | `windows-2022` | CMake + the test binary invoked directly with the `[fuzz]` tag. Not `ctest`: it registers the whole suite as one test and offers no way to pass Catch2 a tag filter. |
+| `fuzz-python` | `ubuntu-latest`, `windows-latest` | `TestFuzzHarness` holds both harnesses. Runs with `-s` so the harnesses' own stderr reaches the job log the way the other two already do. |
+| `fuzz-compare` | all three, both platforms | Downloads every job's `FUZZ-SUMMARY` artifact and fails if any two disagree. **The only step in the workflow that can catch a divergence between implementations** — everything above it proves one implementation did not crash. |
+
+All harnesses use the **same xorshift64 generator with the same seed and the same draw order**, so iteration N is the same bytes everywhere. Until v2.15.1 that was as far as it went: nothing compared the results, so three implementations could each prove "I did not crash" while decoding the same bytes differently. Each harness now ends by writing one `FUZZ-SUMMARY` line of counters defined to mean the same thing in all three, and `fuzz-compare` diffs them all-pairs (`scripts/compare-fuzz-summaries.py`, same no-majority / no-reference reasoning as `tests/conformance/differential.py`). Every counter must be **path-independent**: the harnesses name their temp files differently, so anything derived from a path measures the harness rather than the decoder. The dump harness counts output *lines* for exactly this reason — it counted bytes first, and the implementations disagreed by a constant offset that turned out to be the length of the file path in the dump header.
+
+Three environment variables are shared by all three harnesses:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MIE_FUZZ_ITERATIONS` | 256 | Inputs to generate. Unparseable or zero falls back rather than guessing. |
+| `MIE_FUZZ_STREAM_LOGS` | unset (silent) | `1` / `true` leaves the decoder's logger at WARN so diagnostics stream. |
+| `MIE_FUZZ_SUMMARY` | unset | File to append the `FUZZ-SUMMARY` line to. |
+
+`MIE_FUZZ_STREAM_LOGS` replaced a `--nocapture` / `-s` pair that did not work: Rust's logger writes through `std::io::stderr()` and libtest's capture only intercepts the `print!` / `eprint!` macros, and C++ writes to the stderr fd, which Catch2 does not redirect — so two of the three jobs streamed unconditionally (tens of megabytes into every scheduled run) while pytest captured Python's and showed nothing. Silencing is the harness's job, not the runner's. In C++ the level is set through an RAII guard: Catch2 runs its cases sequentially in one process, and leaving the level at `OFF` broke `test_log.cpp` two files away. In Rust it is set and deliberately *not* restored — libtest runs that binary's tests in parallel threads, so a scope guard would restore the level while a sibling test was still running.
+
+C++ deliberately does **not** use libFuzzer: it needs clang, so it would skip the GCC 4.8.5 fidelity tier this implementation exists for, and its non-determinism would make a required gate fail on inputs no change produced. The C++ harness is an ordinary Catch2 case (`cpp/tests/test_fuzz.cpp`), so it rides along on every tier including MSVC, ASan/UBSan and Valgrind, with no committed corpus. Because the PRNG seed is fixed, the burn-in is a strict superset of the default run and any failure prints a reproducible seed.
+
+To reproduce locally:
+
+```bash
+MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic
+MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness
+MIE_FUZZ_ITERATIONS=25000 make -C cpp check-fuzz
+```
+
+One thing the burn-in still does not do: raise the iteration count on an **instrumented** C++ build. The ASan/UBSan, Valgrind and GCC 4.8.5 tiers live in `cpp-ci.yml` and see only the default count, so the deep sweep runs where a non-faulting out-of-bounds read goes unnoticed. Run `MIE_FUZZ_ITERATIONS=25000 make -C cpp check SANITIZE=1` by hand; the gap is tracked in `docs/FUZZING.md` section 5.
 
 Pre-commit hooks (set up locally via `bash scripts/install-hooks.sh`, which points `core.hooksPath` at `.githooks/`) run a subset of the above on staged content: trailing-whitespace / CRLF / merge-marker scans, rust/Cargo.lock parity, `python scripts/build-trace-matrix.py --check` (whenever Rust source, Python tests, the L1/L2/L3 docs, or the matrix itself are staged), `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, a `dbg!()` scan in staged Rust, and a `// SAFETY:` comment requirement for new `unsafe` blocks. These mirror what CI checks so push-fails are rare. The pre-commit hooks do **not** regenerate diagrams or rebuild SVGs, and neither does CI — the `diagrams` job renders to a scratch directory to check the sources parse, but cannot detect a stale committed SVG (§9). Re-render by hand, following §3.
 

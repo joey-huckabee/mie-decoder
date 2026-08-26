@@ -654,12 +654,15 @@ Each `recover_sync` invocation scans at most `MAX_SCAN_BYTES` (64 KB) forward fr
 
 ### Fuzz harness (L1-ROB-001)
 
-Both implementations carry a deterministic-PRNG fuzz harness that feeds 256 random byte sequences (32 B – 8 KB each) through the `MieFileReader → message iterator` path and asserts that every outcome is either a successfully decoded message or a documented decoder error variant — never a panic, `IndexError`, `struct.error`, or unbounded iteration. The harnesses use a shared xorshift64 PRNG with seed `0x0DDCD1ECDDC0DEC0`, so a failure in one implementation is exactly reproducible against the other.
+All three implementations carry a deterministic-PRNG fuzz harness that feeds random byte sequences (32 B - 8 KB each) through the `MieFileReader -> message iterator -> canonical-order` path and asserts that every outcome is either a successfully decoded message or a documented decoder error variant - never a panic, `IndexError`, `struct.error`, an undocumented exception type, or unbounded iteration. All of them use the same xorshift64 PRNG with seed `0x0DDCD1ECDDC0DEC0`, the same size bands and the same draw order, so iteration N is the same bytes everywhere and a failure in one implementation is exactly reproducible against the others.
 
-- Rust: `rust/tests/integration.rs::fuzz_arbitrary_bytes_never_panic`
-- Python: `python/tests/test_e2e.py::TestFuzzHarness`
+- Rust: `rust/tests/integration.rs::fuzz_arbitrary_bytes_never_panic` (and `dump_arbitrary_bytes_never_panics`)
+- Python: `python/tests/test_e2e.py::TestFuzzHarness` (reader + dump)
+- C++: `cpp/tests/test_fuzz.cpp`, tagged `[fuzz]` (reader only - a parity gap, tracked in `docs/FUZZING.md` section 5)
 
-The default-suite iteration count (256) is sized so the harness completes in a few seconds per implementation. CI environments that want a longer burn-in can override via a separate follow-on smoke test outside the default suite.
+Each harness ends by writing one `FUZZ-SUMMARY` line of counters - inputs, bytes generated, readers opened, records yielded, errors - defined to mean the same thing in all three. Sharing a generator without sharing an assertion means three implementations can each prove "I did not crash" while decoding the same bytes differently; the `fuzz-compare` job in `fuzz.yml` diffs those lines all-pairs and fails the run if any two disagree.
+
+The default-suite iteration count (256) is sized so the harness completes in a few seconds per implementation. `MIE_FUZZ_ITERATIONS` raises it; the scheduled burn-in in `.github/workflows/fuzz.yml` runs 25 000 across all three implementations on both Linux and Windows. See [`FUZZING.md`](FUZZING.md) for the full picture, including what is *not* fuzzed.
 
 ---
 

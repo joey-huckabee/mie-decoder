@@ -171,7 +171,7 @@ Python implementations:
 | MSVC on `windows-2022` | the shipping Windows artifact, at `/W4 /WX /permissive-` |
 | static analysis | clang-tidy 20, cppcheck, CodeQL `c-cpp`, SonarCloud CFamily |
 | coverage (gcovr) | 90% line / 76% branch floors, from `COVERAGE_MIN_*` in the Makefile |
-| fuzz burn-in | the L1-ROB-001 harness at a raised iteration count (`fuzz.yml`) |
+| fuzz burn-in | the L1-ROB-001 harness at a raised iteration count, on Linux and MSVC (`fuzz.yml`, via `make check-fuzz`) |
 | real SLES 12 SP5 | deployability. Not in CI — verified by hand on hardware |
 
 **On the fuzz tier.** This section previously said there was deliberately *no*
@@ -182,6 +182,14 @@ tier above — modern g++, the GCC 4.8.5 fidelity tier, MSVC, and again under
 ASan/UBSan and Valgrind, which is where a real memory fault on random input
 actually surfaces. What does not exist is a *separate libFuzzer target*, and
 that is a decision rather than a gap (see the note at the top of this file).
+
+Two things about that tier are genuine gaps rather than decisions, and both are
+tracked in `docs/FUZZING.md` section 5: there is **no C++ `dump` fuzz harness**
+(Rust and Python both have one), and the burn-in raises the iteration count only
+on the uninstrumented `-O2` build — the ASan/UBSan and Valgrind tiers see the
+256-iteration default, so the deep sweep runs where a non-faulting out-of-bounds
+read goes unnoticed. Run `MIE_FUZZ_ITERATIONS=25000 make check SANITIZE=1` by
+hand until that is wired.
 
 The branch floor is lower than the line floor on purpose: gcov branch counts
 vary by several points with compiler version, and one portable number keeps a
