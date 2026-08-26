@@ -1534,12 +1534,32 @@ class TestDeltaAndErrorRecords:
 
 
 class TestFuzzHarness:
-    """L1-ROB-001: fuzz harness asserting no panic on arbitrary input bytes.
+    """L1-ROB-001: fuzz harnesses asserting no unexpected escape on arbitrary bytes.
 
-    Mirrors the Rust harness in rust/tests/integration.rs. Same seed and
-    PRNG (xorshift64), same iteration count, same size band — so a
-    failure in one impl is reproducible against the other.
+    Mirrors the Rust harnesses in ``rust/tests/integration.rs`` and the C++ one
+    in ``cpp/tests/test_fuzz.cpp``: same xorshift64 generator, same seed, same
+    size bands, same draw order — so iteration N is the same bytes in all three
+    implementations.
+
+    THREE KNOBS, SHARED WITH THE RUST AND C++ HARNESSES. All three read the same
+    environment variables and mean the same thing by them, because a burn-in
+    scoped differently per language cannot be compared across languages — which
+    is the subject of ``docs/FUZZING.md`` section 1.
+
+    ``MIE_FUZZ_ITERATIONS``
+        Inputs to generate (default 256).
+    ``MIE_FUZZ_STREAM_LOGS``
+        ``1`` / ``true`` leaves the ``mie_decoder`` logger at WARNING so its
+        diagnostics stream under ``pytest -s``; anything else silences it.
+        Previously the handler was installed unconditionally, so every burn-in
+        paid the cost of formatting a quarter of a million WARN records that
+        pytest then discarded.
+    ``MIE_FUZZ_SUMMARY``
+        File to append this run's ``FUZZ-SUMMARY`` line to.
     """
+
+    SEED = 0x0DDC_D1EC_DDC0_DEC0
+    """The seed every fuzz harness in every implementation starts from."""
 
     @staticmethod
     def _xorshift64(state: int) -> tuple[int, int]:
@@ -1550,29 +1570,71 @@ class TestFuzzHarness:
         x &= 0xFFFFFFFFFFFFFFFF
         return x, x  # new state, output
 
+    @classmethod
+    def _fill(cls, state: int, size: int) -> tuple[int, bytes]:
+        """Draw ``size`` bytes: eight at a time little-endian, then the tail.
+
+        The *draw order* is as much a part of the contract as the PRNG — Rust
+        and C++ consume the stream identically, which is what makes iteration N
+        the same bytes in all three implementations.
+        """
+        payload = bytearray(size)
+        j = 0
+        while j + 8 <= size:
+            state, r = cls._xorshift64(state)
+            payload[j : j + 8] = r.to_bytes(8, "little")
+            j += 8
+        while j < size:
+            state, r = cls._xorshift64(state)
+            payload[j] = r & 0xFF
+            j += 1
+        return state, bytes(payload)
+
+    @staticmethod
+    def _iterations() -> int:
+        """``MIE_FUZZ_ITERATIONS``, or 256.
+
+        A value that does not parse, or parses to zero, falls back rather than
+        guessing — the same rule in all three harnesses.
+        """
+        import os
+
+        override = os.environ.get("MIE_FUZZ_ITERATIONS")
+        if override and override.isdigit() and int(override) > 0:
+            return int(override)
+        return 256
+
     @staticmethod
     @contextlib.contextmanager
-    def _surface_logs():
-        """Route ``mie_decoder`` logs to stderr for the duration of the block.
+    def _fuzz_logging():
+        """Silence the ``mie_decoder`` logger unless ``MIE_FUZZ_STREAM_LOGS`` asks.
 
-        The reader and dump both log through the ``mie_decoder`` logger; with
-        no handler configured (the fuzz tests call the library directly, not
-        the CLI) pytest's log capture swallows the records, so even ``-s``
-        shows nothing. Installing the package's own stderr handler makes the
-        diagnostics stream under ``pytest -s`` just as the Rust harness shows
-        them under ``cargo test -- --nocapture``. The package logger is
-        restored afterward so no handler is left bound to this test's
+        The reader and dump both log through the ``mie_decoder`` logger; with no
+        handler configured (the fuzz tests call the library directly, not the
+        CLI) pytest's log capture swallows the records — but the package still
+        *formats* every one of them. Setting the level to ``OFF`` skips the
+        formatting entirely, which is what the Rust and C++ harnesses do with
+        ``Level::Off`` / ``LEVEL_OFF``.
+
+        When the knob is set, the package's own stderr handler is installed at
+        WARNING so the diagnostics stream under ``pytest -s``, matching
+        ``MIE_FUZZ_STREAM_LOGS=1`` in the other two implementations. The package
+        logger is restored afterward so no handler is left bound to this test's
         soon-stale captured stream.
         """
         import logging
+        import os
 
         from mie_decoder.logger import configure_logging
+
+        raw = os.environ.get("MIE_FUZZ_STREAM_LOGS")
+        stream = raw in {"1", "true", "TRUE"}
 
         mie_log = logging.getLogger("mie_decoder")
         saved_handlers = mie_log.handlers[:]
         saved_level = mie_log.level
         saved_propagate = mie_log.propagate
-        configure_logging("WARNING")  # matches the Rust default WARN level
+        configure_logging("WARNING" if stream else "OFF")
         try:
             yield
         finally:
@@ -1583,6 +1645,33 @@ class TestFuzzHarness:
             mie_log.setLevel(saved_level)
             mie_log.propagate = saved_propagate
 
+    @classmethod
+    def _summary(cls, harness: str, iterations: int, fields: str) -> None:
+        """Emit this harness's one-line summary.
+
+        The line has the same shape in all three implementations, so the burn-in
+        jobs produce artifacts that can be *diffed* rather than three
+        differently-shaped pass messages. On identical inputs the counters
+        should be identical too; a difference is a cross-implementation finding,
+        and comparing them is the cheap precursor to a real differential driver
+        (``docs/FUZZING.md`` 6.1).
+
+        Written to ``MIE_FUZZ_SUMMARY`` when that names a file — a file survives
+        both pytest's capture and a job log's truncation — and to stderr, where
+        it is visible under ``pytest -s``.
+        """
+        import os
+
+        line = (
+            f"FUZZ-SUMMARY impl=python harness={harness} "
+            f"seed=0x{cls.SEED:016X} iterations={iterations} {fields}"
+        )
+        sys.stderr.write(line + "\n")
+        target = os.environ.get("MIE_FUZZ_SUMMARY")
+        if target:
+            with Path(target).open("a", encoding="ascii") as handle:
+                handle.write(line + "\n")
+
     @pytest.mark.requirement("L1-ROB-001")
     def test_arbitrary_bytes_never_raise_unexpected_exceptions(
         self,
@@ -1591,37 +1680,25 @@ class TestFuzzHarness:
         from mie_decoder.exceptions import MieDecoderError
         from mie_decoder.reader import MieFileReader
 
-        seed = 0x0DDC_D1EC_DDC0_DEC0
-        state = seed
-        # The scheduled CI fuzz job overrides the iteration count via
-        # MIE_FUZZ_ITERATIONS for a longer burn-in; the default-suite cost
-        # stays bounded. Deterministic PRNG, so a burn-in is a strict
-        # superset of the default run (same first 256 iterations). Mirrors
-        # the Rust harness's MIE_FUZZ_ITERATIONS handling.
-        import os
+        state = self.SEED
+        iterations = self._iterations()
+        total_bytes = 0
+        opened = 0
+        records = 0
+        iter_errors = 0
 
-        iterations = 256
-        override = os.environ.get("MIE_FUZZ_ITERATIONS")
-        if override and override.isdigit() and int(override) > 0:
-            iterations = int(override)
-
-        with self._surface_logs():
+        with self._fuzz_logging():
             for i in range(iterations):
+                # Sizes range from 32 B (slightly above MIN_RECORD_BYTES_STANDARD)
+                # to ~8 KB. The lower bound keeps record headers reachable; the
+                # upper bound keeps each iteration fast.
                 state, r = self._xorshift64(state)
                 size = 32 + (r % 8192)
-                payload = bytearray(size)
-                j = 0
-                while j + 8 <= size:
-                    state, r = self._xorshift64(state)
-                    payload[j : j + 8] = r.to_bytes(8, "little")
-                    j += 8
-                while j < size:
-                    state, r = self._xorshift64(state)
-                    payload[j] = r & 0xFF
-                    j += 1
+                state, payload = self._fill(state, size)
+                total_bytes += size
 
                 fpath = tmp_path / f"fuzz-{i}.bin"
-                fpath.write_bytes(bytes(payload))
+                fpath.write_bytes(payload)
 
                 try:
                     reader = MieFileReader(fpath)
@@ -1630,11 +1707,19 @@ class TestFuzzHarness:
                     # documented and acceptable.
                     continue
                 except Exception as exc:
+                    self._summary(
+                        "reader",
+                        iterations,
+                        f"bytes={total_bytes} opened={opened} "
+                        f"open_errors={i - opened} records={records} "
+                        f"iter_errors={iter_errors} outcome=error",
+                    )
                     raise AssertionError(
                         f"Unexpected non-MieDecoderError on construction "
-                        f"(seed=0x{seed:X}, iter={i}, size={size}): "
+                        f"(seed=0x{self.SEED:X}, iter={i}, size={size}): "
                         f"{type(exc).__name__}: {exc}"
                     ) from exc
+                opened += 1
 
                 try:
                     # The canonical-order stage (L2-WRT-021) is on the fuzzed
@@ -1642,29 +1727,45 @@ class TestFuzzHarness:
                     # or all-zero timestamps, which is exactly the
                     # equal-timestamp run its max_sort_group cap (L2-WRT-022)
                     # exists to bound. A small cap is used so the cap-overflow
-                    # branch is reached often rather than only on a pathological
-                    # input. Mirrors the Rust harness in rust/tests/integration.rs.
+                    # branch is reachable at all. Mirrors the Rust harness in
+                    # rust/tests/integration.rs.
                     for yielded, _ in enumerate(order_rows(reader, 8), start=1):
+                        records += 1
                         if yielded > 100_000:
                             raise AssertionError(
                                 f"iterator yielded over 100k items "
-                                f"(seed=0x{seed:X}, iter={i}, size={size}) "
+                                f"(seed=0x{self.SEED:X}, iter={i}, size={size}) "
                                 f"— possible unbounded loop"
                             )
                 except MieDecoderError:
                     # Decode-time errors are documented and acceptable —
                     # the fuzz harness exists to catch IndexError,
                     # struct.error, RecursionError, etc.
-                    pass
+                    iter_errors += 1
                 except AssertionError:
                     raise
                 except Exception as exc:
+                    self._summary(
+                        "reader",
+                        iterations,
+                        f"bytes={total_bytes} opened={opened} "
+                        f"open_errors={i + 1 - opened} records={records} "
+                        f"iter_errors={iter_errors} outcome=error",
+                    )
                     raise AssertionError(
                         f"Unexpected non-MieDecoderError during iteration "
-                        f"(seed=0x{seed:X}, iter={i}, size={size}): "
+                        f"(seed=0x{self.SEED:X}, iter={i}, size={size}): "
                         f"{type(exc).__name__}: {exc}\n"
-                        f"First 32 bytes: {bytes(payload[:32]).hex()}"
+                        f"First 32 bytes: {payload[:32].hex()}"
                     ) from exc
+
+        self._summary(
+            "reader",
+            iterations,
+            f"bytes={total_bytes} opened={opened} "
+            f"open_errors={iterations - opened} records={records} "
+            f"iter_errors={iter_errors} outcome=ok",
+        )
 
     @pytest.mark.requirement("L1-ROB-001")
     @pytest.mark.requirement("L2-CLI-009")
@@ -1685,57 +1786,72 @@ class TestFuzzHarness:
         had. This test guards that property against regression. Sizes are
         skewed small to exercise the truncation/guard paths densely.
 
-        Like the reader harness, it runs under ``_surface_logs`` so the dump's
-        scan-stop anomaly WARNs (L2-CLI-013) stream under ``pytest -s`` — the
-        report itself still goes to a throwaway sink. Mirrors the Rust
+        Both dumps are attempted on every input, into a sink cleared between
+        them, and each is counted separately — so the summary line means the
+        same thing as the Rust harness's on the same bytes. Mirrors the Rust
         ``dump_arbitrary_bytes_never_panics``.
-        """
-        import io
-        import os
 
+        Output volume is counted in LINES, not bytes. Both dumps print the input
+        path in their header, and the harnesses name their temp files
+        differently in each implementation — so a byte count is a measure of the
+        path, not of the decoder, and the two could never agree. Lines are
+        path-independent.
+        """
         from mie_decoder.dump import hex_dump_raw, hex_dump_records
         from mie_decoder.exceptions import MieDecoderError
 
-        # Honor MIE_FUZZ_ITERATIONS for the scheduled burn-in, same as the
-        # reader harness (deterministic PRNG, so a burn-in is a superset of
-        # the default run).
-        iterations = 256
-        override = os.environ.get("MIE_FUZZ_ITERATIONS")
-        if override and override.isdigit() and int(override) > 0:
-            iterations = int(override)
+        state = self.SEED  # same seed family as the reader harness
+        iterations = self._iterations()
+        total_bytes = 0
+        records_errors = 0
+        records_lines = 0
+        raw_errors = 0
+        raw_lines = 0
 
-        state = 0x0DDC_D1EC_DDC0_DEC0  # same seed family as the reader harness
-        with self._surface_logs():
+        with self._fuzz_logging():
             for i in range(iterations):
                 state, r = self._xorshift64(state)
                 size = r % 512  # small band → dense coverage of guard/truncation
-                payload = bytearray(size)
-                j = 0
-                while j + 8 <= size:
-                    state, r = self._xorshift64(state)
-                    payload[j : j + 8] = r.to_bytes(8, "little")
-                    j += 8
-                while j < size:
-                    state, r = self._xorshift64(state)
-                    payload[j] = r & 0xFF
-                    j += 1
+                state, payload = self._fill(state, size)
+                total_bytes += size
 
                 fpath = tmp_path / f"dumpfuzz-{i}.bin"
-                fpath.write_bytes(bytes(payload))
+                fpath.write_bytes(payload)
 
                 buf = io.StringIO()
                 try:
                     hex_dump_records(fpath, max_records=64, stream=buf)
-                    hex_dump_raw(fpath, start_offset=0, length=None, stream=buf)
                 except MieDecoderError:
                     # Empty-file / not-found are documented and acceptable.
-                    pass
+                    records_errors += 1
                 except Exception as exc:
                     raise AssertionError(
-                        f"Unexpected non-MieDecoderError from dump "
+                        f"Unexpected non-MieDecoderError from hex_dump_records "
                         f"(iter={i}, size={size}): {type(exc).__name__}: {exc}\n"
-                        f"First 32 bytes: {bytes(payload[:32]).hex()}"
+                        f"First 32 bytes: {payload[:32].hex()}"
                     ) from exc
+                records_lines += buf.getvalue().count("\n")
+
+                buf = io.StringIO()
+                try:
+                    hex_dump_raw(fpath, start_offset=0, length=None, stream=buf)
+                except MieDecoderError:
+                    raw_errors += 1
+                except Exception as exc:
+                    raise AssertionError(
+                        f"Unexpected non-MieDecoderError from hex_dump_raw "
+                        f"(iter={i}, size={size}): {type(exc).__name__}: {exc}\n"
+                        f"First 32 bytes: {payload[:32].hex()}"
+                    ) from exc
+                raw_lines += buf.getvalue().count("\n")
+
+        self._summary(
+            "dump",
+            iterations,
+            f"bytes={total_bytes} records_errors={records_errors} "
+            f"records_lines={records_lines} raw_errors={raw_errors} "
+            f"raw_lines={raw_lines} outcome=ok",
+        )
 
 
 class TestDumpDiagnostics:

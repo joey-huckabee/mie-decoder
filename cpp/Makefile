@@ -117,7 +117,7 @@ DECODER_OBJ := $(BUILD_DIR)/src/main.o
 # the next test run silently exercises stale objects.
 DEPFLAGS := -MMD -MP
 
-.PHONY: all check clean clean-all toolchain versions check-valgrind \
+.PHONY: all check check-fuzz clean clean-all toolchain versions check-valgrind \
         check-gcc48 verify-ci print-test-bin print-decoder-bin \
         print-lib-sources decoder tidy cppcheck format format-check \
         coverage coverage-report
@@ -148,6 +148,19 @@ $(DECODER_BIN): $(LIB_OBJ) $(DECODER_OBJ)
 # that a log viewer renders as noise around every assertion.
 check: $(TEST_BIN)
 	$(TEST_BIN) --use-colour no
+
+# The [fuzz] cases only (L1-ROB-001), for the nightly burn-in.
+#
+# `check` stays the single unparameterised command a developer runs, and the
+# fuzz cases still ride along in it at their default iteration count. This
+# target exists because the burn-in raises MIE_FUZZ_ITERATIONS by two orders of
+# magnitude, and running the WHOLE suite at that point means the job's wall time
+# is mostly a cold build plus ~480 unrelated cases -- so it could not be
+# compared against the Rust and Python burn-ins, which run only their harnesses.
+# Catch2 reports no per-case duration without `-d yes`, so there was no way to
+# recover the fuzz time from the combined run either.
+check-fuzz: $(TEST_BIN)
+	$(TEST_BIN) --use-colour no "[fuzz]"
 
 clean:
 	rm -rf $(BUILD_DIR)
