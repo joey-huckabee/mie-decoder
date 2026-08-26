@@ -183,13 +183,23 @@ ASan/UBSan and Valgrind, which is where a real memory fault on random input
 actually surfaces. What does not exist is a *separate libFuzzer target*, and
 that is a decision rather than a gap (see the note at the top of this file).
 
-Two things about that tier are genuine gaps rather than decisions, and both are
-tracked in `docs/FUZZING.md` section 5: there is **no C++ `dump` fuzz harness**
-(Rust and Python both have one), and the burn-in raises the iteration count only
-on the uninstrumented `-O2` build — the ASan/UBSan and Valgrind tiers see the
-256-iteration default, so the deep sweep runs where a non-faulting out-of-bounds
-read goes unnoticed. Run `MIE_FUZZ_ITERATIONS=25000 make check SANITIZE=1` by
-hand until that is wired.
+Both gaps this section named at v2.15.1 are closed as of **v2.16.0**: the tree
+now carries `dump` and merge-input-resolution fuzz harnesses alongside the
+reader one (`make check-fuzz` runs all three), and `fuzz-cpp-asan` gives the
+burn-in an **instrumented** deep run — until then the raised iteration count
+applied only to the uninstrumented `-O2` build, where a non-faulting
+out-of-bounds read goes unnoticed.
+
+Valgrind still runs at the default count, deliberately: it is one to two orders
+of magnitude slower than ASan and finds the same class of fault on this code, so
+a 25 000-input memcheck would cost hours to duplicate what the ASan job covers.
+
+The merge harness earned its keep immediately. Comparing its `FUZZ-SUMMARY`
+counters against Rust's and Python's found **four** `read_manifest` divergences
+at once, two of them in this implementation: it accepted arbitrary bytes as
+paths where the other two require UTF-8, and it dropped every `\r` in a line
+rather than only a trailing one. The grammar all three now implement is
+normative in L2-MRG-001.
 
 The branch floor is lower than the line floor on purpose: gcov branch counts
 vary by several points with compiler version, and one portable number keeps a

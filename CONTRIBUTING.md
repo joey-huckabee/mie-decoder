@@ -392,10 +392,16 @@ none**). What follows is how to run them.
 | Rust dump | `rust/tests/integration.rs::dump_arbitrary_bytes_never_panics` |
 | Python reader | `tests/test_e2e.py::TestFuzzHarness::test_arbitrary_bytes_never_raise_unexpected_exceptions` |
 | Python dump | `tests/test_e2e.py::TestFuzzHarness::test_dump_arbitrary_bytes_never_raise_unexpected_exceptions` |
-| C++ reader | `cpp/tests/test_fuzz.cpp`, tagged `[fuzz]` |
+| Rust merge | `rust/tests/integration.rs::merge_input_resolution_tolerates_arbitrary_bytes` |
+| Python merge | `tests/test_merge.py::test_merge_input_resolution_tolerates_arbitrary_bytes` |
+| C++ (all three) | `cpp/tests/test_fuzz.cpp`, tagged `[fuzz]` |
 
-C++ has no dump harness. That is a parity gap, not a design choice; it is
-tracked in `docs/FUZZING.md` section 5.
+Two further fuzzers live in `tests/conformance/` and are **differential by
+construction** -- they generate one input, drive it through every
+implementation's CLI, and compare all-pairs: `config_fuzz.py` over config
+documents, and `record_fuzz.py` over recordings built from the committed hex
+fixtures and then damaged. `record_fuzz.py` is the only check anywhere that
+compares what the three *decoders* produce on input nobody wrote.
 
 Run them (default 256 iterations):
 
@@ -409,6 +415,9 @@ poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness
 
 # C++ (the [fuzz] cases only; they also ride along in `make check`)
 make -C cpp check-fuzz
+
+# The differential fuzzers, across every implementation at once
+python tests/conformance/run.py
 ```
 
 ### The three shared knobs
