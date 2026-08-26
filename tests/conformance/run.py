@@ -18,6 +18,7 @@ from typing import Any
 from config_fuzz import check_config_parser_fuzz
 from config_parity import check_config_parser_parity
 from config_path_parity import check_config_path_parity
+from record_fuzz import check_record_stream_fuzz
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -736,6 +737,11 @@ def main() -> int:
             invocations = {impl.label: impl.prefix(args) for impl in impls}
             check_config_parser_parity(invocations, ROOT, parity_input, temp)
             check_config_parser_fuzz(invocations, ROOT, parity_input, temp)
+            # The record-stream twin of the config fuzzer: the only check that
+            # compares what the DECODERS produce on inputs nobody wrote. The
+            # per-implementation fuzz harnesses each prove their own process did
+            # not crash; this proves the three agree.
+            check_record_stream_fuzz(invocations, ROOT, SUITE, temp)
             # Same idea one level up: the config *path*, not its contents.
             check_config_path_parity(invocations, ROOT, parity_input, temp)
         else:

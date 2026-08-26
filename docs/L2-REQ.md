@@ -993,8 +993,28 @@ C++ was the outlier on six shapes until its help/version scan was replaced. It r
 #### L2-MRG-001
 
 **Parent**: L1-MRG-001
-**Statement**: The `decode` command SHALL accept the input set via exactly one of three mutually exclusive methods: one or more positional paths, a `--manifest <file>` (one path per line; blank lines and `#`-prefixed comment lines ignored), or a `--glob <pattern>`. Supplying more than one method, or resolving to more than `MAX_MERGE_FILES` inputs, SHALL be a usage error (exit `4`). Resolving to a single input SHALL invoke the existing single-file path unchanged; resolving to two or more SHALL invoke the merge. The `--glob` pattern SHALL be a single-directory pattern supporting `*` and `?` wildcards over the filename only (no recursive `**`, no brace expansion), and both implementations SHALL expand it identically and in a deterministic (lexicographic) order.
+**Statement**: The `decode` command SHALL accept the input set via exactly one of three mutually exclusive methods: one or more positional paths, a `--manifest <file>`, or a `--glob <pattern>`. Supplying more than one method, or resolving to more than `MAX_MERGE_FILES` inputs, SHALL be a usage error (exit `4`). Resolving to a single input SHALL invoke the existing single-file path unchanged; resolving to two or more SHALL invoke the merge. The `--glob` pattern SHALL be a single-directory pattern supporting `*` and `?` wildcards over the filename only (no recursive `**`, no brace expansion), and every implementation SHALL expand it identically and in a deterministic (lexicographic) order.
+
+The **manifest grammar** SHALL be exactly:
+
+1. The file SHALL be well-formed **UTF-8**. Ill-formed input SHALL be rejected, not decoded — including overlong encodings, surrogate halves and code points above U+10FFFF.
+2. `\n` SHALL be the **only** line separator. No other character terminates a line.
+3. At most **one trailing `\r`** SHALL be stripped from each line, so a CRLF file reads correctly and a filename containing a carriage return survives intact. No other `\r` SHALL be removed, and no implementation SHALL apply universal-newline translation while reading.
+4. Each line SHALL then be trimmed of **ASCII space (0x20) and tab (0x09) only**. No other whitespace SHALL be trimmed.
+5. A line that is empty after trimming, or whose first character after trimming is `#`, SHALL be ignored. Every other line SHALL contribute one path, in file order.
+
 **Rationale**: Positionals serve ad-hoc use, a manifest serves large/scripted sets, and a tool-expanded glob serves directories on shells (Windows) that do not expand globs. Mutual exclusivity avoids ambiguous union/ordering semantics. A fixed file-count cap keeps open mappings/descriptors within OS limits. Constraining the glob to a small, identical syntax lets the Rust crate stay dependency-free while keeping cross-implementation behavior byte-identical.
+
+**On the grammar being spelled out.** Through v2.15.1 this requirement said only "one path per line; blank lines and `#`-prefixed comment lines ignored", and each implementation filled the gaps with whatever its standard library made easy. They filled them **four different ways**, all found at once when the merge fuzz harness started comparing counters across implementations (`docs/FUZZING.md`):
+
+| Gap | What happened | Outlier |
+|---|---|---|
+| Text vs bytes | `std::string` validates nothing, so C++ accepted arbitrary bytes as paths; `fs::read_to_string` and `read_text(encoding="utf-8")` both refuse. 498 of 512 generated manifests were rejected by two implementations and decoded by the third. | C++ |
+| Line separators | `str.splitlines()` also breaks on vertical tab, form feed, U+0085 and U+2028/9 — none of which ends a line in a manifest, all of which are legal in a POSIX filename. One file became two nonexistent ones. | Python |
+| Carriage returns | C++ dropped **every** `\r` in a line, silently editing a filename containing one; Python's reader translated a lone `\r` to `\n` before the parser saw it, splitting one path into two. | C++, Python |
+| Trimming | `str::trim` and `str.strip` remove Unicode whitespace (U+00A0, U+3000, …); the C++ implementation is locale-free by rule (`scripts/assert-locale-free.sh`) and cannot, so two implementations edited a filename the third passed through. | Rust, Python |
+
+Rule 4 resolves the last of these **toward** the constrained implementation rather than away from it: C++ cannot classify Unicode whitespace without embedding a table, and "trim spaces and tabs" is what a manifest format actually needs. Each rule is pinned by a `read_manifest_grammar_is_exactly_specified` test in all three trees.
 **Verification Method**: Test (T)
 
 #### L2-MRG-002

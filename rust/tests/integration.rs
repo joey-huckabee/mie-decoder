@@ -760,14 +760,18 @@ fn fuzz_xorshift64(state: &mut u64) -> u64 {
     x
 }
 
-/// `MIE_FUZZ_ITERATIONS`, or 256. A value that does not parse, or parses to
-/// zero, falls back rather than guessing — same rule in all three harnesses.
-fn fuzz_iterations() -> usize {
+/// `MIE_FUZZ_ITERATIONS`, or `default`. A value that does not parse, or parses
+/// to zero, falls back rather than guessing — same rule in all three harnesses.
+///
+/// The default is per-harness because the harnesses cost different amounts per
+/// input. Every implementation uses the same default for the same harness,
+/// which is what keeps the summary lines comparable.
+fn fuzz_iterations_or(default: usize) -> usize {
     std::env::var("MIE_FUZZ_ITERATIONS")
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|&n| n > 0)
-        .unwrap_or(256)
+        .unwrap_or(default)
 }
 
 /// Silence the decoder's logger unless `MIE_FUZZ_STREAM_LOGS` asks for it.
@@ -844,7 +848,7 @@ fn fuzz_arbitrary_bytes_never_panic() {
     fuzz_configure_logging();
 
     let mut state = FUZZ_SEED;
-    let iterations = fuzz_iterations();
+    let iterations = fuzz_iterations_or(256);
     let mut total_bytes = 0u64;
     let mut totals = ReaderFuzzCounts::default();
 
@@ -961,7 +965,7 @@ fn dump_arbitrary_bytes_never_panics() {
     fuzz_configure_logging();
 
     let mut state = FUZZ_SEED; // same seed family as the reader harness
-    let iterations = fuzz_iterations();
+    let iterations = fuzz_iterations_or(256);
     let mut total_bytes = 0u64;
     let (mut records_errors, mut records_lines) = (0u64, 0u64);
     let (mut raw_errors, mut raw_lines) = (0u64, 0u64);
@@ -1211,35 +1215,216 @@ fn read_manifest_skips_blanks_and_comments() {
     );
 }
 
+/// The manifest grammar, pinned exactly, because leaving it to "one path per
+/// line" is how three implementations came to disagree three different ways.
+///
+/// All three were found by the merge fuzz harness comparing its `FUZZ-SUMMARY`
+/// counters, and all three are now spelled out in L2-MRG-001:
+///
+///   * `\n` is the ONLY line separator. Python used `str.splitlines()`, which
+///     also breaks on vertical tab, form feed, U+0085 and U+2028/9 — none of
+///     which ends a line in a manifest, all of which are legal in a POSIX
+///     filename. One file became two nonexistent ones.
+///   * At most ONE trailing `\r` is stripped, so CRLF works and a filename
+///     containing a bare CR survives. C++ dropped every `\r` in the line.
+///   * Trimming is ASCII space and tab ONLY. `str::trim` also removes U+00A0,
+///     U+3000 and the rest; the C++ implementation is locale-free by rule and
+///     cannot, so two implementations silently edited a filename the third
+///     passed through.
+///
+/// Requirements: L2-MRG-001
+#[test]
+fn read_manifest_grammar_is_exactly_specified() {
+    let read = |body: &[u8]| {
+        let f = TempFile::new(body);
+        mie_decoder::merge::read_manifest(f.path())
+    };
+
+    // Only `\n` separates. A form feed is part of the filename.
+    assert_eq!(
+        read(b"a.mie\x0cb.mie\n").unwrap(),
+        vec![PathBuf::from("a.mie\x0cb.mie")]
+    );
+    // ... and so are VT and (as UTF-8) U+0085 / U+2028.
+    assert_eq!(
+        read(b"a.mie\x0bb.mie\n").unwrap(),
+        vec![PathBuf::from("a.mie\x0bb.mie")]
+    );
+    assert_eq!(
+        read("a.mie\u{85}b.mie\n".as_bytes()).unwrap(),
+        vec![PathBuf::from("a.mie\u{85}b.mie")]
+    );
+
+    // One trailing CR is the CRLF terminator; an interior CR is a filename.
+    assert_eq!(
+        read(b"a.mie\r\nb.mie\r\n").unwrap(),
+        vec![PathBuf::from("a.mie"), PathBuf::from("b.mie")]
+    );
+    assert_eq!(
+        read(b"a\rb.mie\n").unwrap(),
+        vec![PathBuf::from("a\rb.mie")]
+    );
+
+    // ASCII blanks are trimmed; Unicode spaces are part of the name.
+    assert_eq!(
+        read(b" \ta.mie\t \n").unwrap(),
+        vec![PathBuf::from("a.mie")]
+    );
+    assert_eq!(
+        read("\u{a0}a.mie\n".as_bytes()).unwrap(),
+        vec![PathBuf::from("\u{a0}a.mie")]
+    );
+
+    // A manifest is a text file: ill-formed UTF-8 is refused, not decoded.
+    assert!(read(b"\xff\xfe\na.mie\n").is_err());
+}
+
+/// The glob-pattern alphabet the merge fuzz harness draws from, shared with
+/// `python/tests/fuzz_support.py` and `cpp/tests/test_fuzz.cpp`.
+///
+/// A pattern built by lossily UTF-8-decoding random bytes would be the obvious
+/// thing, and it is wrong twice over. Random bytes almost never contain `*` or
+/// `?`, so the matcher's interesting branches are never reached; and the three
+/// languages' lossy decoders do not agree character-for-character on how many
+/// U+FFFD an invalid sequence produces, so the counters could diverge without
+/// the glob matchers disagreeing about anything.
+///
+/// Drawing from an alphabet fixes both. The last two entries are deliberately
+/// non-ASCII: Rust and Python match over scalar values and the C++ matcher
+/// advances `?` by a whole UTF-8 character, and this is the surface where that
+/// agreement is either real or it is not.
+///
+/// `*` and `?` are weighted (three and two slots) because the first version of
+/// this harness drew uniformly from a 15-character alphabet over patterns up to
+/// 95 characters long and matched a probe **zero** times in 512 iterations —
+/// which is to say it fuzzed the matcher's reject path and nothing else. Short,
+/// wildcard-heavy patterns are what reach the interesting branches.
+const GLOB_ALPHABET: [&str; 15] = [
+    "*", "*", "*", "?", "?", ".", "a", "b", "m", "i", "e", "-", "x", "\u{e9}", "\u{4e2d}",
+];
+
+/// Probe names the generated patterns are matched against. ASCII, Latin-1 and
+/// CJK, counted separately so a divergence says which one broke.
+const GLOB_PROBES: [&str; 3] = ["some.name.mie", "caf\u{e9}.mie", "\u{4e2d}\u{6587}.mie"];
+
 /// L1-ROB-001 for the merge input-resolution surface: a manifest of arbitrary
-/// bytes, an arbitrary glob pattern, and arbitrary `glob_match` inputs must
-/// never panic — only return Ok/Err (or a bool). Deterministic PRNG.
+/// bytes, and an arbitrary glob pattern driven through the matcher and the
+/// directory expansion, must never panic — only return Ok/Err (or a bool).
+///
+/// `expand_glob` is called for crash-safety only and its result is deliberately
+/// NOT counted: it reads the working directory, so what it returns depends on
+/// where the suite ran, and a summary field has to mean the same thing in every
+/// implementation on every host.
 /// Requirements: L1-ROB-001, L2-MRG-001
 #[test]
 fn merge_input_resolution_tolerates_arbitrary_bytes() {
-    fn xorshift64(state: &mut u64) -> u64 {
-        let mut x = *state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        *state = x;
-        x
-    }
-    let mut state = 0x0DDC_D1EC_DDC0_DEC0u64;
-    for _ in 0..512 {
-        let n = (xorshift64(&mut state) % 96) as usize;
-        let bytes: Vec<u8> = (0..n)
-            .map(|_| (xorshift64(&mut state) & 0xFF) as u8)
-            .collect();
+    fuzz_configure_logging();
+
+    let mut state = FUZZ_SEED;
+    // 512 by default rather than the reader harness's 256: each iteration is
+    // cheap (no decode, no mmap) and the glob matcher has more branches than
+    // this many inputs comfortably cover. The shared knob still overrides.
+    let iterations = fuzz_iterations_or(512);
+
+    let mut total_bytes = 0u64;
+    let mut manifest_ok = 0u64;
+    let mut manifest_errors = 0u64;
+    let mut manifest_paths = 0u64;
+    let mut glob_hits = [0u64; GLOB_PROBES.len()];
+
+    for i in 0..iterations {
+        let size = usize::try_from(fuzz_xorshift64(&mut state) % 96).unwrap_or(0);
+        let bytes = fuzz_bytes(&mut state, size);
+        total_bytes += u64::try_from(size).unwrap_or(0);
+
+        // The pattern is drawn separately from the manifest bytes, and short:
+        // the two surfaces want different input shapes, and deriving one from
+        // the other means neither gets the shape it needs.
+        let pattern_len = usize::try_from(fuzz_xorshift64(&mut state) % 12).unwrap_or(0);
+        let pattern_bytes = fuzz_bytes(&mut state, pattern_len);
+
         let f = TempFile::new(&bytes);
-        // read_manifest: Ok (parsed lines) or Err (non-UTF8) — never panic.
-        let _ = mie_decoder::merge::read_manifest(f.path());
-        // Treat the bytes (lossily) as a glob pattern: matcher + expansion
-        // must not panic on any input.
-        let pat = String::from_utf8_lossy(&bytes);
-        let _ = mie_decoder::merge::glob_match(&pat, "some.name.mie");
-        let _ = mie_decoder::merge::expand_glob(&pat);
+        let result = std::panic::catch_unwind(|| {
+            // read_manifest: Ok (parsed lines) or Err (non-UTF8) — never panic.
+            let manifest = mie_decoder::merge::read_manifest(f.path());
+            let (ok, errs, paths) = match &manifest {
+                Ok(list) => (1u64, 0u64, u64::try_from(list.len()).unwrap_or(0)),
+                Err(_) => (0, 1, 0),
+            };
+
+            let pattern: String = pattern_bytes
+                .iter()
+                .map(|b| GLOB_ALPHABET[usize::from(*b) % GLOB_ALPHABET.len()])
+                .collect();
+            let mut hits = [0u64; GLOB_PROBES.len()];
+            for (slot, probe) in hits.iter_mut().zip(GLOB_PROBES) {
+                *slot = u64::from(mie_decoder::merge::glob_match(&pattern, probe));
+            }
+            // Crash-safety only; see the doc comment.
+            let _ = mie_decoder::merge::expand_glob(&pattern);
+            (ok, errs, paths, hits)
+        });
+
+        match result {
+            Ok((ok, errs, paths, hits)) => {
+                manifest_ok += ok;
+                manifest_errors += errs;
+                manifest_paths += paths;
+                for (total, hit) in glob_hits.iter_mut().zip(hits) {
+                    *total += hit;
+                }
+            }
+            Err(_) => {
+                merge_fuzz_summary(
+                    iterations,
+                    total_bytes,
+                    manifest_ok,
+                    manifest_errors,
+                    manifest_paths,
+                    glob_hits,
+                    "panic",
+                );
+                panic!(
+                    "merge input resolution panicked on random input \
+                     (seed=0x{FUZZ_SEED:X}, iter={i}, size={size}). First 32 bytes: {:02X?}",
+                    &bytes[..bytes.len().min(32)]
+                );
+            }
+        }
     }
+
+    merge_fuzz_summary(
+        iterations,
+        total_bytes,
+        manifest_ok,
+        manifest_errors,
+        manifest_paths,
+        glob_hits,
+        "ok",
+    );
+}
+
+/// Formats the merge harness's summary. Split out so the success and panic
+/// paths cannot drift apart in field order or spelling.
+fn merge_fuzz_summary(
+    iterations: usize,
+    total_bytes: u64,
+    manifest_ok: u64,
+    manifest_errors: u64,
+    manifest_paths: u64,
+    glob_hits: [u64; GLOB_PROBES.len()],
+    outcome: &str,
+) {
+    fuzz_summary(
+        "merge",
+        iterations,
+        &format!(
+            "bytes={total_bytes} manifest_ok={manifest_ok} \
+             manifest_errors={manifest_errors} manifest_paths={manifest_paths} \
+             glob_ascii={} glob_latin1={} glob_cjk={} outcome={outcome}",
+            glob_hits[0], glob_hits[1], glob_hits[2]
+        ),
+    );
 }
 
 /// L2-MRG-004 / L1-EXIT-004: with --allow-partial, a merge whose input hits an

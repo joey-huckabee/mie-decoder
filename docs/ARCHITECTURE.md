@@ -658,9 +658,9 @@ All three implementations carry a deterministic-PRNG fuzz harness that feeds ran
 
 - Rust: `rust/tests/integration.rs::fuzz_arbitrary_bytes_never_panic` (and `dump_arbitrary_bytes_never_panics`)
 - Python: `python/tests/test_e2e.py::TestFuzzHarness` (reader + dump)
-- C++: `cpp/tests/test_fuzz.cpp`, tagged `[fuzz]` (reader only - a parity gap, tracked in `docs/FUZZING.md` section 5)
+- C++: `cpp/tests/test_fuzz.cpp`, tagged `[fuzz]` (reader, dump and merge)
 
-Each harness ends by writing one `FUZZ-SUMMARY` line of counters - inputs, bytes generated, readers opened, records yielded, errors - defined to mean the same thing in all three. Sharing a generator without sharing an assertion means three implementations can each prove "I did not crash" while decoding the same bytes differently; the `fuzz-compare` job in `fuzz.yml` diffs those lines all-pairs and fails the run if any two disagree.
+Each harness ends by writing one `FUZZ-SUMMARY` line of counters - inputs, bytes generated, readers opened, records yielded, errors - defined to mean the same thing in all three. Sharing a generator without sharing an assertion means three implementations can each prove "I did not crash" while decoding the same bytes differently; the `fuzz-compare` job in `fuzz.yml` diffs those lines all-pairs across seven runner configurations, and `differential.yml` runs the same comparison on every push. Beyond the totals, `tests/conformance/record_fuzz.py` compares the decoded **CSV bytes** per input: it builds recordings from the committed fixtures, damages them, and drives all three CLIs over each one.
 
 The default-suite iteration count (256) is sized so the harness completes in a few seconds per implementation. `MIE_FUZZ_ITERATIONS` raises it; the scheduled burn-in in `.github/workflows/fuzz.yml` runs 25 000 across all three implementations on both Linux and Windows. See [`FUZZING.md`](FUZZING.md) for the full picture, including what is *not* fuzzed.
 

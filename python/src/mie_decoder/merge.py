@@ -61,10 +61,31 @@ def read_manifest(path: str | Path) -> list[Path]:
         manifest with no usable lines returns ``[]``, which is what lets the CLI
         distinguish "listed nothing" from "could not be read".
     """
-    text = Path(path).read_text(encoding="utf-8")
+    # `newline=""` disables universal-newline translation. Without it Python
+    # rewrites a lone `\r` -- and `\r\n` -- to `\n` before this code sees the
+    # text, so a filename containing a bare carriage return silently became two
+    # paths here while Rust's `fs::read_to_string` and the C++ reader, neither
+    # of which translates, kept it as one (L2-MRG-001).
+    #
+    # `Path.read_text` grew a `newline` parameter only in 3.13; this package
+    # supports 3.10, so the stream is opened explicitly.
+    with Path(path).open(encoding="utf-8", newline="") as handle:
+        text = handle.read()
     out: list[Path] = []
-    for line in text.splitlines():
-        trimmed = line.strip()
+    # `split("\n")`, NOT `splitlines()`. `splitlines()` also breaks on vertical
+    # tab, form feed, file/group/record separator, U+0085, U+2028 and U+2029 --
+    # none of which terminates a line in any manifest anyone writes, and all of
+    # which are legal in a POSIX filename. Rust's `str::lines()` and the C++
+    # reader both split on `\n` alone, so a manifest naming one file containing
+    # a form feed resolved to two nonexistent files here and one real file
+    # there (L2-MRG-001).
+    for raw in text.split("\n"):
+        # Strip at most one trailing carriage return -- that is what a CRLF
+        # line ending is -- then ASCII space and tab only. `str.strip()` removes
+        # Unicode whitespace, which the locale-free C++ implementation cannot
+        # do without embedding a table; see the note in `rust/src/merge.rs`.
+        line = raw[:-1] if raw.endswith("\r") else raw
+        trimmed = line.strip(" \t")
         if not trimmed or trimmed.startswith("#"):
             continue
         out.append(Path(trimmed))

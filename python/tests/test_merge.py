@@ -25,6 +25,11 @@ from mie_decoder.merge import (
 from mie_decoder.models import DeltaScope, MieMessage, TimestampFormat
 from mie_decoder.reader import MieFileReader
 from tests.conftest import RECORD_RT15_SA11_RCV
+from tests.fuzz_support import FUZZ_SEED, GLOB_PROBES, fuzz_logging, glob_pattern
+from tests.fuzz_support import fill as fuzz_fill
+from tests.fuzz_support import iterations as fuzz_iterations
+from tests.fuzz_support import summary as fuzz_summary
+from tests.fuzz_support import xorshift64 as fuzz_xorshift64
 
 
 def rt15_record_at(
@@ -482,22 +487,123 @@ def test_merge_allow_partial_bad_input_then_good(tmp_path: Path) -> None:
     assert (tmp_path / "out.csv.partial").exists()
 
 
-@pytest.mark.requirement("L1-ROB-001")
-def test_read_manifest_tolerates_arbitrary_bytes(tmp_path: Path) -> None:
-    # read_manifest on arbitrary bytes must only ever return a list or raise
-    # UnicodeDecodeError — never an unexpected exception. Deterministic.
-    import random
+@pytest.mark.requirement("L2-MRG-001")
+def test_read_manifest_grammar_is_exactly_specified(tmp_path: Path) -> None:
+    """The manifest grammar, pinned exactly.
 
-    rng = random.Random(0x0DDCD1EC)
+    Leaving it at "one path per line" is how three implementations came to
+    disagree three different ways, all found by the merge fuzz harness comparing
+    its ``FUZZ-SUMMARY`` counters and all now spelled out in L2-MRG-001:
+
+    * ``\\n`` is the only line separator. This reader used ``str.splitlines()``,
+      which also breaks on vertical tab, form feed, U+0085 and U+2028/9 -- none
+      of which ends a line in a manifest, all of which are legal in a POSIX
+      filename. One file became two nonexistent ones.
+    * At most one trailing ``\\r`` is stripped, so CRLF works and a filename
+      containing a bare CR survives.
+    * Trimming is ASCII space and tab only. ``str.strip()`` also removes U+00A0,
+      U+3000 and the rest; the C++ implementation is locale-free by rule and
+      cannot, so two implementations silently edited a filename the third passed
+      through.
+
+    Mirrors ``read_manifest_grammar_is_exactly_specified`` in Rust and the
+    C++ case of the same name.
+    """
+
+    def read(body: bytes) -> list[str]:
+        path = tmp_path / "grammar.txt"
+        path.write_bytes(body)
+        return [str(p) for p in read_manifest(path)]
+
+    # Only "\n" separates; a form feed, VT or U+0085 is part of the filename.
+    assert read(b"a.mie\x0cb.mie\n") == ["a.mie\x0cb.mie"]
+    assert read(b"a.mie\x0bb.mie\n") == ["a.mie\x0bb.mie"]
+    assert read("a.mie\u0085b.mie\n".encode()) == ["a.mie\u0085b.mie"]  # U+0085 NEL
+
+    # One trailing CR is the CRLF terminator; an interior CR is a filename.
+    assert read(b"a.mie\r\nb.mie\r\n") == ["a.mie", "b.mie"]
+    assert read(b"a\rb.mie\n") == ["a\rb.mie"]
+
+    # ASCII blanks are trimmed; Unicode spaces are part of the name.
+    assert read(b" \ta.mie\t \n") == ["a.mie"]
+    assert read("\u00a0a.mie\n".encode()) == ["\u00a0a.mie"]  # U+00A0 NBSP
+
+    # A manifest is a text file: ill-formed UTF-8 is refused, not decoded.
+    with pytest.raises(UnicodeDecodeError):
+        read(b"\xff\xfe\na.mie\n")
+
+
+@pytest.mark.requirement("L1-ROB-001")
+@pytest.mark.requirement("L2-MRG-001")
+def test_merge_input_resolution_tolerates_arbitrary_bytes(tmp_path: Path) -> None:
+    """L1-ROB-001 for the merge input-resolution surface.
+
+    ``read_manifest`` on arbitrary bytes must only ever return a list or raise
+    ``UnicodeDecodeError``, and the hand-rolled glob matcher and directory
+    expansion must tolerate any pattern.
+
+    Mirrors ``merge_input_resolution_tolerates_arbitrary_bytes`` in
+    ``rust/tests/integration.rs`` and the ``[fuzz]`` merge case in
+    ``cpp/tests/test_fuzz.cpp``: same generator, same alphabet, same probes, so
+    the ``FUZZ-SUMMARY`` counters are comparable. This harness used to seed
+    ``random.Random`` and cover only the manifest -- it was the one harness in
+    the project that did not see the same inputs as its counterparts.
+
+    ``expand_glob`` is called for crash-safety only and its result is
+    deliberately *not* counted: it reads the working directory, so what it
+    returns depends on where the suite ran, and a summary field has to mean the
+    same thing in every implementation on every host.
+    """
+    state = FUZZ_SEED
+    # 512 by default rather than the reader harness's 256: each iteration is
+    # cheap (no decode, no mmap) and the matcher has more branches than 256
+    # inputs comfortably cover. The shared knob still overrides.
+    count = fuzz_iterations(512)
+
+    total_bytes = 0
+    manifest_ok = 0
+    manifest_errors = 0
+    manifest_paths = 0
+    glob_hits = [0, 0, 0]
+
     manifest = tmp_path / "fuzz.txt"
-    for _ in range(512):
-        n = rng.randint(0, 96)
-        manifest.write_bytes(bytes(rng.randint(0, 255) for _ in range(n)))
-        try:
-            result = read_manifest(manifest)
-        except UnicodeDecodeError:
-            continue  # non-UTF8 is a documented failure, not a crash
-        assert isinstance(result, list)
+    with fuzz_logging():
+        for _ in range(count):
+            state, r = fuzz_xorshift64(state)
+            size = r % 96
+            state, payload = fuzz_fill(state, size)
+            total_bytes += size
+
+            # The pattern is drawn separately from the manifest bytes, and
+            # short: the two surfaces want different input shapes, and deriving
+            # one from the other means neither gets the shape it needs.
+            state, r = fuzz_xorshift64(state)
+            state, pattern_payload = fuzz_fill(state, r % 12)
+            pattern = glob_pattern(pattern_payload)
+
+            manifest.write_bytes(payload)
+            try:
+                result = read_manifest(manifest)
+            except UnicodeDecodeError:
+                manifest_errors += 1  # non-UTF8 is a documented failure
+            else:
+                assert isinstance(result, list)
+                manifest_ok += 1
+                manifest_paths += len(result)
+
+            for index, probe in enumerate(GLOB_PROBES):
+                if glob_match(pattern, probe):
+                    glob_hits[index] += 1
+            expand_glob(pattern)  # crash-safety only; see the docstring
+
+    fuzz_summary(
+        "merge",
+        count,
+        f"bytes={total_bytes} manifest_ok={manifest_ok} "
+        f"manifest_errors={manifest_errors} manifest_paths={manifest_paths} "
+        f"glob_ascii={glob_hits[0]} glob_latin1={glob_hits[1]} "
+        f"glob_cjk={glob_hits[2]} outcome=ok",
+    )
 
 
 @pytest.mark.requirement("L1-MRG-003")

@@ -82,6 +82,61 @@ std::string trim_ascii_blank(const std::string& s) {
     return s.substr(begin, end - begin);
 }
 
+bool is_valid_utf8(const std::string& s) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const unsigned char lead = static_cast<unsigned char>(s[i]);
+        std::size_t width = 0;
+        uint32_t code = 0;
+        if (lead < 0x80) {
+            i += 1;
+            continue;
+        } else if ((lead & 0xE0) == 0xC0) {
+            width = 2;
+            code = lead & 0x1FU;
+        } else if ((lead & 0xF0) == 0xE0) {
+            width = 3;
+            code = lead & 0x0FU;
+        } else if ((lead & 0xF8) == 0xF0) {
+            width = 4;
+            code = lead & 0x07U;
+        } else {
+            return false;  // continuation byte in lead position, or 0xF8..0xFF
+        }
+        if (i + width > s.size()) {
+            return false;  // truncated sequence
+        }
+        for (std::size_t k = 1; k < width; ++k) {
+            const unsigned char cont = static_cast<unsigned char>(s[i + k]);
+            if ((cont & 0xC0) != 0x80) {
+                return false;
+            }
+            code = (code << 6) | (cont & 0x3FU);
+        }
+        // Overlong encodings, surrogate halves and out-of-range code points are
+        // each well-formed byte patterns for a decoder that only counts
+        // continuation bytes, and each is rejected by the Rust and Python
+        // readers this has to agree with.
+        if (width == 2 && code < 0x80) {
+            return false;
+        }
+        if (width == 3 && code < 0x800) {
+            return false;
+        }
+        if (width == 4 && code < 0x10000) {
+            return false;
+        }
+        if (code > 0x10FFFF) {
+            return false;
+        }
+        if (code >= 0xD800 && code <= 0xDFFF) {
+            return false;
+        }
+        i += width;
+    }
+    return true;
+}
+
 std::string decimal(uint64_t value) { return render_unsigned(value, 10, 0, false); }
 
 std::string decimal_signed(int64_t value) {

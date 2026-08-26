@@ -13,7 +13,7 @@
 //      fault on random input actually surfaces.
 //
 //   2. The generator below is byte-for-byte the one in
-//      `rust/tests/integration.rs` and `python/tests/test_e2e.py`: same
+//      `rust/tests/integration.rs` and `python/tests/fuzz_support.py`: same
 //      xorshift64, same seed, same size range, same little-endian fill, same
 //      draw order. All three implementations therefore see THE SAME INPUTS.
 //      L1-ROB-001 is a shared requirement, and testing it three different ways
@@ -32,7 +32,7 @@
 // scoped differently per language cannot be compared across languages -- which
 // is the subject of `docs/FUZZING.md` section 1.
 //
-//   MIE_FUZZ_ITERATIONS   inputs to generate (default 256)
+//   MIE_FUZZ_ITERATIONS   inputs to generate (256 reader/dump, 512 merge)
 //   MIE_FUZZ_STREAM_LOGS  `1` / `true` -> leave the decoder's logger at WARN so
 //                         its diagnostics stream; anything else -> LEVEL_OFF
 //   MIE_FUZZ_SUMMARY      file to append this run's FUZZ-SUMMARY line to
@@ -43,7 +43,8 @@
 // burn-in wrote roughly forty megabytes of WARN lines into every CI run whether
 // or not anyone had asked for them.
 //
-// The default 256 iterations run in seconds and ride along with every `make
+// This file holds THREE cases -- reader, dump and merge input resolution.
+// The defaults run in seconds and ride along with every `make
 // check`. `make check-fuzz` runs ONLY this file's cases, which is what the
 // nightly burn-in uses so its wall time measures fuzzing rather than the whole
 // suite; `make check` is deliberately left as the single unparameterised
@@ -57,9 +58,13 @@
 #include <string>
 #include <vector>
 
+#include "mie/dump.hpp"
 #include "mie/error.hpp"
 #include "mie/log.hpp"
+#include "mie/merge.hpp"
+#include "mie/optional.hpp"
 #include "mie/order.hpp"
+#include "mie/platform.hpp"
 #include "mie/reader.hpp"
 #include "mie/source.hpp"
 #include "mie/text.hpp"
@@ -81,24 +86,56 @@ uint64_t xorshift64(uint64_t& state) {
     return x;
 }
 
+/// The glob-pattern alphabet the merge harness draws from, shared verbatim with
+/// `rust/tests/integration.rs` and `python/tests/fuzz_support.py`.
+///
+/// A pattern built by lossily UTF-8-decoding random bytes would be the obvious
+/// thing, and it is wrong twice over. Random bytes almost never contain `*` or
+/// `?`, so the matcher's interesting branches are never reached; and the three
+/// languages' lossy decoders do not agree character-for-character on how many
+/// U+FFFD an invalid sequence produces, so the counters could diverge without
+/// the glob matchers disagreeing about anything.
+///
+/// `*` and `?` are weighted (three and two slots) because the first version of
+/// this harness drew uniformly over patterns up to 95 characters long and
+/// matched a probe ZERO times in 512 iterations -- it fuzzed the reject path
+/// and nothing else.
+///
+/// The last two entries are deliberately non-ASCII, spelled as UTF-8 bytes so
+/// the source stays ASCII: U+00E9 and U+4E2D. Rust and Python match over
+/// scalar values and this matcher advances `?` by a whole UTF-8 character, and
+/// this is the surface where that agreement is either real or it is not.
+const std::size_t GLOB_ALPHABET_SIZE = 15;
+const char* const GLOB_ALPHABET[GLOB_ALPHABET_SIZE] = {
+    "*", "*", "*", "?", "?", ".", "a", "b", "m", "i", "e", "-", "x", "\xC3\xA9", "\xE4\xB8\xAD"};
+
+/// Names the generated patterns are matched against: ASCII, Latin-1, CJK.
+/// Counted separately so a divergence says which one broke.
+const char* const GLOB_PROBES[3] = {"some.name.mie", "caf\xC3\xA9.mie",
+                                    "\xE4\xB8\xAD\xE6\x96\x87.mie"};
+
 /// Digits only, explicit ASCII range -- `<cctype>` reads the locale table and
 /// is banned tree-wide (scripts/assert-locale-free.sh).
-std::size_t iterations_from_env() {
+///
+/// The default is per-harness because the harnesses cost different amounts per
+/// input. Every implementation uses the same default for the same harness,
+/// which is what keeps the summary lines comparable.
+std::size_t iterations_from_env(std::size_t default_value) {
     const char* raw = std::getenv("MIE_FUZZ_ITERATIONS");
     if (raw == 0) {
-        return 256;
+        return default_value;
     }
     std::size_t value = 0;
     for (const char* p = raw; *p != '\0'; ++p) {
         if (*p < '0' || *p > '9') {
-            return 256;  // unparseable: fall back rather than guess
+            return default_value;  // unparseable: fall back rather than guess
         }
         value = value * 10 + static_cast<std::size_t>(*p - '0');
         if (value > 10000000) {
             return 10000000;
         }
     }
-    return value == 0 ? 256 : value;
+    return value == 0 ? default_value : value;
 }
 
 /// True when MIE_FUZZ_STREAM_LOGS asks for the decoder's diagnostics.
@@ -217,7 +254,7 @@ TEST_CASE("arbitrary bytes never crash the decoder", "[fuzz][robustness][L1-ROB-
                                                           : mie::log::LEVEL_OFF);
 
     uint64_t state = FUZZ_SEED;
-    const std::size_t iterations = iterations_from_env();
+    const std::size_t iterations = iterations_from_env(256);
     uint64_t total_bytes = 0;
     uint64_t opened = 0;
     uint64_t records = 0;
@@ -310,4 +347,218 @@ TEST_CASE("arbitrary bytes never crash the decoder", "[fuzz][robustness][L1-ROB-
     // The loop above deliberately spends no per-record Catch2 assertion, so
     // without this the case would report "no assertions" on a clean run.
     REQUIRE(opened <= static_cast<uint64_t>(iterations));
+}
+
+namespace {
+
+uint64_t count_lines(const std::string& text) {
+    uint64_t lines = 0;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\n') {
+            ++lines;
+        }
+    }
+    return lines;
+}
+
+/// A `std::FILE*` closed exactly once, on the way out.
+///
+/// RAII because the dump below can throw between open and close, and a leaked
+/// handle across 25 000 burn-in iterations exhausts the descriptor table --
+/// which presents as the decoder failing to open its input, several hundred
+/// iterations after the harness caused it.
+class OpenFile {
+  public:
+    explicit OpenFile(const std::string& path) : handle_(std::fopen(path.c_str(), "wb")) {}
+    ~OpenFile() { close(); }
+
+    std::FILE* get() const { return handle_; }
+
+    void close() {
+        if (handle_ != 0) {
+            static_cast<void>(std::fclose(handle_));
+            handle_ = 0;
+        }
+    }
+
+  private:
+    OpenFile(const OpenFile&);
+    OpenFile& operator=(const OpenFile&);
+
+    std::FILE* handle_;
+};
+
+}  // namespace
+
+/// L1-ROB-001 for the `dump` subcommand: the record-aware and raw hex dumps
+/// must tolerate arbitrary bytes, letting nothing but a documented MieError
+/// escape.
+///
+/// The record dump reads headers under a bounds guard and slices to the record
+/// extent for the body -- it never reads payload by a Command Word's
+/// `data_word_count`, so it has no over-claim/overrun class of its own. This
+/// case guards that property against regression. Sizes are skewed small to
+/// exercise the truncation and loop-guard paths densely, and zero-length inputs
+/// reach the empty-file rejection.
+///
+/// Mirrors `dump_arbitrary_bytes_never_panics` in Rust and
+/// `test_dump_arbitrary_bytes_never_raise_unexpected_exceptions` in Python.
+/// Output volume is counted in LINES, not bytes: all three dumps print the
+/// input path in their header and the three harnesses name their temp files
+/// differently, so a byte count measures the path rather than the decoder.
+TEST_CASE("dump tolerates arbitrary bytes", "[fuzz][robustness][L1-ROB-001][L2-CLI-009]") {
+    const ScopedLogLevel log_level(stream_logs_from_env() ? mie::log::LEVEL_WARN
+                                                          : mie::log::LEVEL_OFF);
+
+    uint64_t state = FUZZ_SEED;  // same seed family as the reader harness
+    const std::size_t iterations = iterations_from_env(256);
+    uint64_t total_bytes = 0;
+    uint64_t records_errors = 0;
+    uint64_t records_lines = 0;
+    uint64_t raw_errors = 0;
+    uint64_t raw_lines = 0;
+
+    for (std::size_t i = 0; i < iterations; ++i) {
+        const std::size_t size = static_cast<std::size_t>(xorshift64(state) % 512);
+        const std::vector<uint8_t> bytes = fill_bytes(state, size);
+        total_bytes += static_cast<uint64_t>(size);
+
+        INFO("seed=0x0DDCD1ECDDC0DEC0 iteration=" << i << " size=" << size);
+
+        const mie_test::TempFile input("mie-dumpfuzz.mie", bytes);
+
+        {
+            const mie_test::TempPath out("dump-fuzz-records");
+            OpenFile file(out.str());
+            if (file.get() == 0) {
+                FAIL("could not open a temp file for the record dump");
+            }
+            try {
+                mie::dump::hex_dump_records(input.str(), mie::Optional<uint64_t>(64), 0,
+                                            file.get());
+            } catch (const mie::MieError&) {
+                // Empty or unreadable input is the documented error path.
+                ++records_errors;
+            }
+            file.close();
+            std::string text;
+            if (mie_test::read_file(out.str(), text)) {
+                records_lines += count_lines(text);
+            }
+        }
+
+        {
+            const mie_test::TempPath out("dump-fuzz-raw");
+            OpenFile file(out.str());
+            if (file.get() == 0) {
+                FAIL("could not open a temp file for the raw dump");
+            }
+            try {
+                mie::dump::hex_dump_raw(input.str(), 0, mie::Optional<std::size_t>(), file.get());
+            } catch (const mie::MieError&) {
+                ++raw_errors;
+            }
+            file.close();
+            std::string text;
+            if (mie_test::read_file(out.str(), text)) {
+                raw_lines += count_lines(text);
+            }
+        }
+        // Any OTHER exception type escapes and fails the case. That is the
+        // point: MieError is the contract.
+    }
+
+    std::string fields = "bytes=" + mie::text::decimal(total_bytes);
+    fields += " records_errors=" + mie::text::decimal(records_errors);
+    fields += " records_lines=" + mie::text::decimal(records_lines);
+    fields += " raw_errors=" + mie::text::decimal(raw_errors);
+    fields += " raw_lines=" + mie::text::decimal(raw_lines);
+    fields += " outcome=ok";
+    emit_summary("dump", iterations, fields);
+
+    REQUIRE(records_errors <= static_cast<uint64_t>(iterations));
+}
+
+/// L1-ROB-001 for the merge input-resolution surface: a manifest of arbitrary
+/// bytes, and an arbitrary glob pattern driven through the matcher and the
+/// directory expansion, must tolerate anything.
+///
+/// `expand_glob` is called for crash-safety only and its result is deliberately
+/// NOT counted: it reads the working directory, so what it returns depends on
+/// where the suite ran, and a summary field has to mean the same thing in every
+/// implementation on every host.
+///
+/// The glob matcher is hand-rolled three times, and the C++ one advances `?` by
+/// a whole UTF-8 character so it agrees with Rust's and Python's matching over
+/// scalar values. The non-ASCII alphabet entries and probes below are the part
+/// of this harness that tests that claim rather than restating it.
+TEST_CASE("merge input resolution tolerates arbitrary bytes",
+          "[fuzz][robustness][L1-ROB-001][L2-MRG-001]") {
+    const ScopedLogLevel log_level(stream_logs_from_env() ? mie::log::LEVEL_WARN
+                                                          : mie::log::LEVEL_OFF);
+
+    uint64_t state = FUZZ_SEED;
+    // 512 by default rather than the reader harness's 256: each iteration is
+    // cheap (no decode, no mmap) and the matcher has more branches than 256
+    // inputs comfortably cover. The shared knob still overrides.
+    const std::size_t iterations = iterations_from_env(512);
+
+    uint64_t total_bytes = 0;
+    uint64_t manifest_ok = 0;
+    uint64_t manifest_errors = 0;
+    uint64_t manifest_paths = 0;
+    uint64_t glob_hits[3] = {0, 0, 0};
+
+    for (std::size_t i = 0; i < iterations; ++i) {
+        const std::size_t size = static_cast<std::size_t>(xorshift64(state) % 96);
+        const std::vector<uint8_t> bytes = fill_bytes(state, size);
+        total_bytes += static_cast<uint64_t>(size);
+
+        // The pattern is drawn separately from the manifest bytes, and short:
+        // the two surfaces want different input shapes, and deriving one from
+        // the other means neither gets the shape it needs.
+        const std::size_t pattern_len = static_cast<std::size_t>(xorshift64(state) % 12);
+        const std::vector<uint8_t> pattern_bytes = fill_bytes(state, pattern_len);
+        std::string pattern;
+        for (std::size_t k = 0; k < pattern_bytes.size(); ++k) {
+            pattern += GLOB_ALPHABET[pattern_bytes[k] % GLOB_ALPHABET_SIZE];
+        }
+
+        INFO("seed=0x0DDCD1ECDDC0DEC0 iteration=" << i << " size=" << size
+                                                  << " pattern=" << pattern);
+
+        const mie_test::TempFile manifest("mie-mergefuzz.txt", bytes);
+
+        std::vector<std::string> paths;
+        mie::platform::OsError err;
+        if (mie::merge::read_manifest(manifest.str(), paths, err)) {
+            ++manifest_ok;
+            manifest_paths += static_cast<uint64_t>(paths.size());
+        } else {
+            // Non-UTF-8 content is a documented failure, not a crash.
+            ++manifest_errors;
+        }
+
+        for (std::size_t p = 0; p < 3; ++p) {
+            if (mie::merge::glob_match(pattern, GLOB_PROBES[p])) {
+                ++glob_hits[p];
+            }
+        }
+
+        std::vector<std::string> expanded;
+        mie::platform::OsError glob_err;
+        static_cast<void>(mie::merge::expand_glob(pattern, expanded, glob_err));
+    }
+
+    std::string fields = "bytes=" + mie::text::decimal(total_bytes);
+    fields += " manifest_ok=" + mie::text::decimal(manifest_ok);
+    fields += " manifest_errors=" + mie::text::decimal(manifest_errors);
+    fields += " manifest_paths=" + mie::text::decimal(manifest_paths);
+    fields += " glob_ascii=" + mie::text::decimal(glob_hits[0]);
+    fields += " glob_latin1=" + mie::text::decimal(glob_hits[1]);
+    fields += " glob_cjk=" + mie::text::decimal(glob_hits[2]);
+    fields += " outcome=ok";
+    emit_summary("merge", iterations, fields);
+
+    REQUIRE(manifest_ok + manifest_errors == static_cast<uint64_t>(iterations));
 }

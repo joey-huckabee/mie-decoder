@@ -52,7 +52,14 @@ pub fn read_manifest(path: &Path) -> io::Result<Vec<PathBuf>> {
     let text = fs::read_to_string(path)?;
     let mut out = Vec::new();
     for line in text.lines() {
-        let trimmed = line.trim();
+        // ASCII space and tab only, NOT `str::trim`. `trim` removes Unicode
+        // whitespace -- a no-break space, an ideographic space, an ogham space
+        // mark -- and the C++ implementation cannot: it is locale-free by rule
+        // (scripts/assert-locale-free.sh), so it trims ASCII blanks and would
+        // have to embed a Unicode table to agree. Two implementations silently
+        // editing a filename that legitimately begins with U+00A0, while the
+        // third passed it through, is the divergence this closes (L2-MRG-001).
+        let trimmed = line.trim_matches([' ', '\t']);
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
