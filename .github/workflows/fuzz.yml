@@ -1,11 +1,40 @@
 name: Fuzz burn-in
 
-# Longer-running fuzz burn-in for the L1-ROB-001 no-panic harnesses. The
-# normal CI suite runs the fixed 256-iteration default (kept fast); this
-# scheduled job overrides MIE_FUZZ_ITERATIONS for a much deeper sweep. The
-# PRNG is deterministic, so a burn-in is a strict superset of the default
-# run (same first 256 iterations) and a failure is reproducible from the
-# printed seed against either implementation.
+# Deeper run of the L1-ROB-001 no-panic harnesses than the ordinary suites do.
+# The normal `ci.yml` / `cpp-ci.yml` runs take the fixed 256-iteration default;
+# this workflow overrides MIE_FUZZ_ITERATIONS for a much larger sweep. The
+# generator is deterministic, so a burn-in is a strict superset of the default
+# run (same first 256 inputs) and a failure reproduces from the printed seed
+# against any implementation.
+#
+# THE THREE JOBS ARE SCOPED TO BE COMPARABLE. That is the point of the file and
+# it was not true before. Each implementation's harness used to run under its
+# own framework, at its own scope, reporting its own shape of result -- Rust
+# printed "1 passed", Python "2 passed", and C++ "484 test cases" because it ran
+# the WHOLE suite from a cold build, so its wall time was mostly not fuzzing and
+# Catch2 reports no per-case duration to recover it from. Three jobs proving
+# "did not crash" three different ways cannot be diffed against each other, and
+# a deterministic shared generator is wasted if nothing compares the results.
+#
+# So, in order:
+#
+#   * every job runs ONLY its fuzz harnesses (C++ via the `check-fuzz` target),
+#   * every harness reads the SAME three environment variables,
+#   * every harness ends by writing one FUZZ-SUMMARY line of counters that are
+#     defined to mean the same thing in all three, and
+#   * `fuzz-compare` downloads all of them and fails if any two disagree.
+#
+# WHY WINDOWS IS IN THE MATRIX. The C++ platform layer is entirely different
+# code on Windows -- file mapping, path identity, binary stdout (ADR-0003) --
+# and mapping a file is the first thing every one of these harnesses does with
+# its garbage input. Rust's and Python's memory-mapping paths differ by platform
+# too. `ci.yml` and `cpp-ci.yml` already build and test all three on Windows,
+# but only ever at the 256-iteration default; the deep sweep ran on Linux alone.
+#
+# WHAT THIS JOB STILL DOES NOT DO: raise the iteration count on an INSTRUMENTED
+# C++ build. The ASan/UBSan, Valgrind and GCC 4.8.5 tiers live in cpp-ci.yml and
+# see only the default count, so the deep sweep runs where a non-faulting
+# out-of-bounds read goes unnoticed. Tracked in docs/FUZZING.md section 5.
 
 on:
   schedule:
@@ -17,7 +46,7 @@ on:
         description: "Fuzz iterations per implementation"
         default: "25000"
       stream_logs:
-        description: "Stream harness WARN/ERROR diagnostics live (cargo --nocapture / pytest -s)"
+        description: "Stream harness WARN/ERROR diagnostics into the job log"
         type: boolean
         default: false
 
@@ -28,16 +57,29 @@ concurrency:
   group: fuzz-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
+  # Replaces the former `--nocapture` / `-s` knobs, which did not work. Rust's
+  # logger writes through `std::io::stderr()` and libtest's capture only
+  # intercepts the `print!` / `eprint!` macros; C++ writes to the stderr fd,
+  # which Catch2 does not redirect. So two of the three jobs streamed their
+  # diagnostics unconditionally -- tens of megabytes into every scheduled run --
+  # while pytest captured Python's and showed nothing at all. Neither job was
+  # answering the question the input claimed to ask. Silencing is now the
+  # harness's job, and this variable is what asks it not to.
+  MIE_FUZZ_STREAM_LOGS: ${{ github.event.inputs.stream_logs == 'true' && '1' || '0' }}
+
 jobs:
   fuzz-rust:
-    name: Rust fuzz burn-in
-    runs-on: ubuntu-latest
+    name: Rust fuzz burn-in (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     env:
       CARGO_TERM_COLOR: always
-      MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
-      # Empty on the scheduled run (capture on → small logs); `--nocapture`
-      # only when a manual run ticks `stream_logs`.
-      NOCAPTURE: ${{ github.event.inputs.stream_logs == 'true' && '--nocapture' || '' }}
+      MIE_FUZZ_SUMMARY: ${{ github.workspace }}/fuzz-summary.txt
 
     steps:
       - name: Check out repository
@@ -49,24 +91,32 @@ jobs:
           rustup update stable --no-self-update
           rustup default stable
 
-      # Both L1-ROB-001 harnesses run as separate steps so the Actions UI
-      # shows pass/fail per harness. With `stream_logs` ticked, $NOCAPTURE is
-      # `--nocapture` and each harness's logger diagnostics (reader:
-      # sync/invariant WARNs; dump: scan-stop anomaly WARNs, L2-CLI-013) stream
-      # live; otherwise output is captured and shown only on failure.
+      # Both harnesses run as separate steps so the Actions UI shows pass/fail
+      # and duration per harness -- the granularity the other two jobs lacked.
       - name: Reader fuzz harness (burn-in)
         working-directory: rust
-        run: cargo test --locked --test integration fuzz_arbitrary_bytes_never_panic -- $NOCAPTURE
+        run: cargo test --locked --test integration fuzz_arbitrary_bytes_never_panic
 
       - name: Dump fuzz harness (burn-in)
         working-directory: rust
-        run: cargo test --locked --test integration dump_arbitrary_bytes_never_panics -- $NOCAPTURE
+        run: cargo test --locked --test integration dump_arbitrary_bytes_never_panics
+
+      - name: Show summary
+        shell: bash
+        run: cat "$MIE_FUZZ_SUMMARY"
+
+      - name: Upload summary
+        uses: actions/upload-artifact@v6
+        with:
+          name: fuzz-summary-rust-${{ matrix.os }}
+          path: fuzz-summary.txt
+          if-no-files-found: error
 
   fuzz-cpp:
-    name: C++ fuzz burn-in
+    name: C++ fuzz burn-in (linux)
     runs-on: ubuntu-24.04
     env:
-      MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
+      MIE_FUZZ_SUMMARY: ${{ github.workspace }}/fuzz-summary.txt
 
     steps:
       - name: Check out repository
@@ -77,30 +127,67 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends g++ make
 
-      # No separate fuzz target and no corpus: the harness is an ordinary
-      # Catch2 test case, so it already runs on EVERY tier -- modern g++, the
-      # GCC 4.8.5 fidelity tier, MSVC, and again under ASan/UBSan and Valgrind,
-      # which is where a real memory fault on random input actually surfaces.
-      # This job exists only to turn the iteration count up. It runs the WHOLE
-      # suite rather than filtering to `[fuzz]`: the other 475 cases take a few
-      # seconds, and `make check` staying a single unparameterised command is
-      # what keeps this job and a developer's `make check` the same invocation.
-      #
-      # The generator is deterministic and seeded identically to the Rust and
-      # Python harnesses, so this burn-in is a strict SUPERSET of the default
-      # run -- the first 256 inputs are the same bytes in all three
-      # implementations.
+      # `check-fuzz`, not `check`. The harness is an ordinary Catch2 case, so it
+      # already rides along on every tier in cpp-ci.yml -- modern g++, the GCC
+      # 4.8.5 fidelity tier, MSVC, ASan/UBSan and Valgrind. This job exists only
+      # to turn the iteration count up, and running the other ~480 cases at that
+      # point buries the measurement it is here to take. `make check` stays the
+      # single unparameterised command a developer runs.
       - name: Run the L1-ROB-001 fuzz harness (burn-in)
-        run: make -C cpp -j"$(nproc)" check
+        run: make -C cpp -j"$(nproc)" check-fuzz
+
+      - name: Show summary
+        run: cat "$MIE_FUZZ_SUMMARY"
+
+      - name: Upload summary
+        uses: actions/upload-artifact@v6
+        with:
+          name: fuzz-summary-cpp-ubuntu-24.04
+          path: fuzz-summary.txt
+          if-no-files-found: error
+
+  fuzz-cpp-msvc:
+    name: C++ fuzz burn-in (MSVC)
+    runs-on: windows-2022
+    env:
+      MIE_FUZZ_SUMMARY: ${{ github.workspace }}\fuzz-summary.txt
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure
+        run: cmake -B cpp/build-msvc -S cpp -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build cpp/build-msvc --config Release
+
+      # The test binary directly rather than ctest: ctest registers the whole
+      # suite as one test and gives no way to pass Catch2 a tag filter, which is
+      # the whole point of this step. Same filter the `check-fuzz` target uses.
+      - name: Run the L1-ROB-001 fuzz harness (burn-in)
+        run: cpp\build-msvc\Release\mie_decoder_tests.exe --use-colour no "[fuzz]"
+
+      - name: Show summary
+        shell: bash
+        run: cat "$MIE_FUZZ_SUMMARY"
+
+      - name: Upload summary
+        uses: actions/upload-artifact@v6
+        with:
+          name: fuzz-summary-cpp-msvc
+          path: fuzz-summary.txt
+          if-no-files-found: error
 
   fuzz-python:
-    name: Python fuzz burn-in
-    runs-on: ubuntu-latest
+    name: Python fuzz burn-in (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     env:
-      MIE_FUZZ_ITERATIONS: ${{ github.event.inputs.iterations || '25000' }}
-      # Empty on the scheduled run (pytest captures → small logs); `-s` only
-      # when a manual run ticks `stream_logs`.
-      PYTEST_STREAM: ${{ github.event.inputs.stream_logs == 'true' && '-s' || '' }}
+      MIE_FUZZ_SUMMARY: ${{ github.workspace }}/fuzz-summary.txt
 
     steps:
       - name: Check out repository
@@ -119,10 +206,48 @@ jobs:
       - name: Synchronize locked dependencies
         run: poetry -C python sync --no-interaction --no-ansi
 
-      # The TestFuzzHarness class runs both the reader and dump harnesses.
-      # When `stream_logs` is ticked, $PYTEST_STREAM is `-s` (capture off) so
-      # the harnesses' `mie_decoder` WARN/ERROR diagnostics stream live into
-      # the job log, matching the Rust job's `--nocapture`; otherwise pytest
-      # captures and shows them only on failure.
+      # TestFuzzHarness holds both the reader and dump harnesses. `-s` so the
+      # harnesses' own stderr (the summary line, and the decoder diagnostics
+      # when MIE_FUZZ_STREAM_LOGS is set) reaches the job log the way Rust's and
+      # C++'s already do -- pytest is the only one of the three whose capture
+      # actually intercepts them.
       - name: Run the L1-ROB-001 fuzz harnesses (burn-in)
-        run: poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness -v $PYTEST_STREAM
+        run: poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness -v -s
+
+      - name: Show summary
+        shell: bash
+        run: cat "$MIE_FUZZ_SUMMARY"
+
+      - name: Upload summary
+        uses: actions/upload-artifact@v6
+        with:
+          name: fuzz-summary-python-${{ matrix.os }}
+          path: fuzz-summary.txt
+          if-no-files-found: error
+
+  fuzz-compare:
+    name: Cross-implementation summary comparison
+    runs-on: ubuntu-latest
+    needs: [fuzz-rust, fuzz-cpp, fuzz-cpp-msvc, fuzz-python]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Download every job's summary
+        uses: actions/download-artifact@v6
+        with:
+          pattern: fuzz-summary-*
+          path: fuzz-summaries
+
+      # The only step in this workflow that can catch a divergence BETWEEN
+      # implementations. Everything above proves that one implementation did not
+      # crash; this proves they agreed on what they read. All-pairs, no
+      # reference implementation -- see the script's header and
+      # tests/conformance/differential.py for why.
+      - name: Compare
+        run: python scripts/compare-fuzz-summaries.py fuzz-summaries

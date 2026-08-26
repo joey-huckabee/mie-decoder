@@ -703,108 +703,239 @@ fn header_skip_via_proprietary_prefix() {
 
 // ── L1-ROB-001 fuzz harness ──────────────────────────────────────────────
 //
-// Deterministic xorshift64 PRNG keeps the test fully reproducible and
-// avoids pulling in `rand` (the crate stays at a single external dep,
-// per L3-RS-002). Every iteration:
-//   1. generates a random byte sequence (32 B - 8 KB),
-//   2. writes it to a temp file,
-//   3. opens it with MieFileReader,
-//   4. iterates to completion,
-// and asserts that ANY outcome other than a panic is acceptable —
-// `Err(MieError::*)` items are the *expected* response to random
-// bytes; we just need to confirm we never panic, segfault, or enter
-// an unbounded loop. With 2 KiB iterations × up to 8 KB inputs the
-// total throughput is ~16 MB of random bytes; comfortably fits in a
-// test budget.
+// Deterministic xorshift64 PRNG keeps the tests fully reproducible and avoids
+// pulling in `rand` (the crate stays at a single external dep, per L3-RS-002).
+// Every iteration generates a random byte sequence, writes it to a temp file,
+// drives it through the decoder, and asserts that ANY outcome other than a
+// panic is acceptable — `Err(MieError::*)` items are the *expected* response to
+// random bytes; we just need to confirm we never panic, segfault, or enter an
+// unbounded loop.
 //
-// The PRNG seed is hard-coded so a failure can be reproduced exactly
-// (and locked in via the panic-printed seed when triaging).
-/// Requirements: L1-ROB-001
-#[test]
-fn fuzz_arbitrary_bytes_never_panic() {
-    fn xorshift64(state: &mut u64) -> u64 {
-        let mut x = *state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        *state = x;
-        x
-    }
+// THREE KNOBS, SHARED WITH THE PYTHON AND C++ HARNESSES. All three
+// implementations read the same environment variables and mean the same thing
+// by them. That matters because a burn-in scoped differently per language
+// cannot be compared across languages, which is the whole subject of
+// `docs/FUZZING.md` section 1:
+//
+//   MIE_FUZZ_ITERATIONS   inputs to generate (default 256)
+//   MIE_FUZZ_STREAM_LOGS  `1` / `true` -> leave the decoder's logger at WARN so
+//                         its diagnostics stream; anything else -> Level::Off
+//   MIE_FUZZ_SUMMARY      file to append this run's FUZZ-SUMMARY line to
+//
+// WHY THE LOG KNOB IS THE HARNESS'S JOB AND NOT THE RUNNER'S. This crate's
+// logger writes through `std::io::stderr()`, and libtest's capture only
+// intercepts the `print!` / `eprint!` macros — so `--nocapture` does not
+// control it in either direction. Before this knob existed a scheduled burn-in
+// streamed tens of megabytes of WARN lines into every CI run whether or not
+// anyone had asked for them, while the Python job (which pytest *can* capture)
+// showed nothing at all. Neither job was answering the question the workflow
+// input claimed to ask.
+//
+// Setting the level is process-global and NOT restored afterwards, which is
+// deliberate. libtest runs this binary's tests in parallel threads, so a scope
+// guard would restore the level while a sibling test was still running — the
+// race would be worse than the leak. Both fuzz harnesses set the same value,
+// no other test in this binary asserts on logging, and the unit tests that DO
+// (`src/log.rs`) build into a separate binary. The C++ harness is the opposite
+// case and does use a guard: Catch2 runs its cases sequentially in one process,
+// and leaving the level at OFF there broke `test_log.cpp` two files away.
 
-    let seed: u64 = 0x0DDC_D1EC_DDC0_DEC0;
-    let mut state = seed;
-    // 256 iterations runs in a few seconds and consistently exercises
-    // every invariant + recovery branch (verified by inspecting the
-    // WARN/ERROR log stream). The scheduled CI fuzz job overrides this
-    // via the MIE_FUZZ_ITERATIONS env var for a longer burn-in; the
-    // default-suite cost stays bounded. The PRNG is deterministic, so a
-    // burn-in is a strict superset of the default run (same first 256).
-    let iterations: usize = std::env::var("MIE_FUZZ_ITERATIONS")
+// Module scope rather than inside the harness body: `order_rows` is called from
+// within a `catch_unwind` closure, and an inner `use` after a statement trips
+// `clippy::items_after_statements` (the pedantic group is denied crate-wide).
+use mie_decoder::order::OrderIterExt;
+
+/// The seed every fuzz harness in every implementation starts from.
+const FUZZ_SEED: u64 = 0x0DDC_D1EC_DDC0_DEC0;
+
+/// The shared generator: xorshift64, byte-for-byte the one in
+/// `python/tests/test_e2e.py` and `cpp/tests/test_fuzz.cpp`. Not a good PRNG; a
+/// *reproducible* one, which is the property that matters here.
+fn fuzz_xorshift64(state: &mut u64) -> u64 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    x
+}
+
+/// `MIE_FUZZ_ITERATIONS`, or 256. A value that does not parse, or parses to
+/// zero, falls back rather than guessing — same rule in all three harnesses.
+fn fuzz_iterations() -> usize {
+    std::env::var("MIE_FUZZ_ITERATIONS")
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|&n| n > 0)
-        .unwrap_or(256);
+        .unwrap_or(256)
+}
+
+/// Silence the decoder's logger unless `MIE_FUZZ_STREAM_LOGS` asks for it.
+fn fuzz_configure_logging() {
+    let stream = std::env::var("MIE_FUZZ_STREAM_LOGS")
+        .is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE"));
+    mie_decoder::log::set_level(if stream {
+        mie_decoder::log::Level::Warn
+    } else {
+        mie_decoder::log::Level::Off
+    });
+}
+
+/// Fill `size` bytes from the shared generator: eight at a time little-endian,
+/// then one at a time for the tail.
+///
+/// The *consumption order* is as much a part of the contract as the PRNG —
+/// Python and C++ draw from the stream identically, which is what makes
+/// iteration N the same bytes in all three implementations.
+fn fuzz_bytes(state: &mut u64, size: usize) -> Vec<u8> {
+    let mut bytes = vec![0u8; size];
+    let mut j = 0;
+    while j + 8 <= size {
+        bytes[j..j + 8].copy_from_slice(&fuzz_xorshift64(state).to_le_bytes());
+        j += 8;
+    }
+    while j < size {
+        bytes[j] = (fuzz_xorshift64(state) & 0xFF) as u8;
+        j += 1;
+    }
+    bytes
+}
+
+/// Emit this harness's one-line summary.
+///
+/// The line has the same shape in all three implementations, so the burn-in
+/// jobs produce artifacts that can be *diffed* rather than three
+/// differently-shaped pass messages ("1 passed" vs "2 passed" vs "484 test
+/// cases"). On identical inputs the counters should be identical too; a
+/// difference is a cross-implementation finding, and comparing them is the
+/// cheap precursor to a real differential driver (`docs/FUZZING.md` 6.1).
+///
+/// Written to stderr — which libtest does not capture, for the same reason it
+/// does not capture the logger — and appended to `MIE_FUZZ_SUMMARY` when that
+/// names a file, because a file survives a job's log truncation.
+fn fuzz_summary(harness: &str, iterations: usize, fields: &str) {
+    let line = format!(
+        "FUZZ-SUMMARY impl=rust harness={harness} seed=0x{FUZZ_SEED:016X} \
+         iterations={iterations} {fields}"
+    );
+    let _ = std::io::Write::write_fmt(&mut std::io::stderr().lock(), format_args!("{line}\n"));
+    if let Ok(path) = std::env::var("MIE_FUZZ_SUMMARY")
+        && let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// What the reader harness counts. Every field is defined so that Python and
+/// C++ can count the same thing on the same input.
+#[derive(Default, Clone, Copy)]
+struct ReaderFuzzCounts {
+    opened: u64,
+    records: u64,
+    iter_errors: u64,
+}
+
+/// Requirements: L1-ROB-001
+#[test]
+fn fuzz_arbitrary_bytes_never_panic() {
+    fuzz_configure_logging();
+
+    let mut state = FUZZ_SEED;
+    let iterations = fuzz_iterations();
+    let mut total_bytes = 0u64;
+    let mut totals = ReaderFuzzCounts::default();
 
     for i in 0..iterations {
-        // Sizes range from 32 B (slightly above MIN_RECORD_BYTES_STANDARD)
-        // to ~8 KB. The lower bound keeps record headers reachable; the
-        // upper bound keeps each iteration fast.
-        let size = 32 + usize::try_from(xorshift64(&mut state) % 8192).unwrap_or(0);
-        let mut bytes = vec![0u8; size];
-        let mut j = 0;
-        while j + 8 <= size {
-            let r = xorshift64(&mut state);
-            bytes[j..j + 8].copy_from_slice(&r.to_le_bytes());
-            j += 8;
-        }
-        // Fill any tail.
-        while j < size {
-            bytes[j] = (xorshift64(&mut state) & 0xFF) as u8;
-            j += 1;
-        }
+        // Sizes range from 32 B (slightly above MIN_RECORD_BYTES_STANDARD) to
+        // ~8 KB. The lower bound keeps record headers reachable; the upper
+        // bound keeps each iteration fast.
+        let size = 32 + usize::try_from(fuzz_xorshift64(&mut state) % 8192).unwrap_or(0);
+        let bytes = fuzz_bytes(&mut state, size);
+        total_bytes += u64::try_from(size).unwrap_or(0);
 
         let f = TempFile::new(&bytes);
 
         // Use catch_unwind so an unexpected panic is surfaced with the
-        // reproducer seed instead of bringing down the whole test
-        // process at the first failure.
+        // reproducer seed instead of bringing down the whole test process at
+        // the first failure.
         let result = std::panic::catch_unwind(|| {
-            // Reader construction itself may fail on FileEmpty etc. —
-            // that's a documented error path, not a panic.
+            let mut counts = ReaderFuzzCounts::default();
+            // Reader construction itself may fail on FileEmpty etc. — that's a
+            // documented error path, not a panic.
             if let Ok(reader) = MieFileReader::new(f.path()) {
-                // Cap iteration count as a defense-in-depth bound:
-                // if the iterator somehow enters an unbounded loop,
-                // this surfaces it as a failed assertion rather than
-                // hanging the test runner.
-                //
+                counts.opened = 1;
                 // The canonical-order stage (L2-WRT-021) is on the fuzzed path
                 // deliberately: random bytes readily decode to repeated or
                 // all-zero timestamps, which is exactly the equal-timestamp run
                 // its `max_sort_group` cap (L2-WRT-022) exists to bound. A small
-                // cap is used so the cap-overflow branch is reached often rather
-                // than only on a pathological input.
-                use mie_decoder::order::OrderIterExt;
+                // cap is used so the cap-overflow branch is reachable at all.
                 let mut yielded = 0u64;
                 for item in reader.iter().order_rows(8) {
                     // We accept any Result; we just must not panic.
-                    let _ = item;
+                    if item.is_ok() {
+                        counts.records += 1;
+                    } else {
+                        counts.iter_errors += 1;
+                    }
                     yielded += 1;
+                    // Cap iteration count as a defense-in-depth bound: if the
+                    // iterator somehow enters an unbounded loop, this surfaces
+                    // it as a failed assertion rather than hanging the runner.
                     assert!(
                         yielded < 100_000,
                         "iterator yielded over 100k items on a {size}-byte input — \
-                         possible unbounded loop (seed=0x{seed:X}, iter={i})"
+                         possible unbounded loop (seed=0x{FUZZ_SEED:X}, iter={i})"
                     );
                 }
             }
+            counts
         });
 
-        assert!(
-            result.is_ok(),
-            "MieFileReader panicked on random input (seed=0x{seed:X}, iter={i}, \
-             size={size}). First 32 bytes: {:02X?}",
-            &bytes[..bytes.len().min(32)]
-        );
+        match result {
+            Ok(counts) => {
+                totals.opened += counts.opened;
+                totals.records += counts.records;
+                totals.iter_errors += counts.iter_errors;
+            }
+            Err(_) => {
+                // Emit what we have before failing: the summary is how a
+                // burn-in is compared, and a run that died at iteration 24 000
+                // still has 24 000 iterations' worth of evidence in it.
+                fuzz_summary(
+                    "reader",
+                    iterations,
+                    &format!(
+                        "bytes={total_bytes} opened={} open_errors={} records={} \
+                         iter_errors={} outcome=panic",
+                        totals.opened,
+                        u64::try_from(i).unwrap_or(0) - totals.opened,
+                        totals.records,
+                        totals.iter_errors
+                    ),
+                );
+                panic!(
+                    "MieFileReader panicked on random input (seed=0x{FUZZ_SEED:X}, iter={i}, \
+                     size={size}). First 32 bytes: {:02X?}",
+                    &bytes[..bytes.len().min(32)]
+                );
+            }
+        }
     }
+
+    fuzz_summary(
+        "reader",
+        iterations,
+        &format!(
+            "bytes={total_bytes} opened={} open_errors={} records={} iter_errors={} outcome=ok",
+            totals.opened,
+            u64::try_from(iterations).unwrap_or(0) - totals.opened,
+            totals.records,
+            totals.iter_errors
+        ),
+    );
 }
 
 /// L1-ROB-001 for the `dump` subcommand: the record-aware and raw hex dumps
@@ -816,61 +947,92 @@ fn fuzz_arbitrary_bytes_never_panic() {
 /// against regression. Sizes are skewed small to exercise the truncation /
 /// loop-guard paths densely. Mirrors the Python
 /// `test_dump_arbitrary_bytes_never_raise_unexpected_exceptions`.
+///
+/// Both dumps are attempted on every input, and each is counted separately, so
+/// the summary line means the same thing as Python's on the same bytes.
+///
+/// Output volume is counted in LINES, not bytes. Both dumps print the input
+/// path in their header, and the harnesses name their temp files differently in
+/// each implementation — so a byte count is a measure of the path, not of the
+/// decoder, and the two could never agree. Lines are path-independent.
 /// Requirements: L1-ROB-001, L2-CLI-009
 #[test]
 fn dump_arbitrary_bytes_never_panics() {
-    fn xorshift64(state: &mut u64) -> u64 {
-        let mut x = *state;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        *state = x;
-        x
-    }
+    fuzz_configure_logging();
 
-    let seed: u64 = 0x0DDC_D1EC_DDC0_DEC0; // same seed family as the reader harness
-    let mut state = seed;
-
-    // Honor MIE_FUZZ_ITERATIONS for the scheduled burn-in, same as the reader
-    // harness (deterministic PRNG, so a burn-in is a superset of the default).
-    let iterations: usize = std::env::var("MIE_FUZZ_ITERATIONS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(256);
+    let mut state = FUZZ_SEED; // same seed family as the reader harness
+    let iterations = fuzz_iterations();
+    let mut total_bytes = 0u64;
+    let (mut records_errors, mut records_lines) = (0u64, 0u64);
+    let (mut raw_errors, mut raw_lines) = (0u64, 0u64);
 
     for i in 0..iterations {
         // Modulo first, so the value provably fits a usize before conversion.
-        let size = usize::try_from(xorshift64(&mut state) % 512).unwrap_or(0); // dense guard coverage
-        let mut bytes = vec![0u8; size];
-        let mut j = 0;
-        while j + 8 <= size {
-            let r = xorshift64(&mut state);
-            bytes[j..j + 8].copy_from_slice(&r.to_le_bytes());
-            j += 8;
-        }
-        while j < size {
-            bytes[j] = (xorshift64(&mut state) & 0xFF) as u8;
-            j += 1;
-        }
+        let size = usize::try_from(fuzz_xorshift64(&mut state) % 512).unwrap_or(0);
+        let bytes = fuzz_bytes(&mut state, size);
+        total_bytes += u64::try_from(size).unwrap_or(0);
 
         let f = TempFile::new(&bytes);
         let result = std::panic::catch_unwind(|| {
             // Both dumps may return Err (e.g. FileEmpty) — a documented error
-            // path, not a panic. We sink output into a Vec and discard it.
+            // path, not a panic. We sink output into a Vec and discard it,
+            // clearing between the two so each dump's output size is its own.
+            // clippy::naive_bytecount suggests the `bytecount` crate. This crate
+            // has exactly one external dependency by policy (L3-RS-002), and a
+            // line count in a test harness is nowhere near a reason to add a
+            // second — the fuzzed dumps here are at most a few hundred bytes.
+            #[allow(clippy::naive_bytecount)]
+            let count_lines = |sink: &[u8]| {
+                u64::try_from(sink.iter().filter(|&&b| b == b'\n').count()).unwrap_or(0)
+            };
             let mut sink = Vec::new();
-            let _ = mie_decoder::dump::hex_dump_records(f.path(), Some(64), 0, &mut sink);
+            let records = mie_decoder::dump::hex_dump_records(f.path(), Some(64), 0, &mut sink);
+            let records_len = count_lines(&sink);
             sink.clear();
-            let _ = mie_decoder::dump::hex_dump_raw(f.path(), 0, None, &mut sink);
+            let raw = mie_decoder::dump::hex_dump_raw(f.path(), 0, None, &mut sink);
+            let raw_len = count_lines(&sink);
+            (
+                u64::from(records.is_err()),
+                records_len,
+                u64::from(raw.is_err()),
+                raw_len,
+            )
         });
 
-        assert!(
-            result.is_ok(),
-            "dump panicked on random input (seed=0x{seed:X}, iter={i}, size={size}). \
-             First 32 bytes: {:02X?}",
-            &bytes[..bytes.len().min(32)]
-        );
+        match result {
+            Ok((rec_err, rec_len, raw_err, raw_len)) => {
+                records_errors += rec_err;
+                records_lines += rec_len;
+                raw_errors += raw_err;
+                raw_lines += raw_len;
+            }
+            Err(_) => {
+                fuzz_summary(
+                    "dump",
+                    iterations,
+                    &format!(
+                        "bytes={total_bytes} records_errors={records_errors} \
+                         records_lines={records_lines} raw_errors={raw_errors} \
+                         raw_lines={raw_lines} outcome=panic"
+                    ),
+                );
+                panic!(
+                    "dump panicked on random input (seed=0x{FUZZ_SEED:X}, iter={i}, size={size}). \
+                     First 32 bytes: {:02X?}",
+                    &bytes[..bytes.len().min(32)]
+                );
+            }
+        }
     }
+
+    fuzz_summary(
+        "dump",
+        iterations,
+        &format!(
+            "bytes={total_bytes} records_errors={records_errors} records_lines={records_lines} \
+             raw_errors={raw_errors} raw_lines={raw_lines} outcome=ok"
+        ),
+    );
 }
 
 // ── L1-MRG / L2-MRG: multi-file time-sorted merge ─────────────────────────

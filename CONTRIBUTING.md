@@ -376,10 +376,15 @@ Two things to know:
 
 Each implementation carries a deterministic fuzz harness asserting the
 **L1-ROB-001** robustness contract: arbitrary input bytes must never panic
-(Rust) or raise anything other than a documented `MieDecoderError` (Python).
-There are four harnesses — a reader and a dump harness per language — all
-seeded from the same `xorshift64` PRNG so a failure is reproducible across
-implementations:
+(Rust) or raise anything other than a documented `MieDecoderError` / `MieError`
+(Python, C++). All of them are seeded from the same `xorshift64` PRNG, with the
+same seed, size bands and draw order, so iteration N is the same bytes in every
+implementation.
+
+`docs/FUZZING.md` is the full map — which surfaces are fuzzed, by which
+implementation, what is deliberately not fuzzed yet, and the rule that governs
+the area (**a fuzz surface is exercised by all three implementations or by
+none**). What follows is how to run them.
 
 | Harness | Test |
 |---------|------|
@@ -387,6 +392,10 @@ implementations:
 | Rust dump | `rust/tests/integration.rs::dump_arbitrary_bytes_never_panics` |
 | Python reader | `tests/test_e2e.py::TestFuzzHarness::test_arbitrary_bytes_never_raise_unexpected_exceptions` |
 | Python dump | `tests/test_e2e.py::TestFuzzHarness::test_dump_arbitrary_bytes_never_raise_unexpected_exceptions` |
+| C++ reader | `cpp/tests/test_fuzz.cpp`, tagged `[fuzz]` |
+
+C++ has no dump harness. That is a parity gap, not a design choice; it is
+tracked in `docs/FUZZING.md` section 5.
 
 Run them (default 256 iterations):
 
@@ -397,44 +406,79 @@ cargo test --test integration dump_arbitrary_bytes_never_panics
 
 # Python (whole class = both reader + dump)
 poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness
+
+# C++ (the [fuzz] cases only; they also ride along in `make check`)
+make -C cpp check-fuzz
 ```
 
-### Burn-in iterations
+### The three shared knobs
 
-All four harnesses honor the `MIE_FUZZ_ITERATIONS` environment variable; the
-scheduled [`.github/workflows/fuzz.yml`](.github/workflows/fuzz.yml) job runs
-25 000 iterations daily. The PRNG is deterministic, so a burn-in is a strict
-superset of the default run (same first 256 inputs); a failure prints the
-reproducer seed.
+Every harness reads the same three environment variables and means the same
+thing by each. That is deliberate: a burn-in scoped differently per language
+cannot be compared across languages.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MIE_FUZZ_ITERATIONS` | 256 | Inputs to generate. Unparseable or zero falls back rather than guessing. |
+| `MIE_FUZZ_STREAM_LOGS` | unset (silent) | `1` / `true` leaves the decoder's logger at WARN so its diagnostics stream. |
+| `MIE_FUZZ_SUMMARY` | unset | File to append the run's `FUZZ-SUMMARY` line to. |
+
+The scheduled [`.github/workflows/fuzz.yml`](.github/workflows/fuzz.yml) job
+runs 25 000 iterations daily, across all three implementations on both Linux and
+Windows. The PRNG is deterministic, so a burn-in is a strict superset of the
+default run (same first 256 inputs); a failure prints the reproducer seed.
 
 ```bash
-(cd rust && MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic -- --nocapture)
+(cd rust && MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic)
 MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest -s tests/test_e2e.py::TestFuzzHarness
+MIE_FUZZ_ITERATIONS=25000 make -C cpp check-fuzz
 ```
 
 On Windows PowerShell set the variable separately: `$env:MIE_FUZZ_ITERATIONS =
 "25000"` (and `Remove-Item Env:\MIE_FUZZ_ITERATIONS` after).
 
+### The summary line
+
+Every harness ends by writing one `FUZZ-SUMMARY` record — inputs, bytes
+generated, readers opened, records yielded, errors — with the same shape in all
+three implementations. Point them all at one file and compare:
+
+```bash
+export MIE_FUZZ_SUMMARY=/tmp/fuzz-summary.txt && rm -f "$MIE_FUZZ_SUMMARY"
+(cd rust && cargo test --test integration -- fuzz_arbitrary_bytes_never_panic dump_arbitrary_bytes_never_panics)
+poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness
+make -C cpp check-fuzz
+mkdir -p /tmp/fz/local && cp "$MIE_FUZZ_SUMMARY" /tmp/fz/local/
+python scripts/compare-fuzz-summaries.py /tmp/fz
+```
+
+On identical inputs the counters must be identical. The burn-in's
+`fuzz-compare` job does exactly this across every implementation and both
+platforms, and fails if any two disagree. Any counter added here must be
+**path-independent** — the harnesses name their temp files differently, so
+anything derived from a path measures the harness rather than the decoder.
+
 ### Output model (where the WARN noise comes from)
 
-All four harnesses route diagnostics through the logger, so all four are noisy
-on random input:
+All the harnesses route diagnostics through the logger, and all of them are
+noisy on random input:
 
 - **Reader harnesses** emit WARN/ERROR for sync recovery and invariant
   rejection.
 - **Dump harnesses** emit a WARN for each record-aware scan-stop anomaly —
   invalid `word_count`, truncated record, offset overflow (L2-CLI-013) — in
-  addition to the inline `!! …` note in the hex report (the report itself goes
+  addition to the inline `!! ...` note in the hex report (the report itself goes
   to a throwaway sink in the fuzz tests, so you see the WARNs, not the report).
 
-The logger writes to process **stderr** in Rust (`rust/src/log.rs`, default `WARN`)
-and through the `mie_decoder` logger in Python. Both `cargo test` and `pytest`
-**capture** stderr by default and replay it only on failure; pass `--nocapture`
-(cargo) or `-s` (pytest) to **stream it live**. The Python harnesses call
-`configure_logging("WARNING")` (via the `_surface_logs` helper) so the records
-reach stderr under `-s` — without it pytest's log capture would swallow them.
-Heavy output on random input is expected. For a long burn-in, prefer
-`--nocapture` / `-s` so the output streams rather than buffering tens of MB.
+**The test runners do not control this, which is why `MIE_FUZZ_STREAM_LOGS`
+exists.** Rust's logger writes through `std::io::stderr()` and libtest's capture
+only intercepts the `print!` / `eprint!` macros; the C++ logger writes to the
+stderr file descriptor, which Catch2 does not redirect. So `--nocapture` is a
+no-op for both and their output used to stream unconditionally — tens of
+megabytes per burn-in — while pytest, which *does* capture, showed nothing at
+all. The harnesses now silence the logger themselves by default and turn it back
+on for `MIE_FUZZ_STREAM_LOGS=1`. Under pytest you still need `-s` on top of the
+variable, since pytest captures what the harness emits either way.
 
 ## Continuous integration
 

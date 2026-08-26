@@ -81,6 +81,7 @@ poetry -P python build   # -P (not -C): -C doubles the src path on Windows; -P n
 # C++ build and test (run from cpp/; the Makefile is authoritative on Linux)
 cd cpp
 make check                # build + full Catch2 suite, -Werror
+make check-fuzz           # the [fuzz] cases only (what the nightly burn-in runs)
 make check SANITIZE=1     # ASan + UBSan + LSan, fatal on first finding
 make check-valgrind       # memcheck, fails on any leak
 make check-gcc48          # SLES 12 fidelity tier: FULL suite on GCC 4.8.5, in a container
@@ -111,6 +112,15 @@ bash scripts/assert-sources-agree.sh       # Makefile and CMake resolve the same
 poetry -C python run python ../tests/conformance/run.py
 poetry -C python run python ../tests/conformance/run.py --skip cpp   # no C++ build
 poetry -C python run python ../tests/conformance/run.py --only cpp   # C++ vs the oracles
+
+# Fuzz harnesses (L1-ROB-001). All three read the SAME three knobs:
+#   MIE_FUZZ_ITERATIONS (default 256) / MIE_FUZZ_STREAM_LOGS / MIE_FUZZ_SUMMARY
+# Point them all at one MIE_FUZZ_SUMMARY file and compare the FUZZ-SUMMARY
+# lines -- on identical inputs the counters must be identical.
+MIE_FUZZ_ITERATIONS=25000 cargo test --test integration fuzz_arbitrary_bytes_never_panic
+MIE_FUZZ_ITERATIONS=25000 poetry -C python run pytest tests/test_e2e.py::TestFuzzHarness -s
+MIE_FUZZ_ITERATIONS=25000 make -C cpp check-fuzz
+python scripts/compare-fuzz-summaries.py <dir-of-summary-files>
 ```
 
 ## Architecture
@@ -160,6 +170,7 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
 - `docs/ERROR-CATALOG.md` — operator-facing reference for every CLI exit code, error class, DDC error code (`0x01xx`), and decoder-assigned code (`0x20xx`). Updated when error variants are added or removed.
 - `docs/DATA-SCENARIOS.md` — plain-language, scenario-indexed map of how the tool handles every data condition (clean / error / spurious records, IRIG / Standard / freerun timestamps, empty / truncated / non-MIE files, multi-file merge including per-file `--allow-partial` and duplicate collapsing, output modes, filters, MUX), each with its CSV / log / exit outcome and a glossary that defines the jargon (including "oracle"). Summarizes and links to ERROR-CATALOG.md (codes / exits) and MIE-FORMAT.md (binary). The "which scenario am I in, and what will the tool do?" front door.
 - `docs/MAINTAINER-GUIDE.md` — repo layout, local dev setup, command cheat sheet, workflows for adding requirements / tests / conformance fixtures / error variants / CLI flags, CI architecture, coverage workflow, release process, cross-impl alignment principles. Start here when onboarding to make changes to the codebase.
+- `docs/FUZZING.md` — the map of what is fuzzed: the two fuzzing architectures in the repo (per-language in-process robustness harnesses vs. the shared all-pairs differential drivers in `tests/conformance/`), a per-surface inventory of which implementations cover it, where each harness runs in CI, the parity gaps (C++ has no `dump` or merge-resolution fuzz; Python's merge fuzz uses a different PRNG than Rust's; the C++ deep run is uninstrumented), and the candidate future surfaces. Read this before adding a fuzz harness or interpreting a burn-in log. **The governing rule: a fuzz surface is exercised by all three implementations or by none.**
 - `docs/MIE-FORMAT.md` — comprehensive MIE binary format reference: file-level framing, the three-section record shape, Type Word / IRIG and Standard timestamp / Command Word / Status Word bit layouts, per-format payload shapes for all 11 transaction types, error-record lifecycle (Type Word bit 14 → truncated payload → Error Word → optional SPURIOUS continuation), the DDC `0x01xx` and decoder-assigned `0x20xx` error code tables, full CSV output reference, three worked hex-to-CSV decodes. The deep reference for reverse-engineering or adding format support.
 - `docs/L1-REQ.md` — Level 1 SHALL statements (system requirements grouped by category, plus the NR-001 out-of-scope note).
 - `docs/L2-REQ.md` — Level 2 architectural derivations (each with a single L1 parent).

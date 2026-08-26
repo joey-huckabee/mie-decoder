@@ -198,6 +198,7 @@ docs/
 ├── DATA-SCENARIOS.md   Every data condition mapped to its CSV / log / exit outcome
 ├── ERROR-CATALOG.md    Operator reference: exit codes, error classes, DDC codes
 ├── EXAMPLES.md         Runnable cookbook of common operator tasks
+├── FUZZING.md          What is fuzzed, by which implementation, and what is not
 ├── L1-REQ.md           Level 1 SHALL statements (system requirements)
 ├── L2-REQ.md           Level 2 architectural derivations
 ├── L3-REQ.md           Level 3 implementation obligations (incl. PY/RS)
