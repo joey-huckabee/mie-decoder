@@ -108,9 +108,29 @@ bool read_manifest(const std::string& path, std::vector<std::string>& out, platf
     }
     const std::string body(raw.begin(), raw.end());
 
+    // A manifest is a TEXT file, and the other two implementations say so by
+    // construction: `fs::read_to_string` and `Path.read_text(encoding="utf-8")`
+    // both refuse ill-formed input. A std::string does not, so this
+    // implementation used to accept arbitrary bytes as if they were paths --
+    // the same manifest was rejected by two implementations and decoded by the
+    // third. Found by the merge fuzz harness (L2-MRG-001).
+    if (!text::is_valid_utf8(body)) {
+        err.code = -1;
+        err.message = "manifest is not valid UTF-8";
+        return false;
+    }
+
     std::string line;
     for (std::size_t i = 0; i <= body.size(); ++i) {
         if (i == body.size() || body[i] == '\n') {
+            // Strip at most ONE trailing carriage return, which is what a CRLF
+            // line ending is. Dropping every `\r` in the line -- as this did
+            // until v2.16.0 -- also silently edits a filename that legitimately
+            // contains one, and Rust's `str::lines()` and the fixed Python
+            // reader both strip only the terminator.
+            if (!line.empty() && line[line.size() - 1] == '\r') {
+                line.erase(line.size() - 1);
+            }
             const std::string trimmed = text::trim_ascii_blank(line);
             // A comment or a blank line is not an empty path -- treating it as
             // one would put "" into the merge and fail on a file nobody named.
@@ -118,7 +138,7 @@ bool read_manifest(const std::string& path, std::vector<std::string>& out, platf
                 out.push_back(trimmed);
             }
             line.clear();
-        } else if (body[i] != '\r') {
+        } else {
             line += body[i];
         }
     }

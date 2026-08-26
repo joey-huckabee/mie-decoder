@@ -76,6 +76,21 @@ bool equals_ignoring_ascii_case(const std::string& a, const std::string& b);
 /// Remove leading and trailing spaces and tabs.
 std::string trim_ascii_blank(const std::string& s);
 
+/// Whether `s` is well-formed UTF-8.
+///
+/// Exists because a `std::string` is a byte sequence and the other two
+/// implementations' strings are not: `fs::read_to_string` and
+/// `Path.read_text(encoding="utf-8")` both REJECT ill-formed input, so a
+/// manifest of arbitrary bytes was accepted here and refused there. The merge
+/// fuzz harness found it -- 512 generated manifests, 498 rejected by Rust and
+/// Python and 0 by this implementation.
+///
+/// Rejects the things a naive length-driven decoder accepts: overlong
+/// encodings, surrogate halves (U+D800..U+DFFF), and anything above U+10FFFF.
+/// A path that is not valid UTF-8 cannot round-trip to Windows, so accepting
+/// one here would only defer the failure.
+bool is_valid_utf8(const std::string& s);
+
 // --- Integer formatting ---------------------------------------------------
 
 /// Unsigned decimal, no padding.
