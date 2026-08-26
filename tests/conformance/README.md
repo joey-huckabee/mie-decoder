@@ -84,6 +84,19 @@ minimal Rust parser), so `run.py` cross-checks them when both are present:
   iteration count); on a divergence it prints the exact config so it can be
   pinned in `config_parity.py`. Set `MIE_CONFIG_FUZZ_SEED` / `MIE_CONFIG_FUZZ_ITERS` to explore
   further locally.
+- **`record_fuzz.py`** — the record-stream twin of `config_fuzz.py`, and the only
+  check anywhere that compares what the three **decoders produce** on input
+  nobody wrote. It builds a recording by concatenating one to three of the
+  committed hex fixtures, then *damages* it (bit flips, truncation, spliced
+  noise, zeroed words, duplicated slices), runs `decode` through every
+  implementation's CLI, and compares the exit-code class **and the CSV bytes**
+  all-pairs. Structure-aware on purpose: uniform random bytes reach the recovery
+  paths densely and the valid-record paths almost never. All implementations
+  read **one shared input file** — `MUX` comes from the input file name
+  (L2-WRT-020), so per-implementation copies would make every CSV differ on the
+  harness rather than the decoder. On a divergence it prints the input as a
+  ready-to-commit `inputs/*.hex` fixture and names the first differing CSV line.
+  `MIE_RECORD_FUZZ_SEED` / `MIE_RECORD_FUZZ_ITERS` (default 60) tune it.
 - **`config_path_parity.py`** — the layer above: the `--config` **path**, not its
   contents. The two above always hand the CLIs a perfectly ordinary file, so the
   path's own behavior — what counts as usable, which exit code a bad one yields,
