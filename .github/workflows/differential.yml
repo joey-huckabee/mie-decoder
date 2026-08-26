@@ -55,8 +55,11 @@ jobs:
       # `-e` rather than the locked Poetry environment: this job compares CLI
       # BEHAVIOUR across implementations and does not need pinned dependency
       # versions, only an importable package.
+      # `pytest` explicitly: `-e ./python` installs the package's runtime
+      # requirements, not its dev group, and the fuzz-summary step below runs
+      # the Python harnesses directly.
       - name: Install the Python package
-        run: python -m pip install -e ./python
+        run: python -m pip install -e ./python pytest
 
       - name: Install the C++ toolchain
         run: |
@@ -70,5 +73,38 @@ jobs:
       # implementation and fails if one is missing, which is exactly what this
       # job wants to assert. The Rust binary is built by the runner itself if
       # it is not already present.
-      - name: Conformance, surface parity, and the differential config checks
+      #
+      # This also runs `record_fuzz.py`, the differential RECORD-STREAM fuzzer:
+      # it generates recordings from the committed fixtures, damages them, and
+      # compares the CSV bytes all-pairs. That is the only check anywhere that
+      # compares what the three DECODERS produce on inputs nobody wrote.
+      - name: Conformance, surface parity, and the differential fuzzers
         run: python tests/conformance/run.py
+
+      # The per-implementation L1-ROB-001 harnesses each prove their own process
+      # did not crash. Their FUZZ-SUMMARY counters are defined to mean the same
+      # thing in all three, and comparing them is what turns "three
+      # implementations each survived" into "three implementations agreed".
+      #
+      # It runs HERE, on every push, and not only in the nightly burn-in: a PR
+      # that introduced a divergence would otherwise stay green until the next
+      # scheduled run. Default iteration counts, so this costs seconds.
+      - name: Run every fuzz harness into one summary file
+        env:
+          MIE_FUZZ_SUMMARY: ${{ github.workspace }}/fuzz-summaries/all/summary.txt
+        run: |
+          mkdir -p fuzz-summaries/all
+          (cd rust && cargo test --locked --test integration -- \
+              fuzz_arbitrary_bytes_never_panic \
+              dump_arbitrary_bytes_never_panics \
+              merge_input_resolution_tolerates_arbitrary_bytes)
+          # From `python/`, because the harnesses import `tests.fuzz_support`
+          # and that resolves against the rootdir pytest picks from
+          # `python/pyproject.toml`.
+          (cd python && python -m pytest tests/test_e2e.py::TestFuzzHarness \
+              tests/test_merge.py::test_merge_input_resolution_tolerates_arbitrary_bytes \
+              -q)
+          make -C cpp check-fuzz
+
+      - name: Compare the summaries across implementations
+        run: python scripts/compare-fuzz-summaries.py fuzz-summaries
