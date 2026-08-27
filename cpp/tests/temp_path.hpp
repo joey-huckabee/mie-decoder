@@ -137,6 +137,32 @@ inline bool read_file(const std::string& path, std::string& out) {
     return ok;
 }
 
+/// Write `contents` to an EXACT path. False when it could not be written.
+///
+/// The counterpart to `read_file`, and distinct from `TempFile`, which builds a
+/// unique path of its own choosing. A test that needs a file at a path the code
+/// under test *derives* -- `<stem>_errors<ext>`, `<dest>.partial` -- cannot use
+/// `TempFile`: the unique suffix means the derived name and the fixture name
+/// would never coincide, and the test passes for the wrong reason. Pair this
+/// with `TempPath::also_remove` so the file is still cleaned up.
+///
+/// Binary mode on purpose, for the same reason `read_file` uses it.
+inline bool write_file(const std::string& path, const std::string& contents) {
+    std::FILE* handle = std::fopen(path.c_str(), "wb");
+    if (handle == NULL) {
+        return false;
+    }
+    bool ok = true;
+    if (!contents.empty()) {
+        ok = std::fwrite(contents.data(), 1, contents.size(), handle) == contents.size();
+    }
+    // fclose is where a buffered write actually reports failure.
+    if (std::fclose(handle) != 0) {
+        ok = false;
+    }
+    return ok;
+}
+
 class TempPath {
   public:
     /// A unique path built from `leaf`.

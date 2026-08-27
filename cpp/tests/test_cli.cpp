@@ -22,6 +22,7 @@
 #include "mie/log.hpp"
 #include "mie/merge.hpp"
 #include "mie/text.hpp"
+#include "mie/writer.hpp"
 #include "record_fixtures.hpp"
 #include "temp_path.hpp"
 
@@ -718,6 +719,36 @@ TEST_CASE("a merge refuses to write over one of its own inputs", "[cli][L3-CPP-0
         REQUIRE(run_capturing(args("decode", first.str(), second.str(), "-o", second.str()), out,
                               err) == mie::cli::EXIT_RUNTIME);
         REQUIRE(err.find("resolves to merge input") != std::string::npos);
+    }
+
+    SECTION("an input a DERIVED output path would overwrite") {
+        // The destination itself collides with nothing; the errors file derived
+        // FROM it is the input. `-o capture.mie --separate-errors` derives
+        // `capture_errors.mie`, a plausible name for a second recorder's file.
+        // Before this the guard checked only the destination, the errors file
+        // committed straight over the input, and the run exited 0.
+        //
+        // The victim path is DERIVED, not named: TempFile picks a unique
+        // suffix of its own, so a separately-named fixture would never be what
+        // `error_path_for` computes and the test would pass for the wrong
+        // reason. (It did, first time round.)
+        TempPath destination("mie-cli-collide.mie");
+        const std::vector<uint8_t> recording = valid_recording();
+        const std::string before(recording.begin(), recording.end());
+        const std::string victim = destination.also_remove(mie::error_path_for(destination.str()));
+        REQUIRE(mie_test::write_file(victim, before));
+
+        REQUIRE(run_capturing(args("decode", first.str(), victim, "-o", destination.str(),
+                                   "--separate-errors"),
+                              out, err) == mie::cli::EXIT_RUNTIME);
+        REQUIRE(err.find("resolves to merge input") != std::string::npos);
+
+        // Asserted on the artifact, not just the message.
+        std::string after;
+        REQUIRE(mie_test::read_file(victim, after));
+        CHECK(after == before);
+        std::string unused;
+        CHECK_FALSE(mie_test::read_file(destination.str(), unused));
     }
 
     SECTION("a distinct output is allowed") {

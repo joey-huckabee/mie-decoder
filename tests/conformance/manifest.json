@@ -879,6 +879,49 @@
       ],
       "expected_exit": 4,
       "expected_stderr_contains": "--format"
+    },
+    {
+      "name": "collision-derived-errors-path-refused",
+      "input": "inputs/errors-inline.hex",
+      "input_names": [
+        "capture_errors.mie"
+      ],
+      "output_name": "capture.mie",
+      "args": [
+        "--separate-errors"
+      ],
+      "expected_exit": 1,
+      "expected_stderr_contains": "resolves to the same file as the input"
+    },
+    {
+      "name": "collision-partial-path-refused",
+      "input": "inputs/errors-inline.hex",
+      "input_names": [
+        "capture.csv.partial"
+      ],
+      "output_name": "capture.csv",
+      "args": [
+        "--allow-partial"
+      ],
+      "expected_exit": 1,
+      "expected_stderr_contains": "resolves to the same file as the input"
+    },
+    {
+      "name": "collision-merge-derived-errors-path-refused",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-b.hex"
+      ],
+      "input_names": [
+        "recording.mie",
+        "capture_errors.mie"
+      ],
+      "output_name": "capture.mie",
+      "args": [
+        "--separate-errors"
+      ],
+      "expected_exit": 1,
+      "expected_stderr_contains": "resolves to merge input"
     }
   ]
 }

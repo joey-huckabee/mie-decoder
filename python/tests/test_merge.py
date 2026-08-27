@@ -315,6 +315,40 @@ def test_cli_merge_allow_partial_single_survivor_still_guards_output(
     assert fg.read_bytes() == before  # input left intact, never overwritten
 
 
+@pytest.mark.requirement("L2-WRT-014")
+@pytest.mark.requirement("L2-MRG-001")
+def test_cli_merge_rejects_input_a_derived_output_would_overwrite(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A merge must check every path it could commit, not just the destination.
+
+    The writer cannot do this one: on the merge path it is handed
+    ``input_path=None`` precisely because it is given one stream and never
+    learns how many files fed it, so the CLI guard is the only thing standing
+    between ``capture_errors.mie`` and being overwritten by the errors file
+    derived from ``-o capture.mie``. Asserted on the artifact: exit
+    ``EXIT_RUNTIME``, every input byte identical, and no output created.
+    """
+    from mie_decoder.cli import EXIT_RUNTIME, main
+
+    rec = rt15_record_at(192, 15, 54, 50, 100) + rt15_record_at(192, 15, 54, 50, 300)
+    first = tmp_path / "recording.mie"
+    first.write_bytes(rec)
+    # Plausible name for a second recorder's file -- and exactly what
+    # `-o capture.mie --separate-errors` derives.
+    victim = tmp_path / "capture_errors.mie"
+    victim.write_bytes(rec)
+    before = victim.read_bytes()
+    dest = tmp_path / "capture.mie"
+
+    rc = main(["decode", str(first), str(victim), "-o", str(dest), "--separate-errors"])
+    assert rc == EXIT_RUNTIME
+    assert "resolves to merge input" in capsys.readouterr().err
+    assert victim.read_bytes() == before, "input modified despite the rejection"
+    assert not dest.exists(), "no output may be created once the run is refused"
+
+
 # ── CLI bad-input / cap / robustness (L2-MRG-001, L1-ROB-001) ──────────────
 
 
