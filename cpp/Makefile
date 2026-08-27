@@ -4,9 +4,11 @@
 # This Makefile is AUTHORITATIVE on Linux. CMakeLists.txt exists alongside it
 # for the MSVC/Visual Studio build and is authoritative there. The reason for
 # two build descriptions rather than one is not preference: the gcc:4.8 fidelity
-# container is Debian 7 and ships CMake 2.8, which cannot read a modern
-# CMakeLists.txt at all -- so the tier that proves SLES 12 conformance has to be
-# driven by make. Both read cpp/sources.txt so the file list cannot drift.
+# container is Debian 7 and has NO CMAKE AT ALL -- and cannot install one, since
+# Debian 7's repositories are archived and apt-get update there exits 100 -- so
+# the tier that proves SLES 12 conformance has to be driven by make. Both read
+# cpp/sources.txt so the file list cannot drift. ADR-0002 records the full
+# reasoning.
 
 CXX      ?= g++
 CPPFLAGS += -Iinclude -isystem third_party -D_FILE_OFFSET_BITS=64

@@ -2,9 +2,12 @@
 #
 # AUTHORITATIVE ON WINDOWS. cpp/Makefile is authoritative on Linux. Two build
 # descriptions rather than one is not a preference: the gcc:4.8 fidelity
-# container is Debian 7 and ships CMake 2.8, which cannot read this file at all,
-# so the tier that proves SLES 12 conformance has to be driven by make. Both
-# read cpp/sources.txt, so the file list itself cannot drift.
+# container is Debian 7 and has NO CMAKE AT ALL -- and cannot install one, since
+# Debian 7's repositories are archived and apt-get update there exits 100 -- so
+# the tier that proves SLES 12 conformance has to be driven by make. Both read
+# cpp/sources.txt, so the file list itself cannot drift. ADR-0002 records the
+# full reasoning, including why putting a hand-built CMake in that image would
+# cost the tier the credibility it exists for.
 #
 # In Visual Studio 2022: File -> Open -> Folder -> this directory. VS configures
 # CMake, wires up IntelliSense and the debugger, and picks up the test target.
