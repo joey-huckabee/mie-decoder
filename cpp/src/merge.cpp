@@ -280,13 +280,15 @@ bool DedupWindow::is_duplicate(uint64_t us, std::size_t file_index, const MieMes
     // the sorted-stream case is no slower than the front-only eviction it
     // replaces -- and the unsorted case is now bounded at all.
     //
-    // `iterator`, not `const_iterator`: GCC 4.8's libstdc++ predates the C++11
-    // signatures that take const iterators, and passing one to a container
-    // mutator is banned in this tree for exactly that reason.
+    // `survivors_` is non-const here, so `begin()`/`end()` and the `remove_if`
+    // result are all plain `iterator` -- which is what `erase` needs. GCC 4.8's
+    // libstdc++ predates the C++11 erase overloads taking const iterators, so
+    // handing one to a container mutator is banned in this tree; nothing here
+    // can produce one.
     {
         const uint64_t window_for_evict = window_us_;
         const uint64_t now = us;
-        const std::deque<Survivor>::iterator kept_end =
+        const auto kept_end =
             std::remove_if(survivors_.begin(), survivors_.end(), [&](const Survivor& survivor) {
                 return abs_diff(survivor.us, now) > window_for_evict;
             });
