@@ -268,22 +268,111 @@ class WriteOutcome:
     partial: PartialCommit | None
 
 
-def _preflight_output(output: Path, opts: WriteOptions) -> None:
+def error_path_for(output: Path) -> Path:
+    """``<stem>_errors<suffix>`` -- where split mode sends errored rows.
+
+    Used by both :func:`write_csv_split` (which writes it) and
+    :func:`commit_targets` (which pre-flights it), so the path guarded and the
+    path written are one derivation.
+
+    Args:
+        output: The destination the operator named.
+
+    Returns:
+        The sibling path errored and spurious rows are written to.
+    """
+    return output.with_name(f"{output.stem}_errors{output.suffix}")
+
+
+def partial_path_for(destination: Path) -> Path:
+    """``<destination>.partial`` -- where an ``--allow-partial`` run commits the
+    rows decoded before an unrecoverable sync loss (L2-WRT-016).
+
+    Used by both :meth:`_AtomicCsvFile.commit_partial` and
+    :func:`commit_targets`, for the same reason as :func:`error_path_for`.
+
+    Args:
+        destination: The path a complete run would have committed.
+
+    Returns:
+        The sibling ``.partial`` path an interrupted run commits instead.
+    """
+    return destination.with_name(f"{destination.name}.partial")
+
+
+def commit_targets(output: Path, split_errors: bool, allow_partial: bool) -> list[Path]:
+    """Every path a decode run could commit, given its destination and mode.
+
+    The L2-WRT-014 collision guard has to test *all* of them, not just the
+    destination the operator named. A derived path is an ordinary path that can
+    name an ordinary file, and "it was derived from a path we already checked"
+    says nothing about whether it collides with a *different* input:
+    ``-o capture.mie --separate-errors`` derives ``capture_errors.mie``, which
+    is a perfectly plausible name for one of the recordings being decoded. Both
+    destructive cases were live until this existed -- the errors file and the
+    ``.partial`` file each committed straight over an input, and the run exited
+    0.
+
+    ``.partial`` targets are enumerated even though a clean decode never writes
+    one: the guard runs before the output is opened, which is the only point at
+    which refusing is still safe, and by then nobody knows whether the decode
+    will lose sync. Refusing a run that *might* have destroyed an input is the
+    conservative direction.
+
+    Args:
+        output: The destination the operator named.
+        split_errors: True when errored rows go to their own file.
+        allow_partial: True when a sync loss commits ``.partial`` output.
+
+    Returns:
+        Main, errors, then their ``.partial`` variants -- ordered so the error
+        names the most direct collision when more than one target matches.
+    """
+    targets = [output]
+    if split_errors:
+        targets.append(error_path_for(output))
+    if allow_partial:
+        # Snapshot before extending: the partial of the *errors* file is a real
+        # commit target in split mode, and it is the one an audit forgets.
+        targets.extend(partial_path_for(target) for target in list(targets))
+    return targets
+
+
+def _preflight_output(output: Path, split_errors: bool, opts: WriteOptions) -> None:
     """Raise per the L2-WRT-014 and L2-WRT-017 contracts.
 
     Runs before any output file is opened so existing destinations are
     never partially overwritten on a rejected configuration.
 
+    The collision test covers **every** commit target; the no-clobber test
+    covers only the destinations a run actually creates -- main, and the errors
+    file in split mode. ``.partial`` paths are deliberately not clobber-checked,
+    which is the behaviour that shipped: a ``.partial`` is written only on a
+    failure path, and refusing a whole run up front because a stale one is lying
+    around would be a different rule than L2-WRT-017 states.
+
+    Args:
+        output: The destination the operator named.
+        split_errors: True when the caller is :func:`write_csv_split`.
+        opts: Output safety options.
+
     Raises:
-        MieInputOutputCollisionError: if the destination is also an input
-            (L2-WRT-014).
-        MieClobberRefusedError: if the destination exists and ``no_clobber`` is
+        MieInputOutputCollisionError: if any path this run could commit is also
+            an input (L2-WRT-014).
+        MieClobberRefusedError: if a destination exists and ``no_clobber`` is
             set (L2-WRT-017).
     """
-    if opts.input_path is not None and paths_refer_to_same_file(opts.input_path, output):
-        raise MieInputOutputCollisionError(str(output))
-    if opts.no_clobber and output.exists():
-        raise MieClobberRefusedError(str(output))
+    if opts.input_path is not None:
+        for target in commit_targets(output, split_errors, opts.allow_partial):
+            if paths_refer_to_same_file(opts.input_path, target):
+                raise MieInputOutputCollisionError(str(target))
+    if opts.no_clobber:
+        if output.exists():
+            raise MieClobberRefusedError(str(output))
+        if split_errors:
+            error_path = error_path_for(output)
+            if error_path.exists():
+                raise MieClobberRefusedError(str(error_path))
 
 
 # ── Atomic CSV write helper (L2-WRT-015, L2-WRT-016) ───────────────────
@@ -482,7 +571,7 @@ class _AtomicCsvFile:
             MieWriterError: if the rename fails.
         """
         self._close_stream()
-        partial = self._final.with_name(f"{self._final.name}.partial")
+        partial = partial_path_for(self._final)
         try:
             os.replace(self._temp, partial)
         except OSError as exc:
@@ -632,7 +721,7 @@ def _write_csv_to_file(
             normally.
         MieWriterError: on an I/O failure writing or renaming.
     """
-    _preflight_output(dest, opts)
+    _preflight_output(dest, False, opts)
     partial_info: tuple[int, int] | None = None
     with _AtomicCsvFile(dest) as atomic:
         writer = _StreamingCsvRowWriter(atomic.stream, str(dest))
@@ -755,14 +844,15 @@ def write_csv_split(
     if opts is None:
         opts = WriteOptions()
     output_path = Path(output)
-    error_path = output_path.with_name(f"{output_path.stem}_errors{output_path.suffix}")
+    error_path = error_path_for(output_path)
 
-    _preflight_output(output_path, opts)
-    # The errors-file path also needs the no-clobber check; the
-    # collision check is implicit since errors_path is derived from
-    # output_path which was just checked.
-    if opts.no_clobber and error_path.exists():
-        raise MieClobberRefusedError(str(error_path))
+    # Covers the errors destination and every ``.partial`` variant, not just
+    # ``output_path``. This used to reason that the errors path needed no
+    # collision check because it was "derived from output_path which was just
+    # checked", which does not follow: a derived path is an ordinary path that
+    # can name a *different* input, and ``capture_errors.mie`` is a plausible
+    # recording name (L2-WRT-014).
+    _preflight_output(output_path, True, opts)
 
     # Stream into the main temp file eagerly; the errors temp is created
     # lazily on the first error row so a clean decode never leaves an

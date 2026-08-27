@@ -875,14 +875,29 @@ std::vector<std::string> resolve_inputs(const DecodeArgs& args) {
 /// `--allow-partial` can drop a multi-input merge to a single open reader, and
 /// the writer's guard is off for the whole run either way -- so keying off the
 /// surviving count would leave exactly that case unguarded.
-void check_merge_output_collision(const std::string& output,
-                                  const std::vector<std::string>& inputs) {
-    for (std::size_t i = 0; i < inputs.size(); ++i) {
-        bool same = false;
-        platform::OsError err;
-        if (platform::paths_same_file(inputs[i], output, same, err) && same) {
-            throw runtime_error_("output path " + output + " resolves to merge input " + inputs[i] +
-                                 "; choose a different output path");
+///
+/// Checks EVERY path the run could commit, not just the destination the
+/// operator named: `writer::commit_targets` enumerates the derived errors file
+/// and the `.partial` variants alongside it. The writer runs the same
+/// enumeration for a single-input decode, where it knows the one input; on the
+/// merge path it is given no `input_path` and this is the only guard that sees
+/// the input set at all.
+void check_merge_output_collision(const std::string& output, const std::vector<std::string>& inputs,
+                                  bool split_errors, bool allow_partial) {
+    const std::vector<std::string> targets = commit_targets(output, split_errors, allow_partial);
+    for (std::size_t t = 0; t < targets.size(); ++t) {
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+            bool same = false;
+            platform::OsError err;
+            if (platform::paths_same_file(inputs[i], targets[t], same, err) && same) {
+                // Naming which target collided matters: told only that the
+                // output collides, an operator looks at `-o` and sees a name
+                // that is plainly different from every input.
+                const std::string role =
+                    targets[t] == output ? "output path " : "derived output path ";
+                throw runtime_error_(role + targets[t] + " resolves to merge input " + inputs[i] +
+                                     "; choose a different output path");
+            }
         }
     }
 }
@@ -1058,7 +1073,13 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     if (destination.has_value() && !merging) {
         write_options.input_path = inputs[0];
     } else if (destination.has_value()) {
-        check_merge_output_collision(destination.value(), inputs);
+        // The RESOLVED config decides the mode, not the flags: a site config
+        // file can select separate-errors or allow-partial without either flag
+        // appearing on the command line, and enumerating from the flags alone
+        // would leave exactly those runs unguarded.
+        check_merge_output_collision(destination.value(), inputs,
+                                     config.error_mode == ERROR_MODE_SEPARATE,
+                                     config.allow_partial);
     }
 
     if (!destination.has_value() && config.error_mode == ERROR_MODE_SEPARATE) {

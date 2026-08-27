@@ -687,22 +687,47 @@ def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
     return paths
 
 
-def _merge_output_collision(output: Path, inputs: list[Path]) -> str | None:
-    """Return an error message if a merge's output path resolves to one of its
-    inputs (L2-WRT-014 across the input set), else None. ``Path.resolve`` is
+def _merge_output_collision(
+    output: Path,
+    inputs: list[Path],
+    *,
+    split_errors: bool = False,
+    allow_partial: bool = False,
+) -> str | None:
+    """Return an error message if a merge could commit over one of its inputs
+    (L2-WRT-014 across the input set), else None. ``Path.resolve`` is
     non-strict, so a not-yet-existing output resolves fine.
+
+    Checks **every** path the run could commit, not just the destination the
+    operator named: :func:`writer.commit_targets` enumerates the derived errors
+    file and the ``.partial`` variants alongside it. The writer runs the same
+    enumeration for a single-input decode, where it knows the one input; on the
+    merge path it is given ``input_path=None`` and this is the only guard that
+    sees the input set at all.
+
+    Args:
+        output: The destination the operator named.
+        inputs: Every resolved merge input.
+        split_errors: True when errored rows go to their own file.
+        allow_partial: True when a sync loss commits ``.partial`` output.
 
     Returns:
         The operator-facing error message, or ``None`` when there is no
         collision.
     """
-    out_resolved = output.resolve()
-    for inp in inputs:
-        if inp.resolve() == out_resolved:
-            return (
-                f"output path {output} resolves to merge input {inp}; "
-                f"choose a different output path"
-            )
+    from mie_decoder.writer import commit_targets
+
+    for target in commit_targets(output, split_errors, allow_partial):
+        target_resolved = target.resolve()
+        for inp in inputs:
+            if inp.resolve() == target_resolved:
+                # Naming which target collided matters: told only that the
+                # output collides, an operator looks at ``-o`` and sees a name
+                # that is plainly different from every input.
+                role = "output path" if target == output else "derived output path"
+                return (
+                    f"{role} {target} resolves to merge input {inp}; choose a different output path"
+                )
     return None
 
 
@@ -945,13 +970,19 @@ def _open_reader(path: Path, config: DecoderConfig) -> MieFileReader:
 def _check_merge_output_collision(
     args: argparse.Namespace,
     input_paths: list[Path],
+    config: DecoderConfig,
     *,
     merge_requested: bool,
 ) -> int | None:
-    """For a merge writing to a file, reject an output path that resolves to any
-    of the inputs (L2-WRT-014 across the set); a single input uses the writer's
-    own input/output check. Returns an exit code to short-circuit on, or ``None``
-    to continue.
+    """For a merge writing to a file, reject any path the run could commit that
+    resolves to one of the inputs (L2-WRT-014 across the set); a single input
+    uses the writer's own check, which runs the same enumeration. Returns an
+    exit code to short-circuit on, or ``None`` to continue.
+
+    ``config``, not ``args``, decides the mode: a site config file can select
+    separate-errors or allow-partial without the corresponding flag ever
+    appearing on the command line, and enumerating from the flags alone would
+    leave exactly those runs unguarded.
 
     Gated on whether a merge was *requested*, not on the surviving reader count:
     ``--allow-partial`` can drop a multi-input merge to a single open reader, and
@@ -964,7 +995,14 @@ def _check_merge_output_collision(
         continue.
     """
     if merge_requested and args.output is not None:
-        collision = _merge_output_collision(args.output, input_paths)
+        from mie_decoder.models import ErrorMode
+
+        collision = _merge_output_collision(
+            args.output,
+            input_paths,
+            split_errors=config.error_mode == ErrorMode.SEPARATE,
+            allow_partial=config.allow_partial,
+        )
         if collision is not None:
             logger.error("%s", collision)
             print(f"Error: {collision}", file=sys.stderr)
@@ -1284,7 +1322,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         logger.info("Opened %s (%d bytes)", r.path.name, r.file_size)
 
     collision_code = _check_merge_output_collision(
-        args, input_paths, merge_requested=merge_requested
+        args, input_paths, config, merge_requested=merge_requested
     )
     if collision_code is not None:
         return collision_code

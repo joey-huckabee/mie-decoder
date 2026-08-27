@@ -171,17 +171,11 @@ impl AtomicCsvFile {
         drop(file);
         // `<dest>.partial` lives in the destination directory by
         // construction (final_path itself does), so the rename stays on
-        // one filesystem and is atomic.
-        let mut name = self
-            .final_path
-            .file_name()
-            .map(std::ffi::OsStr::to_os_string)
-            .unwrap_or_default();
-        name.push(".partial");
-        let partial = match self.final_path.parent() {
-            Some(p) if !p.as_os_str().is_empty() => p.join(&name),
-            _ => PathBuf::from(name),
-        };
+        // one filesystem and is atomic. The name comes from
+        // `partial_path_for` rather than being built here, so the path
+        // this commits to and the path `commit_targets` pre-flights are
+        // the same derivation and cannot drift (L2-WRT-014).
+        let partial = partial_path_for(&self.final_path);
         std::fs::rename(&self.temp_path, &partial).map_err(|source| MieError::WriterError {
             destination: partial.display().to_string(),
             source,
@@ -527,18 +521,39 @@ pub struct PartialCommit {
 /// L2-WRT-014 input/output identity test and the L2-WRT-017 no-clobber
 /// gate, in that order. No filesystem state is mutated; this only
 /// produces an error before any output file is opened.
-fn preflight_output(output: &Path, opts: &WriteOptions) -> MieResult<()> {
-    if let Some(input) = &opts.input_path
-        && paths_refer_to_same_file(input, output).unwrap_or(false)
-    {
-        return Err(MieError::InputOutputCollision {
-            path: output.to_path_buf(),
-        });
+///
+/// `split_errors` says whether the caller is `write_csv_split`, which decides
+/// both which paths can be committed (L2-WRT-014, via [`commit_targets`]) and
+/// whether the derived errors destination gets its own no-clobber check.
+///
+/// The collision test covers **every** commit target; the no-clobber test
+/// covers only the destinations a run actually creates — main, and the errors
+/// file in split mode. `.partial` paths are deliberately not clobber-checked,
+/// which is the behaviour that shipped: a `.partial` is written only on a
+/// failure path, and refusing a whole run up front because a stale one is
+/// lying around would be a different rule than L2-WRT-017 states.
+fn preflight_output(output: &Path, split_errors: bool, opts: &WriteOptions) -> MieResult<()> {
+    // L2-WRT-014, over every path this run could commit -- not just `output`.
+    if let Some(input) = &opts.input_path {
+        for target in commit_targets(output, split_errors, opts.allow_partial) {
+            if paths_refer_to_same_file(input, &target).unwrap_or(false) {
+                return Err(MieError::InputOutputCollision { path: target });
+            }
+        }
     }
-    if opts.no_clobber && output.exists() {
-        return Err(MieError::ClobberRefused {
-            path: output.to_path_buf(),
-        });
+    // L2-WRT-017, over the destinations that get created.
+    if opts.no_clobber {
+        if output.exists() {
+            return Err(MieError::ClobberRefused {
+                path: output.to_path_buf(),
+            });
+        }
+        if split_errors {
+            let error_path = error_path_for(output);
+            if error_path.exists() {
+                return Err(MieError::ClobberRefused { path: error_path });
+            }
+        }
     }
     Ok(())
 }
@@ -572,7 +587,7 @@ where
 {
     match output {
         Some(path) => {
-            preflight_output(path, &opts)?;
+            preflight_output(path, false, &opts)?;
             let mut atomic = AtomicCsvFile::create(path.to_path_buf())?;
 
             let (count, partial_info) = {
@@ -663,17 +678,16 @@ pub fn write_csv_split<I>(messages: I, output: &Path, opts: WriteOptions) -> Mie
 where
     I: IntoIterator<Item = MieResult<MieMessage>>,
 {
-    preflight_output(output, &opts)?;
+    preflight_output(output, true, &opts)?;
 
+    // Both the errors destination and every `.partial` variant were pre-flighted
+    // by `preflight_output` above -- collision against the input, and
+    // no-clobber for the two paths a run creates. This used to reason that the
+    // errors path needed no collision check because it "is derived from output,
+    // which was already checked", which does not follow: a derived path is an
+    // ordinary path that can name a *different* input, and `capture_errors.mie`
+    // is a plausible recording name (L2-WRT-014).
     let error_path = error_path_for(output);
-    // Also pre-flight the error file path for clobber. The collision
-    // check against the input is implicit — the error path is derived
-    // from output, which was already checked.
-    if opts.no_clobber && error_path.exists() {
-        return Err(MieError::ClobberRefused {
-            path: error_path.clone(),
-        });
-    }
 
     let mut main_atomic = AtomicCsvFile::create(output.to_path_buf())?;
     let mut errors_atomic: Option<AtomicCsvFile> = None;
@@ -845,6 +859,62 @@ where
         writer.write_message(&msg)?;
     }
     Ok(())
+}
+
+/// `<destination>.partial` — where an `--allow-partial` run commits the rows
+/// decoded before an unrecoverable sync loss (L2-WRT-016).
+///
+/// Kept beside `error_path_for` and used by **both** `AtomicCsvFile::commit_partial`
+/// (which renames onto it) and `commit_targets` (which pre-flights it). A second
+/// spelling of this derivation is how a guard comes to check a path the writer
+/// does not actually write.
+fn partial_path_for(destination: &Path) -> PathBuf {
+    let mut name = destination
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .unwrap_or_default();
+    name.push(".partial");
+    match destination.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.join(&name),
+        _ => PathBuf::from(name),
+    }
+}
+
+/// Every path a decode run could commit, given its destination and mode.
+///
+/// The L2-WRT-014 collision guard has to test **all** of them, not just the
+/// destination the operator named. The derived paths are ordinary paths that
+/// can name an ordinary file, and "it was derived from a path we already
+/// checked" says nothing about whether it collides with a *different* input:
+/// `-o capture.mie --separate-errors` derives `capture_errors.mie`, which is a
+/// perfectly plausible name for one of the recordings being decoded. Both
+/// destructive cases were live until this existed — the errors file and the
+/// `.partial` file each committed straight over an input, and the run exited 0.
+///
+/// `.partial` targets are enumerated even though a clean decode never writes
+/// one: the guard runs before the output is opened, which is the only point at
+/// which refusing is still safe, and by then nobody knows whether the decode
+/// will lose sync. Refusing a run that *might* have destroyed an input is the
+/// conservative direction.
+///
+/// Ordering is main, errors, then their `.partial` variants, so the error names
+/// the most direct collision when more than one target matches.
+#[must_use]
+pub fn commit_targets(output: &Path, split_errors: bool, allow_partial: bool) -> Vec<PathBuf> {
+    let mut targets = vec![output.to_path_buf()];
+    if split_errors {
+        targets.push(error_path_for(output));
+    }
+    if allow_partial {
+        // Indexing over a snapshot of the length: the partial of the errors
+        // file is a real commit target in split mode (`write_csv_split`
+        // commits both as `.partial`), and it is the one an audit forgets.
+        let committed = targets.len();
+        for i in 0..committed {
+            targets.push(partial_path_for(&targets[i]));
+        }
+    }
+    targets
 }
 
 fn error_path_for(output: &Path) -> std::path::PathBuf {
@@ -1239,6 +1309,136 @@ mod tests {
         let content = std::fs::read_to_string(&p).unwrap();
         assert!(content.starts_with("TIME_STAMP,RT,MSG,"));
         let _ = std::fs::remove_file(&p);
+    }
+
+    /// Requirements: L2-WRT-014
+    ///
+    /// Every path a run could commit is a collision candidate -- not just the
+    /// destination the operator named. The derived errors path is an ordinary
+    /// path that can name a *different* input: `-o capture.mie
+    /// --separate-errors` derives `capture_errors.mie`, a plausible recording
+    /// name. Before this, the errors file committed straight over that input
+    /// and the run exited 0.
+    #[test]
+    fn write_csv_split_rejects_collision_on_the_derived_errors_path() {
+        let dest = unique_path(".mie");
+        let victim = error_path_for(&dest);
+        std::fs::write(&victim, b"the recording being decoded").unwrap();
+
+        let opts = WriteOptions {
+            input_path: Some(victim.clone()),
+            no_clobber: false,
+            allow_partial: false,
+        };
+        let result = write_csv_split(std::iter::empty(), &dest, opts);
+        match result {
+            Err(MieError::InputOutputCollision { path }) => assert_eq!(path, victim),
+            other => panic!("expected InputOutputCollision on the errors path, got {other:?}"),
+        }
+
+        // The whole point: the input survives, and nothing was created.
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"the recording being decoded",
+            "input file was modified despite the collision rejection"
+        );
+        assert!(!dest.exists(), "main destination must not be created");
+        let _ = std::fs::remove_file(&victim);
+    }
+
+    /// Requirements: L2-WRT-014, L2-WRT-016
+    ///
+    /// `<destination>.partial` is a commit target under `--allow-partial`, so
+    /// an input named `out.csv.partial` collides with `-o out.csv`. It is
+    /// enumerated even though a clean decode never writes one: the guard runs
+    /// before the output is opened, which is the only point at which refusing
+    /// is still safe, and by then nobody knows whether the decode will lose
+    /// sync.
+    #[test]
+    fn write_csv_rejects_collision_on_the_partial_path() {
+        let dest = unique_path(".csv");
+        let victim = partial_path_for(&dest);
+        std::fs::write(&victim, b"the recording being decoded").unwrap();
+
+        let collide = |allow_partial| {
+            write_csv(
+                std::iter::empty(),
+                Some(&dest),
+                WriteOptions {
+                    input_path: Some(victim.clone()),
+                    no_clobber: false,
+                    allow_partial,
+                },
+            )
+        };
+
+        // Without --allow-partial there is no `.partial` target, so the same
+        // pair of paths is a perfectly ordinary decode.
+        collide(false).expect("no .partial target without allow_partial");
+        assert!(dest.exists());
+        std::fs::remove_file(&dest).unwrap();
+
+        match collide(true) {
+            Err(MieError::InputOutputCollision { path }) => assert_eq!(path, victim),
+            other => panic!("expected InputOutputCollision on the .partial path, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"the recording being decoded",
+            "input file was modified despite the collision rejection"
+        );
+        assert!(!dest.exists(), "main destination must not be created");
+        let _ = std::fs::remove_file(&victim);
+    }
+
+    /// Requirements: L2-WRT-014
+    ///
+    /// The enumeration itself, pinned: main, errors, then their `.partial`
+    /// variants. The errors file's own `.partial` is the one an audit forgets,
+    /// and split mode commits it.
+    #[test]
+    fn commit_targets_enumerates_every_committable_path() {
+        let out = Path::new("dir").join("capture.csv");
+        let name = |p: &Path| p.file_name().unwrap().to_string_lossy().into_owned();
+
+        assert_eq!(
+            commit_targets(&out, false, false)
+                .iter()
+                .map(|p| name(p))
+                .collect::<Vec<_>>(),
+            vec!["capture.csv"]
+        );
+        assert_eq!(
+            commit_targets(&out, true, false)
+                .iter()
+                .map(|p| name(p))
+                .collect::<Vec<_>>(),
+            vec!["capture.csv", "capture_errors.csv"]
+        );
+        assert_eq!(
+            commit_targets(&out, false, true)
+                .iter()
+                .map(|p| name(p))
+                .collect::<Vec<_>>(),
+            vec!["capture.csv", "capture.csv.partial"]
+        );
+        assert_eq!(
+            commit_targets(&out, true, true)
+                .iter()
+                .map(|p| name(p))
+                .collect::<Vec<_>>(),
+            vec![
+                "capture.csv",
+                "capture_errors.csv",
+                "capture.csv.partial",
+                "capture_errors.csv.partial",
+            ]
+        );
+        // Every target stays beside the destination, so each rename is
+        // same-filesystem and stays atomic (L2-WRT-015).
+        for target in commit_targets(&out, true, true) {
+            assert_eq!(target.parent(), out.parent());
+        }
     }
 
     /// Requirements: L2-WRT-014
