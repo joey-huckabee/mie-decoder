@@ -30,6 +30,11 @@ from pathlib import Path
 from typing import Any
 
 from mie_decoder.decode import DEFAULT_DETECT_RECORDS
+from mie_decoder.merge import (
+    DEFAULT_MAX_COLLAPSE_SURVIVORS,
+    MAX_COLLAPSE_SURVIVORS_MAX,
+    MAX_COLLAPSE_SURVIVORS_MIN,
+)
 from mie_decoder.models import (
     Bus,
     DeltaScope,
@@ -98,6 +103,7 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
         ("mux", "field"),
         ("merge", "collapse_duplicates"),
         ("merge", "collapse_window_us"),
+        ("merge", "max_collapse_survivors"),
         ("merge", "delta_scope"),
         ("filter", "exclude_types"),
         ("filter", "exclude_rts"),
@@ -601,6 +607,12 @@ class DecoderConfig:
     #: collapse_window_us is the timestamp tolerance in microseconds (0 = exact).
     collapse_duplicates: bool = False
     collapse_window_us: int = 0
+    #: L2-MRG-008: cap on the survivors the de-duplication window (L2-MRG-007)
+    #: retains at once. Validated at load time against
+    #: [MAX_COLLAPSE_SURVIVORS_MIN, MAX_COLLAPSE_SURVIVORS_MAX]. Default 4096.
+    #: The window bounds retention in time; this bounds it in count, so input
+    #: whose timestamps all decode alike cannot grow the set without limit.
+    max_collapse_survivors: int = DEFAULT_MAX_COLLAPSE_SURVIVORS
 
     #: L2-MRG-005: scope over which DELTA is measured in a multi-file merge.
     #: PER_FILE (default) leaves each reader's own DELTA in place, matching a
@@ -642,6 +654,7 @@ class DecoderConfig:
             mux_field=self._override_present(kwargs, "mux_field"),
             collapse_duplicates=self._override_present(kwargs, "collapse_duplicates"),
             collapse_window_us=self._override_present(kwargs, "collapse_window_us"),
+            max_collapse_survivors=self._override_present(kwargs, "max_collapse_survivors"),
             max_sort_group=self._override_present(kwargs, "max_sort_group"),
             delta_scope=self._override_present(kwargs, "delta_scope"),
         )
@@ -878,7 +891,9 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     standard_tick_rate_hz = _load_standard_tick_rate(decode_section)
     mux_enabled, mux_delimiter, mux_field = _load_mux_section(_require_table(data, "mux"))
     merge_section = _require_table(data, "merge")
-    collapse_duplicates, collapse_window_us = _load_merge_section(merge_section)
+    collapse_duplicates, collapse_window_us, max_collapse_survivors = _load_merge_section(
+        merge_section
+    )
     delta_scope = _load_delta_scope(merge_section)
 
     _warn_unknown_keys(data)
@@ -900,6 +915,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
         mux_field=mux_field,
         collapse_duplicates=collapse_duplicates,
         collapse_window_us=collapse_window_us,
+        max_collapse_survivors=max_collapse_survivors,
         max_sort_group=max_sort_group,
         delta_scope=delta_scope,
     )
@@ -1064,16 +1080,17 @@ def _load_delta_scope(merge_section: dict[str, Any]) -> DeltaScope:
     return parse_delta_scope(raw)
 
 
-def _load_merge_section(merge_section: dict[str, Any]) -> tuple[bool, int]:
+def _load_merge_section(merge_section: dict[str, Any]) -> tuple[bool, int, int]:
     """`[merge]` cross-recorder duplicate collapsing (L2-MRG-007).
 
     The caller validates the section is a table (see :func:`_require_table`).
 
     Returns:
-        ``(collapse_duplicates, collapse_window_us)``.
+        ``(collapse_duplicates, collapse_window_us, max_collapse_survivors)``.
 
     Raises:
-        ValueError: if ``collapse_window_us`` is not a non-negative integer.
+        ValueError: if ``collapse_window_us`` is not a non-negative integer, or
+            ``max_collapse_survivors`` is outside its valid range.
     """
     collapse_duplicates = _require_bool(
         "merge", "collapse_duplicates", merge_section.get("collapse_duplicates", False)
@@ -1088,7 +1105,16 @@ def _load_merge_section(merge_section: dict[str, Any]) -> tuple[bool, int]:
             f"Invalid merge.collapse_window_us: {collapse_window_us_raw!r}; "
             "must be a non-negative integer"
         )
-    return collapse_duplicates, collapse_window_us_raw
+    # L2-MRG-008. Range-checked here so a bad value fails at load time rather
+    # than silently clamping later; the message text matches the Rust and C++
+    # loaders (L3-WRT-003).
+    max_collapse_survivors = _require_int_range(
+        "merge.max_collapse_survivors",
+        merge_section.get("max_collapse_survivors", DEFAULT_MAX_COLLAPSE_SURVIVORS),
+        MAX_COLLAPSE_SURVIVORS_MIN,
+        MAX_COLLAPSE_SURVIVORS_MAX,
+    )
+    return collapse_duplicates, collapse_window_us_raw, max_collapse_survivors
 
 
 def _require_int_range(key: str, value: object, lo: int, hi: int) -> int:

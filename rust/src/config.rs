@@ -23,6 +23,9 @@ use crate::decode::{
     DEFAULT_DETECT_RECORDS, DEFAULT_MUX_DELIMITER, DEFAULT_MUX_ENABLED, DEFAULT_MUX_FIELD,
 };
 use crate::filter::FilterConfig;
+use crate::merge::{
+    DEFAULT_MAX_COLLAPSE_SURVIVORS, MAX_COLLAPSE_SURVIVORS_MAX, MAX_COLLAPSE_SURVIVORS_MIN,
+};
 use crate::models::{Bus, DeltaScope, ErrorMode, MessageType, TimestampFormat};
 use crate::order::{DEFAULT_MAX_SORT_GROUP, MAX_SORT_GROUP_MAX, MAX_SORT_GROUP_MIN};
 use crate::sync::DEFAULT_LOOKAHEAD_RECORDS;
@@ -113,6 +116,15 @@ pub struct DecoderConfig {
     /// `[MAX_SORT_GROUP_MIN, MAX_SORT_GROUP_MAX]` at load time. `1` disables
     /// reordering, restoring raw DDC capture order.
     pub max_sort_group: usize,
+    /// L2-MRG-008: cap on the number of survivors the cross-recorder
+    /// de-duplication window (L2-MRG-007) retains at once. Default
+    /// `DEFAULT_MAX_COLLAPSE_SURVIVORS` (`4096`). Set via
+    /// `merge.max_collapse_survivors = N` in TOML or `--max-collapse-survivors N`
+    /// on the CLI. Validated against
+    /// `[MAX_COLLAPSE_SURVIVORS_MIN, MAX_COLLAPSE_SURVIVORS_MAX]` at load time.
+    /// The collapse window bounds retention in time; this bounds it in count, so
+    /// input whose timestamps all decode alike cannot grow the set without limit.
+    pub max_collapse_survivors: usize,
 }
 
 impl Default for DecoderConfig {
@@ -136,6 +148,7 @@ impl Default for DecoderConfig {
             collapse_window_us: 0,
             delta_scope: DeltaScope::PerFile,
             max_sort_group: DEFAULT_MAX_SORT_GROUP,
+            max_collapse_survivors: DEFAULT_MAX_COLLAPSE_SURVIVORS,
         }
     }
 }
@@ -164,6 +177,7 @@ pub struct ConfigOverrides {
     pub collapse_window_us: Option<i64>,
     pub delta_scope: Option<DeltaScope>,
     pub max_sort_group: Option<usize>,
+    pub max_collapse_survivors: Option<usize>,
 
     pub exclude_types: Vec<u8>,
     pub exclude_rts: Vec<u8>,
@@ -216,6 +230,7 @@ impl DecoderConfig {
             mux_field,
             collapse_duplicates,
             max_sort_group,
+            max_collapse_survivors,
             delta_scope,
         );
 
@@ -484,6 +499,21 @@ fn apply_merge_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), Co
         }
         cfg.collapse_window_us = u64::try_from(n).unwrap_or(0);
     }
+    // L2-MRG-008: cap on the retained survivor set. Range-checked here so a bad
+    // value fails at load time rather than silently clamping later; the message
+    // text matches Python's loader and the C++ one (L3-WRT-003).
+    if let Some(n) = toml.get_int("merge", "max_collapse_survivors")? {
+        match usize::try_from(n) {
+            Ok(v) if (MAX_COLLAPSE_SURVIVORS_MIN..=MAX_COLLAPSE_SURVIVORS_MAX).contains(&v) => {
+                cfg.max_collapse_survivors = v;
+            }
+            _ => {
+                return Err(ConfigError(format!(
+                    "Invalid merge.max_collapse_survivors: {n}. Valid range: [{MAX_COLLAPSE_SURVIVORS_MIN}, {MAX_COLLAPSE_SURVIVORS_MAX}]"
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -579,6 +609,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("mux", "field")
             | ("merge", "collapse_duplicates")
             | ("merge", "collapse_window_us")
+            | ("merge", "max_collapse_survivors")
             | ("merge", "delta_scope")
             | ("filter", "exclude_types")
             | ("filter", "exclude_rts")

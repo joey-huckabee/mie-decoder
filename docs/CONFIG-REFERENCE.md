@@ -41,6 +41,7 @@ field     = 4                    # 0-based field index (negative = from end)
 delta_scope         = "per-file" # per-file | global (multi-file DELTA scope)
 collapse_duplicates = false      # collapse cross-recorder duplicate rows
 collapse_window_us  = 0          # timestamp tolerance for collapsing (µs)
+max_collapse_survivors = 4096    # cap on the collapse survivor set
 
 [filter]
 exclude_types        = []        # array of names or hex codes
@@ -68,6 +69,7 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `merge.delta_scope` | string | `"per-file"` | `--delta-scope` | L2-MRG-005, L3-WRT-004 |
 | `merge.collapse_duplicates` | bool | `false` | `--collapse-duplicates` | L2-MRG-007 |
 | `merge.collapse_window_us` | int | `0` | `--collapse-window-us` | L2-MRG-007 |
+| `merge.max_collapse_survivors` | int | `4096` | `--max-collapse-survivors` | L2-MRG-008 |
 | `filter.exclude_types` | array | `[]` | `--exclude-types` (additive) | L2-CFG-006, L2-CFG-007 |
 | `filter.exclude_rts` | array | `[]` | `--exclude-rts` (additive) | L2-CFG-006 |
 | `filter.exclude_buses` | array | `[]` | `--exclude-buses` (additive) | L2-CFG-006 |
@@ -343,6 +345,18 @@ Enable cross-recorder duplicate collapsing.
 **Type:** int · **Default:** `0` · **CLI:** `--collapse-window-us`
 
 Timestamp tolerance in microseconds: two recorders' copies of the same event collapse when their timestamps differ by at most this much. `0` requires an exact-microsecond match (the safest setting — never over-collapses); widen it for recorders whose IRIG clocks are not perfectly synced. **Validation:** non-negative integer (a negative value is rejected at load time).
+
+### `max_collapse_survivors`
+
+**Type:** int · **Default:** `4096` · **CLI:** `--max-collapse-survivors`
+
+Cap on how many survivors the collapse window retains at once (L2-MRG-008).
+
+`collapse_window_us` bounds retention in **time**. It cannot bound it in **count**: a corrupt recording whose timestamps all decode to one value, or a wide window on a dense bus, puts arbitrarily many records inside a single window. This is the second bound, and it is what makes the merge's constant-memory guarantee unconditional — the same role `output.max_sort_group` plays for the canonical-order stage, with the same default for the same reason.
+
+On reaching the cap the decoder drops the oldest survivor to make room, emits **one** warning for the whole run, and carries on: collapsing becomes best-effort rather than exact. No record is ever dropped from the *output*. Raise this if you widen `collapse_window_us` on a busy bus and see that warning.
+
+**Validation:** integer within `[1, 1048576]`, checked at load time.
 
 ---
 

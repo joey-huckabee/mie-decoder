@@ -57,6 +57,15 @@ const std::size_t MAX_SORT_GROUP_MIN = 1;
 const std::size_t MAX_SORT_GROUP_MAX = 1048576;
 const std::size_t DEFAULT_MAX_SORT_GROUP = 4096;
 
+/// L2-MRG-008: bounds on `merge.max_collapse_survivors`, the cap on the
+/// de-duplication survivor set. The collapse window bounds retention in TIME;
+/// this bounds it in COUNT, so input whose timestamps all decode alike cannot
+/// grow the set without limit. The default matches DEFAULT_MAX_SORT_GROUP
+/// deliberately: the two caps guard the same class of pathological input.
+const std::size_t MAX_COLLAPSE_SURVIVORS_MIN = 1;
+const std::size_t MAX_COLLAPSE_SURVIVORS_MAX = 1048576;
+const std::size_t DEFAULT_MAX_COLLAPSE_SURVIVORS = 4096;
+
 /// A problem with the configuration.
 ///
 /// A separate type from `MieError`, mirroring Rust's `ConfigError`, and the
@@ -111,6 +120,7 @@ struct DecoderConfig {
     DeltaScope delta_scope;
     /// L2-WRT-022 canonical-order run cap.
     std::size_t max_sort_group;
+    std::size_t max_collapse_survivors;
 
     DecoderConfig();
 };
@@ -136,6 +146,7 @@ struct ConfigOverrides {
     Optional<uint64_t> collapse_window_us;
     Optional<DeltaScope> delta_scope;
     Optional<std::size_t> max_sort_group;
+    Optional<std::size_t> max_collapse_survivors;
 
     /// Filter overrides MERGE into the loaded sets rather than replacing them,
     /// matching the Python semantics: `--exclude-rt 5` on top of a config file

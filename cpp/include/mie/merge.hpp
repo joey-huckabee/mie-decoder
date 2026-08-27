@@ -120,6 +120,9 @@ struct MergeOptions {
     /// `collapse_window_us`.
     bool collapse_duplicates;
     uint64_t collapse_window_us;
+    /// L2-MRG-008: cap on the retained survivor set. The window bounds
+    /// retention in TIME; this bounds it in COUNT.
+    std::size_t max_collapse_survivors;
     /// L2-MRG-005.
     DeltaScope delta_scope;
 
@@ -157,9 +160,31 @@ struct DedupKey {
 /// bounded by the window rather than the record count. In a sorted stream an
 /// older survivor can never match a later record, which is what makes the
 /// eviction safe.
+/// Sliding time-window de-duplicator over the merged stream (L2-MRG-007), with
+/// the survivor-set cap of L2-MRG-008.
+///
+/// Retention is defined on the ABSOLUTE time distance to the current record and
+/// is therefore independent of the order survivors were appended in: a survivor
+/// is kept iff `|survivor_us - us| <= window_us`. That order independence is the
+/// requirement, not an optimisation. This used to evict only from the FRONT,
+/// testing the one-sided `us - front_us`, which is correct only while the stream
+/// is sorted. After a lenient backward step (L2-MRG-006) the front can hold a
+/// timestamp in the FUTURE of the current record, the one-sided test is then
+/// never true, and the front never leaves -- blocking eviction of everything
+/// behind it. An alternating 1000us / 0us probe with a zero-width window
+/// retained all 10 000 records and ran quadratically (2x the records, 4x the
+/// time), contradicting the bounded-memory guarantee L2-MRG-007 makes and
+/// L2-MRG-002 depends on.
+///
+/// The window bounds retention in TIME; it does not bound it in COUNT. A corrupt
+/// recording whose timestamps all decode to one value, or a wide operator-set
+/// `collapse_window_us` on a dense bus, puts arbitrarily many records inside one
+/// window. `max_survivors` is the second, independent bound that makes the
+/// guarantee unconditional -- the same reasoning, and the same default, as
+/// `max_sort_group` (L2-WRT-022) applies to the reorder stage.
 class DedupWindow {
   public:
-    explicit DedupWindow(uint64_t window_us);
+    DedupWindow(uint64_t window_us, std::size_t max_survivors);
 
     /// True when `message` duplicates a recent survivor from a DIFFERENT input
     /// within the window. Same-file identical content is never a duplicate --
@@ -168,6 +193,14 @@ class DedupWindow {
     ///
     /// A non-duplicate is recorded as a survivor.
     bool is_duplicate(uint64_t us, std::size_t file_index, const MieMessage& message);
+
+    /// How many survivors are currently retained.
+    ///
+    /// Exposed for the L2-MRG-007 / L2-MRG-008 bound tests: the guarantee they
+    /// check is about resident SIZE, and asserting it through collapse
+    /// behaviour alone would not distinguish "bounded" from "happens not to
+    /// have grown yet".
+    std::size_t survivor_count() const { return survivors_.size(); }
 
   private:
     struct Survivor {
@@ -178,7 +211,13 @@ class DedupWindow {
     };
 
     uint64_t window_us_;
+    std::size_t max_survivors_;
     std::deque<Survivor> survivors_;
+    /// One WARN per merge, not per capped record: a pathological input hits the
+    /// cap on nearly every record, and the cadence that matters to an operator
+    /// is "this run stopped being exact", once. Mirrors the one-WARN-per-input
+    /// cadence L2-MRG-006 uses for the same reason.
+    bool capped_warned_;
 };
 
 /// Streaming k-way merge over per-file readers.

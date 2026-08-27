@@ -101,6 +101,12 @@ DECODE OPTIONS:
                                         (range 1..=1048576, default 4096). Use 1
                                         to disable reordering and emit raw
                                         capture order. L2-WRT-022.
+  --max-collapse-survivors N            Max records the --collapse-duplicates
+                                        window retains at once (range
+                                        1..=1048576, default 4096). Bounds the
+                                        set by COUNT where the window bounds it
+                                        by TIME. Past the cap collapsing is
+                                        best-effort, with one WARN. L2-MRG-008.
   --exclude-types VAL                   Comma-separated names or 0xNN
   --exclude-rts VAL                     Comma-separated RT addresses
   --exclude-buses VAL                   Comma-separated A|B
@@ -173,6 +179,9 @@ struct DecodeArgs {
     /// `--max-sort-group <N>`: cap on one buffered equal-timestamp run
     /// (L2-WRT-022); `1` disables canonical reordering.
     max_sort_group: Option<usize>,
+    /// `--max-collapse-survivors <N>`: cap on the de-duplication survivor set
+    /// (L2-MRG-008).
+    max_collapse_survivors: Option<usize>,
 
     exclude_types: Vec<u8>,
     exclude_rts: Vec<u8>,
@@ -814,6 +823,11 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
                     &a.value("--collapse-window-us", iter)?,
                 )?);
             }
+            "--max-collapse-survivors" => {
+                args.max_collapse_survivors = Some(parse_max_collapse_survivors(
+                    &a.value("--max-collapse-survivors", iter)?,
+                )?);
+            }
             "--manifest" => {
                 args.manifest = Some(PathBuf::from(a.value("--manifest", iter)?));
             }
@@ -1093,6 +1107,26 @@ fn parse_max_sort_group(s: &str) -> Result<usize, String> {
     Ok(n)
 }
 
+/// `--max-collapse-survivors` (L2-MRG-008): cap on the de-duplication survivor
+/// set. Range-checked here so a bad value is a usage error (exit 4) rather than
+/// a silent clamp, mirroring `--max-sort-group`.
+fn parse_max_collapse_survivors(s: &str) -> Result<usize, String> {
+    let n: usize = s
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid --max-collapse-survivors: {s:?}; must be an integer"))?;
+    if !(crate::merge::MAX_COLLAPSE_SURVIVORS_MIN..=crate::merge::MAX_COLLAPSE_SURVIVORS_MAX)
+        .contains(&n)
+    {
+        return Err(format!(
+            "invalid --max-collapse-survivors: {n}; valid range: [{}, {}]",
+            crate::merge::MAX_COLLAPSE_SURVIVORS_MIN,
+            crate::merge::MAX_COLLAPSE_SURVIVORS_MAX
+        ));
+    }
+    Ok(n)
+}
+
 /// `--delta-scope` (L2-MRG-005). Shares `DeltaScope::from_name_ci` with the
 /// config loader so the CLI and TOML accept exactly the same spellings.
 fn parse_delta_scope(s: &str) -> Result<crate::models::DeltaScope, String> {
@@ -1206,6 +1240,7 @@ fn build_config_overrides(args: &mut DecodeArgs, log_level: Option<String>) -> C
         },
         collapse_window_us: args.collapse_window_us,
         max_sort_group: args.max_sort_group,
+        max_collapse_survivors: args.max_collapse_survivors,
         delta_scope: args.delta_scope,
         exclude_types: std::mem::take(&mut args.exclude_types),
         exclude_rts: std::mem::take(&mut args.exclude_rts),
@@ -1279,6 +1314,7 @@ fn execute_decode_or_merge(
         Ok(merged) => {
             let merged = merged
                 .collapse(cfg.collapse_duplicates, cfg.collapse_window_us)
+                .max_collapse_survivors(cfg.max_collapse_survivors)
                 .delta_scope(cfg.delta_scope);
             // Clone the suppressed-duplicate counter before the writer consumes
             // the iterator, then report it after (L2-MRG-007).

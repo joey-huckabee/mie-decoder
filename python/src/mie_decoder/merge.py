@@ -46,6 +46,23 @@ logger = logging.getLogger(__name__)
 #: maps it to exit 4). Shared in value with the Rust constant (L3-PY-014).
 MAX_MERGE_FILES = 256
 
+MAX_COLLAPSE_SURVIVORS_MIN = 1
+"""Smallest accepted ``merge.max_collapse_survivors`` (L2-MRG-008)."""
+
+MAX_COLLAPSE_SURVIVORS_MAX = 1048576
+"""Largest accepted ``merge.max_collapse_survivors`` (L2-MRG-008)."""
+
+DEFAULT_MAX_COLLAPSE_SURVIVORS = 4096
+"""Default cap on the de-duplication survivor set (L2-MRG-008).
+
+Far above any genuine population of one collapse window -- a 1553 bus carries
+one transaction at a time, so a window holds one record per recorder per
+transaction -- while bounding worst-case retention to a few hundred kilobytes.
+Matches ``DEFAULT_MAX_SORT_GROUP`` deliberately: the two caps guard the same
+class of pathological input, and an operator who has reasoned about one should
+not have to re-derive the other.
+"""
+
 
 # ── Input resolution helpers ──────────────────────────────────────────────
 
@@ -231,19 +248,41 @@ def _dedup_key(msg: MieMessage) -> tuple[object, ...]:
 
 
 class _DedupWindow:
-    """Sliding time-window de-duplicator over the merged stream (L2-MRG-007).
-    Holds the survivors emitted within ``window_us`` microseconds as
-    ``(us, file_index, key)``; in a sorted stream older survivors can never match
-    a later record and are evicted from the front, so resident memory stays
-    bounded by the window (not the record count). Matching uses the **absolute**
-    time distance, so a lenient non-monotonic input (L2-MRG-006) that steps
-    backward neither raises nor collapses records outside the window — collapse
-    is best-effort on such "known bad" order. Mirrors ``DedupWindow`` in
-    ``rust/src/merge.rs``."""
+    """Sliding time-window de-duplicator over the merged stream (L2-MRG-007),
+    with the survivor-set cap of L2-MRG-008.
 
-    def __init__(self, window_us: int) -> None:
+    Retention is defined on the **absolute** time distance to the current record
+    and is therefore independent of the order survivors were appended in: a
+    survivor is kept iff ``abs(survivor_us - us) <= window_us``. That order
+    independence is the requirement, not an optimisation. This used to evict only
+    from the FRONT, testing the one-sided ``us - front_us``, which is correct
+    only while the stream is sorted. After a lenient backward step (L2-MRG-006)
+    the front can hold a timestamp in the *future* of the current record, the
+    one-sided test is then never true, and the front never leaves — blocking
+    eviction of everything behind it. An alternating 1000us / 0us probe with a
+    zero-width window retained all 10 000 records and ran quadratically (2x the
+    records, 4x the time), contradicting the bounded-memory guarantee L2-MRG-007
+    makes and L2-MRG-002 depends on.
+
+    The window bounds retention in TIME; it does not bound it in COUNT. A corrupt
+    recording whose timestamps all decode to one value, or a wide operator-set
+    ``collapse_window_us`` on a dense bus, puts arbitrarily many records inside
+    one window. ``max_survivors`` is the second, independent bound that makes the
+    guarantee unconditional — the same reasoning, and the same default, as
+    ``max_sort_group`` (L2-WRT-022) applies to the reorder stage.
+
+    Mirrors ``DedupWindow`` in ``rust/src/merge.rs`` and ``cpp/src/merge.cpp``.
+    """
+
+    def __init__(self, window_us: int, max_survivors: int = DEFAULT_MAX_COLLAPSE_SURVIVORS) -> None:
         self._window_us = window_us
+        self._max_survivors = max(max_survivors, MAX_COLLAPSE_SURVIVORS_MIN)
         self._survivors: deque[tuple[int, int, tuple[object, ...]]] = deque()
+        #: One WARN per merge, not per capped record: a pathological input hits
+        #: the cap on nearly every record, and the cadence that matters to an
+        #: operator is "this run stopped being exact", once. Mirrors the
+        #: one-WARN-per-input cadence L2-MRG-006 uses for the same reason.
+        self._capped_warned = False
 
     def is_duplicate(self, us: int, file_index: int, msg: MieMessage) -> bool:
         """True if ``msg`` (at ``us``, from ``file_index``) duplicates a recent
@@ -256,25 +295,37 @@ class _DedupWindow:
             input and should be collapsed. ``False`` otherwise -- and in that
             case ``msg`` has been recorded as a survivor itself.
         """
-        # Evict survivors too old to fall within the window of the current (or,
-        # in a sorted stream, any later) record. Under lenient non-monotonic
-        # input (L2-MRG-006) a backward step makes ``us - survivor_us`` negative,
-        # which simply leaves those (future-relative) survivors in place.
-        while self._survivors and us - self._survivors[0][0] > self._window_us:
-            self._survivors.popleft()
+        # Evict on absolute distance, over the whole set rather than the front.
+        # This costs one pass, which is what the match scan below already costs,
+        # so the sorted-stream case is no slower than the front-only eviction it
+        # replaces — and the unsorted case is now bounded at all.
+        window = self._window_us
+        self._survivors = deque(s for s in self._survivors if abs(s[0] - us) <= window)
+
         key = _dedup_key(msg)
-        # A survivor matches only if it is within the window in ABSOLUTE time:
-        # the merged stream may step backward, so the distance must be
-        # order-independent (abs), never a one-sided subtraction. In a sorted
-        # stream every retained survivor has ``us - survivor_us <= window``, so
-        # this is identical to the previous behavior.
-        for survivor_us, file_idx, survivor_key in self._survivors:
-            if (
-                file_idx != file_index
-                and abs(survivor_us - us) <= self._window_us
-                and survivor_key == key
-            ):
+        # Every retained survivor is already within the window, so the match test
+        # is content and provenance only.
+        for _survivor_us, file_idx, survivor_key in self._survivors:
+            if file_idx != file_index and survivor_key == key:
                 return True
+
+        # L2-MRG-008: make room rather than grow. Dropping the oldest ARRIVAL is
+        # the honest choice once the window itself is over-full — there is no
+        # "least useful" survivor to pick, and arrival order is the one ordering
+        # that is meaningful on input this badly behaved. Records are never
+        # dropped from the OUTPUT; only the ability to recognise a later
+        # duplicate of this one is given up.
+        while len(self._survivors) >= self._max_survivors:
+            self._survivors.popleft()
+            if not self._capped_warned:
+                self._capped_warned = True
+                logger.warning(
+                    "de-duplication survivor set hit the %d-record "
+                    "max_collapse_survivors cap; collapsing is best-effort past "
+                    "this point (raise [merge] max_collapse_survivors / "
+                    "--max-collapse-survivors, or narrow --collapse-window-us)",
+                    self._max_survivors,
+                )
         self._survivors.append((us, file_index, key))
         return False
 
@@ -287,6 +338,7 @@ def merge_readers(
     strict: bool = False,
     collapse_duplicates: bool = False,
     collapse_window_us: int = 0,
+    max_collapse_survivors: int = DEFAULT_MAX_COLLAPSE_SURVIVORS,
     delta_scope: DeltaScope = DeltaScope.PER_FILE,
 ) -> Iterator[MieMessage]:
     """Stream a time-sorted k-way merge over ``readers``.
@@ -357,7 +409,9 @@ def merge_readers(
         heapq.heappush(heap, (us, idx, 0, next(counter), msg))
         seqs[idx] = 1
 
-    dedup = _DedupWindow(collapse_window_us) if collapse_duplicates else None
+    dedup = (
+        _DedupWindow(collapse_window_us, max_collapse_survivors) if collapse_duplicates else None
+    )
     return _merge_drain(
         readers,
         iters,
