@@ -19,6 +19,49 @@ shared behavior) holds at any compatible version pair. See
 
 ### Fixed
 
+- **A decode could overwrite one of its own input files, and exit 0 while doing
+  it.** All three implementations. The L2-WRT-014 collision guard checked the
+  destination the operator named — and only that. It never checked the paths the
+  writer *derives* from it, each of which is an ordinary path that can name an
+  ordinary file:
+
+  | Derived target | Written when | Destroys an input named |
+  |---|---|---|
+  | `<stem>_errors<suffix>` | `--separate-errors` | `capture_errors.mie`, with `-o capture.mie` |
+  | `<destination>.partial` | `--allow-partial` + sync loss | `out.csv.partial`, with `-o out.csv` |
+  | `<stem>_errors<suffix>.partial` | both | the same, for the errors file |
+
+  All three trees carried a comment reasoning that the errors path needed no
+  collision check because it "is derived from output, which was already
+  checked". That does not follow: being derived from a *safe* path says nothing
+  about whether it collides with a *different* input, and `capture_errors.mie`
+  is a perfectly plausible name for one of the recordings being decoded. On the
+  merge path it was worse — the writer is handed `input_path: None` there, so
+  the derived paths were checked against nothing at all.
+
+  Confirmed destructive before the fix, on all three targets: a 98-byte
+  recording came back as a 433-byte CSV, a 70 KB one as 665 bytes, **exit 0
+  both times**. On POSIX the damage is silent, because the reader's mapping
+  survives on the old inode and the decode completes normally against bytes no
+  longer on disk.
+
+  The fix puts each half where it belongs rather than duplicating the rule: the
+  writer gained a `commit_targets(output, split_errors, allow_partial)`
+  enumeration — the same code `commit_partial` now renames through, so the path
+  guarded and the path written cannot drift — and the CLI's merge guard runs
+  that enumeration against **every** resolved input. The mode comes from the
+  resolved config, not the flags, so a site config selecting separate-errors or
+  allow-partial is guarded exactly like the command line. `.partial` targets are
+  refused up front even on a run that would never lose sync: before the output
+  is opened is the only point at which refusing is still safe.
+
+  L2-WRT-014 is restated to enumerate all four targets, require every one be
+  tested against every input, and require the enumeration be the writer's own.
+  Three conformance cases pin the behaviour across implementations, and the
+  conformance runner now asserts on **every** case that no implementation
+  modified an input — an invariant that would have caught this and that no CSV
+  oracle in the suite could.
+
 - **Rust: a manifest whose last line is unterminated now has its trailing `\r`
   stripped like every other line.** L2-MRG-001 rule 3 requires at most one
   trailing `\r` to be removed from each line; `read_manifest` used

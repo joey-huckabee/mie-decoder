@@ -634,8 +634,25 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-WRT-014
 
 **Parent**: L1-OUT-002
-**Statement**: The decode output path SHALL NOT resolve to the same canonical path as the input file. Implementations SHALL surface a distinct error class (e.g., `MieError::InputOutputCollision` / `MieOutputPathError`) before opening the output. Stdout output is exempt because it has no filesystem identity.
+**Statement**: **No path a decode run could commit** SHALL resolve to the same canonical path as **any** of its inputs. The set of commit targets SHALL be enumerated from the destination and the run's mode, and comprises:
+
+1. the destination itself;
+2. the derived errors file `<stem>_errors<suffix>`, in separate-errors mode (L2-WRT-019);
+3. `<destination>.partial`, under `--allow-partial` (L2-WRT-016); and
+4. the errors file's own `<...>.partial`, when both of the above apply.
+
+Every target SHALL be tested against every resolved input — the whole set on the merge path (L2-MRG-001), not just the first. Implementations SHALL surface a distinct error class (e.g., `MieError::InputOutputCollision` / `MieOutputPathError`) **before opening any output**, and SHALL NOT create any output file on rejection. Targets 3 and 4 SHALL be checked even though a clean decode never writes them. Stdout output is exempt because it has no filesystem identity.
+
+The enumeration SHALL be the same code the writer commits through, not a second spelling of the same rule.
+
 **Rationale**: Decoding a file onto itself would truncate the input mid-decode and produce undefined behavior under mmap. Catching this before the output is opened is the only safe guard.
+
+Through v2.16.0 this requirement said "the output path ... the input file", singular on both sides, and all three implementations implemented exactly that — each carrying a comment reasoning that the derived errors path needed no check because it "is derived from output, which was already checked". That does not follow. A derived path is an ordinary path that can name an ordinary file, and being derived from a *safe* path says nothing about whether it collides with a *different* input: `-o capture.mie --separate-errors` derives `capture_errors.mie`, a perfectly plausible name for one of the recordings being decoded. Both derived families were destructive in practice — the errors file and the `.partial` file each committed straight over an input, and **the run exited 0** while doing it. On POSIX the damage is silent: the reader's mapping survives on the old inode, so the decode completes normally against bytes no longer on disk.
+
+`.partial` targets are checked up front, rather than at the moment a sync loss makes one real, because "before opening the output" is the only point at which refusing is still safe — and by then nobody knows whether the decode will lose sync. Refusing a run that *might* have destroyed an input is the conservative direction, and the cost is a rejected invocation the operator can fix by renaming.
+
+The single-enumeration rule exists because the two halves are owned by different layers: the writer owns the derivations (it is what renames onto them), while only the CLI knows the full input set. A CLI that re-derived `_errors` and `.partial` itself would agree with the writer exactly until someone changed a suffix.
+
 **Verification Method**: Test (T)
 
 #### L2-WRT-015
