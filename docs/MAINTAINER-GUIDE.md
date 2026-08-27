@@ -552,7 +552,7 @@ making C++ blocking.**
 The tree joins a job that already waits on the quality gate, so if the first
 analysis surfaces a large pile of style findings, the answer is to scope C++ to
 the security and taint rules — the ones no other gate here runs — rather than to
-unpick the integration. clang-tidy 20, cppcheck, ASan, UBSan, LSan and Valgrind
+unpick the integration. clang-tidy 22, cppcheck, ASan, UBSan, LSan and Valgrind
 already cover the rest.
 
 The Rust and Python deployment targets are Linux. Windows cells exist to catch path / encoding / line-ending portability bugs early, not because Windows is a production target. Coverage gates (Rust + Python), lockfile-and-metadata check, and dist build run on Linux only — Windows is functional smoke. Coverage isn't platform- or interpreter-dependent, so neither coverage gate fans out across its respective matrix.

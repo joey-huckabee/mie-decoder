@@ -300,7 +300,7 @@ TEST_CASE("expand_glob returns matching files in a deterministic order", "[merge
     // Created out of alphabetical order on purpose: the result must not depend
     // on the order the filesystem enumerates them in, or two hosts would merge
     // the same directory differently.
-    const char* leaves[] = {"-c.mie", "-a.mie", "-b.mie", "-notes.txt"};
+    const char* const leaves[] = {"-c.mie", "-a.mie", "-b.mie", "-notes.txt"};
     for (std::size_t i = 0; i < sizeof(leaves) / sizeof(leaves[0]); ++i) {
         const std::string path = anchor.also_remove(base + leaves[i]);
         std::FILE* handle = std::fopen(path.c_str(), "wb");

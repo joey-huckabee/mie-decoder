@@ -41,12 +41,14 @@ name: C++ CI
 # a shared image means a change made for one repository silently changes what
 # the other's gates check.
 #
-# What the image DID buy background-file-mover is a current analyser: it runs
-# clang-tidy 20, and Ubuntu 24.04 packages 18 as its newest. The analyser
-# version is worth matching -- 20 found a real fread-past-EOF loop here that 18
-# passed -- but it does not require an image. The clang-tidy and clang-format
-# jobs add the LLVM project's own apt repository instead, which costs one step
-# and keeps the no-image decision intact.
+# What the image DID buy background-file-mover is a current analyser, and
+# Ubuntu 24.04 packages clang 18 as its newest. Staying current is worth it --
+# 18 -> 20 found a real fread-past-EOF loop here that 18 passed, and 20 -> 22
+# found twenty const-correctness misses in the test tree -- but it does not
+# require an image. The clang-tidy and clang-format jobs add the LLVM project's
+# own apt repository instead, which costs one step and keeps the no-image
+# decision intact. The version they install is `env.LLVM_VERSION` below; this
+# repository does not track whichever version that image happens to carry.
 #
 # The GCC 4.8.5 mirror IS reused, because it is an immutable pin of a 2015
 # compiler rather than a moving toolchain.
@@ -101,12 +103,25 @@ env:
   # default (g++-13 on ubuntu-24.04), because newer analysers find more.
   CXX: g++-14
 
+  # The analyser major version, in ONE place in this file. `cpp/Makefile` pins
+  # the same number as LLVM_VERSION for `make verify-ci`, and
+  # `scripts/repo-hygiene.sh` fails the build if the two disagree -- before that
+  # check existed the pairing was a comment asking two files to be edited
+  # together, which is not a mechanism.
+  #
+  # Ubuntu 24.04 packages clang 18 as its newest, so this comes from the LLVM
+  # project's own apt repository. Newer genuinely finds more: moving 18 -> 20
+  # surfaced a real fread-past-EOF loop in the platform tests that 18 waved
+  # through, which is the precedent for keeping this current rather than letting
+  # it settle on whatever the distro ships.
+  LLVM_VERSION: "22"
+
 jobs:
   build-test-modern:
     name: build & test (g++-14)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
@@ -163,7 +178,7 @@ jobs:
     env:
       CXX: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Driven through the Makefile target rather than a hand-written
       # `docker run`, so this job and a developer's `make check-gcc48` are the
       # same command reading the same GCC48_IMAGE. Separately maintained copies
@@ -186,7 +201,7 @@ jobs:
     name: build & test (MSVC)
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure
         run: cmake -B cpp/build-msvc -S cpp -G "Visual Studio 17 2022" -A x64
       - name: Build
@@ -216,7 +231,7 @@ jobs:
     name: ASan + UBSan + LSan
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
@@ -228,7 +243,7 @@ jobs:
     name: Valgrind memcheck
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
@@ -244,7 +259,7 @@ jobs:
     name: coverage (gcovr)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install gcovr
         run: pipx install gcovr==8.6
       # Driven through the Makefile target for the same reason cppcheck is: this
@@ -263,7 +278,7 @@ jobs:
     name: cppcheck
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install cppcheck
         run: |
           sudo apt-get update -qq
@@ -281,54 +296,56 @@ jobs:
     name: clang-tidy
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      # LLVM 20 from the project's own apt repository, not Ubuntu's clang 18.
-      # Noble packages 18 as its newest, and 20 finds things 18 does not: its
-      # clang-analyzer unix.Stream checks caught a real fread-past-EOF loop in
-      # the platform tests that 18 waved through. background-file-mover reached
-      # the same conclusion and solved it with a toolchain image; this repo has
-      # no image (see the note at the top of this file), so the repository goes
-      # in directly. cpp/Makefile's LLVM_VERSION pins the SAME number for
-      # `make verify-ci` -- they must move together or that target stops
-      # predicting this job.
-      - name: Add the LLVM 20 apt repository
+      - uses: actions/checkout@v6
+      # The version comes from env.LLVM_VERSION at the top of this file; see the
+      # note there for why it is not Ubuntu's clang 18 and why it is pinned in
+      # exactly one place per file.
+      - name: Add the LLVM apt repository
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update -qq
       - name: Install toolchain
-        run: sudo apt-get install -y -qq --no-install-recommends g++-14 clang-tidy-20 bear
+        run: sudo apt-get install -y -qq --no-install-recommends g++-14 "clang-tidy-${LLVM_VERSION}" bear
+      # Printed so the log says which analyser produced the findings below. A
+      # gate whose version is invisible cannot be reproduced locally.
+      - name: Analyser version
+        run: "clang-tidy-${LLVM_VERSION} --version"
       # bear intercepts the real build to produce compile_commands.json, so
       # clang-tidy analyses the translation units as they are actually compiled
       # -- same flags, same defines -- rather than a reconstruction of them.
+      #
+      # This runs from the REPOSITORY ROOT, so compile_commands.json lands beside
+      # the repo rather than inside cpp/. clang-tidy finds it by walking upward,
+      # and `make tidy`'s tidy-db-check looks in the same places for the same
+      # reason. Moving this step's working directory would break both.
       - name: Generate the compilation database
         run: bear -- make -C cpp -j"$(nproc)" all
       - name: clang-tidy
-        run: make -C cpp tidy TIDY=clang-tidy-20
+        run: make -C cpp tidy "TIDY=clang-tidy-${LLVM_VERSION}"
 
   format:
     name: clang-format
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      # LLVM 20 from the project's own apt repository, not Ubuntu's clang 18.
-      # Noble packages 18 as its newest, and 20 finds things 18 does not: its
-      # clang-analyzer unix.Stream checks caught a real fread-past-EOF loop in
-      # the platform tests that 18 waved through. background-file-mover reached
-      # the same conclusion and solved it with a toolchain image; this repo has
-      # no image (see the note at the top of this file), so the repository goes
-      # in directly. cpp/Makefile's LLVM_VERSION pins the SAME number for
-      # `make verify-ci` -- they must move together or that target stops
-      # predicting this job.
-      - name: Add the LLVM 20 apt repository
+      - uses: actions/checkout@v6
+      # The version comes from env.LLVM_VERSION at the top of this file; see the
+      # note there for why it is not Ubuntu's clang 18 and why it is pinned in
+      # exactly one place per file.
+      - name: Add the LLVM apt repository
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${LLVM_VERSION} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
           sudo apt-get update -qq
       - name: Install clang-format
-        run: sudo apt-get install -y -qq --no-install-recommends clang-format-20
+        run: sudo apt-get install -y -qq --no-install-recommends "clang-format-${LLVM_VERSION}"
+      # Printed for the same reason as the analyser version in the clang-tidy
+      # job: clang-format output changes between majors, so a reformat that
+      # surprises someone should name the tool that produced it.
+      - name: Formatter version
+        run: "clang-format-${LLVM_VERSION} --version"
       - name: format-check
-        run: make -C cpp format-check FORMAT=clang-format-20
+        run: make -C cpp format-check "FORMAT=clang-format-${LLVM_VERSION}"
 
   # The C++ binary against the SHARED oracles in tests/conformance/ -- the same
   # byte-exact expected CSVs the Rust and Python implementations are held to.
@@ -359,7 +376,7 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -416,7 +433,7 @@ jobs:
     name: Platform confinement, locale, source-list agreement
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # cmake is needed by assert-sources-agree.sh, which configures the real
       # CMakeLists and asks it what it resolved -- comparing the two builds'
       # actual output rather than re-implementing the parsing and comparing the
