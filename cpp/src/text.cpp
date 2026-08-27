@@ -85,7 +85,7 @@ std::string trim_ascii_blank(const std::string& s) {
 bool is_valid_utf8(const std::string& s) {
     std::size_t i = 0;
     while (i < s.size()) {
-        const unsigned char lead = static_cast<unsigned char>(s[i]);
+        const auto lead = static_cast<unsigned char>(s[i]);
         std::size_t width = 0;
         uint32_t code = 0;
         if (lead < 0x80) {
@@ -107,7 +107,7 @@ bool is_valid_utf8(const std::string& s) {
             return false;  // truncated sequence
         }
         for (std::size_t k = 1; k < width; ++k) {
-            const unsigned char cont = static_cast<unsigned char>(s[i + k]);
+            const auto cont = static_cast<unsigned char>(s[i + k]);
             if ((cont & 0xC0) != 0x80) {
                 return false;
             }

@@ -4,7 +4,7 @@
 //! as oracles for the Rust port.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mie_decoder::filter::{FilterConfig, FilterIterExt};
@@ -842,6 +842,52 @@ struct ReaderFuzzCounts {
     iter_errors: u64,
 }
 
+/// Decode one fuzz input and tally what it produced.
+///
+/// Split out of `fuzz_arbitrary_bytes_never_panic` so that harness reads as
+/// generate / run / tally rather than nesting the whole decode inside a
+/// `catch_unwind` closure inside the iteration loop. The extraction is what
+/// keeps the harness's own control flow simple enough to audit -- a fuzz
+/// harness whose bookkeeping is hard to follow is one whose counters are hard
+/// to trust, and those counters are what `compare-fuzz-summaries.py` diffs
+/// across implementations.
+///
+/// `iter_index` and `size` are carried in only for the unbounded-loop assertion
+/// message, which has to name the input that tripped it to be reproducible.
+fn fuzz_reader_counts(path: &Path, size: usize, iter_index: usize) -> ReaderFuzzCounts {
+    let mut counts = ReaderFuzzCounts::default();
+    // Reader construction itself may fail on FileEmpty etc. — that's a
+    // documented error path, not a panic.
+    let Ok(reader) = MieFileReader::new(path) else {
+        return counts;
+    };
+    counts.opened = 1;
+    // The canonical-order stage (L2-WRT-021) is on the fuzzed path
+    // deliberately: random bytes readily decode to repeated or all-zero
+    // timestamps, which is exactly the equal-timestamp run its `max_sort_group`
+    // cap (L2-WRT-022) exists to bound. A small cap is used so the
+    // cap-overflow branch is reachable at all.
+    let mut yielded = 0u64;
+    for item in reader.iter().order_rows(8) {
+        // We accept any Result; we just must not panic.
+        if item.is_ok() {
+            counts.records += 1;
+        } else {
+            counts.iter_errors += 1;
+        }
+        yielded += 1;
+        // Cap iteration count as a defense-in-depth bound: if the iterator
+        // somehow enters an unbounded loop, this surfaces it as a failed
+        // assertion rather than hanging the runner.
+        assert!(
+            yielded < 100_000,
+            "iterator yielded over 100k items on a {size}-byte input — \
+             possible unbounded loop (seed=0x{FUZZ_SEED:X}, iter={iter_index})"
+        );
+    }
+    counts
+}
+
 /// Requirements: L1-ROB-001
 #[test]
 fn fuzz_arbitrary_bytes_never_panic() {
@@ -865,38 +911,7 @@ fn fuzz_arbitrary_bytes_never_panic() {
         // Use catch_unwind so an unexpected panic is surfaced with the
         // reproducer seed instead of bringing down the whole test process at
         // the first failure.
-        let result = std::panic::catch_unwind(|| {
-            let mut counts = ReaderFuzzCounts::default();
-            // Reader construction itself may fail on FileEmpty etc. — that's a
-            // documented error path, not a panic.
-            if let Ok(reader) = MieFileReader::new(f.path()) {
-                counts.opened = 1;
-                // The canonical-order stage (L2-WRT-021) is on the fuzzed path
-                // deliberately: random bytes readily decode to repeated or
-                // all-zero timestamps, which is exactly the equal-timestamp run
-                // its `max_sort_group` cap (L2-WRT-022) exists to bound. A small
-                // cap is used so the cap-overflow branch is reachable at all.
-                let mut yielded = 0u64;
-                for item in reader.iter().order_rows(8) {
-                    // We accept any Result; we just must not panic.
-                    if item.is_ok() {
-                        counts.records += 1;
-                    } else {
-                        counts.iter_errors += 1;
-                    }
-                    yielded += 1;
-                    // Cap iteration count as a defense-in-depth bound: if the
-                    // iterator somehow enters an unbounded loop, this surfaces
-                    // it as a failed assertion rather than hanging the runner.
-                    assert!(
-                        yielded < 100_000,
-                        "iterator yielded over 100k items on a {size}-byte input — \
-                         possible unbounded loop (seed=0x{FUZZ_SEED:X}, iter={i})"
-                    );
-                }
-            }
-            counts
-        });
+        let result = std::panic::catch_unwind(|| fuzz_reader_counts(f.path(), size, i));
 
         match result {
             Ok(counts) => {

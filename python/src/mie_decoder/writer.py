@@ -332,9 +332,12 @@ def commit_targets(output: Path, split_errors: bool, allow_partial: bool) -> lis
     if split_errors:
         targets.append(error_path_for(output))
     if allow_partial:
-        # Snapshot before extending: the partial of the *errors* file is a real
+        # A list comprehension, fully evaluated BEFORE the extend. A generator
+        # would be consumed *while* ``targets`` grows, so it would read its own
+        # output and never terminate. The partial of the *errors* file is a real
         # commit target in split mode, and it is the one an audit forgets.
-        targets.extend(partial_path_for(target) for target in list(targets))
+        partials = [partial_path_for(target) for target in targets]
+        targets.extend(partials)
     return targets
 
 

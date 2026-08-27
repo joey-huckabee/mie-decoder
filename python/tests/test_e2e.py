@@ -11,11 +11,12 @@ import csv
 import io
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from mie_decoder.models import Bus, Direction, MessageFormat, TimestampFormat
+from mie_decoder.models import Bus, Direction, MessageFormat, MieMessage, TimestampFormat
 from mie_decoder.order import order_rows
 from mie_decoder.reader import MieFileReader
 from mie_decoder.writer import CSV_HEADER, write_csv
@@ -653,12 +654,13 @@ class TestAtomicWriteSafety:
         assert dest.exists()
         dest.unlink()
 
+        # Built OUTSIDE the `raises` block so only `write_csv_split` can satisfy
+        # it: a constructor failure would otherwise pass this test for the wrong
+        # reason (S5778).
+        partial_opts = WriteOptions(input_path=victim, allow_partial=True)
+        empty: Iterator[MieMessage] = iter([])
         with pytest.raises(MieInputOutputCollisionError):
-            write_csv_split(
-                iter([]),
-                output=dest,
-                opts=WriteOptions(input_path=victim, allow_partial=True),
-            )
+            write_csv_split(empty, output=dest, opts=partial_opts)
         assert victim.read_bytes() == original, "input modified despite the rejection"
         assert not dest.exists(), "main destination must not be created"
 
@@ -706,9 +708,11 @@ class TestAtomicWriteSafety:
         victim.write_bytes(tmp_mie_file.read_bytes())
         original = victim.read_bytes()
 
+        # Built OUTSIDE the `raises` block, per S5778 -- see the note above.
         opts = WriteOptions(input_path=victim, no_clobber=False)
+        empty: Iterator[MieMessage] = iter([])
         with pytest.raises(MieInputOutputCollisionError):
-            write_csv_split(iter([]), output=dest, opts=opts)
+            write_csv_split(empty, output=dest, opts=opts)
 
         assert victim.read_bytes() == original, "input modified despite the rejection"
         assert not dest.exists(), "main destination must not be created"
@@ -737,12 +741,11 @@ class TestAtomicWriteSafety:
         assert dest.exists()
         dest.unlink()
 
+        # Built OUTSIDE the `raises` block, per S5778 -- see the note above.
+        partial_opts = WriteOptions(input_path=victim, allow_partial=True)
+        empty: Iterator[MieMessage] = iter([])
         with pytest.raises(MieInputOutputCollisionError):
-            write_csv(
-                iter([]),
-                output=dest,
-                opts=WriteOptions(input_path=victim, allow_partial=True),
-            )
+            write_csv(empty, output=dest, opts=partial_opts)
         assert victim.read_bytes() == original, "input modified despite the rejection"
         assert not dest.exists(), "main destination must not be created"
 
