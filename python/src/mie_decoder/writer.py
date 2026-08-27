@@ -679,8 +679,12 @@ class _AtomicCsvFile:
             MieClobberRefusedError: if ``destination`` already exists.
         """
         try:
-            with open(destination, "x", encoding="utf-8"):
-                pass
+            # os.open, not open(dest, "x") with an empty body. The point here is
+            # to CLAIM THE NAME, not to open a text file and write nothing to it,
+            # and the descriptor form says so -- it is also the same
+            # O_CREAT|O_EXCL the C++ POSIX backend reserves with, so the two
+            # implementations read as one mechanism rather than two.
+            os.close(os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
         except FileExistsError as exc:
             self._cleanup_temp()
             raise MieClobberRefusedError(str(destination)) from exc

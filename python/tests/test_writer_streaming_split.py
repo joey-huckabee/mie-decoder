@@ -133,8 +133,13 @@ def test_split_partial_main_commit_failure_leaves_no_orphan_errors_partial(
     errors_partial = tmp_path / "out_errors.csv.partial"
     main_partial.mkdir()
 
+    # Built outside the `raises` block so only `write_csv_split` can satisfy it
+    # -- a generator or options constructor that threw would otherwise pass this
+    # test for the wrong reason (S5778).
+    rows = stream()
+    options = WriteOptions(allow_partial=True)
     with pytest.raises(MieWriterError):
-        write_csv_split(stream(), dest, WriteOptions(allow_partial=True))
+        write_csv_split(rows, dest, options)
 
     assert not errors_partial.exists(), (
         "errors .partial must not appear when the main .partial commit fails first"
@@ -163,8 +168,10 @@ def test_split_partial_errors_commit_failure_leaves_the_main_partial(
     errors_partial = tmp_path / "out_errors.csv.partial"
     errors_partial.mkdir()
 
+    rows = stream()
+    options = WriteOptions(allow_partial=True)
     with pytest.raises(MieWriterError):
-        write_csv_split(stream(), dest, WriteOptions(allow_partial=True))
+        write_csv_split(rows, dest, options)
 
     assert main_partial.read_bytes().startswith(b"TIME_STAMP,RT,MSG,"), (
         "the main .partial must survive an errors-commit failure"
@@ -191,8 +198,10 @@ def test_split_no_clobber_refuses_an_errors_file_that_appears_mid_decode(
         errors_dest.write_text("theirs\n")
 
     dest = tmp_path / "out.csv"
+    rows = stream()
+    options = WriteOptions(no_clobber=True)
     with pytest.raises(MieClobberRefusedError):
-        write_csv_split(stream(), dest, WriteOptions(no_clobber=True))
+        write_csv_split(rows, dest, options)
 
     assert errors_dest.read_text() == "theirs\n", "a refused commit must not touch it"
     # Main is committed first and its own destination was free, so it survives.
