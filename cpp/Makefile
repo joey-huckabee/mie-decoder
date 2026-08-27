@@ -342,6 +342,14 @@ coverage-report:
 # Checked by grep rather than jq: this has to work on the SLES 12 host and in
 # the fidelity container, neither of which is required to have a JSON parser.
 #
+# THIS IS PERMANENT, not scaffolding. A CMake+Ninja build would emit
+# compile_commands.json at configure time and make the whole failure mode
+# impossible, and that migration was considered and declined: the gcc:4.8
+# fidelity container has no CMake, cannot install one (Debian 7's repositories
+# are archived, and `apt-get update` there exits 100), and putting a hand-built
+# CMake inside the tier whose job is faithful reproduction of the target defeats
+# the tier. So bear stays, and so does this.
+#
 # The search walks UPWARD from here, which is not tidiness -- it is what
 # clang-tidy itself does when `-p` names a directory holding no database, and
 # this check is worthless unless it looks in the same places. CI proves the
@@ -484,9 +492,14 @@ format:
 CI_BASE_IMAGE ?= docker.io/library/ubuntu:24.04
 
 # The analyser major version, in ONE place. `.github/workflows/cpp-ci.yml` pins
-# the same number in its clang-tidy and clang-format jobs; the two have to move
+# the same number as its workflow-level `env.LLVM_VERSION`; the two have to move
 # together or this target stops predicting CI, which is its only job.
-LLVM_VERSION ?= 20
+#
+# That pairing is now ENFORCED rather than requested: `scripts/repo-hygiene.sh`
+# reads both and fails when they disagree. It was a comment asking two files to
+# be edited together, which is not a mechanism -- and the failure it invites is
+# silent, because a local `verify-ci` on the wrong analyser still passes.
+LLVM_VERSION ?= 22
 
 verify-ci:
 	@echo "Running the divergence-prone gates in $(CI_BASE_IMAGE) via $(CI_ENGINE)..."

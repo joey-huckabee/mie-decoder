@@ -15,6 +15,55 @@ cross-implementation conformance contract (byte-exact CSV equivalence on
 shared behavior) holds at any compatible version pair. See
 `docs/MAINTAINER-GUIDE.md` §11 for the full release workflow.
 
+## [Unreleased]
+
+### Changed
+
+- **The C++ analyser gates moved from LLVM 20 to LLVM 22** (`clang-tidy` and
+  `clang-format` 22.1.8). The version is now declared **once per file** —
+  `LLVM_VERSION` in `cpp/Makefile`, `env.LLVM_VERSION` in
+  `.github/workflows/cpp-ci.yml` — and `scripts/repo-hygiene.sh` fails the build
+  when the two disagree, or when a literal major is spelled out alongside the
+  variable.
+
+  Both files previously carried a comment asking the other to be edited
+  alongside it. A comment is not a mechanism, and the failure it invites is
+  silent in the worse direction: `make verify-ci` exists solely to reproduce the
+  CI gates locally, so a drifted number means it either passes on an older
+  analyser and the PR fails, or reports findings CI will never show. Both
+  outcomes end with the target being distrusted rather than the number being
+  noticed.
+
+  22 found **20 real `misc-const-correctness` misses** in the test tree —
+  tables of string literals declared `const char* x[]` that are iterated and
+  never reassigned, so the pointee should be `const` too. Fixed. This is the
+  second time a bump has paid for itself: 18 → 20 surfaced a genuine
+  fread-past-EOF loop in the platform tests.
+
+- **Every GitHub Action moved off the deprecated Node 20 runtime.**
+  `actions/checkout@v4` → `@v6` at twelve sites (eleven in `cpp-ci.yml`, one in
+  `differential.yml`); the runner had been forcing those steps onto Node 24 and
+  annotating every run. Nothing else was affected — `setup-python`,
+  `upload-artifact` and `download-artifact` are already `@v6`, `cache` is `@v5`,
+  and the rest are on current majors.
+
+### Documentation
+
+- `cpp/README.md` records that the compilation database must be generated from a
+  **clean** tree: `bear` records the compiler invocations it intercepts, and an
+  incremental build issues none for targets already up to date, so
+  `bear -- make all` over a warm tree writes a database missing whatever did not
+  rebuild. `make tidy`'s `tidy-db-check` is what makes that visible rather than a
+  silently empty analysis.
+
+- `cpp/Makefile` records that `tidy-db-check` is **permanent, not scaffolding**.
+  A CMake + Ninja build would emit `compile_commands.json` at configure time and
+  make the failure mode impossible; that migration was considered and declined,
+  because the `gcc:4.8` fidelity container has no CMake and cannot install one
+  (Debian 7's repositories are archived and `apt-get update` there exits 100),
+  and a hand-built CMake inside the tier whose job is faithful reproduction of
+  the target defeats the tier.
+
 ## [2.17.0] — 2026-08-27
 
 ### Added

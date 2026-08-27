@@ -550,6 +550,44 @@ if (( ${#offenders[@]} )); then
     bad "cpp/README.md understates the tiers that actually run"
 fi
 
+# ── 18. The analyser version agrees between the Makefile and CI ───────
+# `cpp/Makefile`'s LLVM_VERSION drives `make verify-ci`, whose entire purpose
+# is to reproduce CI's analyser gates locally. `.github/workflows/cpp-ci.yml`
+# pins the same number as `env.LLVM_VERSION` for the clang-tidy and
+# clang-format jobs. Both files carried a comment asking the other to be
+# edited alongside it, and a comment is not a mechanism.
+#
+# The failure this prevents is silent in the worst direction. If verify-ci
+# runs an OLDER analyser than CI, it passes locally and the PR fails; if it
+# runs a NEWER one, it reports findings CI will never show, and the natural
+# response is to stop trusting the target. Either way the number nobody
+# noticed had drifted is the explanation, and nothing points at it.
+step "the C++ analyser version agrees between cpp/Makefile and cpp-ci.yml"
+mk_llvm=$(sed -n 's/^LLVM_VERSION[[:space:]]*?\{0,1\}=[[:space:]]*\([0-9][0-9]*\).*/\1/p' cpp/Makefile | head -1)
+ci_llvm=$(sed -n 's/^[[:space:]]*LLVM_VERSION:[[:space:]]*"\{0,1\}\([0-9][0-9]*\)"\{0,1\}[[:space:]]*$/\1/p' \
+              .github/workflows/cpp-ci.yml | head -1)
+if [[ -z "$mk_llvm" ]]; then
+    list "cpp/Makefile declares no LLVM_VERSION"
+    bad "cannot read the analyser version from cpp/Makefile"
+elif [[ -z "$ci_llvm" ]]; then
+    list ".github/workflows/cpp-ci.yml declares no env.LLVM_VERSION"
+    bad "cannot read the analyser version from cpp-ci.yml"
+elif [[ "$mk_llvm" != "$ci_llvm" ]]; then
+    list "cpp/Makefile: LLVM_VERSION = $mk_llvm" \
+         ".github/workflows/cpp-ci.yml: env.LLVM_VERSION = $ci_llvm"
+    bad "analyser version differs; 'make verify-ci' no longer predicts the CI gates"
+fi
+
+# Nothing may reintroduce a hardcoded major alongside the variable: a stray
+# `clang-tidy-20` next to `LLVM_VERSION: "22"` would satisfy the comparison
+# above while running the wrong tool, which is precisely the drift being
+# closed. The variable spellings are excluded by requiring a literal digit.
+step "no hardcoded clang-tidy/clang-format major outside LLVM_VERSION"
+if grep -nE 'clang-(tidy|format)-[0-9]+|llvm-toolchain-noble-[0-9]+' \
+        .github/workflows/cpp-ci.yml cpp/Makefile >&2; then
+    bad "spell the analyser major as \$LLVM_VERSION / \$(LLVM_VERSION), not a literal"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2

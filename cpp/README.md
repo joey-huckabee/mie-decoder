@@ -64,26 +64,37 @@ one another. Overwrite with `make BUILD_DIR=/somewhere/else` when needed.
 `make tidy` needs a compilation database:
 
 ```bash
-bear -- make -j"$(nproc)" all      # writes compile_commands.json
+make clean && bear -- make -j"$(nproc)" all   # writes compile_commands.json
 make tidy
 ```
 
+**Start from a clean tree.** `bear` records the compiler invocations it
+*intercepts*, and an incremental build issues none for targets that are already
+up to date — so `bear -- make all` over a warm tree writes a database missing
+whatever did not rebuild. clang-tidy then prints `Skipping <file>. Compile
+command not found.` for each one and **exits 0**, so the gate reports success
+having analysed nothing. `make tidy` refuses to run in that state
+(`tidy-db-check`), which is the only reason it is visible.
+
 **Check the clang-tidy version.** `TIDY` defaults to whatever `clang-tidy` is
-on `PATH`, and CI runs LLVM 20. Ubuntu 22.04 (the usual WSL2 image) ships
+on `PATH`, and CI runs LLVM 22. Ubuntu 22.04 (the usual WSL2 image) ships
 LLVM 14, which is a materially different check set — `misc-const-correctness`,
 for one, does not exist before LLVM 15, so a clean run on 14 says nothing about
 that check, and 14 emits `bugprone-throw-keyword-missing` false positives that
-20 does not. `make tidy` prints a loud advisory when the versions disagree.
+22 does not. `make tidy` prints a loud advisory when the versions disagree.
 Either point it at a matching binary or use the container:
 
 ```bash
-make tidy TIDY=clang-tidy-20       # if installed locally
+make tidy TIDY=clang-tidy-22       # if installed locally
 make verify-ci                     # CI's versions, in a container
 ```
 
 `make verify-ci` is the authoritative pre-push check for everything
-version-sensitive: clang-format 20, clang-tidy 20, cppcheck 2.13 and the
-sanitizers, all on the CI compiler. Note that rootless podman cannot
+version-sensitive: clang-format 22, clang-tidy 22, cppcheck 2.13 and the
+sanitizers, all on the CI compiler. The version itself comes from
+`LLVM_VERSION` in `cpp/Makefile`, which `scripts/repo-hygiene.sh` holds equal to
+`env.LLVM_VERSION` in `.github/workflows/cpp-ci.yml` — so this target cannot
+quietly stop predicting CI. Note that rootless podman cannot
 bind-mount a DrvFs path, so under WSL2 it must be run from a Linux-native
 directory, not `/mnt/c`.
 
@@ -169,7 +180,7 @@ Python implementations:
 | modern g++ | fast feedback, plus the sanitizers GCC 4.8 cannot host |
 | `gcc:4.8` container | C++11 conformance on the SLES 12 system compiler — **runs the full suite, not just a compile** |
 | MSVC on `windows-2022` | the shipping Windows artifact, at `/W4 /WX /permissive-` |
-| static analysis | clang-tidy 20, cppcheck, CodeQL `c-cpp`, SonarCloud CFamily |
+| static analysis | clang-tidy 22, cppcheck, CodeQL `c-cpp`, SonarCloud CFamily |
 | coverage (gcovr) | 90% line / 76% branch floors, from `COVERAGE_MIN_*` in the Makefile |
 | fuzz burn-in | the L1-ROB-001 harness at a raised iteration count, on Linux and MSVC (`fuzz.yml`, via `make check-fuzz`) |
 | real SLES 12 SP5 | deployability. Not in CI — verified by hand on hardware |

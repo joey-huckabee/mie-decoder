@@ -667,7 +667,7 @@ TEST_CASE("parent and filename always partition a path", "[platform][path][exhau
     // parent() is what precedes it. Reassembling them must recover the original
     // except for the separator itself -- which is the property a caller relies
     // on when it splits a destination to place a temp file beside it.
-    const char* paths[] = {
+    const char* const paths[] = {
         "",     "a",          "a.csv", "/",      "/a",
         "/a/b", "/a/b/c.csv", "a/b",   "a/b/",   "//a",
         "a//b", "./a",        "../a",  "/a/b/.", "/very/deep/path/with/many/segments/out.csv"};
@@ -698,8 +698,8 @@ TEST_CASE("joining a parent to a filename never doubles or loses a separator",
     // Every combination of trailing separator on the directory and leading
     // separator on the name -- the four shapes a caller can produce by
     // concatenating configured strings.
-    const char* dirs[] = {"dir", "dir/", "/abs", "/abs/", "/", ""};
-    const char* names[] = {"out.csv", "/out.csv", ""};
+    const char* const dirs[] = {"dir", "dir/", "/abs", "/abs/", "/", ""};
+    const char* const names[] = {"out.csv", "/out.csv", ""};
 
     for (std::size_t d = 0; d < sizeof(dirs) / sizeof(dirs[0]); ++d) {
         for (std::size_t n = 0; n < sizeof(names) / sizeof(names[0]); ++n) {

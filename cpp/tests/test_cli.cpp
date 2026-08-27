@@ -104,7 +104,7 @@ TEST_CASE("version and help are answered before anything else", "[cli][L3-CPP-01
         // Note the asymmetry: version is case-insensitive, help is not.
         // That is not a tidiness question -- Rust and Python both reject
         // `--HELP`, and accepting it made C++ the only one that did.
-        const char* spellings[] = {"--version", "-V", "-v", "--VERSION", "--help", "-h"};
+        const char* const spellings[] = {"--version", "-V", "-v", "--VERSION", "--help", "-h"};
         for (std::size_t i = 0; i < sizeof(spellings) / sizeof(spellings[0]); ++i) {
             std::string out;
             INFO(spellings[i]);
@@ -114,7 +114,7 @@ TEST_CASE("version and help are answered before anything else", "[cli][L3-CPP-01
     }
 
     SECTION("help is case-sensitive, unlike version") {
-        const char* rejected[] = {"--HELP", "--Help", "--hELP"};
+        const char* const rejected[] = {"--HELP", "--Help", "--hELP"};
         for (std::size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i) {
             INFO(rejected[i]);
             REQUIRE(mie::cli::run(args(rejected[i])) == mie::cli::EXIT_USAGE);
@@ -164,7 +164,7 @@ TEST_CASE("the help text is pure ASCII", "[cli][L2-CLI-014]") {
 // about one command, and which nothing exercised until this case.
 TEST_CASE("help asked for on a valid subcommand line prints help",
           "[cli][L3-CPP-014][L2-CLI-017]") {
-    const char* commands[] = {"decode", "count", "dump"};
+    const char* const commands[] = {"decode", "count", "dump"};
     for (std::size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); ++i) {
         std::string out;
         INFO(commands[i]);
@@ -235,25 +235,25 @@ TEST_CASE("a valued flag given no value is a usage error", "[cli][L3-CPP-014]") 
     // The trailing-flag case: `--output` as the last token has nothing after
     // it. Reading past the end would be a crash; treating the absence as an
     // empty value would write to a file named "".
-    const char* flags[] = {"--output",
-                           "--config",
-                           "--log-level",
-                           "--time-format",
-                           "--format",
-                           "--detect-records",
-                           "--lookahead-records",
-                           "--standard-tick-rate-hz",
-                           "--max-sort-group",
-                           "--mux-delimiter",
-                           "--mux-field",
-                           "--exclude-types",
-                           "--include-types",
-                           "--exclude-rts",
-                           "--include-rts",
-                           "--exclude-buses",
-                           "--include-buses",
-                           "--exclude-subaddresses",
-                           "--include-subaddresses"};
+    const char* const flags[] = {"--output",
+                                 "--config",
+                                 "--log-level",
+                                 "--time-format",
+                                 "--format",
+                                 "--detect-records",
+                                 "--lookahead-records",
+                                 "--standard-tick-rate-hz",
+                                 "--max-sort-group",
+                                 "--mux-delimiter",
+                                 "--mux-field",
+                                 "--exclude-types",
+                                 "--include-types",
+                                 "--exclude-rts",
+                                 "--include-rts",
+                                 "--exclude-buses",
+                                 "--include-buses",
+                                 "--exclude-subaddresses",
+                                 "--include-subaddresses"};
     for (std::size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i) {
         INFO(flags[i]);
         REQUIRE(mie::cli::run(args("decode", "in.mie", flags[i])) == mie::cli::EXIT_USAGE);
@@ -368,7 +368,7 @@ TEST_CASE("the separated form refuses a value that looks like an option",
         // "-0x5" and "-1a" begin like numbers under the 3.14 matcher and are
         // values; 3.10-3.13 called them options, so they are outside the
         // contract and not asserted here.
-        const char* tokens[] = {"--no-mux", "--foo", "-o", "-x", "-abc", "--1"};
+        const char* const tokens[] = {"--no-mux", "--foo", "-o", "-x", "-abc", "--1"};
         for (std::size_t i = 0; i < sizeof(tokens) / sizeof(tokens[0]); ++i) {
             INFO(tokens[i]);
             REQUIRE(mie::cli::run(args("decode", input.str(), "--mux-delimiter", tokens[i])) ==
@@ -513,7 +513,7 @@ TEST_CASE("help outranks a deferred diagnostic but not a missing value",
 TEST_CASE("numeric flags reject trailing junk", "[cli][L3-CPP-014]") {
     // `strtoll` stops at the first non-digit and reports success, so "4x" would
     // silently become 4. A typo must be refused, not rounded off.
-    const char* bad[] = {"4x", "", "  ", "0x4", "4.5", "--", "1e3", "4 "};
+    const char* const bad[] = {"4x", "", "  ", "0x4", "4.5", "--", "1e3", "4 "};
     for (std::size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); ++i) {
         INFO(bad[i]);
         REQUIRE(mie::cli::run(args("decode", "in.mie", "--detect-records", bad[i])) ==
@@ -553,7 +553,7 @@ TEST_CASE("--standard-tick-rate-hz must be a positive number", "[cli][L3-CPP-014
     // A zero or negative rate would divide by zero or run the clock backwards;
     // NaN compares false against every bound, so it has to be rejected by the
     // positive test rather than by a range check.
-    const char* bad[] = {"0", "-1", "-0.5", "abc", "", "nan", "1.0.0"};
+    const char* const bad[] = {"0", "-1", "-0.5", "abc", "", "nan", "1.0.0"};
     for (std::size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); ++i) {
         INFO(bad[i]);
         REQUIRE(mie::cli::run(args("decode", "in.mie", "--standard-tick-rate-hz", bad[i])) ==
@@ -612,7 +612,7 @@ TEST_CASE("an invalid --log-level is refused rather than ignored", "[cli][L3-CPP
     // for DEBUG staring at a quiet run and concluding nothing happened.
     REQUIRE(mie::cli::run(args("--log-level", "LOUD", "count", "in.mie")) == mie::cli::EXIT_USAGE);
 
-    const char* accepted[] = {"DEBUG", "INFO", "WARNING", "WARN", "ERROR", "CRITICAL", "OFF"};
+    const char* const accepted[] = {"DEBUG", "INFO", "WARNING", "WARN", "ERROR", "CRITICAL", "OFF"};
     const TempFile input("mie-cli-level.mie", valid_recording());
     for (std::size_t i = 0; i < sizeof(accepted) / sizeof(accepted[0]); ++i) {
         std::string out;

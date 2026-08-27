@@ -362,10 +362,10 @@ TEST_CASE("an inline table is refused", "[toml][L2-CFG-010]") {
 TEST_CASE("every literal the grammar generates is accepted", "[toml][number]") {
     // Built FROM the productions rather than listed by hand, so the corpus
     // cannot quietly omit a shape the grammar allows.
-    const char* signs[] = {"", "+", "-"};
-    const char* integers[] = {"0", "1", "9", "10", "907", "1234567890"};
-    const char* fractions[] = {"", ".0", ".5", ".000001", ".1234567890"};
-    const char* exponents[] = {"", "e1", "E1", "e+1", "e-1", "E+10", "e-10", "e0"};
+    const char* const signs[] = {"", "+", "-"};
+    const char* const integers[] = {"0", "1", "9", "10", "907", "1234567890"};
+    const char* const fractions[] = {"", ".0", ".5", ".000001", ".1234567890"};
+    const char* const exponents[] = {"", "e1", "E1", "e+1", "e-1", "E+10", "e-10", "e0"};
 
     std::size_t checked = 0;
     for (std::size_t s = 0; s < 3; ++s) {
@@ -396,7 +396,7 @@ TEST_CASE("every literal the grammar generates is accepted", "[toml][number]") {
 TEST_CASE("the forms a native parser would accept are refused", "[toml][number]") {
     // Every entry here is taken by strtod or strtoll and refused by TOML. This
     // is the divergence the grammar check exists to prevent.
-    const char* rejected[] = {
+    const char* const rejected[] = {
         "08",    "01",    "0123",               // leading zeros
         "1.",    "1.e5",  ".5",   "-.5",        // a bare or missing fractional part
         "1e",    "1e+",   "1E-",                // an exponent marker with no digits

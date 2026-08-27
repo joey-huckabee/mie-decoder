@@ -185,7 +185,7 @@ TEST_CASE("classification is byte-for-byte identical under a hostile locale",
     const char* previous = std::setlocale(LC_ALL, 0);
     const std::string saved = previous != 0 ? std::string(previous) : std::string("C");
 
-    const char* locales[] = {"tr_TR.UTF-8", "tr_TR", "de_DE.UTF-8", "de_DE", "C.UTF-8"};
+    const char* const locales[] = {"tr_TR.UTF-8", "tr_TR", "de_DE.UTF-8", "de_DE", "C.UTF-8"};
     int exercised = 0;
     bool all_match = true;
 
@@ -228,7 +228,7 @@ TEST_CASE("fixed6 is byte-for-byte identical under a comma-separator locale",
     const char* previous = std::setlocale(LC_ALL, 0);
     const std::string saved = previous != 0 ? std::string(previous) : std::string("C");
 
-    const char* locales[] = {"de_DE.UTF-8", "de_DE", "fr_FR.UTF-8", "fr_FR"};
+    const char* const locales[] = {"de_DE.UTF-8", "de_DE", "fr_FR.UTF-8", "fr_FR"};
     int exercised = 0;
     bool all_match = true;
     bool any_comma = false;
@@ -275,7 +275,7 @@ TEST_CASE("integer formatting is identical under a hostile locale",
     const char* previous = std::setlocale(LC_ALL, 0);
     const std::string saved = previous != 0 ? std::string(previous) : std::string("C");
 
-    const char* locales[] = {"de_DE.UTF-8", "de_DE", "tr_TR.UTF-8", "tr_TR"};
+    const char* const locales[] = {"de_DE.UTF-8", "de_DE", "tr_TR.UTF-8", "tr_TR"};
     bool all_match = true;
     for (std::size_t l = 0; l < sizeof(locales) / sizeof(locales[0]); ++l) {
         if (!try_locale(locales[l])) {
