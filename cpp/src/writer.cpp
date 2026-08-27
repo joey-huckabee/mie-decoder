@@ -117,11 +117,15 @@ void AtomicCsvSink::commit() {
 
 std::string AtomicCsvSink::commit_partial() {
     platform::OsError err;
+    // The name comes from `partial_path_for` rather than being spelled here, so
+    // the path this commits to and the path `commit_targets` pre-flights are
+    // the same derivation and cannot drift (L2-WRT-014).
+    const std::string partial = partial_path_for(path_);
     if (!file_.commit_with_suffix(".partial", err)) {
-        throw writer_failure(path_ + ".partial", err);
+        throw writer_failure(partial, err);
     }
     open_ = false;
-    return path_ + ".partial";
+    return partial;
 }
 
 void AtomicCsvSink::abort() {
@@ -292,25 +296,71 @@ std::string error_path_for(const std::string& output) {
     return parent.empty() ? derived : platform::path_join(parent, derived);
 }
 
+std::string partial_path_for(const std::string& destination) { return destination + ".partial"; }
+
+std::vector<std::string> commit_targets(const std::string& output, bool split_errors,
+                                        bool allow_partial) {
+    std::vector<std::string> targets;
+    targets.push_back(output);
+    if (split_errors) {
+        targets.push_back(error_path_for(output));
+    }
+    if (allow_partial) {
+        // Snapshot the count before appending: the partial of the ERRORS file
+        // is a real commit target in split mode (`write_csv_split` commits both
+        // as `.partial`), and it is the one an audit forgets. Indexing rather
+        // than iterating because the loop grows the vector it reads.
+        const std::size_t committed = targets.size();
+        for (std::size_t i = 0; i < committed; ++i) {
+            targets.push_back(partial_path_for(targets[i]));
+        }
+    }
+    return targets;
+}
+
 namespace {
 
 /// L2-WRT-014 then L2-WRT-017, in that order, before anything is opened.
 ///
 /// No filesystem state is touched here. The point is to fail before a temp file
 /// exists, so a refused write leaves nothing behind to clean up.
-void preflight_output(const std::string& output, const WriteOptions& options) {
+///
+/// `split_errors` says whether the caller is `write_csv_split`, which decides
+/// both which paths can be committed (via `commit_targets`) and whether the
+/// derived errors destination gets its own no-clobber check.
+///
+/// The collision test covers EVERY commit target; the no-clobber test covers
+/// only the destinations a run actually creates -- main, and the errors file in
+/// split mode. `.partial` paths are deliberately not clobber-checked, which is
+/// the behaviour that shipped: a `.partial` is written only on a failure path,
+/// and refusing a whole run up front because a stale one is lying around would
+/// be a different rule than L2-WRT-017 states.
+void preflight_output(const std::string& output, bool split_errors, const WriteOptions& options) {
     if (options.input_path.has_value()) {
-        bool same = false;
-        platform::OsError err;
-        // A path that cannot be resolved is not a collision. Decoding to a
-        // brand-new file is the common case and must not be blocked by the
-        // check that exists to stop decoding ONTO the input.
-        if (platform::paths_same_file(options.input_path.value(), output, same, err) && same) {
-            throw MieError::input_output_collision(output);
+        const std::vector<std::string> targets =
+            commit_targets(output, split_errors, options.allow_partial);
+        for (std::size_t i = 0; i < targets.size(); ++i) {
+            bool same = false;
+            platform::OsError err;
+            // A path that cannot be resolved is not a collision. Decoding to a
+            // brand-new file is the common case and must not be blocked by the
+            // check that exists to stop decoding ONTO the input.
+            if (platform::paths_same_file(options.input_path.value(), targets[i], same, err) &&
+                same) {
+                throw MieError::input_output_collision(targets[i]);
+            }
         }
     }
-    if (options.no_clobber && platform::path_exists(output)) {
-        throw MieError::clobber_refused(output);
+    if (options.no_clobber) {
+        if (platform::path_exists(output)) {
+            throw MieError::clobber_refused(output);
+        }
+        if (split_errors) {
+            const std::string errors = error_path_for(output);
+            if (platform::path_exists(errors)) {
+                throw MieError::clobber_refused(errors);
+            }
+        }
     }
 }
 
@@ -367,7 +417,7 @@ WriteOutcome write_csv(MessageSource& messages, const Optional<std::string>& out
     }
 
     const std::string& path = output.value();
-    preflight_output(path, options);
+    preflight_output(path, false, options);
 
     AtomicCsvSink sink;
     sink.create(path);
@@ -412,14 +462,15 @@ WriteOutcome write_csv(MessageSource& messages, const Optional<std::string>& out
 
 WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
                              const WriteOptions& options) {
-    preflight_output(output, options);
+    // Covers the errors destination and every `.partial` variant, not just
+    // `output`. This used to reason that the errors path needed no collision
+    // check because "the path is derived from `output`, which was just
+    // checked", which does not follow: a derived path is an ordinary path that
+    // can name a DIFFERENT input, and `capture_errors.mie` is a plausible
+    // recording name (L2-WRT-014).
+    preflight_output(output, true, options);
 
     const std::string errors_path = error_path_for(output);
-    // The errors path needs its own clobber check. The collision check does
-    // not: the path is derived from `output`, which was just checked.
-    if (options.no_clobber && platform::path_exists(errors_path)) {
-        throw MieError::clobber_refused(errors_path);
-    }
 
     AtomicCsvSink main_sink;
     main_sink.create(output);

@@ -262,7 +262,8 @@ L1-OUT-002 obligates the writer to preserve output destination integrity: atomic
 ```
 write_csv(messages, dest_path, opts)
   │
-  ├── L2-WRT-014: refuse if dest_path resolves to the same file as input
+  ├── L2-WRT-014: refuse if ANY commit target (dest, <stem>_errors<sfx>,
+  │                and their .partial variants) resolves to ANY input
   │       (compared via canonical path; stdout is exempt)
   │
   ├── L2-WRT-017: if opts.no_clobber and dest_path exists → ClobberRefused

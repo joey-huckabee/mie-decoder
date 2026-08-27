@@ -485,6 +485,51 @@ fn rejects_input_equal_to_output_path() {
     );
 }
 
+/// Requirements: L2-WRT-014, L2-MRG-001
+///
+/// A MERGE must check every path it could commit against every input, not just
+/// the destination against the destination. The writer cannot do this one: on
+/// the merge path it is handed `input_path: None` precisely because it is given
+/// one stream and never learns how many files fed it, so the CLI guard is the
+/// only thing standing between `capture_errors.mie` and being overwritten by
+/// the errors file derived from `-o capture.mie`.
+///
+/// Asserted on the artifact, not the message: exit non-zero, every input byte
+/// identical, and no output file created at all.
+#[test]
+fn merge_rejects_an_input_that_a_derived_output_path_would_overwrite() {
+    let tmp = TempDir::new();
+    let original = one_valid_record();
+    let first = tmp.write("recording.mie", &original);
+    // Plausible name for a second recorder's file -- and exactly what
+    // `-o capture.mie --separate-errors` derives.
+    let victim = tmp.write("capture_errors.mie", &original);
+
+    let out = run([
+        std::ffi::OsStr::new("decode"),
+        first.as_os_str(),
+        victim.as_os_str(),
+        std::ffi::OsStr::new("-o"),
+        tmp.0.join("capture.mie").as_os_str(),
+        std::ffi::OsStr::new("--separate-errors"),
+    ]);
+    assert_ne!(
+        exit_code(&out),
+        0,
+        "a merge whose errors file would land on an input must be rejected"
+    );
+
+    assert_eq!(
+        std::fs::read(&victim).expect("input file disappeared"),
+        original,
+        "input file was modified despite the collision rejection"
+    );
+    assert!(
+        !tmp.0.join("capture.mie").exists(),
+        "no output may be created once the run is refused"
+    );
+}
+
 /// Requirements: L2-CLI-008, L3-RS-008
 ///
 /// Two-channel output contract:

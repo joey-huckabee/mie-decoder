@@ -37,6 +37,7 @@ from mie_decoder.exceptions import (
     MieUnrecoverableSyncLossError,
     MieWriterError,
 )
+from mie_decoder.models import ErrorMode
 from tests.conftest import normal_record_rt15_sa11_us
 
 # ── validators ─────────────────────────────────────────────────────────────
@@ -362,18 +363,33 @@ class TestMergeOutputCollision:
 
 
 class TestCheckMergeOutputCollision:
+    @staticmethod
+    def _config(*, separate: bool = False, allow_partial: bool = False) -> SimpleNamespace:
+        """The two resolved-config fields the guard reads.
+
+        The guard takes the *config*, not the argparse namespace, because a site
+        config file can select either mode without the flag ever being typed.
+        """
+        return SimpleNamespace(
+            error_mode=ErrorMode.SEPARATE if separate else ErrorMode.INLINE,
+            allow_partial=allow_partial,
+        )
+
     def test_no_merge_skips(self) -> None:
         # A single-input decode (merge not requested) defers to the writer's own
-        # input/output check, so this guard is a no-op.
+        # input/output check, which runs the same target enumeration.
         args = SimpleNamespace(output=Path("out.csv"))
         assert (
-            cli._check_merge_output_collision(args, [Path("a.mie")], merge_requested=False) is None
+            cli._check_merge_output_collision(
+                args, [Path("a.mie")], self._config(), merge_requested=False
+            )
+            is None
         )
 
     def test_no_output_skips(self) -> None:
         args = SimpleNamespace(output=None)
         rc = cli._check_merge_output_collision(
-            args, [Path("a.mie"), Path("b.mie")], merge_requested=True
+            args, [Path("a.mie"), Path("b.mie")], self._config(), merge_requested=True
         )
         assert rc is None
 
@@ -383,9 +399,74 @@ class TestCheckMergeOutputCollision:
         f = tmp_path / "a.mie"
         f.write_bytes(b"x")
         args = SimpleNamespace(output=f)
-        rc = cli._check_merge_output_collision(args, [tmp_path / "b.mie", f], merge_requested=True)
+        rc = cli._check_merge_output_collision(
+            args, [tmp_path / "b.mie", f], self._config(), merge_requested=True
+        )
         assert rc == EXIT_RUNTIME
         assert "Error:" in capsys.readouterr().err
+
+    @pytest.mark.requirement("L2-WRT-014")
+    def test_derived_targets_are_checked_from_config_not_flags(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A derived commit target that names an input is a collision too.
+
+        ``-o capture.mie --separate-errors`` derives ``capture_errors.mie``,
+        which is a plausible recording name; before this the guard checked only
+        the destination, the errors file committed over the input, and the run
+        exited 0. The mode comes from the resolved config, so a site config
+        selecting separate mode is guarded exactly like the flag.
+        """
+        victim = tmp_path / "capture_errors.mie"
+        victim.write_bytes(b"x")
+        args = SimpleNamespace(output=tmp_path / "capture.mie")
+
+        # Inline mode never writes an errors file, so there is nothing to hit.
+        assert (
+            cli._check_merge_output_collision(
+                args, [tmp_path / "b.mie", victim], self._config(), merge_requested=True
+            )
+            is None
+        )
+
+        rc = cli._check_merge_output_collision(
+            args,
+            [tmp_path / "b.mie", victim],
+            self._config(separate=True),
+            merge_requested=True,
+        )
+        assert rc == EXIT_RUNTIME
+        assert "derived output path" in capsys.readouterr().err
+
+    @pytest.mark.requirement("L2-WRT-014")
+    def test_partial_target_is_checked(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``<destination>.partial`` is a commit target under ``--allow-partial``.
+
+        Enumerated even though a clean decode never writes one: the guard runs
+        before the output is opened, and by then nobody knows whether the decode
+        will lose sync.
+        """
+        victim = tmp_path / "out.csv.partial"
+        victim.write_bytes(b"x")
+        args = SimpleNamespace(output=tmp_path / "out.csv")
+
+        assert (
+            cli._check_merge_output_collision(
+                args, [tmp_path / "b.mie", victim], self._config(), merge_requested=True
+            )
+            is None
+        )
+
+        rc = cli._check_merge_output_collision(
+            args,
+            [tmp_path / "b.mie", victim],
+            self._config(allow_partial=True),
+            merge_requested=True,
+        )
+        assert rc == EXIT_RUNTIME
+        assert "derived output path" in capsys.readouterr().err
 
 
 # ── dump broken-pipe handling (L2-WRT-018) ──────────────────────────────────

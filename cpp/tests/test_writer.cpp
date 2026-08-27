@@ -226,6 +226,81 @@ TEST_CASE("writing onto the input is refused", "[writer][L2-WRT-014]") {
     CHECK(read_raw(path.str()) == "INPUT");
 }
 
+TEST_CASE("commit_targets enumerates every committable path", "[writer][L2-WRT-014]") {
+    // The enumeration itself, pinned: main, errors, then their `.partial`
+    // variants. The errors file's own `.partial` is the one an audit forgets,
+    // and split mode commits it.
+    const std::string out = "capture.csv";
+
+    std::vector<std::string> t = mie::commit_targets(out, false, false);
+    REQUIRE(t.size() == 1u);
+    CHECK(t[0] == "capture.csv");
+
+    t = mie::commit_targets(out, true, false);
+    REQUIRE(t.size() == 2u);
+    CHECK(t[1] == "capture_errors.csv");
+
+    t = mie::commit_targets(out, false, true);
+    REQUIRE(t.size() == 2u);
+    CHECK(t[1] == "capture.csv.partial");
+
+    t = mie::commit_targets(out, true, true);
+    REQUIRE(t.size() == 4u);
+    CHECK(t[0] == "capture.csv");
+    CHECK(t[1] == "capture_errors.csv");
+    CHECK(t[2] == "capture.csv.partial");
+    CHECK(t[3] == "capture_errors.csv.partial");
+}
+
+TEST_CASE("writing onto an input the ERRORS path resolves to is refused", "[writer][L2-WRT-014]") {
+    // Every path a run could commit is a collision candidate -- not just the
+    // destination the operator named. The derived errors path is an ordinary
+    // path that can name a DIFFERENT input: `-o capture.mie --separate-errors`
+    // derives `capture_errors.mie`, a plausible recording name. Before this,
+    // the errors file committed straight over that input and the run exited 0.
+    TempPath dest("capture.mie");
+    const std::string victim = dest.also_remove(mie::error_path_for(dest.str()));
+    write_raw(victim, "INPUT");
+
+    mie::WriteOptions options;
+    options.input_path = victim;
+    VectorSource source(one(errored()));
+
+    CHECK_THROWS_AS(mie::write_csv_split(source, dest.str(), options), mie::MieError);
+    CHECK(read_raw(victim) == "INPUT");
+    CHECK_FALSE(exists(dest.str()));
+}
+
+TEST_CASE("writing onto an input the .partial path resolves to is refused",
+          "[writer][L2-WRT-014][L2-WRT-016]") {
+    // `<destination>.partial` is a commit target under --allow-partial, so an
+    // input named `out.csv.partial` collides with `-o out.csv`. It is
+    // enumerated even though a clean decode never writes one: the guard runs
+    // before the output is opened, which is the only point at which refusing is
+    // still safe, and by then nobody knows whether the decode will lose sync.
+    TempPath dest("out.csv");
+    const std::string victim = dest.sibling(".partial");
+    write_raw(victim, "INPUT");
+
+    mie::WriteOptions options;
+    options.input_path = victim;
+
+    {
+        // Without allow_partial there is no `.partial` target, so the same pair
+        // of paths is a perfectly ordinary decode.
+        VectorSource clean(one(sample()));
+        CHECK_NOTHROW(mie::write_csv(clean, to(dest), options));
+        CHECK(exists(dest.str()));
+        (void)std::remove(dest.str().c_str());
+    }
+
+    options.allow_partial = true;
+    VectorSource source(one(sample()));
+    CHECK_THROWS_AS(mie::write_csv(source, to(dest), options), mie::MieError);
+    CHECK(read_raw(victim) == "INPUT");
+    CHECK_FALSE(exists(dest.str()));
+}
+
 TEST_CASE("a distinct output path is not a collision", "[writer][L2-WRT-014]") {
     // The check must not fire on the ordinary case, where the destination does
     // not exist yet and therefore cannot be canonicalized at all.

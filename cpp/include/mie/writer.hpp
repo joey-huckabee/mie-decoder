@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "mie/error.hpp"
 #include "mie/models.hpp"
@@ -255,6 +256,36 @@ WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
 /// `<stem>_errors<ext>` beside `output`. Exposed so the CLI can name the file
 /// in a diagnostic without recomputing the rule.
 std::string error_path_for(const std::string& output);
+
+/// `<destination>.partial` -- where an `--allow-partial` run commits the rows
+/// decoded before an unrecoverable sync loss (L2-WRT-016).
+///
+/// Used by both `AtomicCsvSink::commit_partial` (which renames onto it) and
+/// `commit_targets` (which pre-flights it), so the path guarded and the path
+/// written are one derivation.
+std::string partial_path_for(const std::string& destination);
+
+/// Every path a decode run could commit, given its destination and mode.
+///
+/// The L2-WRT-014 collision guard has to test ALL of them, not just the
+/// destination the operator named. A derived path is an ordinary path that can
+/// name an ordinary file, and "it was derived from a path we already checked"
+/// says nothing about whether it collides with a DIFFERENT input:
+/// `-o capture.mie --separate-errors` derives `capture_errors.mie`, which is a
+/// perfectly plausible name for one of the recordings being decoded. Both
+/// destructive cases were live until this existed -- the errors file and the
+/// `.partial` file each committed straight over an input, and the run exited 0.
+///
+/// `.partial` targets are enumerated even though a clean decode never writes
+/// one: the guard runs before the output is opened, which is the only point at
+/// which refusing is still safe, and by then nobody knows whether the decode
+/// will lose sync. Refusing a run that MIGHT have destroyed an input is the
+/// conservative direction.
+///
+/// Ordering is main, errors, then their `.partial` variants, so the error names
+/// the most direct collision when more than one target matches.
+std::vector<std::string> commit_targets(const std::string& output, bool split_errors,
+                                        bool allow_partial);
 
 }  // namespace mie
 

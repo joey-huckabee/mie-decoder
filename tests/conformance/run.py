@@ -39,6 +39,13 @@ FIELD_TYPES: dict[str, type | tuple[type, ...]] = {
     "input": str,
     "inputs": list,  # multi-file merge: list of hex input paths
     "input_names": list,  # override materialized temp file name(s) (L2-WRT-020)
+    # Override the destination's file NAME, placing it in the same directory as
+    # the materialized inputs. Without it the runner names the output itself and
+    # puts it elsewhere, so a case cannot express a destination whose DERIVED
+    # paths -- `<stem>_errors<ext>`, `<dest>.partial` -- land on an input
+    # (L2-WRT-014). Each implementation gets its own subdirectory, so one that
+    # regressed and wrote cannot corrupt the fixture the next one reads.
+    "output_name": str,
     "expected": str,
     "expected_errors": str,
     "expected_partial": str,  # oracle for the <output>.partial (allow-partial)
@@ -777,15 +784,33 @@ def main() -> int:
             # filename-derived feature (the MUX column) can be exercised. Names
             # are placed in a per-case subdirectory to avoid collisions.
             input_names = case.get("input_names")
-            case_dir = temp / name if input_names else temp
-            if input_names:
+            output_name = case.get("output_name")
+            case_dir = temp / name if (input_names or output_name) else temp
+            if case_dir is not temp:
                 case_dir.mkdir(parents=True, exist_ok=True)
-            sources = []
-            for i, spec in enumerate(input_specs):
-                fname = input_names[i] if input_names else f"{name}-in{i}.mie"
-                src = case_dir / fname
-                src.write_bytes(read_hex(SUITE / spec))
-                sources.append(src)
+
+            def materialize(into: Path) -> list[Path]:
+                """The case's hex fixtures written as .mie files under `into`."""
+                into.mkdir(parents=True, exist_ok=True)
+                written = []
+                for i, spec in enumerate(input_specs):
+                    fname = input_names[i] if input_names else f"{name}-in{i}.mie"
+                    src = into / fname
+                    src.write_bytes(read_hex(SUITE / spec))
+                    written.append(src)
+                return written
+
+            # With `output_name` the destination sits BESIDE the inputs, so each
+            # implementation needs its own directory: the point of such a case is
+            # that nothing may be written, and sharing a directory would let a
+            # regressed implementation corrupt the fixture the next one reads.
+            per_impl_sources: dict[str, list[Path]] = {}
+            if output_name:
+                for impl in running:
+                    per_impl_sources[impl.name] = materialize(case_dir / impl.name)
+                sources = per_impl_sources[running[0].name]
+            else:
+                sources = materialize(case_dir)
             expected_exit = int(case.get("expected_exit", 0))
             mode = case.get("mode", "decode")
 
@@ -793,9 +818,12 @@ def main() -> int:
             # CSV file, so the per-impl output paths are unused.
             outputs: dict[str, Path | None] = {}
             for impl in running:
-                outputs[impl.name] = (
-                    None if mode in _STDOUT_MODES else temp / f"{name}-{impl.name}.csv"
-                )
+                if mode in _STDOUT_MODES:
+                    outputs[impl.name] = None
+                elif output_name:
+                    outputs[impl.name] = case_dir / impl.name / output_name
+                else:
+                    outputs[impl.name] = temp / f"{name}-{impl.name}.csv"
 
             # An --allow-partial case commits to ``<output>.partial``; read that
             # artifact for the comparison and oracle against ``expected_partial``.
@@ -819,7 +847,7 @@ def main() -> int:
                     Path(f"{output}.partial") if partial_oracle and output else None
                 )
                 produced[impl.name], captured_stderr[impl.name] = run_command(
-                    impl.command(args, case, sources, output),
+                    impl.command(args, case, per_impl_sources.get(impl.name, sources), output),
                     output,
                     name,
                     impl.label,
@@ -827,6 +855,22 @@ def main() -> int:
                     read_path=read_path,
                     payload_is_stdout="expected_stdout_contains" in case,
                 )
+
+            # L1-OUT-002 / L2-WRT-014, asserted on EVERY case rather than only
+            # the ones about it: decoding never modifies an input, so a byte of
+            # difference here means some destination -- the one named, or one
+            # derived from it -- resolved onto a source file. That is exactly
+            # the failure the derived-path collision guard exists to stop, and
+            # it had been possible for the errors file and the `.partial` file
+            # while every CSV oracle in this suite still matched.
+            for impl in running:
+                for i, src in enumerate(per_impl_sources.get(impl.name, sources)):
+                    original = read_hex(SUITE / input_specs[i])
+                    if src.read_bytes() != original:
+                        raise AssertionError(
+                            f"{name}: {impl.label} MODIFIED its input {src.name}; "
+                            f"a decode must never write to a file it is reading"
+                        )
 
             # Optional stderr substring assertion. Used by ``count`` mode to pin
             # the "counted N messages in <path>" status line without a byte-exact

@@ -610,6 +610,90 @@ class TestAtomicWriteSafety:
         with pytest.raises(MieInputOutputCollisionError):
             write_csv_split(reader, output=tmp_mie_file, opts=opts)
 
+    @pytest.mark.requirement("L2-WRT-014")
+    def test_commit_targets_enumerates_every_committable_path(self) -> None:
+        """The enumeration itself, pinned: main, errors, then their ``.partial``.
+
+        The errors file's own ``.partial`` is the one an audit forgets, and
+        split mode commits it.
+        """
+        from mie_decoder.writer import commit_targets
+
+        out = Path("dir") / "capture.csv"
+        names = lambda *a: [p.name for p in commit_targets(out, *a)]  # noqa: E731
+
+        assert names(False, False) == ["capture.csv"]
+        assert names(True, False) == ["capture.csv", "capture_errors.csv"]
+        assert names(False, True) == ["capture.csv", "capture.csv.partial"]
+        assert names(True, True) == [
+            "capture.csv",
+            "capture_errors.csv",
+            "capture.csv.partial",
+            "capture_errors.csv.partial",
+        ]
+        # Every target stays beside the destination, so each rename is
+        # same-filesystem and stays atomic (L2-WRT-015).
+        assert {p.parent for p in commit_targets(out, True, True)} == {out.parent}
+
+    @pytest.mark.requirement("L2-WRT-014")
+    def test_write_csv_split_rejects_collision_on_the_derived_errors_path(
+        self, tmp_mie_file: Path, tmp_path: Path
+    ) -> None:
+        """Every path a run could commit is a collision candidate.
+
+        The derived errors path is an ordinary path that can name a *different*
+        input: ``-o capture.mie --separate-errors`` derives
+        ``capture_errors.mie``, a plausible recording name. Before this, the
+        errors file committed straight over that input and the run exited 0.
+        """
+        from mie_decoder.exceptions import MieInputOutputCollisionError
+        from mie_decoder.writer import WriteOptions, error_path_for, write_csv_split
+
+        dest = tmp_path / "capture.mie"
+        victim = error_path_for(dest)
+        victim.write_bytes(tmp_mie_file.read_bytes())
+        original = victim.read_bytes()
+
+        opts = WriteOptions(input_path=victim, no_clobber=False)
+        with pytest.raises(MieInputOutputCollisionError):
+            write_csv_split(iter([]), output=dest, opts=opts)
+
+        assert victim.read_bytes() == original, "input modified despite the rejection"
+        assert not dest.exists(), "main destination must not be created"
+
+    @pytest.mark.requirement("L2-WRT-014")
+    @pytest.mark.requirement("L2-WRT-016")
+    def test_write_csv_rejects_collision_on_the_partial_path(self, tmp_path: Path) -> None:
+        """``<destination>.partial`` is a commit target under ``allow_partial``.
+
+        Enumerated even though a clean decode never writes one: the guard runs
+        before the output is opened, which is the only point at which refusing
+        is still safe, and by then nobody knows whether the decode will lose
+        sync.
+        """
+        from mie_decoder.exceptions import MieInputOutputCollisionError
+        from mie_decoder.writer import WriteOptions, partial_path_for
+
+        dest = tmp_path / "out.csv"
+        victim = partial_path_for(dest)
+        victim.write_bytes(b"the recording being decoded")
+        original = victim.read_bytes()
+
+        # Without allow_partial there is no `.partial` target, so the same pair
+        # of paths is a perfectly ordinary decode.
+        write_csv(iter([]), output=dest, opts=WriteOptions(input_path=victim))
+        assert dest.exists()
+        dest.unlink()
+
+        with pytest.raises(MieInputOutputCollisionError):
+            write_csv(
+                iter([]),
+                output=dest,
+                opts=WriteOptions(input_path=victim, allow_partial=True),
+            )
+        assert victim.read_bytes() == original, "input modified despite the rejection"
+        assert not dest.exists(), "main destination must not be created"
+
     @pytest.mark.requirement("L2-SYN-011")
     @pytest.mark.requirement("L1-EXIT-002")
     def test_no_valid_records_raises(self, tmp_path: Path) -> None:

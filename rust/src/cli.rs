@@ -1347,7 +1347,12 @@ fn run_decode(globals: GlobalArgs, mut args: DecodeArgs) -> Result<ExitCode, Cli
     // merge we check the output against *every* input here and disable the
     // writer's single-path check.
     if merge_requested && let Some(out) = args.output.as_deref() {
-        check_output_collision(out, &input_paths)?;
+        check_output_collision(
+            out,
+            &input_paths,
+            cfg.error_mode == ErrorMode::Separate,
+            cfg.allow_partial,
+        )?;
     }
     let write_opts = WriteOptions {
         input_path: if merge_requested {
@@ -1427,23 +1432,45 @@ fn resolve_inputs(args: &DecodeArgs) -> Result<Vec<PathBuf>, CliError> {
     Ok(paths)
 }
 
-/// Reject a merge whose output path resolves to one of its inputs
-/// (L2-WRT-014 extended across the input set). Best-effort canonicalization;
-/// falls back to a literal path comparison when a path cannot be canonicalized
-/// (e.g. the output does not exist yet).
-fn check_output_collision(output: &Path, inputs: &[PathBuf]) -> Result<(), CliError> {
-    let out_canon = std::fs::canonicalize(output).ok();
-    for inp in inputs {
-        let collides = match (&out_canon, std::fs::canonicalize(inp).ok()) {
-            (Some(o), Some(i)) => *o == i,
-            _ => output == inp.as_path(),
-        };
-        if collides {
-            return Err(CliError::runtime(format!(
-                "output path {} resolves to merge input {}; choose a different output path",
-                output.display(),
-                inp.display()
-            )));
+/// Reject a merge that could commit over one of its inputs (L2-WRT-014
+/// extended across the input set). Best-effort canonicalization; falls back to
+/// a literal path comparison when a path cannot be canonicalized (e.g. the
+/// output does not exist yet).
+///
+/// Checks **every** path the run could commit, not just the destination the
+/// operator named: `crate::writer::commit_targets` enumerates the derived
+/// errors file and the `.partial` variants alongside it. The writer runs the
+/// same enumeration for a single-input decode, where it knows the one input;
+/// on the merge path it is given `input_path: None` and this is the only guard
+/// that sees the input set at all.
+fn check_output_collision(
+    output: &Path,
+    inputs: &[PathBuf],
+    split_errors: bool,
+    allow_partial: bool,
+) -> Result<(), CliError> {
+    for target in crate::writer::commit_targets(output, split_errors, allow_partial) {
+        let target_canon = std::fs::canonicalize(&target).ok();
+        for inp in inputs {
+            let collides = match (&target_canon, std::fs::canonicalize(inp).ok()) {
+                (Some(o), Some(i)) => *o == i,
+                _ => target == *inp,
+            };
+            if collides {
+                // Naming which target collided matters: told only that the
+                // output collides, an operator looks at `-o` and sees a name
+                // that is plainly different from every input.
+                let role = if target == output {
+                    "output path"
+                } else {
+                    "derived output path"
+                };
+                return Err(CliError::runtime(format!(
+                    "{role} {} resolves to merge input {}; choose a different output path",
+                    target.display(),
+                    inp.display()
+                )));
+            }
         }
     }
     Ok(())
