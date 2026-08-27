@@ -68,6 +68,20 @@ Level current_level();
 /// context dump) and needs to skip that work, not just the formatting.
 bool enabled(Level level);
 
+/// Enable or disable the one-time IRIG day-of-year advisory (L2-LOG-001).
+/// Enabled by default.
+///
+/// This lives beside the level rather than in `ReaderOptions` because it is a
+/// diagnostics switch, not a decode parameter: it is applied where
+/// `--log-level` is applied, so it covers `decode`, `count` and `dump` from one
+/// place instead of each command threading it through.
+void set_irig_day_advisory(bool enabled);
+
+/// Whether the IRIG day-of-year advisory may be emitted. The level filter still
+/// applies on top of this: the advisory is logged at INFO, so at the default
+/// WARNING level it stays silent even when this is true.
+bool irig_day_advisory();
+
 /// Emit one line. Prefer the macros: this does NOT test the level, so calling
 /// it directly emits unconditionally.
 void emit(Level level, const char* module_name, const std::string& message);

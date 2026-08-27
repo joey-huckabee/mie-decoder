@@ -227,7 +227,23 @@ The MIE-Decoder LF-only choice is pinned by L2-WRT-012 and is intentional — ke
 
 > Empirical testing has shown a discrepancy between the binary-decoded value and vendor CSV output for the day-of-year field on some DDC card models. The bit extraction is correct per the DDC specification, but the card firmware may use a different encoding (possibly BCD or a different field width).
 
-To make this limitation visible at decode time, the decoder emits a **one-time WARN** per decode the first time it decodes a calendar-locked (non-freerun) IRIG record, pointing back to this section. It is advisory — not a decode failure — and can be silenced with `--log-level ERROR`. Freerun recordings (where day-of-year carries no calendar meaning) do not trigger it.
+To make this limitation visible at decode time, the decoder emits a **one-time `INFO` advisory** per decode, the first time it decodes a calendar-locked (non-freerun) IRIG record, pointing back to this section. Freerun recordings (where day-of-year carries no calendar meaning) do not trigger it.
+
+### 5a. Why the advisory is `INFO`, and how to turn it off
+
+The advisory is a **standing disclaimer about card firmware, not a finding about your file.** The decoder never compares the decoded day-of-year against anything — it cannot, because the card model and firmware revision are not recorded in the `.mie` file. So it fires on every calendar-locked IRIG recording from every card, affected or not, and its text is identical every time.
+
+That is why it sits at `INFO` rather than `WARNING`. `WARNING` is reserved for things the decoder *observed about the input in front of it* — a sync recovery, a non-monotonic `DELTA` step, a hit sort-group cap, a skipped invalid record. At `WARNING` the advisory appeared in the default output of every single decode and competed with those. At `INFO` it is silent by default and still one `--log-level INFO` away.
+
+| What you want | How |
+|---|---|
+| Default behaviour | Nothing to do — the advisory is not shown at the default `WARNING` level. |
+| See it (e.g. handing a decode to someone new to the tool) | `--log-level INFO`. It appears once per decode. |
+| Never see it, even at `INFO`/`DEBUG` | `--no-irig-day-advisory`, or `[logging] irig_day_advisory = false` in a config file. |
+
+The dedicated opt-out exists because the level alone cannot express *"we already checked this."* Once you have run the §6 validation workflow against your card model and found the day-of-year column matches vendor output, the advisory is answered permanently for that fleet, and you should still be able to run a verbose troubleshooting decode without it.
+
+**Do not use `--log-level ERROR` to silence it.** That works, but it also discards the sync-loss, sync-recovery, non-monotonic-`DELTA`, sort-cap and invalid-record warnings — the diagnostics that *are* about your recording, and the ones you most want during a decode you are troubleshooting. Prior versions of this document recommended it, before the dedicated switch existed.
 
 This is the only known column-content discrepancy. If you see day-of-year mismatch between MIE-Decoder output and vendor CSV for the same recording:
 

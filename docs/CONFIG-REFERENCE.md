@@ -17,6 +17,7 @@ For the underlying requirement IDs (`L2-CFG-*`), see [`docs/L2-REQ.md`](L2-REQ.m
 ```toml
 [logging]
 level = "WARNING"                # DEBUG | INFO | WARNING | WARN | ERROR | CRITICAL | OFF
+irig_day_advisory = true         # emit the one-time IRIG day-of-year advisory (INFO)
 
 [decode]
 time_format       = "auto"       # auto | irig | standard
@@ -53,6 +54,7 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | Key | Type | Default | CLI override | Pinned by |
 |-----|------|---------|--------------|-----------|
 | `logging.level` | string | `"WARNING"` | `--log-level` | L2-CFG-001, L1-LOG-001 |
+| `logging.irig_day_advisory` | bool | `true` | `--no-irig-day-advisory` | L2-LOG-001 |
 | `decode.time_format` | string | `"auto"` | `--time-format` | L2-CFG-001, L2-DEC-013 |
 | `decode.strict` | bool | `false` | `--strict` | L2-CFG-001, L1-MODE-001 |
 | `decode.error_mode` | string | `"inline"` | `--separate-errors` (sets `separate`) | L2-CFG-001, L1-ERR-001 |
@@ -133,13 +135,42 @@ Diagnostic logging verbosity. Accepted values (case-insensitive):
 | Value | What it emits |
 |-------|---------------|
 | `DEBUG` | Per-record decode details, CLI parsed arguments, truncation events. Verbose. |
-| `INFO` | File open/close, decode start/complete with counts, auto-detected timestamp format, exit-class summary (L1-EXIT-005), header detection size (L2-SYN-012), sync-recovery successes (L2-SYN-013). |
+| `INFO` | File open/close, decode start/complete with counts, auto-detected timestamp format, exit-class summary (L1-EXIT-005), header detection size (L2-SYN-012), sync-recovery successes (L2-SYN-013), the one-time IRIG day-of-year advisory (L2-LOG-001). |
 | `WARNING` / `WARN` | Invalid records (lenient skip), freerun timestamps, unknown DDC error codes (lenient), non-monotonic timestamps (L2-RDR-017), sync loss (L2-SYN-013), structural-invariant violations (lenient), L2-SYN anomalies (L2-SYN-024/025). The two spellings are equivalent. |
 | `ERROR` | File not found, empty file, write failures, NoValidRecords, HomogeneousPayload, UnrecoverableSyncLoss. |
 | `CRITICAL` | Nothing — the decoder emits no CRITICAL-level messages, so selecting `CRITICAL` suppresses all output (it does **not** behave like `ERROR`). |
 | `OFF` | Nothing — explicit "silence all output". Equivalent to `CRITICAL` for this decoder; both map to the Rust logger's `Level::Off`. |
 
 **Validation:** rejected at load time if not one of the above. Case is normalized internally to the canonical uppercase form.
+
+### `irig_day_advisory`
+
+**Type:** bool · **Default:** `true` · **CLI:** `--no-irig-day-advisory`
+
+Whether to emit the one-time IRIG day-of-year advisory (L2-LOG-001). The IRIG
+day-of-year field has a known firmware-dependent discrepancy on some DDC card
+models; hour, minute, second and microsecond are unaffected. See
+[`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) section 5.
+
+The advisory is **not a finding about your file**. The decoder never compares
+the decoded day-of-year against anything -- it cannot, since the card model is
+not recorded in the recording -- so it fires once per decode on every
+calendar-locked (non-freerun) IRIG file from every card, affected or not.
+
+Because it is a standing disclaimer rather than an observation, it is logged at
+`INFO` and is therefore already silent at the default `WARNING` level. Set this
+key to `false` to suppress it at `INFO` and `DEBUG` as well. That is the right
+setting for a site that has diffed its card model's day-of-year against vendor
+CSV and found it correct, and still wants a readable `--log-level INFO`
+troubleshooting run.
+
+Note what this key is *not* for: raising `level` to `ERROR` would also silence
+the advisory, but it discards sync-recovery, non-monotonic-DELTA, sort-cap and
+invalid-record warnings along with it -- and those are observations about the
+recording actually in front of you.
+
+**Validation:** must be a TOML boolean; a string or integer is rejected at load
+time (`"false"` and `0` are both errors, not `false`).
 
 ---
 

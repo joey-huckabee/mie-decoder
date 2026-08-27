@@ -707,13 +707,21 @@ bool RecordIter::decode_timestamp_at(TimestampFormat resolved, Timestamp& out) {
     const IrigTimestamp irig = decode::decode_irig_timestamp(upper, middle, lower);
     if (irig.freerun) {
         MIE_LOG_WARN("freerun timestamp at " + hex(offset_));
-    } else if (!warned_irig_day_) {
+    } else if (!warned_irig_day_ && log::irig_day_advisory()) {
         // PRA-9: one-time day-of-year advisory, on the first calendar-locked
         // record. Once per decode, not once per record -- it is a property of
         // the card's firmware, and repeating it per record would bury every
         // other warning in the file.
+        //
+        // INFO, not WARN (L2-LOG-001). For the same reason it is once-per-file
+        // rather than once-per-record, only stronger: it is a standing
+        // disclaimer about card firmware, not an observation about this
+        // recording -- nothing here compares the decoded day against anything,
+        // so it fires on every calendar-locked IRIG file from every card. At
+        // WARN it sat in the default output of every run and crowded out the
+        // warnings that ARE observations.
         warned_irig_day_ = true;
-        MIE_LOG_WARN(
+        MIE_LOG_INFO(
             "IRIG day-of-year decoded for this recording; the day-of-year field has a known "
             "firmware-dependent discrepancy on some DDC cards (hour/minute/second/microsecond "
             "are unaffected) -- see docs/VENDOR-CSV-DIFFS.md section 5");

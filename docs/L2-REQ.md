@@ -25,6 +25,7 @@ L2s are organized by category. Full forward trace tables appear in `TRACE-MATRIX
 | `ERR`     | Error record handling                       |
 | `WRT`     | CSV output and output destination integrity |
 | `CFG`     | Configuration                               |
+| `LOG`     | Diagnostic logging policy                   |
 | `FLT`     | Filtering                                   |
 | `CLI`     | Shared CLI capabilities                     |
 | `CONF`    | Cross-implementation conformance            |
@@ -818,6 +819,7 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 | Key | Type | Range / Enum | Unknown-value handling |
 |-----|------|--------------|------------------------|
 | `logging.level` | string | one of `DEBUG`/`INFO`/`WARNING`/`WARN`/`ERROR`/`CRITICAL`/`OFF` (case-insensitive); `CRITICAL`/`OFF` silence all output | reject at load time |
+| `logging.irig_day_advisory` | bool | TOML boolean only (see L2-LOG-001) | reject non-bool |
 | `decode.time_format` | string | one of `auto`/`irig`/`standard` | reject at load time |
 | `decode.strict` | bool | TOML boolean only (not coerced from strings) | reject non-bool |
 | `decode.error_mode` | string | one of `separate`/`inline` | reject at load time |
@@ -832,6 +834,21 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 | `filter.exclude_buses` | array of string | each in `{A, B}` | reject at load time |
 | `filter.exclude_subaddresses` | array of int | each in `[0, 31]` (1553 subaddress range) | reject out-of-range at load time |
 | Any unknown `[section] key` | — | — | WARN at load time per L2-CFG-009 |
+
+---
+
+## L2-LOG: Diagnostic logging policy
+
+#### L2-LOG-001
+
+**Parent**: L1-LOG-001
+**Statement**: The one-time IRIG day-of-year advisory SHALL be emitted at `INFO`, once per decode, on the first calendar-locked (non-freerun) IRIG record. It SHALL be suppressible outright, at every level, via `--no-irig-day-advisory` or `[logging] irig_day_advisory = false`, with CLI-over-config precedence per L2-CFG-003.
+
+**Rationale**: The advisory is a **standing disclaimer about card firmware, not an observation about the recording being decoded**. Nothing in the decoder compares the decoded day-of-year against anything — it cannot, since the card model is not recorded in the file — so the advisory fires on every calendar-locked IRIG file from every card, whether or not that card is affected. That is the distinction the level encodes: `WARNING` is for things the decoder observed about *this* input (a sync recovery, a non-monotonic DELTA step, a hit sort-group cap), and putting an unconditional disclaimer at the same level meant it appeared in the default output of every run and competed with those. Demoting it to `INFO` keeps it discoverable — `--log-level INFO` still shows it, once — without spending the default level's attention budget on a message that is identical every time.
+
+The separate opt-out exists because the level alone cannot express "I have already validated this". A site that has diffed its card model's day-of-year against vendor CSV (the workflow in `VENDOR-CSV-DIFFS.md` §6) has answered the question the advisory asks, permanently; it should be able to run at `--log-level INFO` for genuine troubleshooting without that one known-noise line. Suppression is deliberately *not* achievable by raising the level, since `--log-level ERROR` would also discard the observational warnings that matter.
+
+**Verification Method**: Test (T)
 
 ---
 

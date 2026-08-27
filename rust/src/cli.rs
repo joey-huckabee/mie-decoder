@@ -40,6 +40,11 @@ GLOBAL OPTIONS:
                                         CRITICAL|OFF (default WARNING;
                                         case-insensitive; CRITICAL/OFF silence)
   --config PATH                         TOML configuration file
+  --no-irig-day-advisory                Never emit the one-time IRIG
+                                        day-of-year advisory. It is logged at
+                                        INFO, so it is already silent at the
+                                        default level; this suppresses it at
+                                        INFO/DEBUG too (L2-LOG-001)
   -V, -v, --version                     Print version and exit
   -h, --help                            Print this help and exit
 
@@ -207,6 +212,9 @@ struct DumpArgs {
 struct GlobalArgs {
     log_level: Option<String>,
     config: Option<PathBuf>,
+    /// `--no-irig-day-advisory`. `Some(false)` when passed; `None` leaves the
+    /// config-file value (or the default) in place, per L2-CFG-003 precedence.
+    irig_day_advisory: Option<bool>,
 }
 
 /// Process exit codes, the normative contract pinned by L2-CLI-011 /
@@ -352,7 +360,8 @@ fn is_version_flag(arg: &str) -> bool {
             .is_some_and(|word| word.eq_ignore_ascii_case("version"))
 }
 
-/// Consume leading global flags (`--log-level`, `--config`) and `-h`/`-V`.
+/// Consume leading global flags (`--log-level`, `--config`,
+/// `--no-irig-day-advisory`) and `-h`/`-V`.
 ///
 /// Returns `Ok(token)` with the first non-flag token (the subcommand), or
 /// `Err(code)` when the caller (`run`) should return that exit code
@@ -407,6 +416,12 @@ fn parse_global_flags(
                     Ok(v) => globals.log_level = Some(v),
                     Err(_) => return Err(die("--log-level requires a value")),
                 }
+            }
+            // Value-less, so `bare()` declines the `=value` spelling rather
+            // than silently discarding it (same rule as `--no-mux`).
+            "--no-irig-day-advisory" if a.bare() => {
+                iter.next();
+                globals.irig_day_advisory = Some(false);
             }
             "--config" => {
                 iter.next();
@@ -1184,6 +1199,12 @@ fn resolve_config(globals: &GlobalArgs) -> Result<DecoderConfig, CliError> {
         apply_log_level("--log-level", s).map_err(CliError::usage)?;
     }
 
+    // L2-LOG-001, same precedence as the level above: config file first, CLI
+    // on top. Applied here rather than threaded through `ReaderOptions` so it
+    // covers `decode`, `count` and `dump` from one place -- every subcommand
+    // reaches the reader through this function.
+    log::set_irig_day_advisory(globals.irig_day_advisory.unwrap_or(cfg.irig_day_advisory));
+
     Ok(cfg)
 }
 
@@ -1210,8 +1231,13 @@ fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, CliErr
 /// Assemble the CLI `ConfigOverrides` from parsed decode args (CLI > config >
 /// default). The filter vectors are moved out of `args` (leaving them empty),
 /// so `args.output` stays usable afterward.
-fn build_config_overrides(args: &mut DecodeArgs, log_level: Option<String>) -> ConfigOverrides {
+fn build_config_overrides(
+    args: &mut DecodeArgs,
+    log_level: Option<String>,
+    irig_day_advisory: Option<bool>,
+) -> ConfigOverrides {
     ConfigOverrides {
+        irig_day_advisory,
         time_format: args.time_format,
         strict: args.strict,
         // `--separate-errors` opts into the split-file mode; its absence leaves
@@ -1357,7 +1383,11 @@ fn run_decode(globals: GlobalArgs, mut args: DecodeArgs) -> Result<ExitCode, Cli
     // fields out of `args` (so we can still read inputs/manifest/glob).
     let input_paths = resolve_inputs(&args)?;
 
-    let overrides = build_config_overrides(&mut args, globals.log_level.clone());
+    let overrides = build_config_overrides(
+        &mut args,
+        globals.log_level.clone(),
+        globals.irig_day_advisory,
+    );
     let cfg = cfg.with_overrides(overrides);
 
     // No post-load `output_format` check: both ways of setting it are now
@@ -2501,6 +2531,7 @@ mod tests {
         let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
         let globals = GlobalArgs {
             log_level: None,
+            irig_day_advisory: None,
             config: Some(bad.clone()),
         };
         // Input doesn't matter: config error fires before the file is opened.
@@ -2525,6 +2556,7 @@ mod tests {
         let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
         let globals = GlobalArgs {
             log_level: None,
+            irig_day_advisory: None,
             config: Some(bad.clone()),
         };
         let dump_args = DumpArgs {
@@ -2575,6 +2607,7 @@ mod tests {
     fn run_count_propagates_missing_config_file() {
         let globals = GlobalArgs {
             log_level: None,
+            irig_day_advisory: None,
             config: Some(PathBuf::from("/no/such/config.toml")),
         };
         let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
@@ -2644,6 +2677,7 @@ mod tests {
         let bad = write_temp_file(".toml", b"[logging]\nlevel = \"NOPE\"\n");
         let globals = GlobalArgs {
             log_level: None,
+            irig_day_advisory: None,
             config: Some(bad.clone()),
         };
         let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));
@@ -2674,6 +2708,7 @@ mod tests {
         // CLI value is a usage error (exit 4).
         let globals = GlobalArgs {
             log_level: Some("NOPE".to_string()),
+            irig_day_advisory: None,
             config: None,
         };
         let result = run_count(globals, PathBuf::from("/no/such/recording.mie"));

@@ -17,7 +17,46 @@ shared behavior) holds at any compatible version pair. See
 
 ## [Unreleased]
 
+## [2.18.0] — 2026-08-27
+
 ### Changed
+
+- **The one-time IRIG day-of-year advisory moved from `WARNING` to `INFO`, and
+  gained a switch of its own** (`L2-LOG-001`): `--no-irig-day-advisory` on the
+  CLI, `[logging] irig_day_advisory = false` in TOML. All three
+  implementations. This is a **stderr-surface change**: a default-level decode
+  of a calendar-locked IRIG recording no longer prints the advisory at all.
+
+  The advisory is a standing disclaimer about card firmware, not an observation
+  about the recording being decoded. Nothing in the decoder compares the decoded
+  day-of-year against anything — it cannot, because the card model and firmware
+  revision are not recorded in the file — so it fired on every calendar-locked
+  IRIG file from every card, affected or not, with identical text every time. At
+  `WARNING` that put it in the default output of every run, competing with the
+  warnings that *are* observations about the input: sync loss and recovery,
+  non-monotonic `DELTA`, a hit sort-group cap, a skipped invalid record.
+
+  The separate opt-out exists because the level alone cannot express "we already
+  checked this." A site that has diffed its card model's day-of-year against
+  vendor CSV has answered the advisory's question permanently, and should still
+  be able to run `--log-level INFO` for genuine troubleshooting without that one
+  known-noise line. `--log-level ERROR` silences it too, but discards the
+  observational warnings along with it — `docs/VENDOR-CSV-DIFFS.md` §5 used to
+  recommend exactly that, and now documents why not.
+
+  The switch lives in each implementation's **logging** module rather than in
+  the reader's options, so it is applied where `--log-level` is applied and
+  covers `decode` / `count` / `dump` from one place. In Rust that also keeps the
+  change additive: `ReaderOptions` is public with public fields and no
+  `#[non_exhaustive]`, so a new field there would have tripped
+  `constructible_struct_adds_field` and forced a major bump for what is
+  behaviourally a minor change. `cargo-semver-checks` reports no semver update
+  required.
+
+  Coverage note: Rust had **no test for this advisory at all** — the
+  once-per-decode flag was set and nothing asserted it fired. Python and C++
+  each had one. All three now pin the level, the once-per-decode cadence and the
+  opt-out.
 
 - **The C++ analyser gates moved from LLVM 20 to LLVM 22** (`clang-tidy` and
   `clang-format` 22.1.8). The version is now declared **once per file** —
@@ -5279,7 +5318,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.17.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.18.0...HEAD
+[2.18.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.17.0...v2.18.0
 [2.17.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.16.0...v2.17.0
 [2.16.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.1...v2.16.0
 [2.15.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.0...v2.15.1

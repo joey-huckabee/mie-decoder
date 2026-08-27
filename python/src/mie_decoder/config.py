@@ -88,6 +88,7 @@ _VALID_LOG_LEVELS: frozenset[str] = frozenset(
 _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
     {
         ("logging", "level"),
+        ("logging", "irig_day_advisory"),
         ("decode", "time_format"),
         ("decode", "strict"),
         ("decode", "error_mode"),
@@ -559,6 +560,11 @@ class DecoderConfig:
 
     Attributes:
         log_level: Logging verbosity level name.
+        irig_day_advisory: L2-LOG-001. Emit the one-time IRIG day-of-year
+            advisory. True by default, but the advisory is logged at INFO,
+            so at the default WARNING level it is already silent -- this
+            exists so a site that has validated its card model against
+            vendor CSV can also keep it out of a ``--log-level INFO`` run.
         time_format: Timestamp format (auto/irig/standard).
         strict: If True, raise on invalid records instead of skipping.
         error_mode: How errored messages appear in output.
@@ -569,6 +575,7 @@ class DecoderConfig:
     """
 
     log_level: str = "WARNING"
+    irig_day_advisory: bool = True
     time_format: TimestampFormat = TimestampFormat.AUTO
     strict: bool = False
     error_mode: ErrorMode = ErrorMode.INLINE
@@ -639,6 +646,7 @@ class DecoderConfig:
         """
         return DecoderConfig(
             log_level=self._override_present(kwargs, "log_level"),
+            irig_day_advisory=self._override_present(kwargs, "irig_day_advisory"),
             time_format=self._override_present(kwargs, "time_format"),
             strict=self._override_present(kwargs, "strict"),
             error_mode=self._override_present(kwargs, "error_mode"),
@@ -860,7 +868,11 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     decode_section = _require_table(data, "decode")
     output_section = _require_table(data, "output")
 
-    log_level = _load_logging_level(_require_table(data, "logging"))
+    logging_section = _require_table(data, "logging")
+    log_level = _load_logging_level(logging_section)
+    irig_day_advisory = _require_bool(
+        "logging", "irig_day_advisory", logging_section.get("irig_day_advisory", True)
+    )
     time_format = _load_time_format(decode_section)
     strict = _require_bool("decode", "strict", decode_section.get("strict", False))
     error_mode = _load_error_mode(decode_section)
@@ -900,6 +912,7 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
 
     config = DecoderConfig(
         log_level=log_level,
+        irig_day_advisory=irig_day_advisory,
         time_format=time_format,
         strict=strict,
         error_mode=error_mode,

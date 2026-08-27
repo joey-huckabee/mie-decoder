@@ -81,6 +81,7 @@ from mie_decoder.exceptions import (
     MieUnknownTypeWordError,
     MieUnrecoverableSyncLossError,
 )
+from mie_decoder.logger import irig_day_advisory
 from mie_decoder.models import (
     ERROR_SPURIOUS_CONTINUATION,
     ERROR_SPURIOUS_STANDALONE,
@@ -917,13 +918,22 @@ class MieFileReader:
             )
             if irig.freerun:
                 logger.warning("Freerun timestamp at 0x%X", offset)
-            elif not state.warned_irig_day:
+            elif not state.warned_irig_day and irig_day_advisory():
                 # PRA-9: the IRIG day-of-year field has a known
                 # firmware-dependent decode discrepancy on some
                 # DDC cards; time-of-day fields are unaffected.
                 # Emit a one-time advisory (not a decode failure).
+                #
+                # INFO, not WARNING (L2-LOG-001). It is a standing
+                # disclaimer about card firmware, not an observation
+                # about this recording -- nothing here compares the
+                # decoded day against anything, so it fires on every
+                # calendar-locked IRIG file from every card. At WARNING
+                # it sat in the default output of every run and crowded
+                # out the warnings that ARE observations (sync
+                # recovery, non-monotonic DELTA, a hit sort cap).
                 state.warned_irig_day = True
-                logger.warning(
+                logger.info(
                     "IRIG day-of-year decoded for this recording; the "
                     "day-of-year field has a known firmware-dependent "
                     "discrepancy on some DDC cards (hour/minute/second/"

@@ -27,6 +27,10 @@ std::atomic<int> g_level(static_cast<int>(LEVEL_WARN));
 /// cases, never concurrently with logging.
 SinkFn g_sink = nullptr;
 
+/// L2-LOG-001. Atomic for the same reason `g_level` is: it is read on the
+/// per-record path.
+std::atomic<bool> g_irig_day_advisory(true);
+
 void write_out(const std::string& line) {
     if (g_sink != nullptr) {
         g_sink(line.c_str(), line.size());
@@ -93,6 +97,12 @@ Level current_level() {
 bool enabled(Level level) {
     return static_cast<int>(level) >= g_level.load(std::memory_order_relaxed);
 }
+
+void set_irig_day_advisory(bool enabled) {
+    g_irig_day_advisory.store(enabled, std::memory_order_relaxed);
+}
+
+bool irig_day_advisory() { return g_irig_day_advisory.load(std::memory_order_relaxed); }
 
 void emit(Level level, const char* module_name, const std::string& message) {
     std::string line;

@@ -98,7 +98,8 @@ so the request isn't folded into the time-merge contract without separate design
   across a sample set with cross-references against vendor CSV.
   - **Status: blocked on external data** — cannot proceed without real
     sample recordings. The v1.5.0 PRA-9 work only made the discrepancy
-    *visible* (a one-time advisory WARN); the actual decode fix is deferred
+    *visible* (a one-time advisory, demoted from WARN to INFO and given a
+    dedicated opt-out per L2-LOG-001); the actual decode fix is deferred
     until ground-truth data is available.
   - **What's known.** The decoder extracts day-of-year as a 9-bit binary
     integer from Upper-Word bits 13–5 (`(upper >> 5) & 0x1FF`), which is
@@ -122,7 +123,9 @@ so the request isn't folded into the time-merge contract without separate design
     determine whether it correlates with card model/firmware. Outcome:
     either a single corrected extraction or a model-keyed decode, landed as
     a spec'd requirement with byte-exact conformance fixtures so output
-    matches vendor CSV. Until then the advisory WARN stays.
+    matches vendor CSV. Until then the advisory stays -- at INFO, and
+    suppressible outright with `--no-irig-day-advisory` (L2-LOG-001) for a
+    site that has already validated its own card model.
 
 ## SonarCloud security findings on the input path (resolved)
 

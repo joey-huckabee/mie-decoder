@@ -1378,7 +1378,7 @@ TEST_CASE("a freerun timestamp warns on every record", "[reader][L2-DEC-003][L2-
     CHECK(capture.count_containing("freerun timestamp") == 3);
 }
 
-TEST_CASE("the IRIG day-of-year advisory fires once per decode", "[reader]") {
+TEST_CASE("the IRIG day-of-year advisory fires once per decode", "[reader][L2-LOG-001]") {
     // PRA-9. It is a property of the card's firmware, not of any one record, so
     // repeating it per record would bury every other warning in the file.
     std::vector<uint16_t> words;
@@ -1386,10 +1386,40 @@ TEST_CASE("the IRIG day-of-year advisory fires once per decode", "[reader]") {
         words += bc_to_rt(3, 5, 2, i * 1000);
     }
 
-    const LogCapture capture(mie::log::LEVEL_WARN);
+    const LogCapture capture(mie::log::LEVEL_INFO);
     const Walk walk = walk_words(words);
     REQUIRE(walk.messages.size() == 5);
     CHECK(capture.count_containing("day-of-year") == 1);
+}
+
+TEST_CASE("the IRIG day-of-year advisory is silent at the default level", "[reader][L2-LOG-001]") {
+    // L2-LOG-001: INFO, not WARN. It is a standing disclaimer about card
+    // firmware rather than an observation about this recording -- nothing here
+    // compares the decoded day against anything -- so at WARN it appeared in
+    // the default output of every decode of a calendar-locked IRIG file.
+    std::vector<uint16_t> words;
+    words += bc_to_rt(3, 5, 2, 1000);
+
+    const LogCapture capture(mie::log::LEVEL_WARN);
+    const Walk walk = walk_words(words);
+    REQUIRE(walk.messages.size() == 1);
+    CHECK(capture.count_containing("day-of-year") == 0);
+}
+
+TEST_CASE("the IRIG day-of-year advisory can be disabled outright", "[reader][L2-LOG-001]") {
+    // L2-LOG-001: for a site that has diffed its card model against vendor CSV
+    // and wants a verbose troubleshooting run without the known-noise line.
+    std::vector<uint16_t> words;
+    words += bc_to_rt(3, 5, 2, 1000);
+
+    const LogCapture capture(mie::log::LEVEL_INFO);
+    mie::log::set_irig_day_advisory(false);
+    const Walk walk = walk_words(words);
+    // Global state: restore it before the CHECK, so a failing expectation
+    // cannot leave the advisory off for every later case in the binary.
+    mie::log::set_irig_day_advisory(true);
+    REQUIRE(walk.messages.size() == 1);
+    CHECK(capture.count_containing("day-of-year") == 0);
 }
 
 TEST_CASE("a freerun record does not trigger the day-of-year advisory", "[reader]") {

@@ -536,10 +536,12 @@ Rust's `log.rs` is hand-rolled — no `log` crate, no `env_logger`. A single glo
 
 The level is set from the CLI `--log-level` flag or the config file's `logging.level`; CLI overrides config (L2-CFG-003).
 
+One message has a switch of its own beside the level: the IRIG day-of-year advisory (L2-LOG-001), off-switchable via `--no-irig-day-advisory` / `[logging] irig_day_advisory`. It lives in the logging module in all three implementations rather than in the reader's options, because it is a diagnostics switch rather than a decode parameter -- applied where the level is applied, so one call covers `decode`, `count` and `dump`.
+
 | Level | What gets logged |
 |-------|-----------------|
 | DEBUG | Per-record decode trace, CLI parsed arguments, header-skip-zero (`first record at offset 0 (no header)`), record-class details |
-| INFO | File open, header detected with size (L2-SYN-012), timestamp format auto-detect, sync recoveries (L2-SYN-013), decode complete with counts, **exit-class summary** (L1-EXIT-005), CSV row counts, progress every 100k msgs, merge duplicate-collapse count (L2-MRG-007), active-filter summary and passed/excluded tally. |
+| INFO | File open, header detected with size (L2-SYN-012), timestamp format auto-detect, sync recoveries (L2-SYN-013), decode complete with counts, **exit-class summary** (L1-EXIT-005), CSV row counts, progress every 100k msgs, merge duplicate-collapse count (L2-MRG-007), active-filter summary and passed/excluded tally, one-time IRIG day-of-year advisory (L2-LOG-001). |
 | WARN | Sync loss (L2-SYN-013), unknown error codes (lenient), freerun timestamps, structural invariant violations (lenient skip), L2-SYN anomalies (L2-SYN-024 status RT mismatch / L2-SYN-025 reserved bit set), non-monotonic timestamps (L2-RDR-017, once per RT/MSG), unclassifiable records (lenient), stdout-forces-inline-mode |
 | ERROR | No valid records found, homogeneous-payload rejection, unrecoverable sync loss, file/write failures, first-record truncated (strict) |
 
