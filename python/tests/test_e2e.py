@@ -303,27 +303,75 @@ class TestMieFileReader:
         assert messages[0].command_word is not None
         assert messages[0].command_word.rt == 15
 
-    @pytest.mark.requirement("L2-DEC-002")
-    def test_irig_day_of_year_warns_once_per_decode(
+    @pytest.mark.requirement("L2-DEC-002", "L2-LOG-001")
+    def test_irig_day_of_year_advises_once_per_decode(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """PRA-9: decoding calendar-locked (non-freerun) IRIG records emits a
         one-time advisory about the known day-of-year firmware discrepancy —
-        once per decode, not once per record."""
+        once per decode, not once per record.
+
+        L2-LOG-001: at INFO, not WARNING. It is a standing disclaimer about
+        card firmware rather than an observation about this recording, so it
+        must not sit in the default output of every run.
+        """
         import logging
 
         from tests.conftest import RECORD_RT15_SA11_RCV
 
         fpath = tmp_path / "irig_day.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV * 3)  # 3 non-freerun IRIG records
-        with caplog.at_level(logging.WARNING, logger="mie_decoder.reader"):
+        with caplog.at_level(logging.INFO, logger="mie_decoder.reader"):
             messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
         assert len(messages) == 3
-        day_warns = [r for r in caplog.records if "day-of-year" in r.getMessage()]
-        assert len(day_warns) == 1, (
+        advisories = [r for r in caplog.records if "day-of-year" in r.getMessage()]
+        assert len(advisories) == 1, (
             "day-of-year advisory should fire exactly once per decode, got "
-            f"{[w.getMessage() for w in day_warns]}"
+            f"{[a.getMessage() for a in advisories]}"
         )
+        assert advisories[0].levelno == logging.INFO, (
+            "the advisory is INFO, not WARNING -- at WARNING it appears in the "
+            "default output of every decode of a calendar-locked IRIG file"
+        )
+
+    @pytest.mark.requirement("L2-LOG-001")
+    def test_irig_day_of_year_advisory_is_silent_at_the_default_level(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """L2-LOG-001: nothing at the default WARNING level."""
+        import logging
+
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "irig_day.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV)
+        with caplog.at_level(logging.WARNING, logger="mie_decoder.reader"):
+            assert len(list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))) == 1
+        assert not [r for r in caplog.records if "day-of-year" in r.getMessage()]
+
+    @pytest.mark.requirement("L2-LOG-001")
+    def test_irig_day_of_year_advisory_can_be_disabled(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """L2-LOG-001: ``set_irig_day_advisory(False)`` suppresses it even at
+        INFO -- the case for a site that has diffed its card model against
+        vendor CSV and wants a verbose run without the known-noise line."""
+        import logging
+
+        from mie_decoder.logger import set_irig_day_advisory
+        from tests.conftest import RECORD_RT15_SA11_RCV
+
+        fpath = tmp_path / "irig_day.mie"
+        fpath.write_bytes(RECORD_RT15_SA11_RCV)
+        set_irig_day_advisory(False)
+        try:
+            with caplog.at_level(logging.INFO, logger="mie_decoder.reader"):
+                assert len(list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))) == 1
+        finally:
+            # Module-level state: restore it or every later test in the process
+            # runs with the advisory off.
+            set_irig_day_advisory(True)
+        assert not [r for r in caplog.records if "day-of-year" in r.getMessage()]
 
     @pytest.mark.requirement("L2-DEC-010")
     def test_file_offset_tracking(self, tmp_mie_file: Path) -> None:
@@ -2029,10 +2077,15 @@ class TestDumpDiagnostics:
 
         handler = _Capture()
         records.addHandler(handler)
+        # The advisory is INFO (L2-LOG-001), so the logger's own level has to
+        # be lowered or it never reaches the handler at all.
+        previous_level = records.level
+        records.setLevel(logging.INFO)
         try:
             list(MieFileReader(fpath))
         finally:
             records.removeHandler(handler)
+            records.setLevel(previous_level)
 
         messages.extend(captured)
         assert captured, "the decode emitted no log messages to check"

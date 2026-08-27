@@ -60,6 +60,7 @@ _KEYS = [
     "field",
     "exclude_rts",
     "level",
+    "irig_day_advisory",
     "unknown_key",
     "decode.strict",  # dotted key
     '"strict"',  # quoted key

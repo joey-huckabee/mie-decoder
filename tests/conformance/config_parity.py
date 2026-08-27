@@ -33,6 +33,13 @@ CORPUS: list[tuple[str, str, str]] = [
     ("int-value", "[decode]\ndetect_records = 8\n", "accept"),
     ("float-value", "[decode]\nstandard_tick_rate_hz = 1000000.0\n", "accept"),
     ("bool-value", "[output]\nno_clobber = true\n", "accept"),
+    # L2-LOG-001: the day-of-year advisory switch. A bool key in [logging],
+    # a section that until now held nothing but a string -- exactly the shape
+    # that has drifted between the loaders before.
+    ("irig-day-advisory-false", "[logging]\nirig_day_advisory = false\n", "accept"),
+    ("irig-day-advisory-true", "[logging]\nirig_day_advisory = true\n", "accept"),
+    ("irig-day-advisory-int", "[logging]\nirig_day_advisory = 0\n", "reject"),
+    ("irig-day-advisory-string", '[logging]\nirig_day_advisory = "false"\n', "reject"),
     ("int-array", "[filter]\nexclude_rts = [0, 31]\n", "accept"),
     ("string-array", '[filter]\nexclude_buses = ["A", "B"]\n', "accept"),
     ("trailing-comment", "[decode]\nstrict = true  # yes\n", "accept"),

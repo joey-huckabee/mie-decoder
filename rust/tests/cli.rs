@@ -981,6 +981,143 @@ fn strict_irig_failure_names_precise_validation_reason() {
     );
 }
 
+// -- IRIG day-of-year advisory (L2-LOG-001) --------------------------
+
+/// Requirements: L2-LOG-001
+///
+/// The advisory is a standing disclaimer about card firmware, not an
+/// observation about this recording, so it is logged at INFO and the default
+/// WARNING level never shows it. Before v2.18.0 it was a WARN and appeared in
+/// the default output of every decode of a calendar-locked IRIG file.
+#[test]
+fn irig_day_advisory_is_silent_at_the_default_level() {
+    let d = TempDir::new();
+    let input = d.write("in.mie", &one_valid_record());
+    let out = d.path().join("out.csv");
+    let o = run([
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        !stderr.contains("day-of-year"),
+        "the advisory must not appear at the default level
+--- stderr ---
+{stderr}"
+    );
+}
+
+/// Requirements: L2-LOG-001
+///
+/// It is still emitted -- once per decode, not once per record -- for anyone
+/// who asks for INFO. Two records in, one line out.
+#[test]
+fn irig_day_advisory_fires_once_at_info() {
+    let d = TempDir::new();
+    let bytes = [one_valid_record(), one_valid_record()].concat();
+    let input = d.write("in.mie", &bytes);
+    let out = d.path().join("out.csv");
+    let o = run([
+        "--log-level",
+        "INFO",
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(exit_code(&o), 0);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    // Count LINES, not substring hits: the message itself says "day-of-year"
+    // twice in one sentence, so `matches()` would report two for one emission.
+    assert_eq!(
+        stderr.lines().filter(|l| l.contains("day-of-year")).count(),
+        1,
+        "the advisory fires once per decode
+--- stderr ---
+{stderr}"
+    );
+}
+
+/// Requirements: L2-LOG-001, L2-CFG-003
+///
+/// `--no-irig-day-advisory` suppresses it even at INFO -- the case for a site
+/// that has diffed its card model against vendor CSV and wants a verbose
+/// troubleshooting run without the known-noise line. The config key does the
+/// same thing, and the CLI flag wins over a config that leaves it enabled.
+#[test]
+fn irig_day_advisory_can_be_disabled() {
+    let d = TempDir::new();
+    let input = d.write("in.mie", &one_valid_record());
+
+    let out1 = d.path().join("out1.csv");
+    let o1 = run([
+        "--log-level",
+        "INFO",
+        "--no-irig-day-advisory",
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out1.to_str().unwrap(),
+    ]);
+    assert_eq!(exit_code(&o1), 0);
+    let e1 = String::from_utf8_lossy(&o1.stderr);
+    assert!(
+        !e1.contains("day-of-year"),
+        "--no-irig-day-advisory should suppress it at INFO
+--- stderr ---
+{e1}"
+    );
+
+    let cfg = d.write(
+        "cfg.toml",
+        b"[logging]
+irig_day_advisory = false
+",
+    );
+    let out2 = d.path().join("out2.csv");
+    let o2 = run([
+        "--log-level",
+        "INFO",
+        "--config",
+        cfg.to_str().unwrap(),
+        "decode",
+        input.to_str().unwrap(),
+        "-o",
+        out2.to_str().unwrap(),
+    ]);
+    assert_eq!(exit_code(&o2), 0);
+    let e2 = String::from_utf8_lossy(&o2.stderr);
+    assert!(
+        !e2.contains("day-of-year"),
+        "[logging] irig_day_advisory = false should suppress it
+--- stderr ---
+{e2}"
+    );
+}
+
+/// Requirements: L2-LOG-001, L2-CLI-002
+///
+/// A value-less flag must decline the `=value` spelling rather than accept it
+/// and discard the value -- the same rule `--no-mux` follows.
+#[test]
+fn irig_day_advisory_flag_rejects_a_joined_value() {
+    let d = TempDir::new();
+    let input = d.write("in.mie", &one_valid_record());
+    let o = run([
+        "--no-irig-day-advisory=true",
+        "decode",
+        input.to_str().unwrap(),
+    ]);
+    assert_ne!(
+        exit_code(&o),
+        0,
+        "--no-irig-day-advisory=true should be a usage error"
+    );
+}
+
 // ── Timestamp-format auto-detect (L2-DEC-015) ────────────────────────
 
 /// Requirements: L2-DEC-015

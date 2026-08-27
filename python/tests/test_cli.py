@@ -486,7 +486,14 @@ class TestRunDumpBrokenPipe:
         mie = tmp_path / "rec.mie"
         mie.write_bytes(normal_record_rt15_sa11_us(100))
         return SimpleNamespace(
-            input=mie, raw=False, offset=0, length=None, records=None, config=None, log_level=None
+            input=mie,
+            raw=False,
+            offset=0,
+            length=None,
+            records=None,
+            config=None,
+            log_level=None,
+            no_irig_day_advisory=False,
         )
 
     def test_broken_pipe_exits_zero(
