@@ -376,3 +376,20 @@ collapse_duplicates = false
 # clocks are not perfectly synced. Overridden by --collapse-window-us.
 # Default: 0
 collapse_window_us = 0
+
+# Cap on how many survivors the collapse window retains at once (L2-MRG-008).
+#
+# collapse_window_us bounds retention in TIME. It cannot bound it in COUNT: a
+# corrupt recording whose timestamps all decode to one value, or a wide window
+# on a dense bus, puts arbitrarily many records inside a single window. This is
+# the second bound, and it is what makes the merge's constant-memory guarantee
+# unconditional -- the same role output.max_sort_group plays for the
+# canonical-order stage, with the same default for the same reason.
+#
+# On reaching the cap the decoder drops the oldest survivor to make room, emits
+# ONE warning for the whole run, and carries on: collapsing becomes best-effort
+# rather than exact. No record is ever dropped from the OUTPUT.
+#
+# Raise it if you widen collapse_window_us on a busy bus and see that warning.
+# Range: 1-1048576. Overridden by --max-collapse-survivors. Default: 4096
+max_collapse_survivors = 4096

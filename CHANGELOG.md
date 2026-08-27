@@ -17,7 +17,58 @@ shared behavior) holds at any compatible version pair. See
 
 ## [Unreleased]
 
+### Added
+
+- **`[merge] max_collapse_survivors` / `--max-collapse-survivors`** (L2-MRG-008),
+  a positive integer in `[1, 1048576]` defaulting to `4096`. Caps how many
+  survivors the cross-recorder collapse window retains at once. On reaching the
+  cap the oldest survivor is evicted to make room, **one** WARN is emitted for
+  the whole run, and collapsing continues best-effort; no row is ever dropped
+  from the output.
+
+  This is the second of two bounds. `collapse_window_us` bounds retention in
+  **time** and cannot bound it in **count** — a window admits however many
+  records fall inside it, and that is a property of the data. A recording whose
+  timestamps all decode to one value puts *every* record inside a single window,
+  and so does a legitimately dense bus under a wide operator-set window. The
+  reorder stage already had this bound (`max_sort_group`, L2-WRT-022) for the
+  identical reason; these two are the only pipeline stages whose memory is a
+  function of the data rather than of the file count, and they now share a
+  default so an operator who has reasoned about one need not re-derive the other.
+
 ### Fixed
+
+- **De-duplication could retain every record and go quadratic after a backward
+  timestamp step.** All three implementations. The collapse window's *matching*
+  test used the absolute time distance, but its *eviction* did not: each
+  implementation evicted only from the front of an arrival-ordered deque, testing
+  the one-sided `current_us - front_us`. That is correct only while the stream is
+  sorted. After a lenient non-monotonic step (L2-MRG-006) the front can hold a
+  timestamp in the **future** of the current record, the one-sided test is then
+  never true, the front never leaves — and it blocks eviction of everything
+  behind it.
+
+  Measured on an alternating 1000 us / 0 us probe with a zero-width window:
+
+  | records | survivors retained | time |
+  |---|---|---|
+  | 2 500 | 2 500 (100%) | 0.376 s |
+  | 5 000 | 5 000 (100%) | 1.462 s |
+  | 10 000 | 10 000 (100%) | 5.725 s |
+  | 10 000, monotonic (control) | **1** | 0.071 s |
+
+  Twice the records for four times the time — the quadratic scan L2-MRG-002's
+  streaming guarantee and L1-ROB-001's no-unbounded-growth rule both exclude.
+  After the fix the same probe retains **1** survivor and runs linearly (0.021 /
+  0.042 / 0.082 s).
+
+  Retention is now stated as a property of the retained set — a survivor is kept
+  iff `|survivor_us - current_us| <= collapse_window_us` — rather than as a loop
+  over one end of a container, which is what makes it checkable independently of
+  how survivors happen to be stored. L2-MRG-007 is amended to require that
+  order-independence explicitly, and the new L2-MRG-008 adds the count bound that
+  the window cannot provide.
+
 
 - **A decode could overwrite one of its own input files, and exit 0 while doing
   it.** All three implementations. The L2-WRT-014 collision guard checked the
