@@ -349,6 +349,70 @@ TEST_CASE("expand_glob returns matching files in a deterministic order", "[merge
     }
 }
 
+TEST_CASE("expand_glob matches files and never directories", "[merge][L2-MRG-001][L3-CPP-033]") {
+    // A glob resolves to FILES. `list_directory` returns every entry -- this
+    // implementation used to match them all, so a DIRECTORY named `archive.mie`
+    // became an input here and was invisible to Rust and Python; the merge then
+    // failed to map it, and a batch the other two decoded whole came back short.
+    //
+    // The directory used is the temp root itself, globbed from ITS parent. There
+    // is no mkdir in the platform layer and adding one for a test would widen
+    // the surface `scripts/assert-platform-confined.sh` exists to keep narrow
+    // (the same reasoning test_config.cpp records for its not-a-regular-file
+    // case). The temp root is a directory that is guaranteed to exist and to
+    // have a parent, which is exactly what this needs.
+    const std::string root = mie_test::temp_root();
+    const std::string parent = mie::platform::path_parent(root);
+    const std::string leaf = mie::platform::path_filename(root);
+    // A root with no parent (a bare "/", or a drive root) has nothing to
+    // enumerate from; there is no case to run rather than a case that fails.
+    if (parent.empty() || leaf.empty()) {
+        SUCCEED("temp root has no enumerable parent on this host");
+        return;
+    }
+
+    std::vector<std::string> found;
+    mie::platform::OsError err;
+    REQUIRE(mie::merge::expand_glob(mie::platform::path_join(parent, leaf), found, err));
+    // The pattern has no wildcards, so the ONLY thing it can match is the temp
+    // root -- and the temp root is a directory. An empty result is the whole
+    // assertion.
+    CHECK(found.empty());
+    CHECK(err.ok());
+}
+
+#ifndef _WIN32
+TEST_CASE("expand_glob does not treat a backslash as a separator on POSIX",
+          "[merge][L2-MRG-001][L3-CPP-033]") {
+    // On POSIX a backslash is an ordinary filename character. This
+    // implementation split on it regardless of platform, so
+    // `--glob 'odd\name*.mie'` was one pattern in the current directory to Rust
+    // and Python -- whose Path types agree with the platform -- and a
+    // `name*.mie` pattern inside a directory called `odd` here.
+    //
+    // Windows genuinely disagrees (a backslash IS a separator there, and is not
+    // a legal filename character), so this is compiled out rather than skipped:
+    // it is not a capability question.
+    TempPath anchor("glob-backslash");
+    const std::string base = anchor.str();
+    const std::string odd = anchor.also_remove(base + "-odd\\name.mie");
+    const std::string plain = anchor.also_remove(base + "-plain.mie");
+    for (int i = 0; i < 2; ++i) {
+        const std::string& path = (i == 0) ? odd : plain;
+        std::FILE* handle = std::fopen(path.c_str(), "wb");
+        REQUIRE(handle != NULL);
+        REQUIRE(std::fputs("x", handle) >= 0);
+        REQUIRE(std::fclose(handle) == 0);
+    }
+
+    std::vector<std::string> found;
+    mie::platform::OsError err;
+    REQUIRE(mie::merge::expand_glob(base + "-odd\\name*.mie", found, err));
+    REQUIRE(found.size() == 1u);
+    CHECK(found[0] == odd);
+}
+#endif
+
 TEST_CASE("the merge interleaves inputs by timestamp", "[merge][L3-CPP-020]") {
     const TempFile a("mie-merge-a.mie", recording(100, 3));
     const TempFile b("mie-merge-b.mie", recording(150, 3));

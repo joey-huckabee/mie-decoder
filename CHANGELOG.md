@@ -38,6 +38,110 @@ shared behavior) holds at any compatible version pair. See
 
 ### Fixed
 
+- **`--no-clobber` did not actually prevent overwrites.** All three
+  implementations. The guard was an `exists()` test run before the output was
+  opened, paired with a replacing rename at the end — and `exists()` answers a
+  question about the *past*. Between that answer and the rename, any other
+  process could create the destination; the rename then destroyed it. Two
+  concurrent runs of the same command both passed the pre-flight, and the second
+  silently overwrote the first's output — the exact outcome the flag exists to
+  prevent.
+
+  The `.partial` targets were not merely racy: they were **never checked at
+  all**. `--no-clobber --allow-partial` over an existing `<dest>.partial`
+  overwrote it unconditionally, which on a forensic re-run means destroying the
+  artifact from the previous attempt.
+
+  The refusal now happens **at the commit**, where the filesystem can make it
+  atomic, and covers every path a run commits: the destination, the derived
+  errors file, and the `.partial` of each (new **L2-WRT-023**). A refusal
+  surfaces the same `ClobberRefused` class as the pre-flight and leaves the
+  target's contents untouched. The pre-flight is kept as an *early*, friendlier
+  report — before a temp file exists and before a whole recording is decoded —
+  and is now documented as not being the guarantee.
+
+  No portable single call does this, so the requirement is stated over the
+  *property* — atomic and non-replacing — rather than over a syscall:
+
+  | | Mechanism |
+  |---|---|
+  | Win32 (C++) | `MoveFileExW` with **no** flags: natively atomic and non-replacing, works on FAT, no fallback needed |
+  | POSIX (C++) | `link(2)` (fails `EEXIST`), then unlink the temp; an `O_EXCL` reservation plus a rename over our own zero-byte file where hard links do not exist |
+  | Rust | `std::fs::hard_link` — `link(2)` on POSIX, `CreateHardLinkW` on Windows — with the same reservation fallback. One standard-library call spans both platforms, so the crate stays dependency-free |
+  | Python | `os.link` with the same fallback |
+
+  `renameat2(RENAME_NOREPLACE)` would be more direct and is deliberately not
+  used: it needs glibc 2.28 and SLES 12 SP5 ships 2.22, so reaching it means a
+  raw `syscall()` plus a hand-written fallback for every kernel without it —
+  more OS surface, in the layer that exists to contain OS surface, for no
+  behaviour `link(2)` does not already provide.
+
+- **A split `--allow-partial` run committed the errors output before the main
+  one.** All three implementations. L2-WRT-019 requires main-before-errors so
+  that a mid-commit failure can never leave an orphan errors file beside no main
+  output. The normal path obeyed it. The `--allow-partial` path did the
+  opposite — in every implementation — so when the errors `.partial` rename
+  succeeded and the main one failed, what was left on disk was
+  `<dest>_errors.csv.partial` and nothing else: the precise residue the rule
+  forbids.
+
+  That the branch which got it wrong was the *failure* branch is not a
+  coincidence; it is the branch nobody re-reads. L2-WRT-019 is now stated over
+  **every path that commits the pair** rather than over "the commit".
+
+- **`--glob` resolved a different input set in each implementation.** L2-MRG-001
+  says every implementation "SHALL expand it identically", and the only thing any
+  test compared was the **wildcard matcher**. All three matchers agreed. The
+  expansions did not, in three ways, none of them about wildcards:
+
+  | Divergence | Effect |
+  |---|---|
+  | C++ matched every entry `list_directory` returned | A **directory** named `archive.mie` was an input there and invisible to Rust and Python. C++ then failed to map it, so a batch the other two decoded whole came back short. |
+  | Rust filtered on `DirEntry::file_type`, which does not follow symlinks | A **symlinked** recording was dropped there and kept by Python. |
+  | C++ split the pattern on `\` on both platforms | On POSIX a backslash is an ordinary filename character, so `--glob 'odd\name*.mie'` named one file in the current directory to two implementations and a pattern inside a directory called `odd` to the third. |
+
+  L2-MRG-001 now carries an **expansion grammar** alongside its manifest grammar:
+  the split uses the platform's separator set, and only entries resolving to a
+  regular file are matched — symlinks followed, so a symlinked recording counts
+  and a dangling one does not; directories, sockets, fifos and devices never do;
+  and an entry whose type cannot be read is skipped rather than raised (a
+  directory listing racing a deletion is not a reason to fail a run).
+
+  The cross-implementation gate is the new
+  `tests/conformance/glob_parity.py`, which compares the **resolved set** on a
+  directory built to hold exactly the entries the three disagreed about. A
+  per-implementation test could not have caught any of this: each pins its
+  implementation against its own reading of the rule, which is the thing in
+  question when two readings differ.
+
+- **Python let a final-flush failure escape as a raw `OSError`, and could leak
+  the temp file with it.** `_AtomicCsvFile.commit()` closed the stream *outside*
+  its exception wrapper. The final flush is where the last buffered rows actually
+  reach the filesystem — so it is the likeliest place for a disk-full error to
+  land, not an unlikely one — and it surfaced as a raw `OSError` from a method
+  documented to raise `MieWriterError`. The CLI reported an unexpected crash
+  rather than a write failure.
+
+  The follow-on was worse. The context manager's `close()` then re-raised while
+  flushing the same unwritten buffer, which skipped the unlink and left the temp
+  file sitting on the disk that had just filled up.
+
+  New **L2-WRT-024** states that the final flush, the close and the move are all
+  part of the commit for classification purposes, and that cleanup on the failure
+  path may not mask the failure or skip its own unlink. Rust and C++ already
+  behaved this way; the requirement pins behaviour two implementations had and
+  one did not, which is the kind of gap a cross-implementation contract exists to
+  catch.
+
+### Changed
+
+- **`commit` and `commit_partial` now share one move routine** in every
+  implementation (new **L3-WRT-005**), with the commit mode carried as state set
+  once at construction. Each having spelled the flush / close / move sequence out
+  for itself is what let three of the four fixes above take the same shape: a
+  rule applied at one commit target and not the other, and error handling that
+  wrapped the rename but not the flush.
+
 - **De-duplication could retain every record and go quadratic after a backward
   timestamp step.** All three implementations. The collapse window's *matching*
   test used the absolute time distance, but its *eviction* did not: each

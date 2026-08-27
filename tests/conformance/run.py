@@ -18,6 +18,7 @@ from typing import Any
 from config_fuzz import check_config_parser_fuzz
 from config_parity import check_config_parser_parity
 from config_path_parity import check_config_path_parity
+from glob_parity import check_glob_parity
 from record_fuzz import check_record_stream_fuzz
 
 
@@ -751,10 +752,16 @@ def main() -> int:
             check_record_stream_fuzz(invocations, ROOT, SUITE, temp)
             # Same idea one level up: the config *path*, not its contents.
             check_config_path_parity(invocations, ROOT, parity_input, temp)
+            # And the input side of the same question: what `--glob` resolves
+            # to. The wildcard matcher was pinned three times over; the
+            # directory entries it was applied to were not, and that is where
+            # the three implementations actually disagreed.
+            (temp / "glob-parity-source.mie").write_bytes(parity_input.read_bytes())
+            check_glob_parity(invocations, ROOT, temp)
         else:
             # A differential check needs something to differ from.
             print(
-                "SKIP config-parser-parity / -fuzz / -path "
+                "SKIP config-parser-parity / -fuzz / -path / glob-parity "
                 f"(needs two or more implementations; have {len(impls)})"
             )
 

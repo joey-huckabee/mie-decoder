@@ -267,6 +267,7 @@ write_csv(messages, dest_path, opts)
   │       (compared via canonical path; stdout is exempt)
   │
   ├── L2-WRT-017: if opts.no_clobber and dest_path exists → ClobberRefused
+  │       (an EARLY report only -- the guarantee is at the commit, below)
   │
   ├── L2-WRT-015: exclusively create a unique temp file
   │       <dest>.mie-decoder.tmp.<pid>.<counter>.<nanos> on the SAME
@@ -274,18 +275,43 @@ write_csv(messages, dest_path, opts)
   │
   ├── stream rows through BufWriter<File> wrapped around the temp
   │
-  ├── normal completion → atomic rename(temp, dest_path)
+  ├── normal completion → commit_onto(dest_path)
   │
   └── failure path:
         ├── opts.allow_partial?
-        │   └── yes → rename(temp, <dest_path>.partial); leave dest untouched.
+        │   └── yes → commit_onto(<dest_path>.partial); leave dest untouched.
         │            Exit class: complete (allow_partial). Per L3-WRT-002.
         │
         └── no → unlink(temp); leave dest untouched.
                 Exit class: partial-unrecoverable (exit 3).
+
+commit_onto(target)          ← ONE routine, both entry points (L3-WRT-005)
+  │
+  ├── flush + close the temp        ┐ all three stages are part of the
+  ├── move it onto `target`         ┘ commit for error classification
+  │                                   (L2-WRT-024): any failure is a
+  │                                   writer error, the destination is
+  │                                   untouched, no temp is left behind
+  │
+  └── the move honours the commit mode, fixed at construction:
+        ├── Replace   (default)   rename / MoveFileEx(REPLACE_EXISTING)
+        └── NoReplace (--no-clobber, L2-WRT-023)
+              ├── Win32:  MoveFileExW with NO flags -- natively atomic
+              │           and non-replacing; ERROR_ALREADY_EXISTS is the
+              │           refusal. Works on FAT. No fallback needed.
+              └── POSIX:  link(2) (fails EEXIST) then unlink the temp;
+                          on a filesystem with no hard links, fall back
+                          to an O_EXCL reservation plus a rename over
+                          our own zero-byte file.
 ```
 
-The atomic temp+rename is what guarantees a crash or kill mid-decode never produces a half-written destination file. The output destination is touched exactly once, by the final rename, and only when decoding completed cleanly. The L2-WRT-015 cleanup path also covers strict-mode errors raised during decoding — the temp file is unlinked before the exception propagates.
+The atomic temp+rename is what guarantees a crash or kill mid-decode never produces a half-written destination file. The output destination is touched exactly once, by the final move, and only when decoding completed cleanly. The L2-WRT-015 cleanup path also covers strict-mode errors raised during decoding — the temp file is unlinked before the exception propagates.
+
+**Why `--no-clobber` is enforced at the commit and not at the pre-flight (L2-WRT-023).** `exists()` answers a question about the past. Between that answer and the rename, any other process may create the destination — and a replacing rename then destroys it. Two concurrent runs of the same command both pass the pre-flight, and the second silently overwrites the first's output, which is the exact outcome the flag exists to prevent. Moving the refusal into the move is what closes the window, because that is the only point at which the filesystem can make it atomic.
+
+The same change is what finally covers the `.partial` targets. They are never pre-flighted, deliberately — a stale `<dest>.partial` must not refuse a run that was never going to write one — so before this they were overwritten unconditionally even under `--no-clobber`. Routing both commit entry points through `commit_onto` means the rule reaches every target by construction rather than by remembering to apply it twice.
+
+No portable single call does this, which is why the requirement is stated over the *property* (atomic, non-replacing) rather than over a syscall: `renameat2(RENAME_NOREPLACE)` needs a glibc newer than the SLES 12 floor, and `std::fs` exposes no no-replace rename at all. Rust reaches it with `std::fs::hard_link`, which maps to `link(2)` and `CreateHardLinkW` and fails on both when the destination exists — one standard-library call spanning both platforms, and no new dependency (L3-RS-002).
 
 Stdout output (L2-WRT-007) bypasses the temp+rename machinery — it's a stream, not a file with a destination — and inherits broken-pipe-on-stdout semantics (L2-WRT-018: exit 0 with no error).
 
@@ -384,7 +410,9 @@ For per-variant cause / lenient-vs-strict behavior / exit-code mapping, see [`ER
   └──────────────────────┘
 ```
 
-In separate mode the errors file is **not created** if no error rows occur (lazy creation, per L2-ERR-008). Each file is written atomically *on its own* via temp + rename, but the two files are **committed sequentially, not as a single transaction** — there is no cross-file atomicity (the platforms provide no two-file atomic rename). Both implementations commit **main first, then errors**: if the first (main) commit fails the errors file is still an un-renamed temp and neither file appears, and if the second (errors) commit fails after main is in place the residual file is the primary `main.csv` rather than an orphan errors file. This is a known limitation — acknowledged in both writers — and is *not* all-or-nothing across the two files.
+In separate mode the errors file is **not created** if no error rows occur (lazy creation, per L2-ERR-008). Each file is written atomically *on its own* via temp + rename, but the two files are **committed sequentially, not as a single transaction** — there is no cross-file atomicity (the platforms provide no two-file atomic rename). All three implementations commit **main first, then errors**: if the first (main) commit fails the errors file is still an un-renamed temp and neither file appears, and if the second (errors) commit fails after main is in place the residual file is the primary `main.csv` rather than an orphan errors file. This is a known limitation — acknowledged in every writer — and is *not* all-or-nothing across the two files.
+
+The order holds on **every** path that commits the pair, the `--allow-partial` path included: `<dest>.partial` before `<errors-dest>.partial` (L2-WRT-019). Through v2.16.0 that branch ran the other way round in all three implementations, so a failing main `.partial` rename left an orphan `<dest>_errors.csv.partial` beside no main output — the precise residue the order exists to make impossible. That the branch which got it wrong was the *failure* branch is not a coincidence; it is the branch nobody re-reads.
 
 Stdout output forces inline mode (you can't split stdout into two streams).
 
@@ -488,7 +516,9 @@ CLI arguments > config file > built-in defaults (L2-CFG-003). Filter arrays merg
     ├── mux_delimiter         mux.delimiter
     ├── mux_field             mux.field
     ├── collapse_duplicates   merge.collapse_duplicates (L2-MRG-007)
-    └── collapse_window_us    merge.collapse_window_us
+    ├── collapse_window_us    merge.collapse_window_us
+    └── max_collapse_survivors
+                              merge.max_collapse_survivors (L2-MRG-008)
 ```
 
 An override is applied when it is **present**, not when it is truthy — Rust
@@ -529,7 +559,13 @@ constant memory.
 
 For either implementation, decoding a 10 GB recording uses the same memory as decoding a 10 MB recording. The streaming property is load-bearing in **both**: changes to a writer that buffer rows (e.g., a `Vec<Row>` collection step in Rust, or re-materializing a DataFrame in Python) would break `L3-RS-012` / `L3-PY-012` and must be rejected at review.
 
-**The one bounded exception: `order.rs` / `order.py`.** Canonical row ordering (L1-OUT-003) is the only stage whose buffer is a function of the *data* rather than of the file count: it holds one run of consecutive equal-`TIME_STAMP` records so it can sort that run. In practice a run is 1–2 records — a 1553 bus carries one transaction at a time, so genuine ties come from the two concurrent buses or from overlapping recorders in a merge. The pathological case is real though: a corrupt recording whose timestamps all decode to the same value would buffer the whole file. That is why the run length is capped by `max_sort_group` (L2-WRT-022, default `4096`), which turns the exception back into a constant — worst case a few hundred kilobytes, independent of record count. On overflow the stage emits the run in arrival order with one WARN and continues; it never grows past the cap and never drops a row. Removing the cap would silently reintroduce an unbounded allocation and must be rejected at review, as would replacing the run buffer with a whole-file sort.
+**The two bounded exceptions.** Exactly two stages hold a buffer whose size is a function of the *data* rather than of the file count. Both are bounded, both degrade rather than fail on overflow, and both defaults are `4096` — deliberately the same number, so an operator who has reasoned about one need not re-derive the other.
+
+**1. The reorder stage (`order.rs` / `order.py`).** Canonical row ordering (L1-OUT-003) holds one run of consecutive equal-`TIME_STAMP` records so it can sort that run. In practice a run is 1–2 records — a 1553 bus carries one transaction at a time, so genuine ties come from the two concurrent buses or from overlapping recorders in a merge. The pathological case is real though: a corrupt recording whose timestamps all decode to the same value would buffer the whole file. That is why the run length is capped by `max_sort_group` (L2-WRT-022, default `4096`), which turns the exception back into a constant — worst case a few hundred kilobytes, independent of record count. On overflow the stage emits the run in arrival order with one WARN and continues; it never grows past the cap and never drops a row.
+
+**2. The de-duplication window (`merge.rs` / `merge.py` / `merge.cpp`).** With `--collapse-duplicates`, the merge retains the survivors inside the collapse window so later records can be compared against them. `collapse_window_us` bounds that set in **time** and cannot bound it in **count**: a window admits however many records fall inside it, and *that* is a property of the data. A recording whose timestamps all decode to one value puts every record inside a single window, and so does a legitimately dense bus under a wide operator-set window. `max_collapse_survivors` (L2-MRG-008, default `4096`) supplies the count bound; at the cap the oldest survivor is evicted, **one** WARN is emitted for the whole run, collapsing continues best-effort, and no row is dropped from the output.
+
+Removing either cap would silently reintroduce an unbounded allocation and must be rejected at review — as would replacing the reorder stage's run buffer with a whole-file sort. Note also that the dedup window's *retention* rule is stated over the retained set (`|survivor_us - current_us| <= collapse_window_us`) rather than as a loop over one end of a deque: after a lenient backward timestamp step the front of an arrival-ordered deque can hold a timestamp in the future of the current record, at which point a one-sided test never evicts it and blocks everything behind it (L2-MRG-007).
 
 ### Multi-file time-sorted merge (streaming k-way merge)
 
@@ -600,15 +636,35 @@ The heap is the easy part; the constraints come from the MIE timestamp model
   survivors inside the window (`VecDeque` / `deque`), so resident memory stays
   bounded by the window — preserving the O(k) streaming guarantee. Off by
   default; a file never collapses against itself; a single-file decode is
-  unaffected (L3-RS-015 / L3-PY-015).
+  unaffected (L3-RS-015 / L3-PY-015). Retention is a property of the retained
+  **set** — a survivor is kept iff `|survivor_us - current_us| <=
+  collapse_window_us` — not a loop over one end of a container: after a lenient
+  backward step (L2-MRG-006) the oldest-arrived survivor can hold a timestamp in
+  the *future* of the current record, and a one-sided test then never evicts it.
+  The survivor count is separately capped by `max_collapse_survivors`
+  (L2-MRG-008, default `4096`), because the window bounds retention in **time**
+  and cannot bound it in **count**; see the memory note below.
 - **Per-file failure** reuses the single-file `--strict` / lenient /
   `--allow-partial` policy across the batch; `--allow-partial` truncates a
   failed file, finishes from the rest, and the writer commits a combined
   `.partial` (L2-MRG-004).
 - **No new dependency.** The heap is `std::collections::BinaryHeap`
-  (with `Reverse`) in Rust and the stdlib `heapq` in Python; `--glob` uses a
-  hand-rolled single-directory `*`/`?` matcher with identical semantics in
-  both (L3-RS-014 / L3-PY-014).
+  (with `Reverse`) in Rust, the stdlib `heapq` in Python, and
+  `std::priority_queue` in C++; `--glob` uses a hand-rolled single-directory
+  `*`/`?` matcher with identical semantics in all three (L3-RS-014 /
+  L3-PY-014).
+- **`--glob` is a grammar, not just a matcher** (L2-MRG-001). "Expand it
+  identically" turned out to have three answers per implementation and only one
+  of them was about wildcards. What is applied *to* the pattern is now specified
+  as tightly as the pattern itself: the split uses the **platform's** separator
+  set (a backslash separates on Windows and is an ordinary filename character on
+  POSIX), and only entries resolving to a **regular file** are matched, with
+  symlinks followed — so a symlinked recording counts, a dangling link does not,
+  and a directory named `archive.mie` never does. Each implementation's unit
+  tests pin it against its own reading, which is exactly the thing in question
+  when two readings differ, so the cross-implementation gate is
+  `tests/conformance/glob_parity.py`: it builds a directory holding the entries
+  the three disagreed about and compares the **resolved set**.
 - **Single year.** IRIG-B carries day-of-year but no year, so the key totally
   orders only within one calendar year; cross-year / New-Year-boundary inputs
   cannot be ordered from the timestamp alone. This intersects the IRIG

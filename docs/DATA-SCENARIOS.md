@@ -256,6 +256,32 @@ the number of files. A single input is unaffected by everything in this section.
 | **Mixed IRIG + Standard** | Rejected, naming the first incompatible file | **6** |
 | **A file whose own records step backward in time** (not internally sorted) | **Lenient**: one WARN, all records still emitted in heap order (never re-sorted). **Strict**: exit 1 (`NonMonotonicInput`). | 0 / 1 |
 
+### What `--glob` actually matches (`L2-MRG-001`)
+
+The wildcards are the small half: `*` matches any run, `?` matches exactly one
+character, both apply to the **filename only**, and there is no `**` and no brace
+expansion. What the pattern is applied *to* matters just as much, and is fixed so
+all three implementations resolve the same set:
+
+| Entry in the globbed directory | Matched? |
+|---|---|
+| An ordinary file whose name matches | Yes |
+| A **symlink** to a matching recording | Yes -- resolution follows links, so a recording reached through one is a recording |
+| A **dangling** symlink | No -- it would only fail to open a moment later |
+| A **directory** whose name matches (e.g. `archive.mie`) | No |
+| A socket, fifo or device whose name matches | No |
+| An entry whose type cannot be read (a listing racing a deletion) | No -- skipped, not an error |
+
+Two more rules that are easy to trip over: results are sorted **lexicographically
+by full path**, so two hosts enumerating one directory merge in the same order;
+and the pattern is split at its last **platform** separator -- `/` everywhere,
+`\` on Windows only, where a backslash is a separator and is not a legal filename
+character. On POSIX a backslash in a pattern is an ordinary character, so
+`--glob 'odd\name*.mie'` names files in the *current* directory.
+
+A pattern that matches nothing is a usage error naming the pattern (exit 4), not
+a silent empty decode.
+
 ### Per-file failure with `--allow-partial` (`L2-MRG-004`)
 
 If one input in a merge fails, the batch normally aborts. With `--allow-partial`
@@ -288,6 +314,14 @@ differ). Same-file repeats and single-file decodes are never collapsed. The
 window uses absolute time distance, so a non-monotonic input neither faults nor
 over-collapses. See [`USER-GUIDE.md`](USER-GUIDE.md) for worked examples.
 
+| Situation | What the tool does |
+|---|---|
+| Several recorders witnessed one transaction | With `--collapse-duplicates`, one row survives; without it, one row per recorder. |
+| The recorders' clocks differ by a few hundred microseconds | Widen the tolerance: `--collapse-window-us 200`. The test is absolute distance, so it does not matter which recorder is ahead. |
+| One recorder's clock stepped backward mid-file | Neither faults nor over-collapses -- and the survivor set still shrinks, because retention is defined over the whole set rather than over the oldest arrival (`L2-MRG-007`). |
+| Every record falls inside one window (all-alike timestamps, or a very wide window) | The `max_collapse_survivors` cap (default 4096) is reached; the oldest survivor is evicted to make room, **one** WARN is emitted for the whole run, collapsing continues best-effort, **no rows are dropped** from the output, exit 0. |
+| You want the count bound tighter or looser | `--max-collapse-survivors N` (`[merge] max_collapse_survivors`), range `1..=1048576`. It bounds the set in **count**; `--collapse-window-us` bounds it in **time**. Neither substitutes for the other. |
+
 ---
 
 ## 9. Output-mode scenarios
@@ -317,7 +351,7 @@ precedes `11R`.
 | Two messages at *different* timestamps | Never reordered. Only records sharing a timestamp are permuted, so a recorder whose own clock stepped backward keeps that anomaly visible where it happened (see §8). |
 | A `SPURIOUS_DATA` row (no `RT`/`MSG`) | Excluded from the sort and kept immediately after the record it followed — which is what makes `ERROR_CODE = 0x2000` ("continues the preceding error") meaningful. See §6. |
 | Two messages identical on timestamp, `RT`, *and* `MSG` | Input order is preserved (the sort is stable). Across a merge, that means the first-listed file's row wins — or use `--collapse-duplicates` to emit one row (§8). |
-| A corrupt recording whose timestamps all decode to one value | The `max_sort_group` cap (default 4096) is reached; that run is written in **arrival order** with one WARN, decoding continues, **no rows are dropped**, exit 0. |
+| A corrupt recording whose timestamps all decode to one value | The `max_sort_group` cap (default 4096) is reached; that run is written in **arrival order** with one WARN, decoding continues, **no rows are dropped**, exit 0. (The de-duplication window has its own count cap for the same reason -- see §8.) |
 | You need byte-exact vendor row order | `--max-sort-group 1` disables reordering entirely (raw capture order). Pair with `--no-mux`; see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3a. |
 
 The `dump` subcommand is deliberately exempt — it reports raw file layout, so it

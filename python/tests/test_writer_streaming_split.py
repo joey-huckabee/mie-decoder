@@ -16,7 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from mie_decoder.exceptions import MieUnrecoverableSyncLossError
+from mie_decoder.exceptions import (
+    MieClobberRefusedError,
+    MieUnrecoverableSyncLossError,
+    MieWriterError,
+)
 from mie_decoder.models import MieMessage
 from mie_decoder.reader import MieFileReader
 from mie_decoder.writer import WriteOptions, write_csv_split
@@ -100,4 +104,97 @@ def test_split_allow_partial_no_errors_omits_errors_partial(
     assert outcome.error_count == 0
     assert (dest.with_name("out.csv.partial")).exists()
     assert not (tmp_path / "out_errors.csv.partial").exists()
+    assert list(tmp_path.glob("*.mie-decoder.tmp.*")) == []
+
+
+@pytest.mark.requirement("L2-WRT-016")
+@pytest.mark.requirement("L2-WRT-019")
+def test_split_partial_main_commit_failure_leaves_no_orphan_errors_partial(
+    tmp_path: Path,
+) -> None:
+    """The ``--allow-partial`` half of the main-before-errors rule.
+
+    Force the MAIN ``.partial`` rename to fail (a directory sits on it) and
+    assert that no errors ``.partial`` appears. Before the fix this branch
+    committed errors first, so the errors ``.partial`` was already on disk by
+    the time the main one failed -- an orphan forensic artifact with no main
+    output beside it, which is precisely the residue the order exists to make
+    impossible.
+    """
+    normal, errored = _normal_and_errored(tmp_path)
+
+    def stream() -> Iterator[MieMessage]:
+        yield normal
+        yield errored
+        raise MieUnrecoverableSyncLossError(offset=0x99, sync_losses=2)
+
+    dest = tmp_path / "out.csv"
+    main_partial = dest.with_name("out.csv.partial")
+    errors_partial = tmp_path / "out_errors.csv.partial"
+    main_partial.mkdir()
+
+    with pytest.raises(MieWriterError):
+        write_csv_split(stream(), dest, WriteOptions(allow_partial=True))
+
+    assert not errors_partial.exists(), (
+        "errors .partial must not appear when the main .partial commit fails first"
+    )
+    assert not dest.exists()
+    assert not (tmp_path / "out_errors.csv").exists()
+    assert list(tmp_path.glob("*.mie-decoder.tmp.*")) == []
+
+
+@pytest.mark.requirement("L2-WRT-016")
+@pytest.mark.requirement("L2-WRT-019")
+def test_split_partial_errors_commit_failure_leaves_the_main_partial(
+    tmp_path: Path,
+) -> None:
+    """The mirror image: the MAIN ``.partial`` commits, then the errors one
+    fails. The residue is the primary artifact, which is the whole point."""
+    normal, errored = _normal_and_errored(tmp_path)
+
+    def stream() -> Iterator[MieMessage]:
+        yield normal
+        yield errored
+        raise MieUnrecoverableSyncLossError(offset=0x99, sync_losses=2)
+
+    dest = tmp_path / "out.csv"
+    main_partial = dest.with_name("out.csv.partial")
+    errors_partial = tmp_path / "out_errors.csv.partial"
+    errors_partial.mkdir()
+
+    with pytest.raises(MieWriterError):
+        write_csv_split(stream(), dest, WriteOptions(allow_partial=True))
+
+    assert main_partial.read_bytes().startswith(b"TIME_STAMP,RT,MSG,"), (
+        "the main .partial must survive an errors-commit failure"
+    )
+    assert errors_partial.is_dir(), "the errors .partial target should be untouched"
+    assert list(tmp_path.glob("*.mie-decoder.tmp.*")) == []
+
+
+@pytest.mark.requirement("L2-WRT-017")
+@pytest.mark.requirement("L2-WRT-023")
+def test_split_no_clobber_refuses_an_errors_file_that_appears_mid_decode(
+    tmp_path: Path,
+) -> None:
+    """``WriteOptions.no_clobber`` has to reach the commit, not just the
+    pre-flight -- and it has to reach the *errors* writer as well as the main
+    one. The errors destination is created while the stream is still draining,
+    which is after its pre-flight and before its commit."""
+    normal, errored = _normal_and_errored(tmp_path)
+    errors_dest = tmp_path / "out_errors.csv"
+
+    def stream() -> Iterator[MieMessage]:
+        yield normal
+        yield errored
+        errors_dest.write_text("theirs\n")
+
+    dest = tmp_path / "out.csv"
+    with pytest.raises(MieClobberRefusedError):
+        write_csv_split(stream(), dest, WriteOptions(no_clobber=True))
+
+    assert errors_dest.read_text() == "theirs\n", "a refused commit must not touch it"
+    # Main is committed first and its own destination was free, so it survives.
+    assert dest.read_bytes().startswith(b"TIME_STAMP,RT,MSG,")
     assert list(tmp_path.glob("*.mie-decoder.tmp.*")) == []

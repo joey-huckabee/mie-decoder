@@ -271,7 +271,7 @@ TEST_CASE("AtomicFile commits through a temp file", "[platform][atomic][L2-WRT-0
 
     const std::string row("TIME_STAMP,RT,MSG\n");
     REQUIRE(file.write(row.data(), row.size(), err));
-    REQUIRE(file.commit(err));
+    REQUIRE(file.commit(err) == plat::COMMIT_DONE);
 
     CHECK(read_raw(destination.str()) == row);
     CHECK_FALSE(raw_exists(temp));
@@ -292,9 +292,104 @@ TEST_CASE("AtomicFile replaces an existing destination",
     REQUIRE(file.create(destination.str(), err));
     const std::string fresh("FRESH");
     REQUIRE(file.write(fresh.data(), fresh.size(), err));
-    REQUIRE(file.commit(err));
+    REQUIRE(file.commit(err) == plat::COMMIT_DONE);
 
     CHECK(read_raw(destination.str()) == fresh);
+}
+
+TEST_CASE("AtomicFile in no-replace mode refuses an existing destination",
+          "[platform][atomic][L2-WRT-023][L3-CPP-032]") {
+    // The window the pre-flight cannot see: the destination is created AFTER
+    // the writer opened its temp, which is exactly where a second process
+    // lands. A `path_exists` test before the open answers a question about the
+    // past, so the refusal has to happen here, at the move.
+    const mie_test::TempPath destination("noreplace.csv");
+
+    plat::AtomicFile file;
+    plat::OsError err;
+    REQUIRE(file.create(destination.str(), err));
+    file.set_commit_mode(plat::COMMIT_NO_REPLACE);
+    const std::string ours("OURS");
+    REQUIRE(file.write(ours.data(), ours.size(), err));
+
+    const std::string temp = file.temp_path();
+    write_raw(destination.str(), std::string("THEIRS"));
+
+    CHECK(file.commit(err) == plat::COMMIT_EXISTS);
+    CHECK(read_raw(destination.str()) == "THEIRS");
+    // COMMIT_EXISTS is a refusal, not a failure, so `err` must stay clean --
+    // the writer reports it as clobber_refused, not as an OS error.
+    CHECK(err.ok());
+    file.abort();
+    CHECK_FALSE(raw_exists(temp));
+}
+
+TEST_CASE("AtomicFile in no-replace mode commits onto a free destination",
+          "[platform][atomic][L2-WRT-023][L3-CPP-032]") {
+    const mie_test::TempPath destination("noreplace-free.csv");
+
+    plat::AtomicFile file;
+    plat::OsError err;
+    REQUIRE(file.create(destination.str(), err));
+    file.set_commit_mode(plat::COMMIT_NO_REPLACE);
+    const std::string rows("ROWS");
+    REQUIRE(file.write(rows.data(), rows.size(), err));
+
+    const std::string temp = file.temp_path();
+    REQUIRE(file.commit(err) == plat::COMMIT_DONE);
+    CHECK(read_raw(destination.str()) == rows);
+    // The POSIX mechanism publishes a second NAME for the same bytes rather
+    // than moving them, so the temp has to be unlinked explicitly. A leak here
+    // is invisible to every other assertion.
+    CHECK_FALSE(raw_exists(temp));
+}
+
+TEST_CASE("AtomicFile in no-replace mode refuses an existing suffixed target",
+          "[platform][atomic][L2-WRT-016][L2-WRT-023][L3-CPP-032][L3-WRT-005]") {
+    // `<destination>.partial` is never pre-flighted -- a stale one must not
+    // refuse a run that was never going to write one -- so the commit is the
+    // ONLY thing standing between --no-clobber and an overwritten forensic
+    // artifact.
+    mie_test::TempPath destination("noreplace-partial.csv");
+    const std::string partial = destination.sibling(".partial");
+    write_raw(partial, std::string("EARLIER FORENSICS"));
+
+    plat::AtomicFile file;
+    plat::OsError err;
+    REQUIRE(file.create(destination.str(), err));
+    file.set_commit_mode(plat::COMMIT_NO_REPLACE);
+    const std::string ours("OURS");
+    REQUIRE(file.write(ours.data(), ours.size(), err));
+
+    const std::string temp = file.temp_path();
+    CHECK(file.commit_with_suffix(".partial", err) == plat::COMMIT_EXISTS);
+    CHECK(read_raw(partial) == "EARLIER FORENSICS");
+    CHECK(err.ok());
+    file.abort();
+    CHECK_FALSE(raw_exists(temp));
+}
+
+TEST_CASE("AtomicFile reports a commit with no open handle as an error",
+          "[platform][atomic][L2-WRT-024]") {
+    // Closing the temp file is PART OF THE COMMIT (L2-WRT-024), and its failure
+    // has to come back as a classified error rather than as a crash or a silent
+    // success. A closed handle is the reachable stand-in for the real cause --
+    // a close that reports the buffered data never reached the filesystem, which
+    // needs a full disk to provoke -- and it exercises the same arm.
+    const mie_test::TempPath destination("commit-twice.csv");
+
+    plat::AtomicFile file;
+    plat::OsError err;
+    REQUIRE(file.create(destination.str(), err));
+    const std::string row("ROW");
+    REQUIRE(file.write(row.data(), row.size(), err));
+    REQUIRE(file.commit(err) == plat::COMMIT_DONE);
+
+    CHECK(file.commit(err) == plat::COMMIT_ERROR);
+    CHECK_FALSE(err.ok());
+    CHECK_FALSE(err.message.empty());
+    // The committed destination is untouched by the failed second attempt.
+    CHECK(read_raw(destination.str()) == row);
 }
 
 TEST_CASE("AtomicFile leaves the destination untouched when aborted",
@@ -331,7 +426,7 @@ TEST_CASE("commit_with_suffix writes the .partial file and spares the destinatio
     REQUIRE(file.create(destination.str(), err));
     const std::string rows("partial rows\n");
     REQUIRE(file.write(rows.data(), rows.size(), err));
-    REQUIRE(file.commit_with_suffix(".partial", err));
+    REQUIRE(file.commit_with_suffix(".partial", err) == plat::COMMIT_DONE);
 
     CHECK(read_raw(destination.sibling(".partial")) == rows);
     CHECK(read_raw(destination.str()) == "PREVIOUS");
@@ -349,7 +444,7 @@ TEST_CASE("AtomicFile writes bytes verbatim, with no newline translation",
     REQUIRE(file.create(destination.str(), err));
     const std::string payload("a\nb\n");
     REQUIRE(file.write(payload.data(), payload.size(), err));
-    REQUIRE(file.commit(err));
+    REQUIRE(file.commit(err) == plat::COMMIT_DONE);
 
     const std::string round_tripped = read_raw(destination.str());
     CHECK(round_tripped.size() == 4);
@@ -379,7 +474,7 @@ TEST_CASE("AtomicFile survives payloads that straddle the buffer boundary",
     expected += exact;
     REQUIRE(file.write(oversized.data(), oversized.size(), err));
     expected += oversized;
-    REQUIRE(file.commit(err));
+    REQUIRE(file.commit(err) == plat::COMMIT_DONE);
 
     CHECK(read_raw(destination.str()).size() == expected.size());
     CHECK(read_raw(destination.str()) == expected);
@@ -714,7 +809,7 @@ TEST_CASE("paths are UTF-8 end to end, including non-ASCII ones", "[platform][L3
         mie::platform::AtomicFile file;
         REQUIRE(file.create(path.str(), err));
         REQUIRE(file.write(payload.data(), payload.size(), err));
-        REQUIRE(file.commit(err));
+        REQUIRE(file.commit(err) == plat::COMMIT_DONE);
     }
 
     REQUIRE(mie::platform::path_exists(path.str()));

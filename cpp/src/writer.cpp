@@ -84,11 +84,12 @@ std::string StdoutCsvSink::destination() const { return std::string("stdout"); }
 
 AtomicCsvSink::AtomicCsvSink() : open_(false) {}
 
-void AtomicCsvSink::create(const std::string& path) {
+void AtomicCsvSink::create(const std::string& path, bool no_clobber) {
     platform::OsError err;
     if (!file_.create(path, err)) {
         throw writer_failure(path, err);
     }
+    file_.set_commit_mode(no_clobber ? platform::COMMIT_NO_REPLACE : platform::COMMIT_REPLACE);
     path_ = path;
     open_ = true;
 }
@@ -109,9 +110,7 @@ std::string AtomicCsvSink::destination() const { return path_; }
 
 void AtomicCsvSink::commit() {
     platform::OsError err;
-    if (!file_.commit(err)) {
-        throw writer_failure(path_, err);
-    }
+    report(file_.commit(err), path_, err);
     open_ = false;
 }
 
@@ -121,11 +120,25 @@ std::string AtomicCsvSink::commit_partial() {
     // the path this commits to and the path `commit_targets` pre-flights are
     // the same derivation and cannot drift (L2-WRT-014).
     const std::string partial = partial_path_for(path_);
-    if (!file_.commit_with_suffix(".partial", err)) {
-        throw writer_failure(partial, err);
-    }
+    report(file_.commit_with_suffix(".partial", err), partial, err);
     open_ = false;
     return partial;
+}
+
+void AtomicCsvSink::report(platform::CommitStatus status, const std::string& destination,
+                           const platform::OsError& err) {
+    if (status == platform::COMMIT_DONE) {
+        return;
+    }
+    if (status == platform::COMMIT_EXISTS) {
+        // A refusal, not an OS failure: the destination appeared between the
+        // pre-flight and the commit (or was never pre-flighted, as a `.partial`
+        // is not). Reporting it as clobber_refused is what makes the racing case
+        // and the pre-flight case indistinguishable to the operator, which is
+        // the point -- both mean "the destination exists and --no-clobber is on".
+        throw MieError::clobber_refused(destination);
+    }
+    throw writer_failure(destination, err);
 }
 
 void AtomicCsvSink::abort() {
@@ -329,12 +342,18 @@ namespace {
 /// both which paths can be committed (via `commit_targets`) and whether the
 /// derived errors destination gets its own no-clobber check.
 ///
-/// The collision test covers EVERY commit target; the no-clobber test covers
-/// only the destinations a run actually creates -- main, and the errors file in
-/// split mode. `.partial` paths are deliberately not clobber-checked, which is
-/// the behaviour that shipped: a `.partial` is written only on a failure path,
-/// and refusing a whole run up front because a stale one is lying around would
-/// be a different rule than L2-WRT-017 states.
+/// The collision test covers EVERY commit target and IS the guarantee:
+/// L2-WRT-014 is a pre-open rule, and once the mapping is live there is nothing
+/// left to refuse.
+///
+/// The no-clobber test here is NOT the guarantee -- that lives in the commit
+/// (L2-WRT-023, platform::COMMIT_NO_REPLACE). `path_exists` answers a question
+/// about the past, and between the answer and the rename any other process may
+/// create the destination. What this test buys is an EARLY refusal, before a
+/// temp file exists and before a whole file is decoded, with the destination
+/// named. It covers only the two paths a run definitely creates: `.partial`
+/// targets are deliberately left to the commit, so a stale `<dest>.partial`
+/// lying around does not refuse a run that was never going to write one.
 void preflight_output(const std::string& output, bool split_errors, const WriteOptions& options) {
     if (options.input_path.has_value()) {
         const std::vector<std::string> targets =
@@ -420,7 +439,7 @@ WriteOutcome write_csv(MessageSource& messages, const Optional<std::string>& out
     preflight_output(path, false, options);
 
     AtomicCsvSink sink;
-    sink.create(path);
+    sink.create(path, options.no_clobber);
 
     PartialStop stop;
     uint64_t rows = 0;
@@ -473,7 +492,7 @@ WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
     const std::string errors_path = error_path_for(output);
 
     AtomicCsvSink main_sink;
-    main_sink.create(output);
+    main_sink.create(output, options.no_clobber);
 
     AtomicCsvSink errors_sink;
     PartialStop stop;
@@ -496,7 +515,7 @@ WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
                 continue;
             }
             if (errors_writer.get() == nullptr) {
-                errors_sink.create(errors_path);
+                errors_sink.create(errors_path, options.no_clobber);
                 errors_writer.reset(new CsvWriter(errors_sink));
             }
             errors_writer->write_message(message);
@@ -539,11 +558,19 @@ WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
         return outcome;
     }
 
+    // MAIN FIRST, for the same reason as the normal path above and under the
+    // same rule (L2-WRT-019). This is the branch that used to run the other way
+    // round in all three implementations: an errors `.partial` that committed
+    // before a main `.partial` whose rename then failed left the operator an
+    // orphan `<dest>_errors.csv.partial` next to no main output at all -- the
+    // precise residue the main-first order exists to make impossible. That the
+    // normal path got it right and the failure path did not is what a rule
+    // stated over "the commit" rather than over "every commit" buys you.
     PartialCommit partial;
+    partial.main_path = main_sink.commit_partial();
     if (errors_sink.is_open()) {
         partial.errors_path = errors_sink.commit_partial();
     }
-    partial.main_path = main_sink.commit_partial();
     partial.offset = stop.offset;
     partial.sync_losses = stop.sync_losses;
     outcome.partial = partial;

@@ -185,7 +185,7 @@ void MappedFile::close() {
 // AtomicFile
 // ---------------------------------------------------------------------------
 
-AtomicFile::AtomicFile() : handle_(nullptr), committed_(false) {
+AtomicFile::AtomicFile() : handle_(nullptr), committed_(false), mode_(COMMIT_REPLACE) {
     buffer_.reserve(kWriteBufferSize);
 }
 
@@ -277,14 +277,26 @@ bool AtomicFile::write(const char* bytes, std::size_t len, OsError& err) {
     return true;
 }
 
-bool AtomicFile::commit(OsError& err) { return commit_with_suffix(std::string(), err); }
+void AtomicFile::set_commit_mode(CommitMode mode) { mode_ = mode; }
 
-bool AtomicFile::commit_with_suffix(const std::string& suffix, OsError& err) {
+CommitStatus AtomicFile::commit(OsError& err) { return commit_with_suffix(std::string(), err); }
+
+CommitStatus AtomicFile::commit_with_suffix(const std::string& suffix, OsError& err) {
     err.clear();
+    // The final flush and the close are PART OF THE COMMIT (L2-WRT-024): they
+    // are where the last buffered rows actually reach the filesystem, so they
+    // are the likeliest place for a disk-full error to land, and a failure in
+    // either means the destination must not be replaced.
     if (!flush(err)) {
-        return false;
+        return COMMIT_ERROR;
     }
+    if (!finish_stream(err)) {
+        return COMMIT_ERROR;
+    }
+    return place(final_path_ + suffix, err);
+}
 
+bool AtomicFile::finish_stream(OsError& err) {
     const int fd = decode_fd(handle_);
     if (fd < 0) {
         err.code = EBADF;
@@ -300,15 +312,73 @@ bool AtomicFile::commit_with_suffix(const std::string& suffix, OsError& err) {
         return false;
     }
     handle_ = nullptr;
+    return true;
+}
 
-    const std::string destination = final_path_ + suffix;
+CommitStatus AtomicFile::place(const std::string& destination, OsError& err) {
+    if (mode_ == COMMIT_REPLACE) {
+        if (::rename(temp_path_.c_str(), destination.c_str()) != 0) {
+            fill_errno(err, errno);
+            return COMMIT_ERROR;
+        }
+        committed_ = true;
+        temp_path_.clear();
+        return COMMIT_DONE;
+    }
+
+    // COMMIT_NO_REPLACE, mechanism 1: link(2) fails with EEXIST when the
+    // destination exists, and otherwise publishes the COMPLETE file under its
+    // final name in one atomic step -- so a concurrent reader never observes a
+    // partial or empty file, exactly as with the replacing rename.
+    //
+    // renameat2(RENAME_NOREPLACE) would do it in one call, but it needs Linux
+    // 3.15 and a glibc that wraps it (2.28). SLES 12 SP5 ships glibc 2.22, so
+    // reaching it would mean a raw syscall(SYS_renameat2, ...) with a
+    // hand-written fallback for every kernel that lacks it -- more OS surface,
+    // in the layer that exists to contain OS surface, for no behaviour link(2)
+    // does not already give.
+    if (::link(temp_path_.c_str(), destination.c_str()) == 0) {
+        // The link published a second name for the same bytes rather than
+        // moving them, so the temp is still there by design. Unlinking is best
+        // effort: the destination is committed either way, and leaving
+        // `committed_` false when the unlink fails just gives abort() a second
+        // attempt at it.
+        if (::unlink(temp_path_.c_str()) == 0) {
+            committed_ = true;
+            temp_path_.clear();
+        }
+        return COMMIT_DONE;
+    }
+    if (errno == EEXIST) {
+        return COMMIT_EXISTS;
+    }
+
+    // Mechanism 2. Hard links do not exist on FAT/exFAT and are refused by some
+    // network filesystems, so the link can fail for reasons that have nothing to
+    // do with the destination. O_EXCL claims the name atomically -- one of two
+    // racing processes wins it -- and the rename that follows overwrites only
+    // OUR OWN zero-byte reservation. The narrow cost is that the destination is
+    // briefly an empty file, which is why this is the fallback and not the
+    // primary.
+    const int reserved = ::open(destination.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (reserved < 0) {
+        if (errno == EEXIST) {
+            return COMMIT_EXISTS;
+        }
+        fill_errno(err, errno);
+        return COMMIT_ERROR;
+    }
+    ::close(reserved);
     if (::rename(temp_path_.c_str(), destination.c_str()) != 0) {
         fill_errno(err, errno);
-        return false;
+        // Take the reservation back out. Leaving it would hand the operator an
+        // empty CSV where the failure message says nothing was written.
+        ::unlink(destination.c_str());
+        return COMMIT_ERROR;
     }
     committed_ = true;
     temp_path_.clear();
-    return true;
+    return COMMIT_DONE;
 }
 
 void AtomicFile::abort() {

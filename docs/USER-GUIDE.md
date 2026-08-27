@@ -438,8 +438,30 @@ mie-decoder decode --glob 'recorders/*.mie' -o session.csv \
 
 The first copy in time order survives; the rest are suppressed and the count is
 logged (`merge: collapsed N duplicate message(s)…`). DELTA is recomputed on the
-deduped timeline. Both flags have config-file equivalents in a `[merge]`
-section (`collapse_duplicates`, `collapse_window_us`).
+deduped timeline. All three flags below have config-file equivalents in a
+`[merge]` section (`collapse_duplicates`, `collapse_window_us`,
+`max_collapse_survivors`).
+
+**One caveat, and its knob.** Widening the window widens the *set* the merge has
+to hold: every record inside the window is a survivor future records get compared
+against. A tolerance of a few hundred microseconds on ordinary traffic holds a
+handful; a very wide window on a dense bus — or a corrupt recording whose
+timestamps all decode to the same value — puts far more than a handful inside one
+window, and a bound expressed in time cannot say how many that is. So the survivor
+set has a second, count-based cap: `--max-collapse-survivors N` (default `4096`).
+
+You will usually never see it. If you do, it is one WARN for the whole run:
+
+```
+WARN  merge: collapse survivor set reached the 4096 cap; evicting oldest
+```
+
+Past that point the oldest survivor is dropped to make room and collapsing
+becomes best-effort — a duplicate whose partner has already been evicted is
+emitted rather than suppressed. **No row is ever dropped from the output**, and
+the exit code is unaffected. If you are deliberately running a very wide window
+and want the collapsing to stay exact, raise the cap (`--max-collapse-survivors
+65536`); if you are memory-constrained, lower it.
 
 ### Labeling output by recorder (MUX from the file name)
 

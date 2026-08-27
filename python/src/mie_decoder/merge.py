@@ -146,6 +146,13 @@ def expand_glob(pattern: str) -> list[Path]:
     current directory). Wildcards apply to the filename only — no recursive
     ``**``, no brace expansion.
 
+    "Regular file" is decided **after following symlinks** (the default for
+    ``DirEntry.is_file``), so a recording reached through a symlink is a
+    recording. A dangling symlink answers ``False`` and is skipped, which is
+    also what a broken link deserves: the merge would only fail to open it a
+    moment later. Directories -- including one named ``archive.mie`` -- are never
+    matched. All three implementations resolve the same set (L2-MRG-001).
+
     Returns:
         Matching regular files, sorted lexicographically so the order is
         deterministic across implementations (L2-MRG-001). An **empty list is
@@ -158,10 +165,13 @@ def expand_glob(pattern: str) -> list[Path]:
     out: list[Path] = []
     with os.scandir(directory) as it:
         for entry in it:
+            # Name test before the stat: a directory of thousands of entries
+            # should cost one stat per *match*, not one per entry.
+            if not glob_match(name_pat, entry.name):
+                continue
             if not entry.is_file():
                 continue
-            if glob_match(name_pat, entry.name):
-                out.append(Path(entry.path))
+            out.append(Path(entry.path))
     out.sort(key=str)
     return out
 
