@@ -286,7 +286,7 @@ bool DedupWindow::is_duplicate(uint64_t us, std::size_t file_index, const MieMes
     {
         const uint64_t window_for_evict = window_us_;
         const uint64_t now = us;
-        std::deque<Survivor>::iterator kept_end =
+        const std::deque<Survivor>::iterator kept_end =
             std::remove_if(survivors_.begin(), survivors_.end(), [&](const Survivor& survivor) {
                 return abs_diff(survivor.us, now) > window_for_evict;
             });

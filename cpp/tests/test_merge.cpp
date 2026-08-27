@@ -551,7 +551,7 @@ TEST_CASE("the dedup survivor set is capped when the window cannot bound it",
     // reorder stage, and it is why absolute-distance eviction is not on its own
     // sufficient.
     const std::size_t cap = 64;
-    mie_test::LogCapture capture(mie::log::LEVEL_WARN);
+    const mie_test::LogCapture capture(mie::log::LEVEL_WARN);
     mie::merge::DedupWindow window(UINT64_MAX, cap);
     for (uint64_t i = 0; i < 10000; ++i) {
         window.is_duplicate(0, static_cast<std::size_t>(i % 2), probe_message(i));

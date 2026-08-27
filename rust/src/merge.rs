@@ -492,7 +492,7 @@ impl<'a> MergedRecordIter<'a> {
 
     /// Cap the de-duplication survivor set (L2-MRG-008), builder-style.
     ///
-    /// A separate method rather than a third parameter on [`collapse`] because
+    /// A separate method rather than a third parameter on [`Self::collapse`] because
     /// `collapse` is public API and widening it would be a breaking change; this
     /// composes with it in **either** order. Values are clamped into
     /// `[MAX_COLLAPSE_SURVIVORS_MIN, MAX_COLLAPSE_SURVIVORS_MAX]` — the CLI and
