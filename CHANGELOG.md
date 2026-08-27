@@ -17,6 +17,25 @@ shared behavior) holds at any compatible version pair. See
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rust: a manifest whose last line is unterminated now has its trailing `\r`
+  stripped like every other line.** L2-MRG-001 rule 3 requires at most one
+  trailing `\r` to be removed from each line; `read_manifest` used
+  `str::lines()`, which strips the CR only from a line an `\n` actually
+  followed. A CRLF manifest whose final terminator was lost — ending
+  `"b.mie\r"` — therefore resolved to a path with a carriage return in it, and
+  failed on a file the operator had named correctly; Python and C++ resolved the
+  same file to `b.mie`. The nightly fuzz burn-in's cross-implementation summary
+  comparison caught it on the degenerate one-byte manifest `"\r"`, which Rust
+  counted as one path and the other two as none (`manifest_paths=299` vs `296`
+  over 25 000 generated manifests). Rust now splits on `\n` and strips the CR
+  itself. The grammar test in all three trees gained the unterminated-final-line
+  case, and rules 2 and 3 of L2-MRG-001 now say outright that the text after the
+  last `\n` is a line and is read no differently — the previous "each line" was
+  precise right up until a standard library decided an unterminated tail was not
+  quite a line.
+
 ## [2.16.0] — 2026-08-26
 
 Closes the fuzzing parity gaps v2.15.1 opened a ledger for, and adds the

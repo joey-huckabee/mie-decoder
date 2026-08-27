@@ -51,7 +51,18 @@ pub const MAX_MERGE_FILES: usize = 256;
 pub fn read_manifest(path: &Path) -> io::Result<Vec<PathBuf>> {
     let text = fs::read_to_string(path)?;
     let mut out = Vec::new();
-    for line in text.lines() {
+    // `split('\n')`, NOT `str::lines()`. `lines()` strips a trailing `\r` only
+    // from a line that was actually terminated by `\n`, so a manifest whose
+    // final line is unterminated keeps its carriage return -- the one-byte
+    // manifest `"\r"` was one path here and none in Python and C++, which strip
+    // the CR from EVERY line as L2-MRG-001 rule 3 requires. Found by the merge
+    // fuzz harness's cross-implementation summary comparison; a truncated CRLF
+    // manifest ending `"b.mie\r"` is the case an operator actually hits.
+    for raw in text.split('\n') {
+        // Strip at most one trailing carriage return -- that is what a CRLF
+        // line ending is. No other `\r` is touched, so a filename containing an
+        // interior CR survives.
+        let line = raw.strip_suffix('\r').unwrap_or(raw);
         // ASCII space and tab only, NOT `str::trim`. `trim` removes Unicode
         // whitespace -- a no-break space, an ideographic space, an ogham space
         // mark -- and the C++ implementation cannot: it is locale-free by rule

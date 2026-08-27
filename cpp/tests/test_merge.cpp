@@ -121,7 +121,7 @@ TEST_CASE("glob_match implements exactly the documented wildcards", "[merge][L3-
 }
 
 /// The manifest grammar, pinned exactly, because leaving it at "one path per
-/// line" is how three implementations came to disagree four different ways.
+/// line" is how three implementations came to disagree, a different way each.
 ///
 /// Every one was found by the merge fuzz harness comparing its FUZZ-SUMMARY
 /// counters against Rust's and Python's, and every one is now spelled out in
@@ -135,6 +135,10 @@ TEST_CASE("glob_match implements exactly the documented wildcards", "[merge][L3-
 ///     containing a bare CR survives. THIS implementation dropped every `\r`
 ///     in the line, and Python's reader translated a lone `\r` to `\n` before
 ///     the parser ever saw it.
+///   * The text after the LAST `\n` is a line, read no differently for missing
+///     its terminator. Rust used `str::lines()`, which strips the CR only when
+///     an `\n` actually followed, so a truncated CRLF manifest ending
+///     "b.mie\r" named a path with a CR in it there and `b.mie` here.
 ///   * Trimming is ASCII space and tab ONLY. Rust's `str::trim` and Python's
 ///     `str.strip` also remove U+00A0, U+3000 and the rest; this
 ///     implementation is locale-free by rule and cannot, so two
@@ -173,6 +177,20 @@ TEST_CASE("read_manifest grammar is exactly specified", "[merge][L2-MRG-001][L3-
         REQUIRE(mie::merge::read_manifest(inner.str(), paths, err));
         REQUIRE(paths.size() == 1u);
         CHECK(paths[0] == std::string("a\rb.mie"));
+
+        // The last line counts even without its terminator, and its CR is
+        // stripped like any other. Rust used `str::lines()`, which strips the
+        // CR only when an `\n` actually followed it, so the one-byte manifest
+        // "\r" was a path there and none here.
+        const TempFile tail("mie-manifest-crtail.txt", std::string("a.mie\r\nb.mie\r"));
+        REQUIRE(mie::merge::read_manifest(tail.str(), paths, err));
+        REQUIRE(paths.size() == 2u);
+        CHECK(paths[0] == "a.mie");
+        CHECK(paths[1] == "b.mie");
+
+        const TempFile bare("mie-manifest-crbare.txt", std::string("\r"));
+        REQUIRE(mie::merge::read_manifest(bare.str(), paths, err));
+        CHECK(paths.empty());
     }
 
     SECTION("ASCII blanks are trimmed and Unicode spaces are not") {

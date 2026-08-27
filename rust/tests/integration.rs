@@ -1264,6 +1264,15 @@ fn read_manifest_grammar_is_exactly_specified() {
         read(b"a\rb.mie\n").unwrap(),
         vec![PathBuf::from("a\rb.mie")]
     );
+    // ... and the LAST line counts as a line even without its terminator. This
+    // reader used `str::lines()`, which strips the CR only when an `\n`
+    // actually followed it, so `"\r"` was a one-character path here and no path
+    // at all in Python and C++.
+    assert_eq!(
+        read(b"a.mie\r\nb.mie\r").unwrap(),
+        vec![PathBuf::from("a.mie"), PathBuf::from("b.mie")]
+    );
+    assert_eq!(read(b"\r").unwrap(), Vec::<PathBuf>::new());
 
     // ASCII blanks are trimmed; Unicode spaces are part of the name.
     assert_eq!(
