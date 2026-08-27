@@ -5,7 +5,7 @@
 //! `format!` only when the level passes the filter, so they're cheap when
 //! disabled.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 /// Log severity. Higher numeric value = more important.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -64,6 +64,30 @@ pub fn current_level() -> Level {
 #[inline]
 pub fn enabled(level: Level) -> bool {
     (level as u8) >= LEVEL.load(Ordering::Relaxed)
+}
+
+/// Whether the one-time IRIG day-of-year advisory is emitted at all. Enabled by
+/// default; `--no-irig-day-advisory` / `[logging] irig_day_advisory = false`
+/// turns it off.
+static IRIG_DAY_ADVISORY: AtomicBool = AtomicBool::new(true);
+
+/// Enable or disable the IRIG day-of-year advisory (L2-LOG-001).
+///
+/// This lives beside the global level rather than in [`crate::ReaderOptions`]
+/// because it is a diagnostics switch, not a decode parameter: it is applied
+/// where `--log-level` is applied, so it covers `decode`, `count` and `dump`
+/// uniformly without each command wiring it through.
+pub fn set_irig_day_advisory(enabled: bool) {
+    IRIG_DAY_ADVISORY.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether the IRIG day-of-year advisory may be emitted. The level filter still
+/// applies on top of this: the advisory is logged at INFO, so at the default
+/// WARNING level it stays silent even when this returns `true`.
+#[inline]
+#[must_use]
+pub fn irig_day_advisory() -> bool {
+    IRIG_DAY_ADVISORY.load(Ordering::Relaxed)
 }
 
 /// Internal write — used by the `log_*!` macros. `args` is already-formatted

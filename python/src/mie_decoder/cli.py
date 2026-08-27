@@ -50,7 +50,7 @@ from mie_decoder.exceptions import (
     MieUnrecoverableSyncLossError,
     MieWriterError,
 )
-from mie_decoder.logger import configure_logging
+from mie_decoder.logger import configure_logging, set_irig_day_advisory
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -262,6 +262,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Set logging verbosity: DEBUG, INFO, WARNING (alias WARN), ERROR, "
             "CRITICAL, or OFF (case-insensitive; CRITICAL/OFF silence all "
             "output). Overrides config file. Validated after --version/--help."
+        ),
+    )
+    parser.add_argument(
+        "--no-irig-day-advisory",
+        action="store_true",
+        help=(
+            "Never emit the one-time IRIG day-of-year advisory. It is logged "
+            "at INFO, so it is already silent at the default level; this "
+            "suppresses it at INFO/DEBUG too. Config: [logging] "
+            "irig_day_advisory = false."
         ),
     )
     # Global option (before the subcommand), matching the Rust CLI:
@@ -634,18 +644,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _apply_config_log_level(args: argparse.Namespace, config_log_level: str) -> None:
-    """Apply log-level precedence: CLI > TOML > default.
+def _apply_config_logging(args: argparse.Namespace, config: DecoderConfig) -> None:
+    """Apply `[logging]` precedence for both keys: CLI > TOML > default.
 
     ``main()`` already configured logging with the CLI value (or the
     ``"WARNING"`` default) before the TOML config was loaded. If the
     user did not pass ``--log-level``, re-configure with the TOML
-    value now. ``config_log_level`` falls back to ``"WARNING"`` when
+    value now. ``config.log_level`` falls back to ``"WARNING"`` when
     the file has no ``[logging]`` section, so this is a no-op in the
     common case. Mirrors ``resolve_config`` in ``rust/src/cli.rs``.
+
+    The IRIG day-of-year advisory (L2-LOG-001) is applied here for the same
+    reason it lives in the logger rather than in the reader signature: every
+    subcommand reaches the reader through this path, so one call covers
+    ``decode`` / ``count`` / ``dump``.
     """
     if args.log_level is None:
-        configure_logging(config_log_level)
+        configure_logging(config.log_level)
+    set_irig_day_advisory(config.irig_day_advisory and not args.no_irig_day_advisory)
 
 
 def _resolve_decode_inputs(args: argparse.Namespace) -> list[Path]:
@@ -1302,7 +1318,7 @@ def _run_decode(args: argparse.Namespace) -> int:
         print(f"Config error: {exc}", file=sys.stderr)
         return EXIT_CONFIG
 
-    _apply_config_log_level(args, config.log_level)
+    _apply_config_logging(args, config)
 
     try:
         overrides = _build_decode_overrides(args)
@@ -1405,7 +1421,7 @@ def _run_count(args: argparse.Namespace) -> int:
         print(f"Config error: {exc}", file=sys.stderr)
         return EXIT_CONFIG
 
-    _apply_config_log_level(args, config.log_level)
+    _apply_config_logging(args, config)
 
     try:
         reader = MieFileReader(
@@ -1475,7 +1491,7 @@ def _run_dump(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return EXIT_CONFIG
-    _apply_config_log_level(args, config.log_level)
+    _apply_config_logging(args, config)
 
     try:
         if args.raw:

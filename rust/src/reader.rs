@@ -916,10 +916,18 @@ impl RecordIter<'_> {
                 let irig = decode_irig_timestamp(upper, middle, lower);
                 if irig.freerun {
                     log_warn!("freerun timestamp at 0x{:X}", self.offset);
-                } else if !self.warned_irig_day {
+                } else if !self.warned_irig_day && crate::log::irig_day_advisory() {
                     // PRA-9: one-time IRIG day-of-year discrepancy advisory.
+                    //
+                    // INFO, not WARN (L2-LOG-001). It is a standing disclaimer
+                    // about a firmware limitation, not an observation about this
+                    // recording -- nothing here compares the decoded day against
+                    // anything, so it fires on every calendar-locked IRIG file
+                    // from every card. At WARN it sat in the default output of
+                    // every run and crowded out the WARNs that ARE observations
+                    // (sync recovery, non-monotonic DELTA, a hit sort cap).
                     self.warned_irig_day = true;
-                    log_warn!(
+                    log_info!(
                         "IRIG day-of-year decoded for this recording; the day-of-year field \
                          has a known firmware-dependent discrepancy on some DDC cards \
                          (hour/minute/second/microsecond are unaffected) -- see \

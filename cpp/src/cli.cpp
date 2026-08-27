@@ -41,6 +41,11 @@ const char* const kHelp =
     "GLOBAL OPTIONS:\n"
     "    --config <PATH>   TOML configuration file\n"
     "    --log-level <L>   DEBUG, INFO, WARNING, ERROR, CRITICAL, OFF\n"
+    "    --no-irig-day-advisory\n"
+    "                      Never emit the one-time IRIG day-of-year advisory.\n"
+    "                      It is logged at INFO, so it is already silent at\n"
+    "                      the default level; this suppresses it at\n"
+    "                      INFO/DEBUG too\n"
     "    -h, --help        Print this help\n"
     "    -V, --version     Print the version\n"
     "\n"
@@ -459,6 +464,9 @@ uint8_t parse_small(const std::string& text, const char* flag) {
 struct GlobalArgs {
     Optional<std::string> config;
     Optional<std::string> log_level;
+    /// `--no-irig-day-advisory`. Absent leaves the config-file value (or the
+    /// default) in place, per L2-CFG-003 precedence.
+    Optional<bool> irig_day_advisory;
 
     GlobalArgs() = default;
 };
@@ -779,6 +787,14 @@ DecoderConfig resolve_config(const GlobalArgs& globals) {
     if (globals.log_level.has_value()) {
         apply_log_level("--log-level", globals.log_level.value());
     }
+
+    // L2-LOG-001, same precedence as the level above: config file first, CLI on
+    // top. Applied here rather than through ReaderOptions so it covers decode,
+    // count and dump from one place -- every subcommand reaches the reader
+    // through this function.
+    log::set_irig_day_advisory(globals.irig_day_advisory.has_value()
+                                   ? globals.irig_day_advisory.value()
+                                   : config.irig_day_advisory);
     return config;
 }
 
@@ -1293,6 +1309,11 @@ int run(const std::vector<std::string>& args, const Streams& streams) {
                 globals.config = value;
             } else if (reader.take_value("--log-level", value)) {
                 globals.log_level = value;
+            } else if (reader.take_flag("--no-irig-day-advisory")) {
+                // take_flag matches the whole token, so the `=value` spelling
+                // does not match here and is reported as an unknown option
+                // rather than silently accepted with its value discarded.
+                globals.irig_day_advisory = false;
             } else {
                 break;
             }

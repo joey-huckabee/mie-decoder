@@ -95,6 +95,12 @@ class ConfigError : public std::exception {
 /// rather than a placeholder.
 struct DecoderConfig {
     std::string log_level;
+    /// L2-LOG-001. Emit the one-time IRIG day-of-year advisory. True by
+    /// default, but the advisory is logged at INFO, so at the default WARNING
+    /// level it is already silent -- this exists so a site that has validated
+    /// its card model against vendor CSV can also keep it out of a
+    /// `--log-level INFO` run.
+    bool irig_day_advisory;
     TimestampFormat time_format;
     bool strict;
     ErrorMode error_mode;
@@ -130,6 +136,7 @@ struct DecoderConfig {
 /// "no --strict flag" are different instructions.
 struct ConfigOverrides {
     Optional<std::string> log_level;
+    Optional<bool> irig_day_advisory;
     Optional<TimestampFormat> time_format;
     Optional<bool> strict;
     Optional<ErrorMode> error_mode;

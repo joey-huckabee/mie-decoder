@@ -52,6 +52,42 @@ LOG_FORMAT: str = "%(asctime)s [%(levelname)-5s] %(name)s: %(message)s"
 LOG_DATE_FORMAT: str = "%Y-%m-%dT%H:%M:%S"
 
 
+class _Switches:
+    """Diagnostics switches that are not the level itself (L2-LOG-001).
+
+    Module-level rather than reader arguments because they are diagnostics
+    switches, not decode parameters: they are applied where the log level is
+    applied, so one call covers ``decode`` / ``count`` / ``dump``. Held as
+    class attributes rather than rebindable module globals so the setters
+    need no ``global`` statement.
+    """
+
+    irig_day_advisory: bool = True
+
+
+def set_irig_day_advisory(enabled: bool) -> None:
+    """Enable or disable the one-time IRIG day-of-year advisory.
+
+    The level filter still applies on top of this: the advisory is logged at
+    ``INFO``, so at the default ``WARNING`` level it is silent regardless.
+    Disabling it also removes it from a ``--log-level INFO`` run.
+
+    Args:
+        enabled: ``False`` to suppress the advisory at every level.
+    """
+    _Switches.irig_day_advisory = enabled
+
+
+def irig_day_advisory() -> bool:
+    """Whether the IRIG day-of-year advisory may be emitted.
+
+    Returns:
+        ``True`` unless suppressed via ``--no-irig-day-advisory`` or
+        ``[logging] irig_day_advisory = false``.
+    """
+    return _Switches.irig_day_advisory
+
+
 def configure_logging(
     level: str = "WARNING",
     stream: object | None = None,

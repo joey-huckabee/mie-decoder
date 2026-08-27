@@ -25,7 +25,8 @@
 #              truncation events.
 #   INFO     — File open/close, decode start/complete with counts and
 #              elapsed time, auto-detected timestamp format, CSV row counts,
-#              progress checkpoints every 100,000 messages.
+#              progress checkpoints every 100,000 messages, and the one-time
+#              IRIG day-of-year advisory (see irig_day_advisory below).
 #   WARNING  — Invalid records (non-fatal), freerun timestamps, unknown
 #              message types encountered. ("WARN" is an accepted alias.)
 #   ERROR    — File not found, empty file, write failures.
@@ -36,6 +37,30 @@
 # Default: "WARNING"
 # ──────────────────────────────────────────────────────────────────────────
 level = "WARNING"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Emit the one-time IRIG day-of-year advisory (L2-LOG-001).
+#
+# The day-of-year field has a known firmware-dependent discrepancy on some
+# DDC card models; hour, minute, second and microsecond are unaffected. The
+# decoder cannot tell whether YOUR card is one of them — the model is not
+# recorded in the file — so the advisory is a standing disclaimer that fires
+# once per decode on every calendar-locked (non-freerun) IRIG recording,
+# not a finding about the file in front of it.
+#
+# Because of that it is logged at INFO, so it is already silent at the
+# default WARNING level. Set this to false to suppress it at INFO and DEBUG
+# too — the right setting once you have diffed your card model's day-of-year
+# against vendor CSV and found it correct (see docs/VENDOR-CSV-DIFFS.md
+# section 5). Do NOT reach for `level = "ERROR"` to silence it: that also
+# discards sync-recovery, non-monotonic-DELTA and sort-cap warnings, which
+# are observations about your actual recording.
+#
+# CLI override: --no-irig-day-advisory
+#
+# Default: true
+# ──────────────────────────────────────────────────────────────────────────
+irig_day_advisory = true
 
 
 [decode]

@@ -34,6 +34,7 @@ const char* ConfigError::what() const throw() { return message_->c_str(); }
 
 DecoderConfig::DecoderConfig()
     : log_level("WARNING"),
+      irig_day_advisory(true),
       time_format(TIMESTAMP_AUTO),
       strict(false),
       error_mode(ERROR_MODE_INLINE),
@@ -72,6 +73,7 @@ bool is_known_key(const std::string& section, const std::string& key) {
     };
     static const Pair known[] = {
         {"logging", "level"},
+        {"logging", "irig_day_advisory"},
         {"decode", "time_format"},
         {"decode", "strict"},
         {"decode", "error_mode"},
@@ -318,6 +320,11 @@ uint8_t parse_small_int(const toml::Value& value, const char* key) {
 // --- whole schema and each can be read against its CONFIG-REFERENCE entry.
 
 void apply_logging(const toml::Document& doc, DecoderConfig& config) {
+    bool advisory = false;
+    if (get_bool(doc, "logging", "irig_day_advisory", advisory)) {
+        config.irig_day_advisory = advisory;
+    }
+
     std::string level;
     if (!get_string(doc, "logging", "level", level)) {
         return;
@@ -594,6 +601,9 @@ DecoderConfig with_overrides(const DecoderConfig& base, const ConfigOverrides& o
 
     if (overrides.log_level.has_value()) {
         out.log_level = overrides.log_level.value();
+    }
+    if (overrides.irig_day_advisory.has_value()) {
+        out.irig_day_advisory = overrides.irig_day_advisory.value();
     }
     if (overrides.time_format.has_value()) {
         out.time_format = overrides.time_format.value();

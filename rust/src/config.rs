@@ -50,6 +50,13 @@ pub const LOOKAHEAD_RECORDS_MAX: usize = 32;
 #[derive(Debug, Clone)]
 pub struct DecoderConfig {
     pub log_level: String,
+    /// L2-LOG-001: emit the one-time IRIG day-of-year advisory. Enabled by
+    /// default, but logged at INFO, so at the default `WARNING` level it is
+    /// already silent -- this key exists so a site that has validated its card
+    /// model against vendor CSV can also keep it out of a `--log-level INFO`
+    /// troubleshooting run. Set via `logging.irig_day_advisory = false` in TOML
+    /// or `--no-irig-day-advisory` on the CLI.
+    pub irig_day_advisory: bool,
     pub time_format: TimestampFormat,
     pub strict: bool,
     pub error_mode: ErrorMode,
@@ -131,6 +138,7 @@ impl Default for DecoderConfig {
     fn default() -> Self {
         Self {
             log_level: "WARNING".to_string(),
+            irig_day_advisory: true,
             time_format: TimestampFormat::Auto,
             strict: false,
             error_mode: ErrorMode::Inline,
@@ -161,6 +169,7 @@ impl Default for DecoderConfig {
 #[derive(Debug, Default, Clone)]
 pub struct ConfigOverrides {
     pub log_level: Option<String>,
+    pub irig_day_advisory: Option<bool>,
     pub time_format: Option<TimestampFormat>,
     pub strict: Option<bool>,
     pub error_mode: Option<ErrorMode>,
@@ -217,6 +226,7 @@ impl DecoderConfig {
             self,
             ov,
             log_level,
+            irig_day_advisory,
             time_format,
             strict,
             error_mode,
@@ -355,6 +365,9 @@ fn apply_logging_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), 
             )));
         }
         cfg.log_level = upper;
+    }
+    if let Some(b) = toml.get_bool("logging", "irig_day_advisory")? {
+        cfg.irig_day_advisory = b;
     }
     Ok(())
 }
@@ -594,6 +607,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
     matches!(
         (section, key),
         ("logging", "level")
+            | ("logging", "irig_day_advisory")
             | ("decode", "time_format")
             | ("decode", "strict")
             | ("decode", "error_mode")
