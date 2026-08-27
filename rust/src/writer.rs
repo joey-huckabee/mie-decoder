@@ -67,6 +67,90 @@ pub fn paths_refer_to_same_file(input: &Path, output: &Path) -> io::Result<bool>
     Ok(input_canon == parent_canon.join(filename))
 }
 
+// ── Commit modes (L2-WRT-015, L2-WRT-016, L2-WRT-023) ─────────────────
+
+/// How a finished temp file is moved onto its destination.
+///
+/// The distinction is the whole of L2-WRT-023. `Replace` is the shipped
+/// default: overwriting an existing destination is what an operator re-running
+/// a batch expects. `NoReplace` is what `--no-clobber` selects, and it has to
+/// be enforced *by the commit itself* — an `exists()` test before the file is
+/// opened answers a question about the past, and between that answer and the
+/// rename any other process may create the destination. The rename then
+/// destroys it, which is the exact outcome the flag exists to prevent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommitMode {
+    /// `rename(2)` / `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`: an existing
+    /// destination is replaced.
+    Replace,
+    /// The destination is claimed atomically, and an existing one is refused
+    /// rather than overwritten.
+    NoReplace,
+}
+
+/// What a `NoReplace` commit did.
+enum NoReplaceOutcome {
+    /// The destination now holds the temp file's contents.
+    Committed,
+    /// The destination already existed. Nothing was written to it.
+    Exists,
+    /// The commit failed for a reason other than the destination existing.
+    Failed(io::Error),
+}
+
+/// Move `temp` onto `dest` without ever replacing an existing file.
+///
+/// Two mechanisms, in order of preference:
+///
+/// 1. **`hard_link` + unlink.** `link(2)` — and `CreateHardLinkW`, which is
+///    what `std::fs::hard_link` calls on Windows — fails with `EEXIST` /
+///    `ERROR_ALREADY_EXISTS` when the destination exists, and otherwise
+///    publishes the *complete* file under its final name in one atomic step.
+///    A concurrent reader watching for the destination therefore never sees a
+///    partial or empty file, exactly as with the replacing rename.
+/// 2. **Exclusive-create reservation, then a replacing rename.** Hard links do
+///    not exist on FAT/exFAT and are refused by some network filesystems, so
+///    the link can fail for reasons that have nothing to do with the
+///    destination. `create_new` claims the name atomically — one of two racing
+///    processes wins it — and the rename that follows overwrites only *our own*
+///    zero-byte reservation. The narrow cost is that the destination is briefly
+///    an empty file, which is why this is the fallback and not the primary.
+///
+/// Note that `std::fs::rename` cannot implement this on its own in either
+/// direction: it replaces on POSIX and on Windows alike, and the no-replace
+/// syscalls that do exist (`renameat2(RENAME_NOREPLACE)`, `MoveFileExW` with no
+/// flags) are reachable only through a `libc`/`windows-sys` dependency this
+/// crate does not have and will not add.
+fn commit_no_replace(temp: &Path, dest: &Path) -> NoReplaceOutcome {
+    match std::fs::hard_link(temp, dest) {
+        Ok(()) => NoReplaceOutcome::Committed,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => NoReplaceOutcome::Exists,
+        Err(_) => reserve_then_rename(temp, dest),
+    }
+}
+
+/// The fallback half of [`commit_no_replace`], split out so the primary path
+/// reads as three lines rather than three lines wrapped around a nested match.
+fn reserve_then_rename(temp: &Path, dest: &Path) -> NoReplaceOutcome {
+    match OpenOptions::new().write(true).create_new(true).open(dest) {
+        Ok(reservation) => {
+            drop(reservation);
+            match std::fs::rename(temp, dest) {
+                Ok(()) => NoReplaceOutcome::Committed,
+                Err(e) => {
+                    // Take the reservation back out. Leaving it would hand the
+                    // operator an empty CSV where the failure message says
+                    // nothing was written.
+                    let _ = std::fs::remove_file(dest);
+                    NoReplaceOutcome::Failed(e)
+                }
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => NoReplaceOutcome::Exists,
+        Err(e) => NoReplaceOutcome::Failed(e),
+    }
+}
+
 // ── AtomicCsvFile (L2-WRT-015, L2-WRT-016) ────────────────────────────
 
 /// Write a CSV to a temp file in the destination's directory, then
@@ -79,6 +163,11 @@ pub fn paths_refer_to_same_file(input: &Path, output: &Path) -> io::Result<bool>
 /// Rename is atomic on POSIX (`rename(2)`) and on NTFS within the
 /// same volume (`MoveFileEx` with replace). Keeping the temp file
 /// in the destination's parent guarantees same-volume placement.
+///
+/// Under [`AtomicCsvFile::no_clobber`] every commit — over the destination and
+/// onto `<destination>.partial` alike — refuses an existing target instead of
+/// replacing it (L2-WRT-023). That refusal is the guarantee; the pre-flight
+/// `exists()` test is only an early, friendlier report of the same condition.
 pub struct AtomicCsvFile {
     final_path: PathBuf,
     temp_path: PathBuf,
@@ -87,6 +176,10 @@ pub struct AtomicCsvFile {
     /// (which Drop would object to).
     writer: Option<BufWriter<File>>,
     committed: bool,
+    /// Selects the commit mode. `Replace` unless the caller opts in through
+    /// [`AtomicCsvFile::no_clobber`], so the default stays L2-WRT-017's
+    /// "overwrite succeeds by default".
+    mode: CommitMode,
 }
 
 impl AtomicCsvFile {
@@ -106,7 +199,24 @@ impl AtomicCsvFile {
             temp_path,
             writer: Some(BufWriter::new(file)),
             committed: false,
+            mode: CommitMode::Replace,
         })
+    }
+
+    /// Select L2-WRT-023's no-replace commit for **every** target this writer
+    /// can produce — the destination itself and `<destination>.partial` alike.
+    ///
+    /// A builder rather than a `create` parameter: `create` is public API, and
+    /// growing its signature is a break the semver gate would be right to
+    /// reject.
+    #[must_use]
+    pub fn no_clobber(mut self, yes: bool) -> Self {
+        self.mode = if yes {
+            CommitMode::NoReplace
+        } else {
+            CommitMode::Replace
+        };
+        self
     }
 
     /// Flush, close the temp file, and atomically rename it over the
@@ -116,31 +226,12 @@ impl AtomicCsvFile {
     /// # Errors
     ///
     /// Returns [`MieError::WriterError`] if the final flush fails, the rename
-    /// over the destination fails, or `commit` is called twice.
+    /// over the destination fails, or `commit` is called twice. Under
+    /// [`AtomicCsvFile::no_clobber`], returns [`MieError::ClobberRefused`] when
+    /// the destination exists at the moment of the commit (L2-WRT-023).
     pub fn commit(mut self) -> MieResult<()> {
-        let Some(writer) = self.writer.take() else {
-            return Err(MieError::WriterError {
-                destination: self.final_path.display().to_string(),
-                source: io::Error::other("AtomicCsvFile::commit called without an active writer"),
-            });
-        };
-        let temp_for_err = self.temp_path.display().to_string();
-        let file = writer.into_inner().map_err(|e| MieError::WriterError {
-            destination: temp_for_err,
-            source: e.into_error(),
-        })?;
-        // Closing the File before rename matters on Windows: NTFS will
-        // not rename a file that has an open handle. POSIX is fine
-        // either way, but explicit close keeps platforms aligned.
-        drop(file);
-        std::fs::rename(&self.temp_path, &self.final_path).map_err(|source| {
-            MieError::WriterError {
-                destination: self.final_path.display().to_string(),
-                source,
-            }
-        })?;
-        self.committed = true;
-        Ok(())
+        let destination = self.final_path.clone();
+        self.commit_onto(&destination)
     }
 
     /// Flush, close the temp file, and atomically rename it to
@@ -153,22 +244,11 @@ impl AtomicCsvFile {
     /// # Errors
     ///
     /// As [`AtomicCsvFile::commit`], but the rename targets
-    /// `<destination>.partial`; the destination itself is left untouched.
+    /// `<destination>.partial`; the destination itself is left untouched. Under
+    /// [`AtomicCsvFile::no_clobber`] an existing `.partial` is refused rather
+    /// than replaced: it is an actual commit target, so L2-WRT-023 covers it
+    /// like any other.
     pub fn commit_partial(mut self) -> MieResult<PathBuf> {
-        let Some(writer) = self.writer.take() else {
-            return Err(MieError::WriterError {
-                destination: self.final_path.display().to_string(),
-                source: io::Error::other(
-                    "AtomicCsvFile::commit_partial called without an active writer",
-                ),
-            });
-        };
-        let temp_for_err = self.temp_path.display().to_string();
-        let file = writer.into_inner().map_err(|e| MieError::WriterError {
-            destination: temp_for_err,
-            source: e.into_error(),
-        })?;
-        drop(file);
         // `<dest>.partial` lives in the destination directory by
         // construction (final_path itself does), so the rename stays on
         // one filesystem and is atomic. The name comes from
@@ -176,14 +256,68 @@ impl AtomicCsvFile {
         // this commits to and the path `commit_targets` pre-flights are
         // the same derivation and cannot drift (L2-WRT-014).
         let partial = partial_path_for(&self.final_path);
-        std::fs::rename(&self.temp_path, &partial).map_err(|source| MieError::WriterError {
-            destination: partial.display().to_string(),
-            source,
-        })?;
-        // Mark committed so Drop does not try to clean up the (now
-        // renamed) temp path.
-        self.committed = true;
+        self.commit_onto(&partial)?;
         Ok(partial)
+    }
+
+    /// The one commit sequence, shared by [`AtomicCsvFile::commit`] and
+    /// [`AtomicCsvFile::commit_partial`] so the two cannot drift in how they
+    /// flush, close, or honour [`CommitMode`]. Each used to spell the sequence
+    /// out for itself, which is how a rule can end up applying to one commit
+    /// target and not the other.
+    ///
+    /// Takes `&mut self` rather than `self` because both callers own the value
+    /// and want it dropped — with `committed` settled — on the way out.
+    fn commit_onto(&mut self, destination: &Path) -> MieResult<()> {
+        let Some(writer) = self.writer.take() else {
+            return Err(MieError::WriterError {
+                destination: self.final_path.display().to_string(),
+                source: io::Error::other("AtomicCsvFile committed without an active writer"),
+            });
+        };
+        let temp_for_err = self.temp_path.display().to_string();
+        let file = writer.into_inner().map_err(|e| MieError::WriterError {
+            destination: temp_for_err,
+            source: e.into_error(),
+        })?;
+        // Closing the File before rename matters on Windows: NTFS will
+        // not rename a file that has an open handle. POSIX is fine
+        // either way, but explicit close keeps platforms aligned.
+        drop(file);
+
+        match self.mode {
+            CommitMode::Replace => {
+                std::fs::rename(&self.temp_path, destination).map_err(|source| {
+                    MieError::WriterError {
+                        destination: destination.display().to_string(),
+                        source,
+                    }
+                })?;
+                self.committed = true;
+            }
+            CommitMode::NoReplace => match commit_no_replace(&self.temp_path, destination) {
+                NoReplaceOutcome::Committed => {
+                    // The link mechanism leaves the temp behind on purpose: it
+                    // published a second name for the same bytes rather than
+                    // moving them. Unlinking is best effort — the destination
+                    // is committed either way, and leaving `committed` false
+                    // when the unlink fails just gives Drop a second attempt.
+                    self.committed = std::fs::remove_file(&self.temp_path).is_ok();
+                }
+                NoReplaceOutcome::Exists => {
+                    return Err(MieError::ClobberRefused {
+                        path: destination.to_path_buf(),
+                    });
+                }
+                NoReplaceOutcome::Failed(source) => {
+                    return Err(MieError::WriterError {
+                        destination: destination.display().to_string(),
+                        source,
+                    });
+                }
+            },
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -526,12 +660,18 @@ pub struct PartialCommit {
 /// both which paths can be committed (L2-WRT-014, via [`commit_targets`]) and
 /// whether the derived errors destination gets its own no-clobber check.
 ///
-/// The collision test covers **every** commit target; the no-clobber test
-/// covers only the destinations a run actually creates — main, and the errors
-/// file in split mode. `.partial` paths are deliberately not clobber-checked,
-/// which is the behaviour that shipped: a `.partial` is written only on a
-/// failure path, and refusing a whole run up front because a stale one is
-/// lying around would be a different rule than L2-WRT-017 states.
+/// The collision test covers **every** commit target and **is** the guarantee:
+/// L2-WRT-014 is a pre-open rule, and once the mapping is live there is nothing
+/// left to refuse.
+///
+/// The no-clobber test here is **not** the guarantee — that lives in the commit
+/// (L2-WRT-023, [`CommitMode::NoReplace`]). `exists()` answers a question about
+/// the past, and between the answer and the rename any other process may create
+/// the destination. What this test buys is an *early* refusal, before a temp
+/// file exists and before a whole file is decoded, with the destination named.
+/// It covers only the two paths a run definitely creates: `.partial` targets are
+/// deliberately left to the commit, so a stale `<dest>.partial` lying around
+/// does not refuse a run that was never going to write one.
 fn preflight_output(output: &Path, split_errors: bool, opts: &WriteOptions) -> MieResult<()> {
     // L2-WRT-014, over every path this run could commit -- not just `output`.
     if let Some(input) = &opts.input_path {
@@ -588,7 +728,7 @@ where
     match output {
         Some(path) => {
             preflight_output(path, false, &opts)?;
-            let mut atomic = AtomicCsvFile::create(path.to_path_buf())?;
+            let mut atomic = AtomicCsvFile::create(path.to_path_buf())?.no_clobber(opts.no_clobber);
 
             let (count, partial_info) = {
                 let mut writer = CsvWriter::new(&mut atomic, path.display().to_string())?;
@@ -689,7 +829,7 @@ where
     // is a plausible recording name (L2-WRT-014).
     let error_path = error_path_for(output);
 
-    let mut main_atomic = AtomicCsvFile::create(output.to_path_buf())?;
+    let mut main_atomic = AtomicCsvFile::create(output.to_path_buf())?.no_clobber(opts.no_clobber);
     let mut errors_atomic: Option<AtomicCsvFile> = None;
 
     let (normal_count, error_count, partial_info) = {
@@ -715,7 +855,9 @@ where
                 main.write_message(&msg)?;
             } else {
                 if error_writer.is_none() {
-                    errors_atomic = Some(AtomicCsvFile::create(error_path.clone())?);
+                    errors_atomic = Some(
+                        AtomicCsvFile::create(error_path.clone())?.no_clobber(opts.no_clobber),
+                    );
                     let Some(inner) = errors_atomic.as_mut() else {
                         return Err(MieError::WriterError {
                             destination: error_path.display().to_string(),
@@ -822,11 +964,20 @@ fn commit_split_outputs(
 
     // Partial path. Rename each temp to its `.partial` counterpart so the
     // operator can inspect what was decoded before the corruption.
+    //
+    // MAIN FIRST, for the same reason as the normal path above and under the
+    // same rule (L2-WRT-019). This is the branch that used to run the other way
+    // round in all three implementations: an errors `.partial` that committed
+    // before a main `.partial` whose rename then failed left the operator an
+    // orphan `<dest>_errors.csv.partial` next to no main output at all -- the
+    // precise residue the main-first order exists to make impossible. That the
+    // normal path got it right and the failure path did not is what a rule
+    // stated over "the commit" rather than over "every commit" buys you.
+    let main_partial_path = main_atomic.commit_partial()?;
     let errors_partial_path = match errors_atomic {
         Some(ea) => Some(ea.commit_partial()?),
         None => None,
     };
-    let main_partial_path = main_atomic.commit_partial()?;
     log_warn!(
         "unrecoverable sync loss at 0x{:X} after {} recovery attempt(s); \
          wrote {} normal + {} error rows as partial to {} (--allow-partial)",
@@ -1227,6 +1378,141 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
+    // ── L2-WRT-023: the no-replace commit ─────────────────────────────
+    //
+    // These drive `AtomicCsvFile` directly rather than going through
+    // `write_csv`, because the whole point is the window the pre-flight cannot
+    // see: the destination is created AFTER the writer opened its temp, which is
+    // exactly where a second process lands. Every one of them passes on the old
+    // code if you only check the pre-flight, and fails on it here.
+
+    /// A destination that appears after the writer opened its temp is refused,
+    /// not overwritten. This is the race `exists()` cannot close.
+    /// Requirements: L2-WRT-017, L2-WRT-023
+    #[test]
+    fn no_clobber_commit_refuses_a_destination_created_after_the_preflight() {
+        let dest = unique_path(".csv");
+        let atomic = {
+            let mut a = AtomicCsvFile::create(dest.clone())
+                .unwrap()
+                .no_clobber(true);
+            a.write_all(b"ours\n").unwrap();
+            a
+        };
+        // The other process wins the race.
+        std::fs::write(&dest, b"theirs\n").unwrap();
+
+        let temp = atomic.temp_path.clone();
+        match atomic.commit() {
+            Err(MieError::ClobberRefused { path }) => assert_eq!(path, dest),
+            other => panic!("expected ClobberRefused, got {other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "theirs\n");
+        assert!(!temp.exists(), "a refused commit must leave no temp behind");
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// The `.partial` target gets the same rule. It is never pre-flighted, so
+    /// before L2-WRT-023 it was overwritten unconditionally under --no-clobber.
+    /// Requirements: L2-WRT-016, L2-WRT-023, L3-WRT-005
+    #[test]
+    fn no_clobber_commit_partial_refuses_an_existing_partial() {
+        let dest = unique_path(".csv");
+        let partial = partial_path_for(&dest);
+        std::fs::write(&partial, b"earlier forensics\n").unwrap();
+
+        let mut atomic = AtomicCsvFile::create(dest.clone())
+            .unwrap()
+            .no_clobber(true);
+        atomic.write_all(b"ours\n").unwrap();
+        let temp = atomic.temp_path.clone();
+        match atomic.commit_partial() {
+            Err(MieError::ClobberRefused { path }) => assert_eq!(path, partial),
+            other => panic!("expected ClobberRefused on the .partial, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(&partial).unwrap(),
+            "earlier forensics\n"
+        );
+        assert!(!temp.exists(), "a refused commit must leave no temp behind");
+        let _ = std::fs::remove_file(&partial);
+    }
+
+    /// A no-replace commit onto a free name is an ordinary success, and leaves
+    /// no temp behind -- the link mechanism has to unlink it explicitly.
+    /// Requirements: L2-WRT-023
+    #[test]
+    fn no_clobber_commit_writes_normally_when_the_destination_is_free() {
+        let dest = unique_path(".csv");
+        let mut atomic = AtomicCsvFile::create(dest.clone())
+            .unwrap()
+            .no_clobber(true);
+        atomic.write_all(b"rows\n").unwrap();
+        let temp = atomic.temp_path.clone();
+        atomic.commit().unwrap();
+
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "rows\n");
+        assert!(!temp.exists(), "the temp must not survive a commit");
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// The default is unchanged: without --no-clobber an existing destination is
+    /// still replaced (L2-WRT-017's "overwrite succeeds by default").
+    /// Requirements: L2-WRT-017
+    #[test]
+    fn default_commit_still_replaces_an_existing_destination() {
+        let dest = unique_path(".csv");
+        std::fs::write(&dest, b"stale\n").unwrap();
+        let mut atomic = AtomicCsvFile::create(dest.clone()).unwrap();
+        atomic.write_all(b"fresh\n").unwrap();
+        atomic.commit().unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "fresh\n");
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// The `.partial` half of the default, for the same reason.
+    /// Requirements: L2-WRT-016
+    #[test]
+    fn default_commit_partial_still_replaces_an_existing_partial() {
+        let dest = unique_path(".csv");
+        let partial = partial_path_for(&dest);
+        std::fs::write(&partial, b"stale\n").unwrap();
+        let mut atomic = AtomicCsvFile::create(dest.clone()).unwrap();
+        atomic.write_all(b"fresh\n").unwrap();
+        assert_eq!(atomic.commit_partial().unwrap(), partial);
+        assert_eq!(std::fs::read_to_string(&partial).unwrap(), "fresh\n");
+        let _ = std::fs::remove_file(&partial);
+    }
+
+    /// The fallback path, exercised directly. On a filesystem with no hard links
+    /// `commit_no_replace` reserves the name with `create_new` instead, and must
+    /// still refuse a taken one -- so both arms of the fallback are pinned, not
+    /// just the one this machine's filesystem happens to reach.
+    /// Requirements: L2-WRT-023, L3-RS-017
+    #[test]
+    fn reserve_then_rename_commits_and_refuses_like_the_link_path() {
+        let free = unique_path(".csv");
+        let temp = unique_path(".tmp");
+        std::fs::write(&temp, b"rows\n").unwrap();
+        match reserve_then_rename(&temp, &free) {
+            NoReplaceOutcome::Committed => {}
+            _ => panic!("a free destination must commit"),
+        }
+        assert_eq!(std::fs::read_to_string(&free).unwrap(), "rows\n");
+
+        let temp2 = unique_path(".tmp");
+        std::fs::write(&temp2, b"other\n").unwrap();
+        match reserve_then_rename(&temp2, &free) {
+            NoReplaceOutcome::Exists => {}
+            _ => panic!("a taken destination must be refused"),
+        }
+        // Refused, so the destination still holds the first writer's bytes and
+        // no zero-byte reservation was left in its place.
+        assert_eq!(std::fs::read_to_string(&free).unwrap(), "rows\n");
+        let _ = std::fs::remove_file(&free);
+        let _ = std::fs::remove_file(&temp2);
+    }
+
     /// Requirements: L2-WRT-014
     #[test]
     fn paths_refer_to_same_file_existing() {
@@ -1605,6 +1891,125 @@ mod tests {
         let _ = std::fs::remove_dir(&dest);
     }
 
+    /// Requirements: L2-WRT-016, L2-WRT-019
+    ///
+    /// The `--allow-partial` half of `split_main_commit_failure_leaves_neither_file`,
+    /// and the direct regression for the bug that branch carried. Force the MAIN
+    /// `.partial` rename to fail (a directory sits on it) and assert that no
+    /// errors `.partial` appears. Before the fix this branch committed errors
+    /// first, so the errors `.partial` was already on disk by the time the main
+    /// one failed -- an orphan forensic artifact with no main output beside it.
+    #[test]
+    fn split_partial_main_commit_failure_leaves_no_orphan_errors_partial() {
+        let dest = unique_path(".csv");
+        let err_dest = error_path_for(&dest);
+        let main_partial = partial_path_for(&dest);
+        let errors_partial = partial_path_for(&err_dest);
+        std::fs::create_dir(&main_partial).unwrap();
+
+        let messages: Vec<MieResult<MieMessage>> = vec![
+            Ok(sample_msg()),
+            Ok(error_msg()),
+            Err(MieError::UnrecoverableSyncLoss {
+                offset: 0x99,
+                sync_losses: 2,
+            }),
+        ];
+        let opts = WriteOptions {
+            input_path: None,
+            no_clobber: false,
+            allow_partial: true,
+        };
+        let result = write_csv_split(messages, &dest, opts);
+
+        assert!(
+            result.is_err(),
+            "a failed main .partial commit should surface as Err"
+        );
+        assert!(
+            !errors_partial.exists(),
+            "errors .partial must not appear when the main .partial commit fails first"
+        );
+        assert!(!dest.exists(), "the destination itself is never written");
+        assert!(!err_dest.exists());
+        assert!(!make_temp_path(&dest).exists(), "main temp leaked");
+        assert!(!make_temp_path(&err_dest).exists(), "errors temp leaked");
+
+        let _ = std::fs::remove_dir(&main_partial);
+    }
+
+    /// Requirements: L2-WRT-016, L2-WRT-019
+    ///
+    /// The mirror image: the MAIN `.partial` commits, then the errors one
+    /// fails. The residue is the primary artifact, which is the whole point of
+    /// the order.
+    #[test]
+    fn split_partial_errors_commit_failure_leaves_the_main_partial() {
+        let dest = unique_path(".csv");
+        let err_dest = error_path_for(&dest);
+        let main_partial = partial_path_for(&dest);
+        let errors_partial = partial_path_for(&err_dest);
+        std::fs::create_dir(&errors_partial).unwrap();
+
+        let messages: Vec<MieResult<MieMessage>> = vec![
+            Ok(sample_msg()),
+            Ok(error_msg()),
+            Err(MieError::UnrecoverableSyncLoss {
+                offset: 0x99,
+                sync_losses: 2,
+            }),
+        ];
+        let opts = WriteOptions {
+            input_path: None,
+            no_clobber: false,
+            allow_partial: true,
+        };
+        let result = write_csv_split(messages, &dest, opts);
+
+        assert!(
+            result.is_err(),
+            "a failed errors .partial commit should surface as Err"
+        );
+        let body = std::fs::read_to_string(&main_partial)
+            .expect("the main .partial must survive an errors-commit failure");
+        assert!(body.starts_with("TIME_STAMP,RT,MSG,"));
+        assert!(
+            errors_partial.is_dir(),
+            "the errors .partial target should be untouched (still a dir)"
+        );
+
+        let _ = std::fs::remove_file(&main_partial);
+        let _ = std::fs::remove_dir(&errors_partial);
+    }
+
+    /// The wiring, end to end: `WriteOptions::no_clobber` has to reach the
+    /// commit, not just the pre-flight. The destination is created after
+    /// `write_csv` is already streaming -- which the pre-flight cannot see --
+    /// by handing it a message iterator that writes the file as it is consumed.
+    /// Requirements: L2-WRT-017, L2-WRT-023
+    #[test]
+    fn write_csv_no_clobber_refuses_a_destination_that_appears_mid_decode() {
+        let dest = unique_path(".csv");
+        let racer = dest.clone();
+        // The "other process": it runs between the pre-flight (already done) and
+        // the commit (not yet reached), because it runs while the stream drains.
+        let messages = std::iter::once(Ok(sample_msg())).inspect(move |_| {
+            std::fs::write(&racer, b"theirs\n").unwrap();
+        });
+        let opts = WriteOptions {
+            input_path: None,
+            no_clobber: true,
+            allow_partial: false,
+        };
+        match write_csv(messages, Some(&dest), opts) {
+            Err(MieError::ClobberRefused { path }) => assert_eq!(path, dest),
+            other => panic!("expected ClobberRefused, got {other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "theirs\n");
+        assert!(!make_temp_path(&dest).exists(), "temp leaked after refusal");
+        let _ = std::fs::remove_file(&dest);
+    }
+
     /// Requirements: L3-WRT-002
     #[test]
     fn atomic_commit_partial_writes_dot_partial_and_leaves_destination() {
@@ -1703,6 +2108,35 @@ mod tests {
         partial_name.push(".partial");
         let partial = dest.parent().unwrap().join(partial_name);
         assert!(!partial.exists());
+    }
+
+    /// Every stage of a commit -- the flush, the close, the move -- reports as
+    /// `WriterError` and leaves the destination untouched with no temp behind
+    /// (L2-WRT-024). The failure is provoked at the move, which is the stage a
+    /// test can actually reach: renaming a file onto a directory fails on POSIX
+    /// (EISDIR) and on Windows alike. The flush and close stages are covered by
+    /// construction here rather than by injection -- `BufWriter::into_inner`
+    /// hands their error back as a value this function already maps, so there is
+    /// no path by which one could escape unclassified. Python had no such
+    /// guarantee, which is why it needed its own injected-stream test.
+    /// Requirements: L2-WRT-024
+    #[test]
+    fn a_failed_commit_reports_a_writer_error_and_leaves_nothing_behind() {
+        let dest = unique_path(".csv");
+        std::fs::create_dir(&dest).unwrap();
+
+        let mut atomic = AtomicCsvFile::create(dest.clone()).unwrap();
+        let temp = atomic.temp_path.clone();
+        atomic.write_all(b"rows\n").unwrap();
+        match atomic.commit() {
+            Err(MieError::WriterError { destination, .. }) => {
+                assert_eq!(destination, dest.display().to_string());
+            }
+            other => panic!("expected WriterError, got {other:?}"),
+        }
+        assert!(!temp.exists(), "the temp must not survive a failed commit");
+        assert!(dest.is_dir(), "the destination is untouched");
+        let _ = std::fs::remove_dir(&dest);
     }
 
     /// Requirements: L2-WRT-018

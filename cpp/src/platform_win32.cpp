@@ -232,7 +232,8 @@ void MappedFile::close() {
 // AtomicFile
 // ---------------------------------------------------------------------------
 
-AtomicFile::AtomicFile() : handle_(0), temp_path_(), final_path_(), buffer_(), committed_(false) {
+AtomicFile::AtomicFile()
+    : handle_(0), temp_path_(), final_path_(), buffer_(), committed_(false), mode_(COMMIT_REPLACE) {
     buffer_.reserve(kWriteBufferSize);
 }
 
@@ -331,13 +332,26 @@ bool AtomicFile::write(const char* bytes, std::size_t len, OsError& err) {
     return true;
 }
 
-bool AtomicFile::commit(OsError& err) { return commit_with_suffix(std::string(), err); }
+CommitStatus AtomicFile::commit(OsError& err) { return commit_with_suffix(std::string(), err); }
 
-bool AtomicFile::commit_with_suffix(const std::string& suffix, OsError& err) {
+void AtomicFile::set_commit_mode(CommitMode mode) { mode_ = mode; }
+
+CommitStatus AtomicFile::commit_with_suffix(const std::string& suffix, OsError& err) {
     err.clear();
+    // The final flush and the close are PART OF THE COMMIT (L2-WRT-024): they
+    // are where the last buffered rows actually reach the filesystem, so they
+    // are the likeliest place for a disk-full error to land, and a failure in
+    // either means the destination must not be replaced.
     if (!flush(err)) {
-        return false;
+        return COMMIT_ERROR;
     }
+    if (!finish_stream(err)) {
+        return COMMIT_ERROR;
+    }
+    return place(final_path_ + suffix, err);
+}
+
+bool AtomicFile::finish_stream(OsError& err) {
     if (handle_ == 0) {
         err.code = ERROR_INVALID_HANDLE;
         err.message = "temporary file is not open";
@@ -354,19 +368,33 @@ bool AtomicFile::commit_with_suffix(const std::string& suffix, OsError& err) {
         return false;
     }
     handle_ = 0;
+    return true;
+}
 
-    const std::string destination = final_path_ + suffix;
+CommitStatus AtomicFile::place(const std::string& destination, OsError& err) {
     const std::wstring wide_temp = to_wide(temp_path_);
     const std::wstring wide_dest = to_wide(destination);
 
     // MOVEFILE_REPLACE_EXISTING is the whole reason this is not std::rename.
-    if (::MoveFileExW(wide_temp.c_str(), wide_dest.c_str(), MOVEFILE_REPLACE_EXISTING) == 0) {
-        fill_last_error(err);
-        return false;
+    // Withholding it is equally deliberate: MoveFileExW with no flags is an
+    // ATOMIC no-replace move -- it fails with ERROR_ALREADY_EXISTS rather than
+    // destroying the destination -- which is precisely what L2-WRT-023 asks for,
+    // in one call, on every filesystem including FAT. The POSIX backend needs
+    // link(2) and a reservation fallback to reach the same guarantee; here the
+    // OS offers it directly, so this backend takes it.
+    const DWORD flags = (mode_ == COMMIT_REPLACE) ? MOVEFILE_REPLACE_EXISTING : 0;
+    if (::MoveFileExW(wide_temp.c_str(), wide_dest.c_str(), flags) == 0) {
+        const DWORD captured = ::GetLastError();
+        if (mode_ == COMMIT_NO_REPLACE &&
+            (captured == ERROR_ALREADY_EXISTS || captured == ERROR_FILE_EXISTS)) {
+            return COMMIT_EXISTS;
+        }
+        fill_last_error(err, captured);
+        return COMMIT_ERROR;
     }
     committed_ = true;
     temp_path_.clear();
-    return true;
+    return COMMIT_DONE;
 }
 
 void AtomicFile::abort() {

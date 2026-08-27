@@ -497,6 +497,110 @@ TEST_CASE("split mode leaves neither file behind on failure", "[writer][L2-WRT-0
     CHECK_FALSE(exists(errors_path));
 }
 
+TEST_CASE("split mode commits the MAIN .partial first",
+          "[writer][L2-WRT-016][L2-WRT-019][L2-WRT-023]") {
+    // The --allow-partial half of the main-before-errors rule, and the direct
+    // regression for the bug that branch carried: it committed errors first, so
+    // an errors `.partial` was already on disk by the time a failing main
+    // `.partial` commit unwound -- an orphan forensic artifact with no main
+    // output beside it.
+    //
+    // The main commit is made to fail with --no-clobber and a pre-existing
+    // `<dest>.partial` rather than by planting a directory on the path. There is
+    // no mkdir in the platform layer and adding one for a test would widen the
+    // surface `assert-platform-confined.sh` exists to keep narrow (the same
+    // reasoning test_config.cpp records for its not-a-regular-file case). This
+    // spelling is the better test anyway: it is a real supported invocation
+    // rather than a planted filesystem oddity, and it pins L2-WRT-023's rule
+    // that a `.partial` is a commit target like any other in the same breath.
+    TempPath out("splitpartialorder.csv");
+    const std::string errors_path = out.also_remove(mie::error_path_for(out.str()));
+    const std::string main_partial = out.sibling(".partial");
+    const std::string errors_partial = out.also_remove(errors_path + ".partial");
+    write_raw(main_partial, "EARLIER FORENSICS");
+
+    std::vector<mie::MieMessage> messages;
+    messages.push_back(sample(100));
+    messages.push_back(errored());
+    VectorSource source(messages);
+    source.throw_at_end(mie::MieError::unrecoverable_sync_loss(0x99, 2));
+
+    mie::WriteOptions options;
+    options.no_clobber = true;
+    options.allow_partial = true;
+
+    CHECK_THROWS_AS(mie::write_csv_split(source, out.str(), options), mie::MieError);
+    CHECK(read_raw(main_partial) == "EARLIER FORENSICS");
+    CHECK_FALSE(exists(errors_partial));
+    CHECK_FALSE(exists(out.str()));
+    CHECK_FALSE(exists(errors_path));
+}
+
+TEST_CASE("split mode leaves the main .partial when the errors .partial is refused",
+          "[writer][L2-WRT-016][L2-WRT-019][L2-WRT-023]") {
+    // The mirror image. The main `.partial` commits, the errors one is refused,
+    // and what is left on disk is the primary artifact -- which is the whole
+    // point of the order.
+    TempPath out("splitpartialorder2.csv");
+    const std::string errors_path = out.also_remove(mie::error_path_for(out.str()));
+    const std::string main_partial = out.sibling(".partial");
+    const std::string errors_partial = out.also_remove(errors_path + ".partial");
+    write_raw(errors_partial, "EARLIER ERRORS");
+
+    std::vector<mie::MieMessage> messages;
+    messages.push_back(sample(100));
+    messages.push_back(errored());
+    VectorSource source(messages);
+    source.throw_at_end(mie::MieError::unrecoverable_sync_loss(0x99, 2));
+
+    mie::WriteOptions options;
+    options.no_clobber = true;
+    options.allow_partial = true;
+
+    CHECK_THROWS_AS(mie::write_csv_split(source, out.str(), options), mie::MieError);
+    CHECK(read_raw(main_partial).find("192:15:54:50.000100") != std::string::npos);
+    CHECK(read_raw(errors_partial) == "EARLIER ERRORS");
+}
+
+TEST_CASE("no-clobber refuses a destination that appears mid-decode",
+          "[writer][L2-WRT-017][L2-WRT-023]") {
+    // The race the pre-flight cannot close: the destination is created while the
+    // stream is still draining, which is after the pre-flight and before the
+    // commit. Two concurrent runs of the same command both pass the pre-flight,
+    // and a replacing rename then lets the second silently destroy the first's
+    // output -- the exact outcome --no-clobber exists to prevent.
+    const TempPath out("clobberrace.csv");
+
+    class RacingSource : public mie::MessageSource {
+      public:
+        RacingSource(const mie::MieMessage& message, const std::string& destination)
+            : message_(message), destination_(destination), sent_(false) {}
+
+        bool next(mie::MieMessage& target) override {
+            if (sent_) {
+                return false;
+            }
+            sent_ = true;
+            target = message_;
+            // The other process wins the race, right here.
+            write_raw(destination_, "THEIRS");
+            return true;
+        }
+
+      private:
+        mie::MieMessage message_;
+        std::string destination_;
+        bool sent_;
+    };
+
+    mie::WriteOptions options;
+    options.no_clobber = true;
+    RacingSource source(sample(), out.str());
+
+    CHECK_THROWS_AS(mie::write_csv(source, to(out), options), mie::MieError);
+    CHECK(read_raw(out.str()) == "THEIRS");
+}
+
 TEST_CASE("split mode honours no-clobber on the errors path too",
           "[writer][L2-WRT-017][L2-ERR-008]") {
     // The errors path needs its own check: it is derived from the output, so

@@ -6,6 +6,7 @@ exercise the same behavior.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -189,6 +190,55 @@ def test_expand_glob_matches_and_sorts(tmp_path: Path) -> None:
     (tmp_path / "c.csv").write_bytes(b"")
     matched = [p.name for p in expand_glob(str(tmp_path / "*.mie"))]
     assert matched == ["a.mie", "b.mie"]  # sorted, .csv excluded
+
+
+@pytest.mark.requirement("L2-MRG-001")
+def test_expand_glob_matches_files_and_skips_directories(tmp_path: Path) -> None:
+    """A DIRECTORY whose name matches the pattern is not an input.
+
+    It matched in the C++ implementation, which then failed to map it -- so the
+    same ``--glob`` produced a full batch on two implementations and a failure
+    on the third (L2-MRG-001 clause 4).
+    """
+    (tmp_path / "a.mie").write_bytes(b"\x00\x00")
+    (tmp_path / "b.mie").write_bytes(b"\x00\x00")
+    (tmp_path / "archive.mie").mkdir()
+    matched = [p.name for p in expand_glob(str(tmp_path / "*.mie"))]
+    assert matched == ["a.mie", "b.mie"]
+
+
+@pytest.mark.requirement("L2-MRG-001")
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need elevation on Windows")
+def test_expand_glob_follows_symlinks_and_skips_dangling_ones(tmp_path: Path) -> None:
+    """A symlink to a recording IS a recording; a dangling one is not.
+
+    This is the clause Rust's ``DirEntry::file_type`` got wrong -- it does not
+    follow symlinks, so a symlinked recording answered "not a file" there while
+    this implementation kept it.
+    """
+    real = tmp_path / "real.mie"
+    real.write_bytes(b"\x00\x00")
+    (tmp_path / "link.mie").symlink_to(real)
+    (tmp_path / "dangling.mie").symlink_to(tmp_path / "gone.bin")
+    matched = [p.name for p in expand_glob(str(tmp_path / "*.mie"))]
+    assert matched == ["link.mie", "real.mie"]
+
+
+@pytest.mark.requirement("L2-MRG-001")
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash IS a separator on Windows")
+def test_expand_glob_does_not_treat_a_backslash_as_a_separator_on_posix(
+    tmp_path: Path,
+) -> None:
+    """On POSIX a backslash is an ordinary filename character.
+
+    C++ split on it regardless of platform, so one pattern resolved to a file in
+    the current directory here and to a pattern inside a subdirectory there
+    (L2-MRG-001 clause 1).
+    """
+    (tmp_path / "odd\\name.mie").write_bytes(b"\x00\x00")
+    (tmp_path / "plain.mie").write_bytes(b"\x00\x00")
+    matched = [p.name for p in expand_glob(str(tmp_path / "odd\\name*.mie"))]
+    assert matched == ["odd\\name.mie"]
 
 
 @pytest.mark.requirement("L2-MRG-001")

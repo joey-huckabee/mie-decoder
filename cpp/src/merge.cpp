@@ -188,11 +188,21 @@ bool expand_glob(const std::string& pattern, std::vector<std::string>& out,
     err.clear();
     out.clear();
 
-    // Split on the LAST separator. Both are accepted on both platforms: a
-    // config file or a script written on one host is routinely run on the
-    // other, and a backslash is not a legal filename character on Windows
-    // anyway.
-    const std::size_t slash = pattern.find_last_of("/\\");
+    // Split on the LAST separator, and let the platform layer say what a
+    // separator IS. This used to spell the set out as "/\\" on both platforms,
+    // which is right on Windows and wrong on POSIX, where a backslash is an
+    // ordinary filename character: `--glob 'odd\name*.mie'` was one pattern in
+    // the current directory to Rust and Python (whose Path types agree with the
+    // platform) and a `name*.mie` pattern inside a directory called `odd` here.
+    // Identical expansion is the requirement (L2-MRG-001), and
+    // `platform::is_separator` is where that question is already answered once.
+    std::size_t slash = std::string::npos;
+    for (std::size_t i = pattern.size(); i > 0; --i) {
+        if (platform::is_separator(pattern[i - 1])) {
+            slash = i - 1;
+            break;
+        }
+    }
     std::string directory;
     std::string name_pattern;
     // Everything up to AND INCLUDING the separator, reused verbatim when
@@ -221,9 +231,30 @@ bool expand_glob(const std::string& pattern, std::vector<std::string>& out,
     }
 
     for (std::size_t i = 0; i < names.size(); ++i) {
-        if (glob_match(name_pattern, names[i])) {
-            out.push_back(prefix + names[i]);
+        // Name test before the stat: a directory of thousands of entries should
+        // cost one stat per MATCH, not one per entry.
+        if (!glob_match(name_pattern, names[i])) {
+            continue;
         }
+        const std::string candidate = prefix + names[i];
+        // A glob resolves to FILES. `list_directory` returns every entry --
+        // subdirectories, fifos, devices -- and matching them all is what made a
+        // directory named `archive.mie` an input here while Rust and Python
+        // silently skipped it: this implementation then failed to map it, and a
+        // batch the other two decoded completely came back short (L2-MRG-001).
+        //
+        // `file_metadata` stats through symlinks, so a recording reached through
+        // a link is a recording, and a dangling link answers false and is
+        // skipped -- both matching the other two. An entry that cannot be
+        // stat'ed at all is skipped rather than raised: it is a directory
+        // listing racing a deletion, not a reason to fail the whole run.
+        uint64_t size = 0;
+        bool is_regular = false;
+        platform::OsError probe;
+        if (!platform::file_metadata(candidate, size, is_regular, probe) || !is_regular) {
+            continue;
+        }
+        out.push_back(candidate);
     }
     // Lexicographic, so two hosts enumerating the same directory merge in the
     // same order. Directory order is whatever the filesystem feels like, which

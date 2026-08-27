@@ -118,6 +118,17 @@ pub fn glob_match(pattern: &str, name: &str) -> bool {
 /// sorted lexicographically by path (deterministic across implementations,
 /// L2-MRG-001).
 ///
+/// "Regular file" is decided **after following symlinks** (`Path::is_file`, not
+/// `DirEntry::file_type`). The two disagree on exactly one entry — a symlink
+/// pointing at a recording — and `DirEntry::file_type` does not follow it, so
+/// this used to drop the symlink that Python's `entry.is_file()` kept. A
+/// recording reached through a symlink is a recording; the same `--glob` has to
+/// resolve to the same set in every implementation (L2-MRG-001), and this is the
+/// reading that agrees with the shell.
+///
+/// A dangling symlink answers `false` and is skipped, which is also what a
+/// broken link deserves: the merge would only fail to open it a moment later.
+///
 /// # Errors
 ///
 /// Returns the [`io::Error`] from enumerating the directory. A pattern matching
@@ -136,13 +147,17 @@ pub fn expand_glob(pattern: &str) -> io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
-        if !entry.file_type()?.is_file() {
+        // Name test before the stat: a directory of thousands of entries should
+        // cost one `stat` per *match*, not one per entry.
+        let fname = entry.file_name().to_string_lossy().into_owned();
+        if !glob_match(&name_pat, &fname) {
             continue;
         }
-        let fname = entry.file_name().to_string_lossy().into_owned();
-        if glob_match(&name_pat, &fname) {
-            out.push(entry.path());
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
         }
+        out.push(path);
     }
     out.sort();
     Ok(out)
@@ -663,6 +678,116 @@ mod tests {
         // No special meaning for other metacharacters.
         assert!(glob_match("a.b", "a.b"));
         assert!(!glob_match("a.b", "axb"));
+    }
+
+    /// A scratch directory under the system temp, removed on drop.
+    struct GlobDir(PathBuf);
+
+    impl GlobDir {
+        fn new(tag: &str) -> Self {
+            static C: AtomicU64 = AtomicU64::new(0);
+            let n = C.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir =
+                std::env::temp_dir().join(format!("mie-glob-{tag}-{}-{n}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn file(&self, name: &str) -> PathBuf {
+            let p = self.0.join(name);
+            fs::write(&p, b"\x00\x00").unwrap();
+            p
+        }
+
+        fn names(&self, pattern: &str) -> Vec<String> {
+            expand_glob(&self.0.join(pattern).to_string_lossy())
+                .unwrap()
+                .into_iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        }
+    }
+
+    impl Drop for GlobDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A DIRECTORY whose name matches the pattern is not an input. It matched in
+    /// the C++ implementation, which then failed to map it -- so the same
+    /// `--glob` produced a full batch on two implementations and a failure on
+    /// the third (L2-MRG-001 clause 4).
+    /// Requirements: L2-MRG-001
+    #[test]
+    fn expand_glob_matches_files_and_skips_directories() {
+        let d = GlobDir::new("dirs");
+        d.file("a.mie");
+        d.file("b.mie");
+        fs::create_dir(d.0.join("archive.mie")).unwrap();
+
+        let mut got = d.names("*.mie");
+        got.sort();
+        assert_eq!(got, vec!["a.mie".to_string(), "b.mie".to_string()]);
+    }
+
+    /// Sorting is lexicographic by full path, so two hosts enumerating one
+    /// directory merge in the same order whatever the filesystem returns.
+    /// Requirements: L2-MRG-001
+    #[test]
+    fn expand_glob_sorts_lexicographically() {
+        let d = GlobDir::new("sort");
+        for name in ["c.mie", "a.mie", "b.mie"] {
+            d.file(name);
+        }
+        assert_eq!(
+            d.names("*.mie"),
+            vec![
+                "a.mie".to_string(),
+                "b.mie".to_string(),
+                "c.mie".to_string()
+            ]
+        );
+    }
+
+    /// A symlink to a recording IS a recording; a dangling one is not.
+    ///
+    /// This is the clause `DirEntry::file_type` got wrong: it does not follow
+    /// symlinks, so a symlinked recording answered "not a file" here while
+    /// Python's `entry.is_file()` kept it. Unix-only because creating a symlink
+    /// on Windows needs Developer Mode or an elevated process, and a test that
+    /// silently skips on most Windows hosts is worse than one that says so.
+    /// Requirements: L2-MRG-001
+    #[cfg(unix)]
+    #[test]
+    fn expand_glob_follows_symlinks_and_skips_dangling_ones() {
+        let d = GlobDir::new("links");
+        let real = d.file("real.mie");
+        std::os::unix::fs::symlink(&real, d.0.join("link.mie")).unwrap();
+        std::os::unix::fs::symlink(d.0.join("gone.bin"), d.0.join("dangling.mie")).unwrap();
+
+        let mut got = d.names("*.mie");
+        got.sort();
+        assert_eq!(
+            got,
+            vec!["link.mie".to_string(), "real.mie".to_string()],
+            "a symlinked recording is matched; a dangling link is not"
+        );
+    }
+
+    /// On POSIX a backslash is an ordinary filename character, not a separator.
+    /// C++ split on it regardless of platform, so one pattern resolved to a file
+    /// in the current directory for Rust and Python and to a pattern inside a
+    /// subdirectory for C++ (L2-MRG-001 clause 1).
+    /// Requirements: L2-MRG-001
+    #[cfg(unix)]
+    #[test]
+    fn expand_glob_does_not_treat_a_backslash_as_a_separator_on_posix() {
+        let d = GlobDir::new("backslash");
+        d.file("odd\\name.mie");
+        d.file("plain.mie");
+        assert_eq!(d.names("odd\\name*.mie"), vec!["odd\\name.mie".to_string()]);
     }
 
     /// A message whose wire content is driven by `seq`, so a stream of them

@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import errno
 import io
+import os
 import sys
 from pathlib import Path
 
 import pytest
 
-from mie_decoder.exceptions import MieWriterError
+from mie_decoder.exceptions import MieClobberRefusedError, MieWriterError
 from mie_decoder.reader import MieFileReader
 from mie_decoder.writer import (
     CSV_HEADER,
@@ -110,6 +111,186 @@ def test_atomic_commit_failure_wraps_writer_error(tmp_path: Path) -> None:
         atomic.commit()
     # Temp must be cleaned up after the failed commit.
     assert _leftover_temps(dest) == []
+
+
+# ── L2-WRT-023: the no-replace commit ──────────────────────────────────
+#
+# These drive ``_AtomicCsvFile`` directly rather than going through
+# ``write_csv``, because the whole point is the window the pre-flight cannot
+# see: the destination is created AFTER the writer opened its temp, which is
+# exactly where a second process lands.
+
+
+@pytest.mark.requirement("L2-WRT-017", "L2-WRT-023")
+def test_no_clobber_commit_refuses_a_destination_created_after_the_preflight(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "out.csv"
+    atomic = _AtomicCsvFile(dest, no_clobber=True)
+    atomic.stream.write("ours\n")
+    # The other process wins the race.
+    dest.write_text("theirs\n")
+
+    with pytest.raises(MieClobberRefusedError):
+        atomic.commit()
+    assert dest.read_text() == "theirs\n", "a refused commit must not touch the file"
+    assert _leftover_temps(dest) == [], "a refused commit must leave no temp behind"
+
+
+@pytest.mark.requirement("L2-WRT-016", "L2-WRT-023", "L3-WRT-005")
+def test_no_clobber_commit_partial_refuses_an_existing_partial(tmp_path: Path) -> None:
+    # The .partial target is never pre-flighted, so before L2-WRT-023 it was
+    # overwritten unconditionally even under --no-clobber.
+    dest = tmp_path / "out.csv"
+    partial = dest.with_name("out.csv.partial")
+    partial.write_text("earlier forensics\n")
+
+    atomic = _AtomicCsvFile(dest, no_clobber=True)
+    atomic.stream.write("ours\n")
+    with pytest.raises(MieClobberRefusedError):
+        atomic.commit_partial()
+    assert partial.read_text() == "earlier forensics\n"
+    assert _leftover_temps(dest) == []
+
+
+@pytest.mark.requirement("L2-WRT-023")
+def test_no_clobber_commit_writes_normally_when_the_destination_is_free(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "out.csv"
+    atomic = _AtomicCsvFile(dest, no_clobber=True)
+    atomic.stream.write("rows\n")
+    atomic.commit()
+    assert dest.read_text() == "rows\n"
+    # The link mechanism has to unlink the temp explicitly -- it published a
+    # second name for the same bytes rather than moving them.
+    assert _leftover_temps(dest) == []
+
+
+@pytest.mark.requirement("L2-WRT-017")
+def test_default_commit_still_replaces_an_existing_destination(tmp_path: Path) -> None:
+    dest = tmp_path / "out.csv"
+    dest.write_text("stale\n")
+    atomic = _AtomicCsvFile(dest)
+    atomic.stream.write("fresh\n")
+    atomic.commit()
+    assert dest.read_text() == "fresh\n"
+
+
+@pytest.mark.requirement("L2-WRT-016")
+def test_default_commit_partial_still_replaces_an_existing_partial(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "out.csv"
+    partial = dest.with_name("out.csv.partial")
+    partial.write_text("stale\n")
+    atomic = _AtomicCsvFile(dest)
+    atomic.stream.write("fresh\n")
+    assert atomic.commit_partial() == partial
+    assert partial.read_text() == "fresh\n"
+
+
+@pytest.mark.requirement("L2-WRT-023", "L3-PY-018")
+def test_no_replace_falls_back_to_a_reservation_when_hard_links_are_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fallback arm, forced.
+
+    On this machine ``os.link`` works, so the reservation path would otherwise
+    never run -- and a fallback nothing exercises is a fallback nobody knows is
+    broken. ``EPERM`` stands in for the real reasons a link fails on a
+    filesystem that supports none: FAT/exFAT, and some network mounts.
+    """
+
+    def _no_links(_src: object, _dst: object) -> None:
+        raise OSError(errno.EPERM, "operation not permitted")
+
+    monkeypatch.setattr(os, "link", _no_links)
+
+    free = tmp_path / "free.csv"
+    atomic = _AtomicCsvFile(free, no_clobber=True)
+    atomic.stream.write("rows\n")
+    atomic.commit()
+    assert free.read_text() == "rows\n"
+    assert _leftover_temps(free) == []
+
+    # ...and the fallback must refuse a taken name just as the link does, or
+    # --no-clobber would be silently disabled on exactly those filesystems.
+    taken = _AtomicCsvFile(free, no_clobber=True)
+    taken.stream.write("other\n")
+    with pytest.raises(MieClobberRefusedError):
+        taken.commit()
+    assert free.read_text() == "rows\n", "no zero-byte reservation left in its place"
+
+
+# ── L2-WRT-024: the final flush is part of the commit ──────────────────
+
+
+class _FlushFailsStream(io.StringIO):
+    """A stream that writes happily and fails on flush.
+
+    This is the disk-full shape, not an invented one: rows land in a buffer and
+    return success, and the failure appears only when that buffer is pushed to
+    the filesystem -- which is what the commit's final flush does.
+    """
+
+    def flush(self) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+
+@pytest.mark.requirement("L2-WRT-018", "L2-WRT-024", "L3-PY-019")
+def test_commit_classifies_a_final_flush_failure_as_a_writer_error(
+    tmp_path: Path,
+) -> None:
+    dest = tmp_path / "out.csv"
+    atomic = _AtomicCsvFile(dest)
+    atomic.stream.write("rows\n")
+    # Swap in the failing stream AFTER construction: the temp file is real, so
+    # the cleanup assertion below is testing the real unlink.
+    atomic._stream = _FlushFailsStream()
+
+    with pytest.raises(MieWriterError):
+        atomic.commit()
+    assert not dest.exists(), "a failed commit must not create the destination"
+    assert _leftover_temps(dest) == [], "the temp must be unlinked on a flush failure"
+
+
+@pytest.mark.requirement("L2-WRT-024", "L3-PY-019")
+def test_commit_partial_classifies_a_final_flush_failure_too(tmp_path: Path) -> None:
+    dest = tmp_path / "out.csv"
+    partial = dest.with_name("out.csv.partial")
+    atomic = _AtomicCsvFile(dest)
+    atomic.stream.write("rows\n")
+    atomic._stream = _FlushFailsStream()
+
+    with pytest.raises(MieWriterError):
+        atomic.commit_partial()
+    assert not partial.exists()
+    assert _leftover_temps(dest) == []
+
+
+@pytest.mark.requirement("L2-WRT-024", "L3-PY-019")
+def test_close_still_unlinks_the_temp_when_the_stream_cannot_be_closed(
+    tmp_path: Path,
+) -> None:
+    """Cleanup must not be defeated by the same failure it is cleaning up after.
+
+    A stream holding unflushable data raises again from ``close()``. Letting
+    that through skips the unlink -- leaking the temp onto the disk that just
+    filled up -- and replaces whatever error actually caused the failure.
+    """
+
+    class _CloseFails(io.StringIO):
+        def close(self) -> None:
+            raise OSError(errno.EIO, "input/output error")
+
+    dest = tmp_path / "out.csv"
+    atomic = _AtomicCsvFile(dest)
+    atomic.stream.write("rows\n")
+    atomic._stream = _CloseFails()
+
+    atomic.close()
+    assert _leftover_temps(dest) == [], "close() must unlink the temp regardless"
 
 
 @pytest.mark.requirement("L2-WRT-015")

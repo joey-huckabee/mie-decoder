@@ -137,6 +137,34 @@ class MappedFile {
 ///
 /// Output is byte-exact: the handle is opened in binary mode, so a newline is
 /// never rewritten to CRLF (L2-WRT-012).
+/// How a finished temp file is moved onto its destination (L2-WRT-023).
+///
+/// `COMMIT_REPLACE` is the shipped default: overwriting an existing destination
+/// is what an operator re-running a batch expects. `COMMIT_NO_REPLACE` is what
+/// `--no-clobber` selects, and it has to be enforced BY THE COMMIT ITSELF -- a
+/// `path_exists` test before the file is opened answers a question about the
+/// past, and between that answer and the rename any other process may create the
+/// destination. The rename then destroys it, which is the exact outcome the flag
+/// exists to prevent.
+enum CommitMode {
+    /// rename(2) / MoveFileExW(MOVEFILE_REPLACE_EXISTING): replaces.
+    COMMIT_REPLACE,
+    /// The destination is claimed atomically; an existing one is refused.
+    COMMIT_NO_REPLACE
+};
+
+/// What a commit did. Three outcomes, not two: "the destination already exists"
+/// is a refusal the caller reports as MieError::clobber_refused, and flattening
+/// it into the failure arm would report a policy decision as an OS error.
+enum CommitStatus {
+    /// The destination now holds the temp file's contents.
+    COMMIT_DONE,
+    /// COMMIT_NO_REPLACE only: the destination existed; nothing was written.
+    COMMIT_EXISTS,
+    /// The commit failed for some other reason; `err` says which.
+    COMMIT_ERROR
+};
+
 class AtomicFile {
   public:
     AtomicFile();
@@ -146,16 +174,22 @@ class AtomicFile {
     /// destination.
     bool create(const std::string& final_utf8_path, OsError& err);
 
+    /// Select the commit mode for EVERY target this file can produce -- the
+    /// destination itself and `<destination>.partial` alike (L2-WRT-023).
+    /// Defaults to `COMMIT_REPLACE`, so L2-WRT-017's "overwrite succeeds by
+    /// default" is what a caller that says nothing gets.
+    void set_commit_mode(CommitMode mode);
+
     /// Append bytes. Buffered; a partial OS write is retried to completion.
     bool write(const char* bytes, std::size_t len, OsError& err);
 
-    /// Flush, close, and rename over the destination.
-    bool commit(OsError& err);
+    /// Flush, close, and move onto the destination per the commit mode.
+    CommitStatus commit(OsError& err);
 
-    /// Flush, close, and rename to <destination><suffix> instead -- the
+    /// Flush, close, and move onto <destination><suffix> instead -- the
     /// `.partial` path taken by --allow-partial (L3-WRT-002). The destination
     /// itself is left untouched.
-    bool commit_with_suffix(const std::string& suffix, OsError& err);
+    CommitStatus commit_with_suffix(const std::string& suffix, OsError& err);
 
     /// Close and unlink the temp file. Safe to call twice; safe after commit.
     void abort();
@@ -169,12 +203,19 @@ class AtomicFile {
 
     bool flush(OsError& err);
     bool raw_write(const char* bytes, std::size_t len, OsError& err);
+    /// Close the handle and report whether the close itself failed. Shared by
+    /// both commit entry points so the "buffered data never reached the
+    /// filesystem" case cannot be handled in one and forgotten in the other.
+    bool finish_stream(OsError& err);
+    /// The move itself, once the handle is closed. Honours the commit mode.
+    CommitStatus place(const std::string& destination, OsError& err);
 
     void* handle_;
     std::string temp_path_;
     std::string final_path_;
     std::vector<char> buffer_;
     bool committed_;
+    CommitMode mode_;
 };
 
 /// Bytes buffered before an OS write is issued. Exposed for the test that

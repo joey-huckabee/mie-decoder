@@ -120,17 +120,26 @@ class AtomicCsvSink : public CsvSink {
     AtomicCsvSink();
 
     /// Create the temp file beside `path`. Throws MieError on failure.
-    void create(const std::string& path);
+    ///
+    /// `no_clobber` selects L2-WRT-023's no-replace commit for EVERY target this
+    /// sink can produce -- the destination itself and `<destination>.partial`
+    /// alike. That refusal is the guarantee; the pre-flight `path_exists` test
+    /// only reports the same condition earlier.
+    void create(const std::string& path, bool no_clobber = false);
 
     bool write(const char* bytes, std::size_t length, platform::OsError& err) override;
     bool flush(platform::OsError& err) override;
     std::string destination() const override;
 
-    /// Rename over the destination. Throws MieError on failure.
+    /// Move onto the destination. Throws MieError on failure -- including
+    /// MieError::clobber_refused when `no_clobber` is set and the destination
+    /// exists at the moment of the commit.
     void commit();
 
-    /// Rename to `<destination>.partial` instead, leaving the destination
-    /// untouched (L3-WRT-002). Returns the path written.
+    /// Move onto `<destination>.partial` instead, leaving the destination
+    /// untouched (L3-WRT-002). Returns the path written. Under `no_clobber` an
+    /// existing `.partial` is refused rather than replaced: it is an actual
+    /// commit target, so L2-WRT-023 covers it like any other.
     std::string commit_partial();
 
     /// Discard the temp file. Safe after commit, and safe twice.
@@ -139,6 +148,12 @@ class AtomicCsvSink : public CsvSink {
     bool is_open() const { return open_; }
 
   private:
+    /// Turn a CommitStatus into the right exception, or nothing. Shared by both
+    /// commit entry points so the refusal arm cannot be handled in one and
+    /// forgotten in the other.
+    static void report(platform::CommitStatus status, const std::string& destination,
+                       const platform::OsError& err);
+
     platform::AtomicFile file_;
     std::string path_;
     bool open_;

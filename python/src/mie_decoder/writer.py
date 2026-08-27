@@ -99,6 +99,7 @@ Output Column Definitions:
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import errno
 import itertools
@@ -347,12 +348,19 @@ def _preflight_output(output: Path, split_errors: bool, opts: WriteOptions) -> N
     Runs before any output file is opened so existing destinations are
     never partially overwritten on a rejected configuration.
 
-    The collision test covers **every** commit target; the no-clobber test
-    covers only the destinations a run actually creates -- main, and the errors
-    file in split mode. ``.partial`` paths are deliberately not clobber-checked,
-    which is the behaviour that shipped: a ``.partial`` is written only on a
-    failure path, and refusing a whole run up front because a stale one is lying
-    around would be a different rule than L2-WRT-017 states.
+    The collision test covers **every** commit target and **is** the guarantee:
+    L2-WRT-014 is a pre-open rule, and once the mapping is live there is nothing
+    left to refuse.
+
+    The no-clobber test here is **not** the guarantee -- that lives in the commit
+    (L2-WRT-023, :meth:`_AtomicCsvFile._commit_no_replace`). ``exists()`` answers
+    a question about the past, and between the answer and the rename any other
+    process may create the destination. What this test buys is an *early*
+    refusal, before a temp file exists and before a whole file is decoded, with
+    the destination named. It covers only the two paths a run definitely creates:
+    ``.partial`` targets are deliberately left to the commit, so a stale
+    ``<dest>.partial`` lying around does not refuse a run that was never going to
+    write one.
 
     Args:
         output: The destination the operator named.
@@ -508,12 +516,18 @@ class _AtomicCsvFile:
     without committing (decode failed or was interrupted), the temp
     file is unlinked and a pre-existing destination is left untouched.
 
+    With ``no_clobber`` set, **every** commit this writer performs -- over the
+    destination and onto ``<destination>.partial`` alike -- refuses an existing
+    target instead of replacing it (L2-WRT-023). That refusal is the guarantee;
+    the pre-flight ``exists()`` test only reports the same condition earlier.
+
     Usable as a context manager: an uncommitted writer is cleaned up on
     ``__exit__`` so the failure path leaves no temp behind.
     """
 
-    def __init__(self, final_path: Path) -> None:
+    def __init__(self, final_path: Path, no_clobber: bool = False) -> None:
         self._final = final_path
+        self._no_clobber = no_clobber
         # Create a uniquely-named temp file beside the destination with
         # exclusive create (mode "x" == O_CREAT|O_EXCL): it never opens an
         # existing file, so two writers targeting the same destination in one
@@ -553,14 +567,10 @@ class _AtomicCsvFile:
         Raises:
             MieWriterError: if the flush, close or rename fails. The temp file
                 is removed first, so a failure leaves nothing behind.
+            MieClobberRefusedError: under ``no_clobber``, if the destination
+                exists at the moment of the commit (L2-WRT-023).
         """
-        self._close_stream()
-        try:
-            os.replace(self._temp, self._final)
-        except OSError as exc:
-            self._cleanup_temp()
-            raise MieWriterError(str(self._final), exc) from exc
-        self._committed = True
+        self._commit_onto(self._final)
 
     def commit_partial(self) -> Path:
         """Rename the temp to ``<destination>.partial`` instead of over the
@@ -571,17 +581,126 @@ class _AtomicCsvFile:
             The ``.partial`` path actually written.
 
         Raises:
-            MieWriterError: if the rename fails.
+            MieWriterError: if the flush, close or rename fails.
+            MieClobberRefusedError: under ``no_clobber``, if the ``.partial``
+                path exists at the moment of the commit. It is an actual commit
+                target, so L2-WRT-023 covers it like any other.
         """
-        self._close_stream()
         partial = partial_path_for(self._final)
+        self._commit_onto(partial)
+        return partial
+
+    def _commit_onto(self, destination: Path) -> None:
+        """The one commit sequence, shared by :meth:`commit` and
+        :meth:`commit_partial` so the two cannot drift in how they flush, close,
+        or honour ``no_clobber``. Each used to spell the sequence out for
+        itself, which is how a rule can end up applying to one commit target and
+        not the other.
+
+        Raises:
+            MieWriterError: on a flush, close or rename failure.
+            MieClobberRefusedError: under ``no_clobber``, if ``destination``
+                exists at the moment of the commit.
+        """
         try:
-            os.replace(self._temp, partial)
+            self._close_stream()
+        except OSError as exc:
+            # THE FINAL FLUSH IS PART OF THE COMMIT (L2-WRT-024). It is also the
+            # single most likely place for a disk-full error to land, because it
+            # is where the last buffered rows actually reach the filesystem --
+            # every earlier `write` may have returned having only filled a
+            # buffer. Closing outside this wrapper, which is what shipped, let
+            # that failure escape as a raw OSError from a method documented to
+            # raise MieWriterError, so the CLI classified a truncated CSV as an
+            # unexpected crash rather than a write failure.
+            self._cleanup_temp()
+            raise MieWriterError(str(destination), exc) from exc
+
+        if self._no_clobber:
+            self._commit_no_replace(destination)
+            return
+        try:
+            os.replace(self._temp, destination)
         except OSError as exc:
             self._cleanup_temp()
-            raise MieWriterError(str(partial), exc) from exc
+            raise MieWriterError(str(destination), exc) from exc
         self._committed = True
-        return partial
+
+    def _commit_no_replace(self, destination: Path) -> None:
+        """Move the temp onto ``destination`` without ever replacing an existing
+        file (L2-WRT-023). Mirrors the Rust ``commit_no_replace``.
+
+        Two mechanisms, in order of preference:
+
+        1. ``os.link`` + unlink. ``link(2)`` -- and ``CreateHardLinkW``, which is
+           what ``os.link`` calls on Windows -- raises ``FileExistsError`` when
+           the destination exists, and otherwise publishes the *complete* file
+           under its final name in one atomic step, so a concurrent reader never
+           observes a partial or empty file.
+        2. Exclusive-create reservation, then ``os.replace``. Hard links do not
+           exist on FAT/exFAT and are refused by some network filesystems, so the
+           link can fail for reasons that have nothing to do with the
+           destination. Mode ``"x"`` claims the name atomically -- one of two
+           racing processes wins it -- and the rename that follows overwrites
+           only *our own* zero-byte reservation.
+
+        ``os.replace`` cannot implement this on its own: it replaces on every
+        platform, which is exactly why an ``exists()`` pre-flight paired with a
+        replacing rename is not a no-clobber guarantee.
+
+        Raises:
+            MieWriterError: on a failure other than the destination existing.
+            MieClobberRefusedError: if ``destination`` already exists.
+        """
+        try:
+            os.link(self._temp, destination)
+        except FileExistsError as exc:
+            self._cleanup_temp()
+            raise MieClobberRefusedError(str(destination)) from exc
+        except OSError:
+            self._reserve_then_replace(destination)
+            return
+        # The link published a second name for the same bytes rather than moving
+        # them, so the temp is still there by design. Unlinking is best effort:
+        # the destination is committed either way, and leaving ``_committed``
+        # False when the unlink fails just gives ``close()`` a second attempt.
+        try:
+            self._temp.unlink()
+            self._committed = True
+        except OSError:
+            pass
+
+    def _reserve_then_replace(self, destination: Path) -> None:
+        """Fallback half of :meth:`_commit_no_replace`, for filesystems with no
+        hard links.
+
+        Raises:
+            MieWriterError: if the reservation or the rename fails.
+            MieClobberRefusedError: if ``destination`` already exists.
+        """
+        try:
+            # os.open, not open(dest, "x") with an empty body. The point here is
+            # to CLAIM THE NAME, not to open a text file and write nothing to it,
+            # and the descriptor form says so -- it is also the same
+            # O_CREAT|O_EXCL the C++ POSIX backend reserves with, so the two
+            # implementations read as one mechanism rather than two.
+            os.close(os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
+        except FileExistsError as exc:
+            self._cleanup_temp()
+            raise MieClobberRefusedError(str(destination)) from exc
+        except OSError as exc:
+            self._cleanup_temp()
+            raise MieWriterError(str(destination), exc) from exc
+        try:
+            os.replace(self._temp, destination)
+        except OSError as exc:
+            # Take the reservation back out. Leaving it would hand the operator
+            # an empty CSV where the failure message says nothing was written.
+            with contextlib.suppress(OSError):
+                destination.unlink()
+            self._cleanup_temp()
+            raise MieWriterError(str(destination), exc) from exc
+        self._committed = True
 
     def _close_stream(self) -> None:
         if not self._stream.closed:
@@ -596,9 +715,22 @@ class _AtomicCsvFile:
             pass
 
     def close(self) -> None:
-        """Close the stream; unlink the temp if it was never committed."""
-        if not self._stream.closed:
-            self._stream.close()
+        """Close the stream; unlink the temp if it was never committed.
+
+        The close is swallowed rather than propagated: this runs on the failure
+        path (and from ``__exit__``), where its whole job is to leave no temp
+        behind. A stream whose buffered data cannot be flushed raises again from
+        ``close()``, and letting that through would skip the unlink and leak the
+        very temp file this method exists to remove -- while replacing whatever
+        error actually caused the failure. The commit path reports flush and
+        close failures properly (L2-WRT-024); by the time we are here, someone
+        already has the real error.
+        """
+        try:
+            if not self._stream.closed:
+                self._stream.close()
+        except OSError:
+            pass
         if not self._committed:
             self._cleanup_temp()
 
@@ -726,7 +858,7 @@ def _write_csv_to_file(
     """
     _preflight_output(dest, False, opts)
     partial_info: tuple[int, int] | None = None
-    with _AtomicCsvFile(dest) as atomic:
+    with _AtomicCsvFile(dest, no_clobber=opts.no_clobber) as atomic:
         writer = _StreamingCsvRowWriter(atomic.stream, str(dest))
         try:
             for msg in messages:
@@ -860,7 +992,7 @@ def write_csv_split(
     # Stream into the main temp file eagerly; the errors temp is created
     # lazily on the first error row so a clean decode never leaves an
     # empty errors CSV behind. Both stay O(1) in the record count.
-    main_atomic = _AtomicCsvFile(output_path)
+    main_atomic = _AtomicCsvFile(output_path, no_clobber=opts.no_clobber)
     errors_atomic: _AtomicCsvFile | None = None
     partial_info: tuple[int, int] | None = None
     try:
@@ -871,7 +1003,7 @@ def write_csv_split(
             for msg in messages:
                 if msg.error_label:
                     if error_writer is None:
-                        errors_atomic = _AtomicCsvFile(error_path)
+                        errors_atomic = _AtomicCsvFile(error_path, no_clobber=opts.no_clobber)
                         error_writer = _StreamingCsvRowWriter(errors_atomic.stream, str(error_path))
                     error_writer.write_message(msg)
                 else:
@@ -928,12 +1060,19 @@ def _commit_split_outputs(
             logger.info("no error/spurious records -- error file not created")
         return WriteOutcome(normal_count=normal_count, error_count=error_count, partial=None)
 
-    # Partial path: commit each file as .partial (errors first, then main,
-    # mirroring the Rust writer).
+    # Partial path: commit each file as .partial -- MAIN FIRST, for the same
+    # reason as the normal path above and under the same rule (L2-WRT-019).
+    # This is the branch that used to run the other way round in all three
+    # implementations: an errors .partial that committed before a main .partial
+    # whose rename then failed left the operator an orphan
+    # <dest>_errors.csv.partial next to no main output at all -- the precise
+    # residue the main-first order exists to make impossible. That the normal
+    # path got it right and the failure path did not is what a rule stated over
+    # "the commit" rather than over "every commit" buys you.
+    main_partial = main_atomic.commit_partial()
     errors_partial: Path | None = None
     if errors_atomic is not None:
         errors_partial = errors_atomic.commit_partial()
-    main_partial = main_atomic.commit_partial()
     offset, sync_losses = partial_info
     logger.warning(
         "Unrecoverable sync loss at 0x%X after %d recovery attempt(s); "
