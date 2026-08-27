@@ -15,7 +15,7 @@ cross-implementation conformance contract (byte-exact CSV equivalence on
 shared behavior) holds at any compatible version pair. See
 `docs/MAINTAINER-GUIDE.md` §11 for the full release workflow.
 
-## [Unreleased]
+## [2.17.0] — 2026-08-27
 
 ### Added
 
@@ -5230,7 +5230,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.16.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.17.0...HEAD
+[2.17.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.16.0...v2.17.0
 [2.16.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.1...v2.16.0
 [2.15.1]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.14.0...v2.15.0
