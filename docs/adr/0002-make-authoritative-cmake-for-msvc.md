@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-08-18
+amended: 2026-08-27
 decision-makers: Joey
 ---
 
@@ -43,16 +44,76 @@ Chosen option: **make on Linux, CMake on Windows, one shared `cpp/sources.txt`.*
 
 ### Why not CMake everywhere
 
-The `gcc:4.8` image is Debian 7 "wheezy" and ships **CMake 2.8**. A modern
-`CMakeLists.txt` cannot be read by it at all — `cmake_minimum_required(VERSION
-3.15)` fails outright. Making CMake universal therefore means publishing and
-maintaining a *new* GCC 4.8.5 image with a backported CMake, which trades one
-maintained artifact for another and puts a hand-built tool inside the tier whose
-entire job is to be a faithful reproduction of the target.
+The `gcc:4.8` image is Debian 7 "wheezy" (glibc 2.13, GNU Make 3.81) and has
+**no CMake at all** — none on `PATH`, no `cmake` binary anywhere on the
+filesystem, no `cmake` package installed. Nor can one be added: Debian 7 is long
+past end of life and its repositories are archived, so `apt-get update` inside
+the image exits **100** and `apt-cache policy cmake` reports
+`Candidate: (none)`. There is no `ninja` either, and no `ninja-build` candidate.
+
+So the objection is not "the CMake in there is too old to read a modern
+`CMakeLists.txt`". It is that there is no CMake to be too old, and no supported
+route to installing one. Making CMake universal means putting one there by hand,
+which is one of:
+
+* **Build it from source in the image.** CMake 3.20 and later require a C++17
+  compiler and GCC 4.8.5 provides C++11, so this pins the fidelity tier to a
+  CMake old enough to build with C++11 — and then the shared `CMakeLists.txt`
+  must drop below the `cmake_minimum_required(VERSION 3.15)` the Windows build
+  relies on. The floor of the *Windows* build would be set by a 2015 Linux
+  compiler.
+* **Drop in a prebuilt binary.** It has to run against glibc 2.13, which is
+  older than the baseline current upstream builds target.
+* **Publish a new GCC 4.8.5 image with CMake baked in.** This trades one
+  maintained artifact for another and puts a hand-built tool inside the tier
+  whose entire job is to be a faithful reproduction of the target. Whatever that
+  tier then proves, it is no longer quite "this is what the target compiler
+  does".
 
 It would also mean re-expressing every gate — the sanitizer tiers, the
 toolchain-keyed build directory, coverage, tidy, the fidelity-container
 invocation — as CMake presets, discarding a Makefile that already works.
+
+### Amendment (2026-08-27): the CMake claim was wrong, and the decision is firmer for it
+
+As originally written, this section said the image "ships **CMake 2.8**" and that
+`cmake_minimum_required(VERSION 3.15)` "fails outright" on it. Both are false.
+The image ships no CMake whatsoever, and nothing fails outright because nothing
+runs.
+
+The error mattered in a specific way: it made the blocker sound *surmountable*.
+A reader weighing "CMake everywhere" a second time sees "2.8", thinks *lower the
+floor, or backport one*, and re-opens a question that is in fact more closed than
+the record admitted. That is what happened — the question was re-opened, and the
+facts above had to be re-derived from the container rather than read from here,
+which is the one thing a decision record exists to prevent.
+
+Verified directly against `ghcr.io/joey-huckabee/gcc-4.8:4.8.5`:
+
+```
+command -v cmake                  -> not on PATH
+find / -name cmake -type f        -> none
+dpkg -l | grep cmake              -> no cmake package installed
+apt-get update                    -> exit 100 (archived repositories)
+apt-cache policy cmake            -> Installed: (none) / Candidate: (none)
+apt-cache policy ninja-build      -> no such package
+dpkg-query -W -f='${Version}' libc6 -> 2.13-38+deb7u10
+```
+
+One new consideration was weighed on the re-examination and did not change the
+outcome. A CMake + Ninja build would emit `compile_commands.json` at configure
+time, which would retire both `bear` and the `tidy-db-check` guard in
+`cpp/Makefile` — that guard exists only because `bear` records the compiler
+invocations it *intercepts*, so an incremental build yields a database missing
+whatever did not rebuild, and clang-tidy then skips those files and still exits
+0. That is a genuine benefit and it is not enough: it buys tooling ergonomics at
+the cost of the fidelity tier's credibility, and the drift hazard this ADR was
+actually written to close (two *file lists*) is already closed by
+`cpp/sources.txt` and `scripts/assert-sources-agree.sh`.
+
+**Status is unchanged — `accepted`.** The decision did not move; only a
+supporting fact was corrected. An ADR is superseded when its decision is
+replaced, not when its evidence is fixed, so no ADR-0004 was written.
 
 ### Why not a checked-in `.vcxproj`
 

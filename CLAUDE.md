@@ -283,9 +283,12 @@ All fallible APIs return `Result<T, MieError>`. `MieError` is a single enum (not
   module attributes through the scanner.
 - **`cpp/sources.txt` is the one source list.** The Makefile (authoritative on
   Linux) and CMakeLists (authoritative on Windows) both read it, because the
-  gcc:4.8 fidelity container ships CMake 2.8 and cannot run a modern
-  `CMakeLists.txt`. Don't add a file to one build only —
-  `scripts/assert-sources-agree.sh` compares what each build actually resolves.
+  gcc:4.8 fidelity container has **no CMake at all** and cannot install one
+  (Debian 7's repositories are archived; `apt-get update` there exits 100), so
+  the tier that proves SLES 12 conformance has to be driven by make. Don't add a
+  file to one build only — `scripts/assert-sources-agree.sh` compares what each
+  build actually resolves. See ADR-0002, whose amendment records why "just use
+  CMake everywhere" is more closed than it looks.
 
 ## Git conventions
 

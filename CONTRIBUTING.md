@@ -685,9 +685,10 @@ whose decimal separator the locale chooses, so a locale change turns
 ### Adding a source file
 
 Add it to `cpp/sources.txt` — once. Both builds read that file, because the
-GCC 4.8.5 fidelity container ships CMake 2.8 and cannot run a modern
-`CMakeLists.txt`, so the Makefile has to stay authoritative on Linux.
-`scripts/assert-sources-agree.sh` compares what each build actually resolves.
+GCC 4.8.5 fidelity container has **no CMake at all** and cannot install one
+(Debian 7's repositories are archived), so the Makefile has to stay
+authoritative on Linux. `scripts/assert-sources-agree.sh` compares what each
+build actually resolves.
 
 Test files are globbed rather than listed, deliberately: a source file left out
 of the build fails loudly at link time, whereas a **test** file left out simply

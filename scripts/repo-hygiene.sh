@@ -588,6 +588,39 @@ if grep -nE 'clang-(tidy|format)-[0-9]+|llvm-toolchain-noble-[0-9]+' \
     bad "spell the analyser major as \$LLVM_VERSION / \$(LLVM_VERSION), not a literal"
 fi
 
+# ── 20. Nothing claims the fidelity container has a CMake ─────────────
+# The gcc:4.8 image has NO CMake and cannot install one -- Debian 7 is past end
+# of life, its repositories are archived, `apt-get update` there exits 100 and
+# `apt-cache policy cmake` reports Candidate: (none). That fact is the whole
+# reason ADR-0002 keeps two build descriptions.
+#
+# It was written down as "ships CMake 2.8" in SIX places -- ADR-0002, CLAUDE.md,
+# CONTRIBUTING.md, cpp/Makefile, cpp/CMakeLists.txt and L3-CPP-002 -- and was
+# wrong in all six. The error mattered in a specific direction: "2.8" reads as
+# surmountable (lower the floor, backport one), so it invites re-opening a
+# question that is more closed than the record admitted. Which is what happened.
+#
+# Three exemptions, each for a different reason:
+#   - CHANGELOG.md is a historical record and legitimately quotes what was
+#     believed at the time.
+#   - The ADR-0002 amendment quotes the wrong text deliberately, to correct it.
+#   - This file, which necessarily contains the string it searches for. A check
+#     that greps for a phrase cannot also be a document that explains the
+#     phrase, unless it declines to read itself.
+step "no document claims the gcc:4.8 fidelity container has a CMake"
+mapfile -t cmake28_hits < <(
+    grep -rniE 'container[^.]{0,40}(ships|has|with)[^.]{0,20}cmake[ -]?2|cmake 2\.8' \
+        --include='*.md' --include='Makefile' --include='*.txt' --include='*.sh' \
+        --exclude-dir=target --exclude-dir=.venv . 2>/dev/null \
+    | grep -v '^\./CHANGELOG\.md:' \
+    | grep -v '^\./docs/adr/0002-' \
+    | grep -v '^\./scripts/repo-hygiene\.sh:' || true
+)
+if (( ${#cmake28_hits[@]} )); then
+    list "${cmake28_hits[@]}"
+    bad "the fidelity container has no CMake at all; see the ADR-0002 amendment"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 if (( failures )); then
     printf '%shygiene: %d check(s) failed%s\n' "$RED" "$failures" "$RESET" >&2
