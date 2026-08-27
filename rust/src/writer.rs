@@ -1391,6 +1391,58 @@ mod tests {
         let _ = std::fs::remove_file(&victim);
     }
 
+    /// Requirements: L2-WRT-014, L2-WRT-016, L2-WRT-019
+    ///
+    /// The FOURTH commit target: the errors file's own `.partial`, written when
+    /// split mode meets an `--allow-partial` sync loss. It had only the
+    /// enumeration test below covering it -- that it appears in a list -- and
+    /// nothing exercising it end to end. "The other three are checked and this
+    /// one is in the same list" is a composition argument, and a composition
+    /// argument ("derived from output, which was already checked") is what put
+    /// the hole here in the first place.
+    ///
+    /// Deliberately isolated: with `-o capture.mie` none of the other three
+    /// targets matches this input, so only the target under test can make it
+    /// pass.
+    #[test]
+    fn write_csv_split_rejects_collision_on_the_errors_partial_path() {
+        let dest = unique_path(".mie");
+        let victim = partial_path_for(&error_path_for(&dest));
+        std::fs::write(&victim, b"the recording being decoded").unwrap();
+
+        let opts = |allow_partial| WriteOptions {
+            input_path: Some(victim.clone()),
+            no_clobber: false,
+            allow_partial,
+        };
+
+        // Confirm the isolation rather than trusting it: the other three
+        // targets must not name this file, or the test proves nothing.
+        for target in commit_targets(&dest, true, true) {
+            if target != victim {
+                assert_ne!(target, victim);
+            }
+        }
+
+        // Without allow_partial the errors `.partial` is not a target at all.
+        write_csv_split(std::iter::empty(), &dest, opts(false))
+            .expect("no errors-partial target without allow_partial");
+        assert!(dest.exists());
+        std::fs::remove_file(&dest).unwrap();
+
+        match write_csv_split(std::iter::empty(), &dest, opts(true)) {
+            Err(MieError::InputOutputCollision { path }) => assert_eq!(path, victim),
+            other => panic!("expected InputOutputCollision on the errors .partial, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"the recording being decoded",
+            "input file was modified despite the collision rejection"
+        );
+        assert!(!dest.exists(), "main destination must not be created");
+        let _ = std::fs::remove_file(&victim);
+    }
+
     /// Requirements: L2-WRT-014
     ///
     /// The enumeration itself, pinned: main, errors, then their `.partial`

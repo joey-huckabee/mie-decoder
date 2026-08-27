@@ -226,6 +226,52 @@ TEST_CASE("writing onto the input is refused", "[writer][L2-WRT-014]") {
     CHECK(read_raw(path.str()) == "INPUT");
 }
 
+TEST_CASE("writing onto an input the ERRORS .partial path resolves to is refused",
+          "[writer][L2-WRT-014][L2-WRT-016][L2-WRT-019]") {
+    // The FOURTH commit target: the errors file's own `.partial`, written when
+    // split mode meets an --allow-partial sync loss. It had only the
+    // enumeration test below covering it -- that it appears in a list -- and
+    // nothing exercising it end to end. "The other three are checked and this
+    // one is in the same list" is a composition argument, and a composition
+    // argument ("the path is derived from `output`, which was just checked") is
+    // what put the hole here in the first place.
+    //
+    // Deliberately isolated: with `-o capture.mie` none of the other three
+    // targets matches this input, so only the target under test can pass it.
+    TempPath dest("capture.mie");
+    const std::string victim =
+        dest.also_remove(mie::partial_path_for(mie::error_path_for(dest.str())));
+    write_raw(victim, "INPUT");
+
+    // Confirm the isolation rather than trusting it: exactly one target may
+    // name this file, or the test proves nothing.
+    const std::vector<std::string> targets = mie::commit_targets(dest.str(), true, true);
+    std::size_t matching = 0;
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        if (targets[i] == victim) {
+            ++matching;
+        }
+    }
+    CHECK(matching == 1u);
+
+    mie::WriteOptions options;
+    options.input_path = victim;
+
+    {
+        // Without allow_partial the errors `.partial` is not a target at all.
+        VectorSource clean(one(sample()));
+        CHECK_NOTHROW(mie::write_csv_split(clean, dest.str(), options));
+        CHECK(exists(dest.str()));
+        (void)std::remove(dest.str().c_str());
+    }
+
+    options.allow_partial = true;
+    VectorSource source(one(errored()));
+    CHECK_THROWS_AS(mie::write_csv_split(source, dest.str(), options), mie::MieError);
+    CHECK(read_raw(victim) == "INPUT");
+    CHECK_FALSE(exists(dest.str()));
+}
+
 TEST_CASE("commit_targets enumerates every committable path", "[writer][L2-WRT-014]") {
     // The enumeration itself, pinned: main, errors, then their `.partial`
     // variants. The errors file's own `.partial` is the one an audit forgets,

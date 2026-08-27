@@ -611,6 +611,58 @@ class TestAtomicWriteSafety:
             write_csv_split(reader, output=tmp_mie_file, opts=opts)
 
     @pytest.mark.requirement("L2-WRT-014")
+    @pytest.mark.requirement("L2-WRT-016")
+    @pytest.mark.requirement("L2-WRT-019")
+    def test_write_csv_split_rejects_collision_on_the_errors_partial_path(
+        self, tmp_path: Path
+    ) -> None:
+        """The FOURTH commit target: the errors file's own ``.partial``.
+
+        Written when split mode meets an ``--allow-partial`` sync loss. It had
+        only the enumeration test covering it -- that it appears in a list --
+        and nothing exercising it end to end. "The other three are checked and
+        this one is in the same list" is a composition argument, and a
+        composition argument ("derived from output, which was already checked")
+        is what put the hole here in the first place.
+
+        Deliberately isolated: with ``-o capture.mie`` none of the other three
+        targets matches this input, so only the target under test can make it
+        pass.
+        """
+        from mie_decoder.exceptions import MieInputOutputCollisionError
+        from mie_decoder.writer import (
+            WriteOptions,
+            commit_targets,
+            error_path_for,
+            partial_path_for,
+            write_csv_split,
+        )
+
+        dest = tmp_path / "capture.mie"
+        victim = partial_path_for(error_path_for(dest))
+        victim.write_bytes(b"the recording being decoded")
+        original = victim.read_bytes()
+
+        # Confirm the isolation rather than trusting it: exactly one target may
+        # name this file, or the test proves nothing.
+        matching = [t for t in commit_targets(dest, True, True) if t == victim]
+        assert len(matching) == 1
+
+        # Without allow_partial the errors `.partial` is not a target at all.
+        write_csv_split(iter([]), output=dest, opts=WriteOptions(input_path=victim))
+        assert dest.exists()
+        dest.unlink()
+
+        with pytest.raises(MieInputOutputCollisionError):
+            write_csv_split(
+                iter([]),
+                output=dest,
+                opts=WriteOptions(input_path=victim, allow_partial=True),
+            )
+        assert victim.read_bytes() == original, "input modified despite the rejection"
+        assert not dest.exists(), "main destination must not be created"
+
+    @pytest.mark.requirement("L2-WRT-014")
     def test_commit_targets_enumerates_every_committable_path(self) -> None:
         """The enumeration itself, pinned: main, errors, then their ``.partial``.
 
