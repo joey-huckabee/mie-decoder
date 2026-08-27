@@ -922,6 +922,38 @@
       ],
       "expected_exit": 1,
       "expected_stderr_contains": "resolves to merge input"
+    },
+    {
+      "name": "collision-errors-partial-path-refused",
+      "input": "inputs/errors-inline.hex",
+      "input_names": [
+        "capture_errors.mie.partial"
+      ],
+      "output_name": "capture.mie",
+      "args": [
+        "--separate-errors",
+        "--allow-partial"
+      ],
+      "expected_exit": 1,
+      "expected_stderr_contains": "resolves to the same file as the input"
+    },
+    {
+      "name": "collision-merge-errors-partial-path-refused",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-b.hex"
+      ],
+      "input_names": [
+        "recording.mie",
+        "capture_errors.mie.partial"
+      ],
+      "output_name": "capture.mie",
+      "args": [
+        "--separate-errors",
+        "--allow-partial"
+      ],
+      "expected_exit": 1,
+      "expected_stderr_contains": "resolves to merge input"
     }
   ]
 }
