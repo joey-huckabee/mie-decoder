@@ -443,7 +443,7 @@ Expected output: nothing. A successful diff is silent.
 
 If you see differences:
 
-- **Day-of-year on IRIG `TIME_STAMP`** — known firmware-dependent discrepancy on some DDC card models. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §5.
+- **Day-of-year on IRIG `TIME_STAMP`** — known firmware-dependent discrepancy on some DDC card models. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §5. The decoder notes this once per decode at `INFO` (so it is silent by default); once you have confirmed the column against vendor output for your card model, `--no-irig-day-advisory` retires the note for good (§5a).
 - **`MUX` column differs** — by default we populate `MUX` from the input file name (L2-WRT-020); pass `--no-mux` for vendor-exact (empty) output. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3.
 - **Empty `TERM_NAME` / `IM_GAP` / `RCV_GAP` / `XMT_GAP` on our side, populated on vendor** — expected; we leave these empty by spec. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3.
 - **Same rows, different order within one `TIME_STAMP`** — canonical row order (L1-OUT-003); we sort ties by
