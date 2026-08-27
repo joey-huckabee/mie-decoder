@@ -119,7 +119,9 @@ std::string AtomicCsvSink::commit_partial() {
     // The name comes from `partial_path_for` rather than being spelled here, so
     // the path this commits to and the path `commit_targets` pre-flights are
     // the same derivation and cannot drift (L2-WRT-014).
-    const std::string partial = partial_path_for(path_);
+    // Not const: it is returned, and constness would block the move
+    // (performance-no-automatic-move).
+    std::string partial = partial_path_for(path_);
     report(file_.commit_with_suffix(".partial", err), partial, err);
     open_ = false;
     return partial;

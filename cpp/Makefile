@@ -119,7 +119,7 @@ DEPFLAGS := -MMD -MP
 
 .PHONY: all check check-fuzz clean clean-all toolchain versions check-valgrind \
         check-gcc48 verify-ci print-test-bin print-decoder-bin \
-        print-lib-sources decoder tidy cppcheck format format-check \
+        print-lib-sources decoder tidy tidy-db-check cppcheck format format-check \
         coverage coverage-report
 
 all: $(TEST_BIN) $(DECODER_BIN)
@@ -328,7 +328,61 @@ coverage-report:
 	  --exclude 'src/main\.cpp' --exclude 'src/platform_win32\.cpp' \
 	  --exclude-unreachable-branches --exclude-throw-branches --branches
 
-tidy:
+# A translation unit missing from compile_commands.json makes clang-tidy print
+# "Skipping <file>. Compile command not found." and exit 0. Every file missing
+# makes it analyse NOTHING and exit 0 -- a gate whose log reads as a clean run.
+#
+# That is the same failure --warnings-as-errors is there to prevent, one level
+# up, and it is not hypothetical: an incremental `bear -- make all` captures no
+# command for a target that was already built, so a local `make tidy` skipped
+# every test file, reported clean, and CI (which always builds from scratch)
+# then failed on one of them. The version-skew banner below says a local run can
+# be WEAKER than CI; it must not be able to be EMPTY.
+#
+# Checked by grep rather than jq: this has to work on the SLES 12 host and in
+# the fidelity container, neither of which is required to have a JSON parser.
+#
+# The search walks UPWARD from here, which is not tidiness -- it is what
+# clang-tidy itself does when `-p` names a directory holding no database, and
+# this check is worthless unless it looks in the same places. CI proves the
+# point: it runs `bear -- make -C cpp all` from the REPOSITORY ROOT, so the
+# database lands beside the repo rather than inside cpp/, and clang-tidy has
+# been finding it by that upward walk all along. A guard that only looked in
+# cpp/ failed a CI job whose tidy run was, in fact, complete.
+tidy-db-check:
+	@db=""; \
+	 dir="$$(pwd)"; \
+	 if [ -f "$(BUILD_DIR)/compile_commands.json" ]; then \
+	   db="$(BUILD_DIR)/compile_commands.json"; \
+	 else \
+	   while [ -n "$$dir" ] && [ "$$dir" != "/" ]; do \
+	     if [ -f "$$dir/compile_commands.json" ]; then db="$$dir/compile_commands.json"; break; fi; \
+	     dir="$$(dirname "$$dir")"; \
+	   done; \
+	   if [ -z "$$db" ] && [ -f "/compile_commands.json" ]; then db="/compile_commands.json"; fi; \
+	 fi; \
+	 if [ -z "$$db" ]; then \
+	   printf '\n*** make tidy: no compile_commands.json found here or above.\n'; \
+	   printf '*** clang-tidy would skip every file and exit 0 -- a gate that\n'; \
+	   printf '*** checks nothing and reports success. Generate the database first:\n'; \
+	   printf '***   bear -- make all\n\n'; \
+	   exit 1; \
+	 fi; \
+	 missing=""; \
+	 for f in $(TIDY_SRC); do \
+	   grep -q "/$$f\"" "$$db" || missing="$$missing $$f"; \
+	 done; \
+	 if [ -n "$$missing" ]; then \
+	   printf '\n*** make tidy: %s has no compile command for:\n' "$$db"; \
+	   for f in $$missing; do printf '***   %s\n' "$$f"; done; \
+	   printf '*** clang-tidy would SKIP those and still exit 0. The database is\n'; \
+	   printf '*** stale -- an incremental build captures nothing for a target that\n'; \
+	   printf '*** was already up to date. Regenerate it from a clean tree:\n'; \
+	   printf '***   make clean && bear -- make all\n\n'; \
+	   exit 1; \
+	 fi
+
+tidy: tidy-db-check
 	@actual=$$($(TIDY) --version 2>/dev/null | sed -n 's/.*LLVM version \([0-9][0-9]*\).*/\1/p' | head -1); \
 	 if [ -n "$$actual" ] && [ "$$actual" != "$(LLVM_VERSION)" ]; then \
 	   printf '\n*** clang-tidy VERSION SKEW: %s is LLVM %s, CI uses LLVM %s.\n' '$(TIDY)' "$$actual" '$(LLVM_VERSION)'; \
