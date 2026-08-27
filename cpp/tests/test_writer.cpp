@@ -569,7 +569,7 @@ TEST_CASE("no-clobber refuses a destination that appears mid-decode",
     // commit. Two concurrent runs of the same command both pass the pre-flight,
     // and a replacing rename then lets the second silently destroy the first's
     // output -- the exact outcome --no-clobber exists to prevent.
-    TempPath out("clobberrace.csv");
+    const TempPath out("clobberrace.csv");
 
     class RacingSource : public mie::MessageSource {
       public:
