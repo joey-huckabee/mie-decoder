@@ -492,8 +492,9 @@ def test_read_manifest_grammar_is_exactly_specified(tmp_path: Path) -> None:
     """The manifest grammar, pinned exactly.
 
     Leaving it at "one path per line" is how three implementations came to
-    disagree three different ways, all found by the merge fuzz harness comparing
-    its ``FUZZ-SUMMARY`` counters and all now spelled out in L2-MRG-001:
+    disagree, a different way each, all found by the merge fuzz harness
+    comparing its ``FUZZ-SUMMARY`` counters and all now spelled out in
+    L2-MRG-001:
 
     * ``\\n`` is the only line separator. This reader used ``str.splitlines()``,
       which also breaks on vertical tab, form feed, U+0085 and U+2028/9 -- none
@@ -523,6 +524,12 @@ def test_read_manifest_grammar_is_exactly_specified(tmp_path: Path) -> None:
     # One trailing CR is the CRLF terminator; an interior CR is a filename.
     assert read(b"a.mie\r\nb.mie\r\n") == ["a.mie", "b.mie"]
     assert read(b"a\rb.mie\n") == ["a\rb.mie"]
+    # The last line counts even without its terminator, and its CR is stripped
+    # like any other. Rust used ``str::lines()``, which strips the CR only when
+    # an ``\n`` actually followed, so ``b"\r"`` was a one-character path there
+    # and no path at all here.
+    assert read(b"a.mie\r\nb.mie\r") == ["a.mie", "b.mie"]
+    assert read(b"\r") == []
 
     # ASCII blanks are trimmed; Unicode spaces are part of the name.
     assert read(b" \ta.mie\t \n") == ["a.mie"]
