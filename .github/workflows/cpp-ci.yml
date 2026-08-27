@@ -106,7 +106,7 @@ jobs:
     name: build & test (g++-14)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
@@ -163,7 +163,7 @@ jobs:
     env:
       CXX: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Driven through the Makefile target rather than a hand-written
       # `docker run`, so this job and a developer's `make check-gcc48` are the
       # same command reading the same GCC48_IMAGE. Separately maintained copies
@@ -186,7 +186,7 @@ jobs:
     name: build & test (MSVC)
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure
         run: cmake -B cpp/build-msvc -S cpp -G "Visual Studio 17 2022" -A x64
       - name: Build
@@ -216,7 +216,7 @@ jobs:
     name: ASan + UBSan + LSan
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
@@ -228,7 +228,7 @@ jobs:
     name: Valgrind memcheck
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install toolchain
         run: |
           sudo apt-get update -qq
@@ -244,7 +244,7 @@ jobs:
     name: coverage (gcovr)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install gcovr
         run: pipx install gcovr==8.6
       # Driven through the Makefile target for the same reason cppcheck is: this
@@ -263,7 +263,7 @@ jobs:
     name: cppcheck
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install cppcheck
         run: |
           sudo apt-get update -qq
@@ -281,7 +281,7 @@ jobs:
     name: clang-tidy
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # LLVM 20 from the project's own apt repository, not Ubuntu's clang 18.
       # Noble packages 18 as its newest, and 20 finds things 18 does not: its
       # clang-analyzer unix.Stream checks caught a real fread-past-EOF loop in
@@ -310,7 +310,7 @@ jobs:
     name: clang-format
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # LLVM 20 from the project's own apt repository, not Ubuntu's clang 18.
       # Noble packages 18 as its newest, and 20 finds things 18 does not: its
       # clang-analyzer unix.Stream checks caught a real fread-past-EOF loop in
@@ -359,7 +359,7 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -416,7 +416,7 @@ jobs:
     name: Platform confinement, locale, source-list agreement
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # cmake is needed by assert-sources-agree.sh, which configures the real
       # CMakeLists and asks it what it resolved -- comparing the two builds'
       # actual output rather than re-implementing the parsing and comparing the
