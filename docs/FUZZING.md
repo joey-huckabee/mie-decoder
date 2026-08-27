@@ -231,6 +231,18 @@ led to is normative in L2-MRG-001; the short version is that a manifest is
 UTF-8, `\n` is the only separator, one trailing `\r` is stripped, and trimming
 is ASCII space and tab only.
 
+It then found a fifth on the first nightly burn-in after that grammar landed —
+which is the argument for running the deep sweep on a schedule rather than
+treating the 256-iteration default as coverage. Writing the grammar down was not
+the same as agreeing on it: Rust's `str::lines()` strips a trailing `\r` only
+from a line an `\n` actually followed, so an unterminated final line kept its
+CR while Python and C++ stripped it, and the whole disagreement rested on the
+single generated input `"\r"` — three of 25 000 manifests, and none of the first
+256. **A summary counter differing by three is the shape these findings have.**
+Read `manifest_paths=299` against `296` as a decoding difference on some input,
+not as noise or as a flaky runner; the generator is deterministic, so the
+divergent input is always recoverable by replaying the same iteration indices.
+
 ### 4.4 Config-parser documents
 
 `tests/conformance/config_fuzz.py` generates small TOML-ish documents from
