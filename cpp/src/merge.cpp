@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "mie/config.hpp"
 #include "mie/error.hpp"
 #include "mie/log.hpp"
 #include "mie/text.hpp"
@@ -240,6 +241,7 @@ MergeOptions::MergeOptions()
       strict(false),
       collapse_duplicates(false),
       collapse_window_us(0),
+      max_collapse_survivors(DEFAULT_MAX_COLLAPSE_SURVIVORS),
       delta_scope(DELTA_SCOPE_PER_FILE) {}
 
 DedupKey::DedupKey() = default;
@@ -266,34 +268,60 @@ bool DedupKey::operator==(const DedupKey& other) const {
 DedupWindow::Survivor::Survivor(uint64_t us_, std::size_t file_index_, const DedupKey& key_)
     : us(us_), file_index(file_index_), key(key_) {}
 
-DedupWindow::DedupWindow(uint64_t window_us) : window_us_(window_us) {}
+DedupWindow::DedupWindow(uint64_t window_us, std::size_t max_survivors)
+    : window_us_(window_us),
+      max_survivors_(max_survivors < MAX_COLLAPSE_SURVIVORS_MIN ? MAX_COLLAPSE_SURVIVORS_MIN
+                                                                : max_survivors),
+      capped_warned_(false) {}
 
 bool DedupWindow::is_duplicate(uint64_t us, std::size_t file_index, const MieMessage& message) {
-    // Evict survivors that can no longer fall within the window of this or any
-    // later record. Guarded against a backward step so a non-monotonic input
-    // cannot underflow into an enormous difference and evict everything.
-    while (!survivors_.empty()) {
-        const uint64_t buffered = survivors_.front().us;
-        if (us > buffered && (us - buffered) > window_us_) {
-            survivors_.pop_front();
-        } else {
-            break;
-        }
+    // Evict on absolute distance, over the whole set rather than the front.
+    // This costs one pass, which is what the match scan below already costs, so
+    // the sorted-stream case is no slower than the front-only eviction it
+    // replaces -- and the unsorted case is now bounded at all.
+    //
+    // `iterator`, not `const_iterator`: GCC 4.8's libstdc++ predates the C++11
+    // signatures that take const iterators, and passing one to a container
+    // mutator is banned in this tree for exactly that reason.
+    {
+        const uint64_t window_for_evict = window_us_;
+        const uint64_t now = us;
+        std::deque<Survivor>::iterator kept_end =
+            std::remove_if(survivors_.begin(), survivors_.end(), [&](const Survivor& survivor) {
+                return abs_diff(survivor.us, now) > window_for_evict;
+            });
+        survivors_.erase(kept_end, survivors_.end());
     }
 
     const DedupKey key = DedupKey::of(message);
-    const uint64_t window = window_us_;
     // A survivor matches only if it came from a DIFFERENT input and lies within
     // the window in ABSOLUTE time -- the merged stream may step backward, so
     // the distance has to be order-independent rather than a one-sided
     // subtraction.
     const bool matched =
         std::any_of(survivors_.begin(), survivors_.end(), [&](const Survivor& survivor) {
-            return survivor.file_index != file_index && abs_diff(survivor.us, us) <= window &&
-                   survivor.key == key;
+            return survivor.file_index != file_index && survivor.key == key;
         });
     if (matched) {
         return true;
+    }
+
+    // L2-MRG-008: make room rather than grow. Dropping the oldest ARRIVAL is the
+    // honest choice once the window itself is over-full -- there is no "least
+    // useful" survivor to pick, and arrival order is the one ordering that is
+    // meaningful on input this badly behaved. Records are never dropped from the
+    // OUTPUT; only the ability to recognise a later duplicate of this one is
+    // given up.
+    while (survivors_.size() >= max_survivors_) {
+        survivors_.pop_front();
+        if (!capped_warned_) {
+            capped_warned_ = true;
+            MIE_LOG_WARN("de-duplication survivor set hit the " +
+                         text::decimal(static_cast<uint64_t>(max_survivors_)) +
+                         "-record max_collapse_survivors cap; collapsing is best-effort past "
+                         "this point (raise [merge] max_collapse_survivors / "
+                         "--max-collapse-survivors, or narrow --collapse-window-us)");
+        }
     }
     survivors_.emplace_back(us, file_index, key);
     return false;
@@ -325,7 +353,7 @@ MergedSource::MergedSource(const std::vector<MieFileReader*>& readers, const Mer
       warned_backward_(readers.size(), false),
       options_(options),
       delta_tracker_(options.standard_tick_rate_hz),
-      dedup_(options.collapse_window_us),
+      dedup_(options.collapse_window_us, options.max_collapse_survivors),
       collapsed_(0) {
     iters_.reserve(readers_.size());
     paths_.reserve(readers_.size());

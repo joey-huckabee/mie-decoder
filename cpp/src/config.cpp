@@ -48,7 +48,8 @@ DecoderConfig::DecoderConfig()
       collapse_duplicates(false),
       collapse_window_us(0),
       delta_scope(DELTA_SCOPE_PER_FILE),
-      max_sort_group(DEFAULT_MAX_SORT_GROUP) {}
+      max_sort_group(DEFAULT_MAX_SORT_GROUP),
+      max_collapse_survivors(DEFAULT_MAX_COLLAPSE_SURVIVORS) {}
 
 ConfigOverrides::ConfigOverrides() = default;
 
@@ -86,6 +87,7 @@ bool is_known_key(const std::string& section, const std::string& key) {
         {"mux", "field"},
         {"merge", "collapse_duplicates"},
         {"merge", "collapse_window_us"},
+        {"merge", "max_collapse_survivors"},
         {"merge", "delta_scope"},
         {"filter", "exclude_types"},
         {"filter", "exclude_rts"},
@@ -439,6 +441,14 @@ void apply_merge(const toml::Document& doc, DecoderConfig& config) {
         }
         config.collapse_window_us = static_cast<uint64_t>(number);
     }
+    // L2-MRG-008: cap on the retained survivor set. Range-checked here so a bad
+    // value fails at load time rather than silently clamping later; the message
+    // text matches the Rust and Python loaders (L3-WRT-003).
+    if (get_int(doc, "merge", "max_collapse_survivors", number)) {
+        config.max_collapse_survivors =
+            require_int_range(number, "merge.max_collapse_survivors", MAX_COLLAPSE_SURVIVORS_MIN,
+                              MAX_COLLAPSE_SURVIVORS_MAX);
+    }
 }
 
 void apply_filter(const toml::Document& doc, DecoderConfig& config) {
@@ -632,6 +642,9 @@ DecoderConfig with_overrides(const DecoderConfig& base, const ConfigOverrides& o
     }
     if (overrides.max_sort_group.has_value()) {
         out.max_sort_group = overrides.max_sort_group.value();
+    }
+    if (overrides.max_collapse_survivors.has_value()) {
+        out.max_collapse_survivors = overrides.max_collapse_survivors.value();
     }
 
     // Filters MERGE. `--exclude-rt 5` on top of a config that already excludes

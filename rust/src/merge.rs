@@ -238,24 +238,59 @@ impl DedupKey {
     }
 }
 
-/// Sliding time-window de-duplicator over the merged stream (L2-MRG-007). Holds
-/// the survivors emitted within `window_us` microseconds as `(us, file_index,
-/// key)`; in a sorted stream older survivors can never match a later record and
-/// are evicted from the front, so resident memory stays bounded by the window
-/// (not the record count). Matching uses the **absolute** time distance, so a
-/// lenient non-monotonic input (L2-MRG-006) that steps backward neither panics
-/// nor collapses records that lie outside the window — collapse is best-effort
-/// on such "known bad" order.
+/// Smallest accepted `merge.max_collapse_survivors` (L2-MRG-008).
+pub const MAX_COLLAPSE_SURVIVORS_MIN: usize = 1;
+/// Largest accepted `merge.max_collapse_survivors` (L2-MRG-008).
+pub const MAX_COLLAPSE_SURVIVORS_MAX: usize = 1_048_576;
+/// Default cap on the de-duplication survivor set (L2-MRG-008). Far above any
+/// genuine population of one collapse window — a 1553 bus carries one
+/// transaction at a time, so a window holds one record per recorder per
+/// transaction — while bounding worst-case retention to a few hundred kilobytes.
+/// Matches `DEFAULT_MAX_SORT_GROUP` deliberately: the two caps guard the same
+/// class of pathological input and an operator who has reasoned about one
+/// should not have to re-derive the other.
+pub const DEFAULT_MAX_COLLAPSE_SURVIVORS: usize = 4096;
+
+/// Sliding time-window de-duplicator over the merged stream (L2-MRG-007), with
+/// the survivor-set cap of L2-MRG-008.
+///
+/// Retention is defined on the **absolute** time distance to the current record
+/// and is therefore independent of the order survivors were appended in: a
+/// survivor is kept iff `|survivor_us - us| <= window_us`. That order
+/// independence is the requirement, not an optimisation. This used to evict only
+/// from the FRONT, testing the one-sided `us - front_us`, which is correct only
+/// while the stream is sorted. After a lenient backward step (L2-MRG-006) the
+/// front can hold a timestamp in the *future* of the current record, the
+/// one-sided test is then never true, and the front never leaves — blocking
+/// eviction of everything behind it. An alternating 1000us / 0us probe with a
+/// zero-width window retained all 10 000 records and ran quadratically (2x the
+/// records, 4x the time), contradicting the bounded-memory guarantee L2-MRG-007
+/// makes and L2-MRG-002 depends on.
+///
+/// The window bounds retention in TIME; it does not bound it in COUNT. A corrupt
+/// recording whose timestamps all decode to one value, or a wide operator-set
+/// `collapse_window_us` on a dense bus, puts arbitrarily many records inside one
+/// window. `max_survivors` is the second, independent bound that makes the
+/// guarantee unconditional — the same reasoning, and the same default, as
+/// `max_sort_group` (L2-WRT-022) applies to the reorder stage.
 struct DedupWindow {
     window_us: u64,
+    max_survivors: usize,
     survivors: VecDeque<(u64, usize, DedupKey)>,
+    /// One WARN per merge, not per capped record: a pathological input hits the
+    /// cap on nearly every record, and the cadence that matters to an operator
+    /// is "this run stopped being exact", once. Mirrors the one-WARN-per-input
+    /// cadence L2-MRG-006 uses for the same reason.
+    capped_warned: bool,
 }
 
 impl DedupWindow {
-    fn new(window_us: u64) -> Self {
+    fn new(window_us: u64, max_survivors: usize) -> Self {
         Self {
             window_us,
+            max_survivors: max_survivors.max(MAX_COLLAPSE_SURVIVORS_MIN),
             survivors: VecDeque::new(),
+            capped_warned: false,
         }
     }
 
@@ -264,27 +299,43 @@ impl DedupWindow {
     /// transaction witnessed by another recorder. Same-file identical content is
     /// never a duplicate. A non-duplicate is recorded as a survivor.
     fn is_duplicate(&mut self, us: u64, file_index: usize, msg: &MieMessage) -> bool {
-        // Evict survivors that can no longer fall within the window of the
-        // current (or, in a sorted stream, any later) record. `saturating_sub`
-        // keeps this safe under lenient non-monotonic input (L2-MRG-006): a
-        // record whose timestamp steps backward must not underflow `us - buf_us`.
-        while let Some(&(buf_us, _, _)) = self.survivors.front() {
-            if us.saturating_sub(buf_us) > self.window_us {
-                self.survivors.pop_front();
-            } else {
-                break;
-            }
-        }
+        // Evict on absolute distance, over the whole set rather than the front.
+        // `retain` is O(survivors), which is what the match scan below already
+        // costs, so the sorted-stream case is no slower than the front-only
+        // eviction it replaces -- and the unsorted case is now bounded at all.
+        let window = self.window_us;
+        self.survivors
+            .retain(|(buf_us, _, _)| buf_us.abs_diff(us) <= window);
+
         let key = DedupKey::of(msg);
-        // A survivor matches only if it is within the window in ABSOLUTE time
-        // (`abs_diff`): the merged stream may step backward (non-monotonic
-        // input), so the distance must be order-independent, never a one-sided
-        // subtraction. In a sorted stream every retained survivor already has
-        // `us - buf_us <= window`, so this is identical to the prior behavior.
-        if self.survivors.iter().any(|(buf_us, fi, k)| {
-            *fi != file_index && buf_us.abs_diff(us) <= self.window_us && *k == key
-        }) {
+        // Every retained survivor is already within the window, so the match
+        // test is content and provenance only.
+        if self
+            .survivors
+            .iter()
+            .any(|(_, fi, k)| *fi != file_index && *k == key)
+        {
             return true;
+        }
+
+        // L2-MRG-008: make room rather than grow. Dropping the oldest ARRIVAL is
+        // the honest choice once the window itself is over-full -- there is no
+        // "least useful" survivor to pick, and arrival order is the one ordering
+        // that is meaningful on input this badly behaved. Records are never
+        // dropped from the OUTPUT; only the ability to recognise a later
+        // duplicate of this one is given up.
+        while self.survivors.len() >= self.max_survivors {
+            self.survivors.pop_front();
+            if !self.capped_warned {
+                self.capped_warned = true;
+                log_warn!(
+                    "de-duplication survivor set hit the {}-record max_collapse_survivors \
+                     cap; collapsing is best-effort past this point (raise [merge] \
+                     max_collapse_survivors / --max-collapse-survivors, or narrow \
+                     --collapse-window-us)",
+                    self.max_survivors
+                );
+            }
         }
         self.survivors.push_back((us, file_index, key));
         false
@@ -328,6 +379,9 @@ pub struct MergedRecordIter<'a> {
     /// Cross-recorder duplicate collapsing (L2-MRG-007). `Some` when enabled via
     /// `--collapse-duplicates`; `None` keeps every row (the default).
     dedup: Option<DedupWindow>,
+    /// L2-MRG-008 cap, held here rather than only inside `DedupWindow` so
+    /// `collapse` and `max_collapse_survivors` compose in either order.
+    max_survivors: usize,
     /// L2-MRG-005: scope DELTA is measured over. `PerFile` (the default) leaves
     /// each reader's own DELTA untouched; `Global` recomputes across the merged
     /// stream via `delta_tracker`.
@@ -420,6 +474,7 @@ impl<'a> MergedRecordIter<'a> {
             pending_error: None,
             pending_terminal,
             dedup: None,
+            max_survivors: DEFAULT_MAX_COLLAPSE_SURVIVORS,
             delta_scope: DeltaScope::PerFile,
             collapsed: Arc::new(AtomicU64::new(0)),
         })
@@ -430,7 +485,27 @@ impl<'a> MergedRecordIter<'a> {
     /// default) is a no-op; `window_us` is the timestamp tolerance.
     #[must_use]
     pub fn collapse(mut self, enabled: bool, window_us: u64) -> Self {
-        self.dedup = enabled.then(|| DedupWindow::new(window_us));
+        let cap = self.max_survivors;
+        self.dedup = enabled.then(|| DedupWindow::new(window_us, cap));
+        self
+    }
+
+    /// Cap the de-duplication survivor set (L2-MRG-008), builder-style.
+    ///
+    /// A separate method rather than a third parameter on [`collapse`] because
+    /// `collapse` is public API and widening it would be a breaking change; this
+    /// composes with it in **either** order. Values are clamped into
+    /// `[MAX_COLLAPSE_SURVIVORS_MIN, MAX_COLLAPSE_SURVIVORS_MAX]` — the CLI and
+    /// config loader both reject out-of-range values with a message, so a
+    /// library caller reaching this with one has bypassed that and is better
+    /// served by a working bound than by a panic.
+    #[must_use]
+    pub fn max_collapse_survivors(mut self, cap: usize) -> Self {
+        let cap = cap.clamp(MAX_COLLAPSE_SURVIVORS_MIN, MAX_COLLAPSE_SURVIVORS_MAX);
+        self.max_survivors = cap;
+        if let Some(dedup) = self.dedup.as_mut() {
+            dedup.max_survivors = cap;
+        }
         self
     }
 
@@ -588,6 +663,120 @@ mod tests {
         // No special meaning for other metacharacters.
         assert!(glob_match("a.b", "a.b"));
         assert!(!glob_match("a.b", "axb"));
+    }
+
+    /// A message whose wire content is driven by `seq`, so a stream of them
+    /// collapses nothing. Content uniqueness is load-bearing in the probes
+    /// below: if everything collapsed, the survivor set would stay small for
+    /// the wrong reason and the assertions would pass vacuously.
+    fn probe_message(seq: u64) -> MieMessage {
+        MieMessage {
+            timestamp: Timestamp::Irig(crate::models::IrigTimestamp {
+                day: 192,
+                hour: 15,
+                minute: 54,
+                second: 50,
+                microsecond: 0,
+                freerun: false,
+            }),
+            type_word: TypeWord {
+                message_type: 0x02,
+                bus: crate::models::Bus::A,
+                word_count: 4,
+                error: false,
+                raw: 0x0224,
+            },
+            message_format: crate::models::MessageFormat::RtToRt,
+            command_word: None,
+            command_word_2: None,
+            status_word: None,
+            status_word_2: None,
+            data_words: crate::models::DataWords::new(),
+            error_word: Some((seq & 0xFFFF) as u16),
+            delta: None,
+            file_offset: 0,
+            mux: None,
+        }
+    }
+
+    /// Requirements: L2-MRG-007, L2-MRG-008
+    ///
+    /// The reported probe, as a test: an alternating 1000us / 0us stream with a
+    /// zero-width window. Front-only eviction never fired here -- the front held
+    /// a timestamp in the FUTURE of the current record, so the one-sided
+    /// `us - front_us` was never greater than the window -- and the front then
+    /// blocked eviction of everything behind it. All 10 000 records were
+    /// retained and the per-record scan went quadratic (2x records, 4x time).
+    ///
+    /// Retention is now on absolute distance, so the 1000us survivors go the
+    /// moment a 0us record arrives, and vice versa.
+    #[test]
+    fn dedup_window_retention_is_independent_of_arrival_order() {
+        let mut w = DedupWindow::new(0, DEFAULT_MAX_COLLAPSE_SURVIVORS);
+        for i in 0..10_000u64 {
+            let us = if i.is_multiple_of(2) { 1000 } else { 0 };
+            w.is_duplicate(us, (i % 2) as usize, &probe_message(i));
+        }
+        assert!(
+            w.survivors.len() <= 2,
+            "survivor set grew to {} on an alternating stream; retention must not \
+             depend on the order survivors were appended in",
+            w.survivors.len()
+        );
+    }
+
+    /// Requirements: L2-MRG-008
+    ///
+    /// The window bounds retention in TIME; the cap bounds it in COUNT. This is
+    /// the input the window alone cannot bound -- every record shares one
+    /// timestamp, so every one of them is legitimately inside the window. It is
+    /// the same "timestamps all decode alike" case L2-WRT-022 cites for the
+    /// reorder stage, and it is why the absolute-distance fix above is not on
+    /// its own sufficient.
+    #[test]
+    fn dedup_survivor_set_is_capped_when_the_window_cannot_bound_it() {
+        const CAP: usize = 64;
+        let mut w = DedupWindow::new(u64::MAX, CAP);
+        for i in 0..10_000u64 {
+            w.is_duplicate(0, (i % 2) as usize, &probe_message(i));
+        }
+        assert_eq!(
+            w.survivors.len(),
+            CAP,
+            "the survivor set must stop at the cap, not grow with the record count"
+        );
+    }
+
+    /// Requirements: L2-MRG-008
+    ///
+    /// The two builder methods compose in either order -- the reason the cap is
+    /// a separate method rather than a third parameter on `collapse` (which is
+    /// public API) is that it must not depend on call order.
+    #[test]
+    fn max_collapse_survivors_composes_with_collapse_in_either_order() {
+        let cap_of = |iter: &MergedRecordIter<'_>| iter.dedup.as_ref().map(|d| d.max_survivors);
+        let readers: Vec<crate::reader::MieFileReader> = Vec::new();
+
+        let a = MergedRecordIter::new(&readers, None, false, false)
+            .expect("empty merge builds")
+            .collapse(true, 0)
+            .max_collapse_survivors(77);
+        assert_eq!(cap_of(&a), Some(77));
+
+        let b = MergedRecordIter::new(&readers, None, false, false)
+            .expect("empty merge builds")
+            .max_collapse_survivors(77)
+            .collapse(true, 0);
+        assert_eq!(cap_of(&b), Some(77));
+
+        // Out-of-range values clamp rather than panic: the CLI and the config
+        // loader both reject them with a message, so anything arriving here has
+        // bypassed those and is better served by a working bound.
+        let c = MergedRecordIter::new(&readers, None, false, false)
+            .expect("empty merge builds")
+            .collapse(true, 0)
+            .max_collapse_survivors(0);
+        assert_eq!(cap_of(&c), Some(MAX_COLLAPSE_SURVIVORS_MIN));
     }
 
     /// Requirements: L2-MRG-002

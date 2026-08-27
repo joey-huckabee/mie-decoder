@@ -56,6 +56,7 @@ const char* const kHelp =
     "    --lookahead-records <N>      Validation look-ahead depth, 1-32\n"
     "    --standard-tick-rate-hz <H>  Calibrate Standard timestamps\n"
     "    --max-sort-group <N>         Canonical-order run cap, 1-1048576\n"
+    "    --max-collapse-survivors <N> Collapse survivor-set cap, 1-1048576\n"
     "    --no-mux                     Leave the MUX column empty\n"
     "    --mux-delimiter <S>          MUX field delimiter\n"
     "    --mux-field <N>              MUX field index; negative counts back\n"
@@ -565,6 +566,10 @@ DecodeArgs parse_decode(ArgReader& reader) {
         } else if (reader.take_value("--max-sort-group", value)) {
             args.overrides.max_sort_group =
                 parse_ranged(value, "--max-sort-group", MAX_SORT_GROUP_MIN, MAX_SORT_GROUP_MAX);
+        } else if (reader.take_value("--max-collapse-survivors", value)) {
+            args.overrides.max_collapse_survivors =
+                parse_ranged(value, "--max-collapse-survivors", MAX_COLLAPSE_SURVIVORS_MIN,
+                             MAX_COLLAPSE_SURVIVORS_MAX);
         } else if (reader.take_value("--mux-delimiter", value)) {
             if (value.empty()) {
                 throw usage_error("--mux-delimiter must not be empty");
@@ -1096,6 +1101,7 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     merge_options.strict = config.strict;
     merge_options.collapse_duplicates = config.collapse_duplicates;
     merge_options.collapse_window_us = config.collapse_window_us;
+    merge_options.max_collapse_survivors = config.max_collapse_survivors;
     merge_options.delta_scope = config.delta_scope;
 
     // The pipeline, assembled. The only difference a merge makes is which source

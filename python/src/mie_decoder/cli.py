@@ -565,6 +565,19 @@ def build_parser() -> argparse.ArgumentParser:
             "output.max_sort_group config key."
         ),
     )
+    decode_parser.add_argument(
+        "--max-collapse-survivors",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Maximum records the --collapse-duplicates window retains at once "
+            "(range 1..=1048576, default 4096). Bounds the survivor set by "
+            "COUNT where the window bounds it by TIME; past the cap collapsing "
+            "is best-effort, with one WARN. L2-MRG-008. Mirrors the "
+            "merge.max_collapse_survivors config key."
+        ),
+    )
 
     # ── count subcommand ───────────────────────────────────────────
     # Its own subcommand, matching the Rust CLI (`count <INPUT>`).
@@ -888,6 +901,10 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
         LOOKAHEAD_RECORDS_MAX,
         LOOKAHEAD_RECORDS_MIN,
     )
+    from mie_decoder.merge import (
+        MAX_COLLAPSE_SURVIVORS_MAX,
+        MAX_COLLAPSE_SURVIVORS_MIN,
+    )
     from mie_decoder.order import MAX_SORT_GROUP_MAX, MAX_SORT_GROUP_MIN
 
     overrides: dict[str, object] = {}
@@ -919,6 +936,13 @@ def _validated_numeric_overrides(args: argparse.Namespace) -> dict[str, object]:
         from mie_decoder.models import parse_delta_scope
 
         overrides["delta_scope"] = parse_delta_scope(args.delta_scope)
+    if args.max_collapse_survivors is not None:
+        overrides["max_collapse_survivors"] = _validate_int_range(
+            args.max_collapse_survivors,
+            "--max-collapse-survivors",
+            MAX_COLLAPSE_SURVIVORS_MIN,
+            MAX_COLLAPSE_SURVIVORS_MAX,
+        )
     if args.max_sort_group is not None:
         overrides["max_sort_group"] = _validate_int_range(
             args.max_sort_group,
@@ -1048,6 +1072,7 @@ def _build_message_stream(
         strict=config.strict,
         collapse_duplicates=config.collapse_duplicates,
         collapse_window_us=config.collapse_window_us,
+        max_collapse_survivors=config.max_collapse_survivors,
         delta_scope=config.delta_scope,
     )
     stream = order_rows(apply_filters(merged, config.filters), config.max_sort_group)
