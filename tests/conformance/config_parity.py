@@ -57,6 +57,17 @@ CORPUS: list[tuple[str, str, str]] = [
     ("max-sort-group-negative", "[output]\nmax_sort_group = -1\n", "reject"),
     ("max-sort-group-bool", "[output]\nmax_sort_group = true\n", "reject"),
     ("max-sort-group-string", '[output]\nmax_sort_group = "64"\n', "reject"),
+    # L2-MRG-008. The same probes its sibling cap gets: a range validated
+    # in two implementations and clamped in the third is a divergence that
+    # only shows up on the value nobody tries by hand.
+    ("max-collapse-survivors-valid", "[merge]\nmax_collapse_survivors = 64\n", "accept"),
+    ("max-collapse-survivors-min", "[merge]\nmax_collapse_survivors = 1\n", "accept"),
+    ("max-collapse-survivors-max", "[merge]\nmax_collapse_survivors = 1048576\n", "accept"),
+    ("max-collapse-survivors-zero", "[merge]\nmax_collapse_survivors = 0\n", "reject"),
+    ("max-collapse-survivors-over", "[merge]\nmax_collapse_survivors = 1048577\n", "reject"),
+    ("max-collapse-survivors-negative", "[merge]\nmax_collapse_survivors = -1\n", "reject"),
+    ("max-collapse-survivors-bool", "[merge]\nmax_collapse_survivors = true\n", "reject"),
+    ("max-collapse-survivors-string", '[merge]\nmax_collapse_survivors = "64"\n', "reject"),
     # ── outside the flat schema (reject on both) ───────────────────────────
     ("inline-table", "[decode]\nx = { a = 1 }\n", "reject"),
     ("multiline-array", "[filter]\nexclude_rts = [\n  1,\n]\n", "reject"),

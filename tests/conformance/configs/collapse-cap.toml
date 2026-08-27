@@ -1,0 +1,15 @@
+# Conformance fixture: exercise the L2-MRG-008 survivor-set cap via the TOML
+# config path (the matching CLI-flag path is covered by the
+# `merge-collapse-cap-one` case). Both cases share the
+# `expected/merge-collapse-cross-recorder.csv` oracle, proving the config and
+# CLI paths produce byte-identical output.
+#
+# The cap is set to its MINIMUM legal value, which is the setting most likely to
+# change behaviour: at 1 the window retains a single survivor, so a merge that
+# still collapses correctly here is not relying on a deep survivor set. It also
+# pins the `[merge] max_collapse_survivors` loader in all three implementations
+# — a key wired into two of the three would be a silent no-op on the third,
+# which is exactly how `[merge]` itself drifted before.
+[merge]
+collapse_duplicates = true
+max_collapse_survivors = 1

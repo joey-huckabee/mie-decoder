@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "log_capture.hpp"
+#include "mie/config.hpp"
 #include "mie/error.hpp"
 #include "mie/reader.hpp"
 #include "record_fixtures.hpp"
@@ -461,7 +462,7 @@ TEST_CASE("duplicate collapsing spans recorders but never one file", "[merge][L3
     // L2-MRG-007. Two recorders on one bus see the same transaction; the same
     // content twice within ONE file is the bus really carrying it twice, and
     // dropping that would be losing data rather than de-duplicating it.
-    mie::merge::DedupWindow window(10);
+    mie::merge::DedupWindow window(10, mie::DEFAULT_MAX_COLLAPSE_SURVIVORS);
 
     mie::MieMessage message;
     message.type_word = mie::TypeWord(mie::MESSAGE_TYPE_BC_TO_RT, mie::BUS_A, 8, false, 0x0802);
@@ -476,19 +477,19 @@ TEST_CASE("duplicate collapsing spans recorders but never one file", "[merge][L3
     }
 
     SECTION("the same content from the SAME input never collapses") {
-        mie::merge::DedupWindow same_file(10);
+        mie::merge::DedupWindow same_file(10, mie::DEFAULT_MAX_COLLAPSE_SURVIVORS);
         CHECK_FALSE(same_file.is_duplicate(1000, 0, message));
         CHECK_FALSE(same_file.is_duplicate(1005, 0, message));
     }
 
     SECTION("outside the window it is a distinct record") {
-        mie::merge::DedupWindow narrow(10);
+        mie::merge::DedupWindow narrow(10, mie::DEFAULT_MAX_COLLAPSE_SURVIVORS);
         CHECK_FALSE(narrow.is_duplicate(1000, 0, message));
         CHECK_FALSE(narrow.is_duplicate(1011, 1, message));
     }
 
     SECTION("different payload is never a duplicate") {
-        mie::merge::DedupWindow other(10);
+        mie::merge::DedupWindow other(10, mie::DEFAULT_MAX_COLLAPSE_SURVIVORS);
         CHECK_FALSE(other.is_duplicate(1000, 0, message));
         mie::MieMessage changed(message);
         const uint16_t different[2] = {0x1234, 0x0000};
@@ -501,10 +502,64 @@ TEST_CASE("duplicate collapsing spans recorders but never one file", "[merge][L3
         // window compares ABSOLUTE distance: a one-sided subtraction would wrap
         // to an enormous unsigned value and read as "outside the window" only
         // by luck.
-        mie::merge::DedupWindow backward(10);
+        mie::merge::DedupWindow backward(10, mie::DEFAULT_MAX_COLLAPSE_SURVIVORS);
         CHECK_FALSE(backward.is_duplicate(1000, 0, message));
         CHECK(backward.is_duplicate(995, 1, message));
     }
+}
+
+namespace {
+
+/// A message whose wire content is driven by `seq`, so a stream of them
+/// collapses nothing. Content uniqueness is load-bearing in the probes below:
+/// if everything collapsed, the survivor set would stay small for the wrong
+/// reason and the assertions would pass vacuously.
+mie::MieMessage probe_message(uint64_t seq) {
+    mie::MieMessage message;
+    message.type_word = mie::TypeWord(mie::MESSAGE_TYPE_BC_TO_RT, mie::BUS_A, 4, false, 0x0224);
+    message.error_word = static_cast<uint16_t>(seq & 0xFFFF);
+    return message;
+}
+
+}  // namespace
+
+TEST_CASE("dedup retention does not depend on the order survivors arrived",
+          "[merge][L2-MRG-007][L2-MRG-008]") {
+    // The reported probe, as a test: alternating 1000us / 0us, zero-width
+    // window. Front-only eviction never fired here -- the front held a timestamp
+    // in the FUTURE of the current record, so the one-sided `us - front_us` was
+    // never greater than the window -- and the front then blocked eviction of
+    // everything behind it. All 10 000 records were retained and the per-record
+    // scan went quadratic (2x records, 4x time).
+    //
+    // Retention is now on absolute distance, so the 1000us survivors go the
+    // moment a 0us record arrives, and vice versa.
+    mie::merge::DedupWindow window(0, mie::DEFAULT_MAX_COLLAPSE_SURVIVORS);
+    for (uint64_t i = 0; i < 10000; ++i) {
+        const uint64_t us = (i % 2 == 0) ? 1000 : 0;
+        window.is_duplicate(us, static_cast<std::size_t>(i % 2), probe_message(i));
+    }
+    CHECK(window.survivor_count() <= 2u);
+}
+
+TEST_CASE("the dedup survivor set is capped when the window cannot bound it",
+          "[merge][L2-MRG-008]") {
+    // The window bounds retention in TIME; the cap bounds it in COUNT. This is
+    // the input the window alone cannot bound -- every record shares one
+    // timestamp, so every one of them is legitimately inside the window. It is
+    // the same "timestamps all decode alike" case L2-WRT-022 cites for the
+    // reorder stage, and it is why absolute-distance eviction is not on its own
+    // sufficient.
+    const std::size_t cap = 64;
+    mie_test::LogCapture capture(mie::log::LEVEL_WARN);
+    mie::merge::DedupWindow window(UINT64_MAX, cap);
+    for (uint64_t i = 0; i < 10000; ++i) {
+        window.is_duplicate(0, static_cast<std::size_t>(i % 2), probe_message(i));
+    }
+    CHECK(window.survivor_count() == cap);
+
+    // Exactly one WARN per merge, not one per capped record.
+    CHECK(capture.count_containing("max_collapse_survivors cap") == 1u);
 }
 
 TEST_CASE("a non-monotonic input warns once and keeps going", "[merge][L3-CPP-023]") {

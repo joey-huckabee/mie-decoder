@@ -53,6 +53,7 @@ _KEYS = [
     "standard_tick_rate_hz",
     "no_clobber",
     "max_sort_group",
+    "max_collapse_survivors",
     "delta_scope",
     "enabled",
     "delimiter",

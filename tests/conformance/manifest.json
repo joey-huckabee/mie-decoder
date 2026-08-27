@@ -954,6 +954,44 @@
       ],
       "expected_exit": 1,
       "expected_stderr_contains": "resolves to merge input"
+    },
+    {
+      "name": "merge-collapse-cap-one",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-a.hex"
+      ],
+      "expected": "expected/merge-collapse-cross-recorder.csv",
+      "args": [
+        "--collapse-duplicates",
+        "--max-collapse-survivors",
+        "1"
+      ]
+    },
+    {
+      "name": "merge-collapse-cap-config",
+      "inputs": [
+        "inputs/merge-a.hex",
+        "inputs/merge-a.hex"
+      ],
+      "expected": "expected/merge-collapse-cross-recorder.csv",
+      "config": "configs/collapse-cap.toml"
+    },
+    {
+      "name": "usage-error-max-collapse-survivors-out-of-range",
+      "input": "inputs/basic-multi-record.hex",
+      "args": [
+        "--max-collapse-survivors",
+        "0"
+      ],
+      "expected_exit": 4,
+      "expected_stderr_contains": "max-collapse-survivors"
+    },
+    {
+      "name": "config-error-max-collapse-survivors",
+      "input": "inputs/basic-multi-record.hex",
+      "config": "configs/collapse-cap-out-of-range.toml",
+      "expected_exit": 5
     }
   ]
 }

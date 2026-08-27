@@ -1,0 +1,13 @@
+# Conformance fixture: `[merge] max_collapse_survivors` outside its documented
+# range must be a CONFIG error (exit 5) in every implementation, not a silent
+# clamp (L2-MRG-008, L2-CFG-010).
+#
+# Zero is the interesting end. It is the value an operator reaches for meaning
+# "turn collapsing off" — but collapsing is already off by default, and a cap of
+# zero would mean "retain nothing", which is not a setting the window can honour.
+# Rejecting it at load time is what keeps that misunderstanding from becoming a
+# silently degraded run. An implementation that clamped instead of rejecting
+# would pass every behavioural test and diverge only here.
+[merge]
+collapse_duplicates = true
+max_collapse_survivors = 0
