@@ -62,7 +62,7 @@ package "External" {
 main      --> cli            : dispatch (decode/count/dump)
 cli       --> logmod         : set global level
 cli       --> config         : load_config then with_overrides
-cli       --> reader         : open(path, time_format, strict)
+cli       --> reader         : open(path, input_time_format, strict)
 cli       --> merge          : two or more inputs\n(positionals / ~--manifest / ~--glob)
 cli       --> filters        : wrap iterator
 cli       --> order          : final stage before writer

@@ -26,7 +26,9 @@ use crate::filter::FilterConfig;
 use crate::merge::{
     DEFAULT_MAX_COLLAPSE_SURVIVORS, MAX_COLLAPSE_SURVIVORS_MAX, MAX_COLLAPSE_SURVIVORS_MIN,
 };
-use crate::models::{Bus, DeltaScope, ErrorMode, MessageType, TimestampFormat};
+use crate::models::{
+    Bus, DeltaScope, ErrorMode, MessageType, OutputTimeFormat, TimestampFormat, YEAR_MAX, YEAR_MIN,
+};
 use crate::order::{DEFAULT_MAX_SORT_GROUP, MAX_SORT_GROUP_MAX, MAX_SORT_GROUP_MIN};
 use crate::sync::DEFAULT_LOOKAHEAD_RECORDS;
 
@@ -57,7 +59,7 @@ pub struct DecoderConfig {
     /// troubleshooting run. Set via `logging.irig_day_advisory = false` in TOML
     /// or `--no-irig-day-advisory` on the CLI.
     pub irig_day_advisory: bool,
-    pub time_format: TimestampFormat,
+    pub input_time_format: TimestampFormat,
     pub strict: bool,
     pub error_mode: ErrorMode,
     pub filters: FilterConfig,
@@ -67,6 +69,21 @@ pub struct DecoderConfig {
     /// behavior. Set via `output.no_clobber = true` in TOML or
     /// `--no-clobber` on the CLI.
     pub no_clobber: bool,
+    /// L2-WRT-025: which rendering the `TIME_STAMP` column uses. Defaults to
+    /// `doy` -- the DDC vendor rendering -- so a decode that selects nothing
+    /// stays byte-comparable against vendor CSV. Set via
+    /// `output.output_time_format` in TOML or `--output-time-format` on the CLI.
+    pub output_time_format: OutputTimeFormat,
+    /// L2-WRT-026: calendar year used to resolve the IRIG day-of-year field.
+    /// Required by the `iso` and `dom` renderings, inert under `doy`. An MIE
+    /// file carries no year, so `None` -- "not supplied" -- is the only honest
+    /// default, and a calendar rendering with `None` here is refused rather
+    /// than guessed at. Set via `output.year` or `--year`.
+    pub year: Option<u16>,
+    /// L2-WRT-025: offset from UTC in minutes, applied to the `iso` rendering's
+    /// zone designator. Zero renders as `Z`. Set via `output.utc_offset` or
+    /// `--utc-offset`.
+    pub utc_offset_minutes: i16,
     /// L1-EXIT-004: on unrecoverable mid-file sync loss, commit the rows
     /// decoded so far as `<destination>.partial` and exit 0, rather
     /// than unlinking and exiting 3. Set via `decode.allow_partial =
@@ -139,12 +156,15 @@ impl Default for DecoderConfig {
         Self {
             log_level: "WARNING".to_string(),
             irig_day_advisory: true,
-            time_format: TimestampFormat::Auto,
+            input_time_format: TimestampFormat::Auto,
             strict: false,
             error_mode: ErrorMode::Inline,
             filters: FilterConfig::default(),
             output_format: "csv".to_string(),
             no_clobber: false,
+            output_time_format: OutputTimeFormat::Doy,
+            year: None,
+            utc_offset_minutes: 0,
             allow_partial: false,
             detect_records: DEFAULT_DETECT_RECORDS,
             lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
@@ -170,11 +190,14 @@ impl Default for DecoderConfig {
 pub struct ConfigOverrides {
     pub log_level: Option<String>,
     pub irig_day_advisory: Option<bool>,
-    pub time_format: Option<TimestampFormat>,
+    pub input_time_format: Option<TimestampFormat>,
     pub strict: Option<bool>,
     pub error_mode: Option<ErrorMode>,
     pub output_format: Option<String>,
     pub no_clobber: Option<bool>,
+    pub output_time_format: Option<OutputTimeFormat>,
+    pub year: Option<u16>,
+    pub utc_offset_minutes: Option<i16>,
     pub allow_partial: Option<bool>,
     pub detect_records: Option<usize>,
     pub lookahead_records: Option<usize>,
@@ -227,11 +250,13 @@ impl DecoderConfig {
             ov,
             log_level,
             irig_day_advisory,
-            time_format,
+            input_time_format,
             strict,
             error_mode,
             output_format,
             no_clobber,
+            output_time_format,
+            utc_offset_minutes,
             allow_partial,
             detect_records,
             lookahead_records,
@@ -247,6 +272,12 @@ impl DecoderConfig {
         // Stored as `Option<f64>`, so the value is re-wrapped rather than copied.
         if let Some(v) = ov.standard_tick_rate_hz {
             self.standard_tick_rate_hz = Some(v);
+        }
+        // Likewise `Option<u16>`: "no year supplied" has to stay expressible,
+        // so an absent override must not overwrite a configured year with
+        // `None` (L2-WRT-026 clause 1).
+        if let Some(v) = ov.year {
+            self.year = Some(v);
         }
         if let Some(v) = ov.collapse_window_us {
             // CLI / config-load validation already rejects negatives; the
@@ -375,8 +406,25 @@ fn apply_logging_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), 
 /// `[decode]`: timestamp format, strict/allow-partial flags, detection and
 /// look-ahead ranges, and the Standard tick-rate calibration.
 fn apply_decode_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), ConfigError> {
-    if let Some(tf) = toml.get_string("decode", "time_format")? {
-        cfg.time_format = parse_time_format(tf)?;
+    // L2-CFG-012: `decode.time_format` was renamed in v3.0.0. Left to the
+    // generic unknown-key rule it would only WARN (L2-CFG-009) -- and a WARN is
+    // the wrong answer for a rename, because the operator's explicit choice
+    // would be discarded while the run reported success, silently reverting a
+    // forced format to auto-detection. Rejected by name, with a pointer.
+    //
+    // Presence is tested through `get` rather than `get_string` so that a
+    // wrong-typed value (`time_format = 1`) reports the rename too, instead of
+    // a type error about a key that no longer exists.
+    if toml.get("decode", "time_format").is_some() {
+        return Err(ConfigError(
+            "decode.time_format was renamed in v3.0.0. Use decode.input_time_format to \
+             choose how timestamps are PARSED (auto, irig, standard); use \
+             output.output_time_format to choose how they are WRITTEN (doy, iso, dom)."
+                .to_string(),
+        ));
+    }
+    if let Some(tf) = toml.get_string("decode", "input_time_format")? {
+        cfg.input_time_format = parse_time_format(tf)?;
     }
     if let Some(b) = toml.get_bool("decode", "strict")? {
         cfg.strict = b;
@@ -451,6 +499,28 @@ fn apply_output_section(toml: &TomlDoc, cfg: &mut DecoderConfig) -> Result<(), C
     }
     if let Some(b) = toml.get_bool("output", "no_clobber")? {
         cfg.no_clobber = b;
+    }
+    // L2-CFG-012 / L2-WRT-025: which rendering the TIME_STAMP column uses.
+    if let Some(otf) = toml.get_string("output", "output_time_format")? {
+        cfg.output_time_format = parse_output_time_format(otf)?;
+    }
+    // L2-WRT-026 clause 1: the year is validated here but NOT required here --
+    // a config may legitimately set a year it never uses, and a calendar
+    // rendering may legitimately take its year from the CLI instead. Whether
+    // one is actually needed is a question about the resolved pair, so it is
+    // asked once both sources have been merged (see `cli::resolve_time_render`).
+    if let Some(n) = toml.get_int("output", "year")? {
+        match u16::try_from(n) {
+            Ok(v) if (YEAR_MIN..=YEAR_MAX).contains(&v) => cfg.year = Some(v),
+            _ => {
+                return Err(ConfigError(format!(
+                    "Invalid output.year: {n}. Valid range: [{YEAR_MIN}, {YEAR_MAX}]"
+                )));
+            }
+        }
+    }
+    if let Some(offset) = toml.get_string("output", "utc_offset")? {
+        cfg.utc_offset_minutes = parse_utc_offset(offset)?;
     }
     // L2-WRT-022: cap on one buffered equal-timestamp run. Range-checked here so
     // a bad value fails at load time rather than silently clamping later; the
@@ -608,7 +678,7 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
         (section, key),
         ("logging", "level")
             | ("logging", "irig_day_advisory")
-            | ("decode", "time_format")
+            | ("decode", "input_time_format")
             | ("decode", "strict")
             | ("decode", "error_mode")
             | ("decode", "allow_partial")
@@ -617,6 +687,9 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
             | ("decode", "standard_tick_rate_hz")
             | ("output", "format")
             | ("output", "no_clobber")
+            | ("output", "output_time_format")
+            | ("output", "year")
+            | ("output", "utc_offset")
             | ("output", "max_sort_group")
             | ("mux", "enabled")
             | ("mux", "delimiter")
@@ -637,9 +710,62 @@ fn is_known_shared_key(section: &str, key: &str) -> bool {
 fn parse_time_format(s: &str) -> Result<TimestampFormat, ConfigError> {
     TimestampFormat::from_name_ci(s).ok_or_else(|| {
         ConfigError(format!(
-            "Invalid time_format: {s:?}. Valid: auto, irig, standard"
+            "Invalid input_time_format: {s:?}. Valid: auto, irig, standard"
         ))
     })
+}
+
+fn parse_output_time_format(s: &str) -> Result<OutputTimeFormat, ConfigError> {
+    OutputTimeFormat::from_name_ci(s).ok_or_else(|| {
+        ConfigError(format!(
+            "Invalid output_time_format: {s:?}. Valid: doy, iso, dom"
+        ))
+    })
+}
+
+/// Parse a UTC offset designator into minutes east of UTC (L2-CFG-012).
+///
+/// Accepts `Z` (case-insensitively) for zero, or a signed `+HH:MM` / `-HH:MM`.
+/// The shape is checked exactly rather than leniently: `+5:00`, `+0500` and a
+/// trailing-space variant are all rejected, because a zone that parsed loosely
+/// here would silently shift every ISO timestamp in the file.
+pub(crate) fn parse_utc_offset(s: &str) -> Result<i16, ConfigError> {
+    let invalid = || {
+        ConfigError(format!(
+            "Invalid output.utc_offset: {s:?}. Valid: Z, or +HH:MM / -HH:MM \
+             with HH in [0, 23] and MM in [0, 59]"
+        ))
+    };
+
+    if s.eq_ignore_ascii_case("z") {
+        return Ok(0);
+    }
+
+    let bytes = s.as_bytes();
+    if bytes.len() != 6 || bytes[3] != b':' {
+        return Err(invalid());
+    }
+    let sign: i16 = match bytes[0] {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return Err(invalid()),
+    };
+
+    let two_digits = |range: std::ops::Range<usize>| -> Option<i16> {
+        let text = s.get(range)?;
+        if !text.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        text.parse::<i16>().ok()
+    };
+    let (Some(hours), Some(minutes)) = (two_digits(1..3), two_digits(4..6)) else {
+        return Err(invalid());
+    };
+    if hours > 23 || minutes > 59 {
+        return Err(invalid());
+    }
+
+    Ok(sign * (hours * 60 + minutes))
 }
 
 fn parse_error_mode(s: &str) -> Result<ErrorMode, ConfigError> {
@@ -1255,7 +1381,7 @@ mod tests {
 level = "INFO"
 
 [decode]
-time_format = "irig"
+input_time_format = "irig"
 strict = true
 error_mode = "inline"
 
@@ -1270,7 +1396,7 @@ format = "csv"
 "#;
         let cfg = parse_into_config(text).unwrap();
         assert_eq!(cfg.log_level, "INFO");
-        assert_eq!(cfg.time_format, TimestampFormat::Irig);
+        assert_eq!(cfg.input_time_format, TimestampFormat::Irig);
         assert!(cfg.strict);
         assert_eq!(cfg.error_mode, ErrorMode::Inline);
         assert!(cfg.filters.exclude_types.contains(&0x20));
@@ -1287,28 +1413,28 @@ format = "csv"
 # leading comment
 [decode]
 strict = true  # trailing comment
-time_format = "auto"
+input_time_format = "auto"
 "#;
         let cfg = parse_into_config(text).unwrap();
         assert!(cfg.strict);
-        assert_eq!(cfg.time_format, TimestampFormat::Auto);
+        assert_eq!(cfg.input_time_format, TimestampFormat::Auto);
     }
 
     /// Requirements: L2-CFG-001
     #[test]
-    fn time_format_is_case_insensitive() {
+    fn input_time_format_is_case_insensitive() {
         for (spelling, expected) in [
             ("IRIG", TimestampFormat::Irig),
             ("Irig", TimestampFormat::Irig),
             ("AUTO", TimestampFormat::Auto),
             ("Standard", TimestampFormat::Standard),
         ] {
-            let text = format!("[decode]\ntime_format = \"{spelling}\"\n");
+            let text = format!("[decode]\ninput_time_format = \"{spelling}\"\n");
             let cfg = parse_into_config(&text).unwrap();
-            assert_eq!(cfg.time_format, expected, "spelling {spelling:?}");
+            assert_eq!(cfg.input_time_format, expected, "spelling {spelling:?}");
         }
         // An unrecognized spelling is still rejected.
-        let bad = "[decode]\ntime_format = \"bogus\"\n";
+        let bad = "[decode]\ninput_time_format = \"bogus\"\n";
         assert!(parse_into_config(bad).is_err());
     }
 
@@ -1350,8 +1476,8 @@ format = "csv#weird"
     /// Requirements: L2-CFG-010
     #[test]
     fn rejects_duplicate_section_header() {
-        let err =
-            parse_toml("[decode]\nstrict = true\n[decode]\ntime_format = \"irig\"\n").unwrap_err();
+        let err = parse_toml("[decode]\nstrict = true\n[decode]\ninput_time_format = \"irig\"\n")
+            .unwrap_err();
         assert!(err.contains("declared more than once"), "got {err:?}");
         assert!(err.contains("[decode]"), "got {err:?}");
         // Distinct section headers are fine.
@@ -1455,7 +1581,7 @@ format = "csv#weird"
     /// Requirements: L2-CFG-010
     #[test]
     fn rejects_non_string_and_scalar_sections() {
-        assert!(parse_into_config("[decode]\ntime_format = 1\n").is_err());
+        assert!(parse_into_config("[decode]\ninput_time_format = 1\n").is_err());
         assert!(parse_into_config("[decode]\nerror_mode = 1\n").is_err());
         for section in ["decode", "logging", "output", "mux", "merge", "filter"] {
             let err = parse_into_config(&format!("{section} = true\n")).unwrap_err();
@@ -1467,10 +1593,10 @@ format = "csv#weird"
 
     /// Requirements: L2-CFG-010
     #[test]
-    fn unknown_time_format_rejected() {
+    fn unknown_input_time_format_rejected() {
         let text = r#"
 [decode]
-time_format = "potato"
+input_time_format = "potato"
 "#;
         assert!(parse_into_config(text).is_err());
     }
@@ -1605,7 +1731,7 @@ exclude_types = ["UNICORN"]
     fn defaults_when_no_path() {
         let cfg = load_config(None).unwrap();
         assert_eq!(cfg.log_level, "WARNING");
-        assert_eq!(cfg.time_format, TimestampFormat::Auto);
+        assert_eq!(cfg.input_time_format, TimestampFormat::Auto);
         // Inline is the default error mode; separate is opt-in (L2-ERR-011).
         assert_eq!(cfg.error_mode, ErrorMode::Inline);
         assert!(!cfg.strict);
@@ -1622,11 +1748,11 @@ exclude_types = ["UNICORN"]
             ..Default::default()
         };
         let merged = cfg.with_overrides(ConfigOverrides {
-            time_format: Some(TimestampFormat::Standard),
+            input_time_format: Some(TimestampFormat::Standard),
             exclude_rts: vec![0],
             ..Default::default()
         });
-        assert_eq!(merged.time_format, TimestampFormat::Standard);
+        assert_eq!(merged.input_time_format, TimestampFormat::Standard);
         assert_eq!(merged.filters.exclude_rts, vec![31, 0]);
     }
 
@@ -1837,7 +1963,7 @@ exclude_types = ["UNICORN"]
         };
         for key in [
             "level",
-            "time_format",
+            "input_time_format",
             "strict",
             "error_mode",
             "allow_partial",
@@ -1865,7 +1991,7 @@ exclude_types = ["UNICORN"]
     /// Requirements: L2-CFG-011, L2-DEC-017
     #[test]
     fn standard_tick_rate_hz_default_is_none() {
-        let cfg = parse_into_config("[decode]\ntime_format = \"standard\"\n").unwrap();
+        let cfg = parse_into_config("[decode]\ninput_time_format = \"standard\"\n").unwrap();
         assert_eq!(cfg.standard_tick_rate_hz, None);
     }
 

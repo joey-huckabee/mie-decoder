@@ -113,12 +113,19 @@ from pathlib import Path
 from typing import Final, TextIO
 
 from mie_decoder.exceptions import (
+    MieCalendarUnavailableError,
     MieClobberRefusedError,
     MieInputOutputCollisionError,
     MieUnrecoverableSyncLossError,
     MieWriterError,
 )
-from mie_decoder.models import MAX_DATA_WORDS, MieMessage
+from mie_decoder.models import (
+    DOY_RENDER,
+    MAX_DATA_WORDS,
+    CalendarUnavailableError,
+    MieMessage,
+    TimeRender,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -222,11 +229,16 @@ class WriteOptions:
         allow_partial: When True, an unrecoverable mid-file sync loss
             commits the rows decoded so far as ``<destination>.partial``
             and returns success rather than propagating the error.
+        time_render: L2-WRT-025. How the ``TIME_STAMP`` column is rendered.
+            Defaults to the day-of-year form, so a caller that does not set it
+            gets exactly the vendor-compatible output every version before
+            v3.0.0 produced.
     """
 
     input_path: Path | None = None
     no_clobber: bool = False
     allow_partial: bool = False
+    time_render: TimeRender = DOY_RENDER
 
 
 @dataclass(frozen=True)
@@ -457,19 +469,31 @@ VENDOR_COLUMN_COUNT: int = 44
 CSV_HEADER: list[str] = [name for name, _ in CSV_COLUMNS]
 
 
-def message_to_row(msg: MieMessage) -> dict[str, str]:
+def message_to_row(msg: MieMessage, render: TimeRender = DOY_RENDER) -> dict[str, str]:
     """Convert a single decoded message to a dict of CSV field strings.
 
     Args:
         msg: A fully decoded MieMessage instance.
+        render: L2-WRT-025 rendering for the ``TIME_STAMP`` column. Defaults to
+            day-of-year, so existing callers are unaffected.
 
     Returns:
         A dict keyed by column name (matching :data:`CSV_HEADER`) with
         string values. Handles all message types including errored
         records and SPURIOUS_DATA (where command_word is None).
+
+    Raises:
+        MieCalendarUnavailableError: when a calendar rendering cannot be
+            resolved for this record (L2-WRT-026).
     """
+    try:
+        timestamp = msg.timestamp.format_with(render)
+    except CalendarUnavailableError as exc:
+        raise MieCalendarUnavailableError(
+            f"{exc} (record at offset 0x{msg.file_offset:X})"
+        ) from exc
     row: dict[str, str] = {
-        "TIME_STAMP": msg.timestamp.format(),
+        "TIME_STAMP": timestamp,
         "RT": str(msg.rt) if msg.rt is not None else "",
         "MSG": msg.msg_label,
         "STAT": f"{msg.status_word:04X}" if msg.status_word is not None else "",
@@ -756,8 +780,9 @@ class _StreamingCsvRowWriter:
     permission) are wrapped as :class:`MieWriterError`.
     """
 
-    def __init__(self, stream: TextIO, destination: str) -> None:
+    def __init__(self, stream: TextIO, destination: str, render: TimeRender = DOY_RENDER) -> None:
         self._destination = destination
+        self._render = render
         self._writer = csv.DictWriter(stream, fieldnames=CSV_HEADER, lineterminator="\n")
         self._rows_written = 0
         try:
@@ -768,7 +793,10 @@ class _StreamingCsvRowWriter:
     def write_message(self, msg: MieMessage) -> None:
         """Write one decoded message as a CSV row."""
         try:
-            self._writer.writerow(message_to_row(msg))
+            # L2-WRT-025: the row is built -- and the timestamp resolved --
+            # before anything is handed to the csv writer, so a calendar
+            # refusal (L2-WRT-026 clause 3) cannot leave a half-written line.
+            self._writer.writerow(message_to_row(msg, self._render))
         except OSError as exc:
             self._reraise_or_wrap(exc)
         self._rows_written += 1
@@ -859,7 +887,7 @@ def _write_csv_to_file(
     _preflight_output(dest, False, opts)
     partial_info: tuple[int, int] | None = None
     with _AtomicCsvFile(dest, no_clobber=opts.no_clobber) as atomic:
-        writer = _StreamingCsvRowWriter(atomic.stream, str(dest))
+        writer = _StreamingCsvRowWriter(atomic.stream, str(dest), opts.time_render)
         try:
             for msg in messages:
                 writer.write_message(msg)
@@ -914,7 +942,7 @@ def _write_csv_to_stream(
             can treat a closed consumer as a clean stop (L2-WRT-018).
         MieWriterError: on any other I/O failure.
     """
-    writer = _StreamingCsvRowWriter(stream, dest_name)
+    writer = _StreamingCsvRowWriter(stream, dest_name, opts.time_render)
     try:
         for msg in messages:
             writer.write_message(msg)
@@ -996,7 +1024,7 @@ def write_csv_split(
     errors_atomic: _AtomicCsvFile | None = None
     partial_info: tuple[int, int] | None = None
     try:
-        main_writer = _StreamingCsvRowWriter(main_atomic.stream, str(output_path))
+        main_writer = _StreamingCsvRowWriter(main_atomic.stream, str(output_path), opts.time_render)
         error_writer: _StreamingCsvRowWriter | None = None
 
         try:
@@ -1004,7 +1032,9 @@ def write_csv_split(
                 if msg.error_label:
                     if error_writer is None:
                         errors_atomic = _AtomicCsvFile(error_path, no_clobber=opts.no_clobber)
-                        error_writer = _StreamingCsvRowWriter(errors_atomic.stream, str(error_path))
+                        error_writer = _StreamingCsvRowWriter(
+                            errors_atomic.stream, str(error_path), opts.time_render
+                        )
                     error_writer.write_message(msg)
                 else:
                     main_writer.write_message(msg)

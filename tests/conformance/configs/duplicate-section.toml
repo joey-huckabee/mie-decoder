@@ -6,4 +6,4 @@
 [decode]
 strict = true
 [decode]
-time_format = "irig"
+input_time_format = "irig"

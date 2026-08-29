@@ -124,6 +124,12 @@ class _DecodeState:
     #: three different ways across two modules.
     delta_tracker: DeltaTracker
     msg_count: int
+    #: L2-WRT-026 clause 4: highest day-of-year seen so far from a
+    #: calendar-locked record, for the rollover watch. None until the first.
+    last_irig_day: int | None = None
+    #: Whether the clause 4 rollover warning has fired for this input. One
+    #: per decode, like every other observational warning here.
+    warned_day_rollover: bool = False
 
 
 @dataclass
@@ -175,7 +181,7 @@ class MieFileReader:
         path: Path to the MIE binary file.
         strict: If ``True``, raise exceptions on sync loss, invalid
             records, and unknown error codes instead of recovering.
-        time_format: Timestamp format. ``AUTO`` (default) detects from
+        input_time_format: Timestamp format. ``AUTO`` (default) detects from
             the first record.
 
     Raises:
@@ -188,17 +194,24 @@ class MieFileReader:
         path: str | Path,
         *,
         strict: bool = False,
-        time_format: TimestampFormat = TimestampFormat.AUTO,
+        input_time_format: TimestampFormat = TimestampFormat.AUTO,
         detect_records: int = DEFAULT_DETECT_RECORDS,
         lookahead_records: int = DEFAULT_LOOKAHEAD_RECORDS,
         standard_tick_rate_hz: float | None = None,
         mux_enabled: bool = DEFAULT_MUX_ENABLED,
         mux_delimiter: str = DEFAULT_MUX_DELIMITER,
         mux_field: int = DEFAULT_MUX_FIELD,
+        calendar_year: int | None = None,
     ) -> None:
         self._path = Path(path)
         self._strict = strict
-        self._time_format = time_format
+        # L2-WRT-026 clause 4 / L2-LOG-002: the calendar year a calendar
+        # rendering will resolve day-of-year against, or None under `doy`.
+        # The reader has no rendering concern of its own; it takes this
+        # because two of its diagnostics change meaning when the day-of-year
+        # field becomes load-bearing.
+        self._calendar_year = calendar_year
+        self._input_time_format = input_time_format
         # L2-DEC-015: probe size for auto-detection. Clamped to >= 1
         # (a no-probe call is nonsensical). The CLI / config layer
         # validates the upper bound; we mirror the clamp here so a
@@ -248,11 +261,12 @@ class MieFileReader:
         if self._file_size == 0:
             raise MieFileEmptyError(str(self._path))
         logger.debug(
-            "Initialized reader for %s (%d bytes, strict=%s, time_format=%s, detect_records=%d)",
+            "Initialized reader for %s (%d bytes, strict=%s, "
+            "input_time_format=%s, detect_records=%d)",
             self._path,
             self._file_size,
             self._strict,
-            self._time_format.name,
+            self._input_time_format.name,
             self._detect_records,
         )
 
@@ -321,8 +335,8 @@ class MieFileReader:
         self._empty_recording = False
 
         resolved_format: TimestampFormat | None = None
-        if self._time_format != TimestampFormat.AUTO:
-            resolved_format = self._time_format
+        if self._input_time_format != TimestampFormat.AUTO:
+            resolved_format = self._input_time_format
 
         logger.info("Beginning decode of %s", self._path.name)
 
@@ -594,7 +608,7 @@ class MieFileReader:
             logger.info(
                 "Auto-detected timestamp format: %s "
                 "(Marginal: IRIG=%d STD=%d over %d "
-                "record(s)) -- pass --time-format to force "
+                "record(s)) -- pass --input-time-format to force "
                 "the choice if this is wrong",
                 outcome.format.name,
                 outcome.irig_score,
@@ -613,7 +627,7 @@ class MieFileReader:
                     "ambiguous in %s starting at offset "
                     "0x%X: IRIG=%d STD=%d over %d record(s) -- "
                     "strict mode rejects ambiguous files; "
-                    "pass --time-format to force the choice",
+                    "pass --input-time-format to force the choice",
                     self._path.name,
                     start_offset,
                     outcome.irig_score,
@@ -630,7 +644,7 @@ class MieFileReader:
                 "Auto-detected timestamp format: %s "
                 "(Ambiguous: IRIG=%d STD=%d over %d "
                 "record(s)) -- using best guess; pass "
-                "--time-format to force the choice or "
+                "--input-time-format to force the choice or "
                 "--strict to reject ambiguous files",
                 outcome.format.name,
                 outcome.irig_score,
@@ -645,10 +659,10 @@ class MieFileReader:
         start_offset: int,
         resolved_format: TimestampFormat,
     ) -> None:
-        """L2-DEC-013: the format was forced via --time-format /
-        decode.time_format. Sanity-check it against the same detection probe:
+        """L2-DEC-013: the format was forced via --input-time-format /
+        decode.input_time_format. Sanity-check it against the same detection probe:
         if the probe is *Decisive* about the OTHER format, the forced
-        selection is obviously wrong (e.g. --time-format standard on an IRIG
+        selection is obviously wrong (e.g. --input-time-format standard on an IRIG
         file), which would otherwise emit garbage timestamps for the whole
         file. Marginal/Ambiguous probes are NOT flagged — those are exactly
         the cases where forcing is the legitimate override. resolved_format
@@ -671,7 +685,7 @@ class MieFileReader:
                     "recording in %s at offset 0x%X: detection is "
                     "decisive for %s (IRIG=%d STD=%d over %d "
                     "record(s)) -- strict mode rejects the mismatch; "
-                    "drop --time-format to auto-detect",
+                    "drop --input-time-format to auto-detect",
                     resolved_format.name,
                     self._path.name,
                     start_offset,
@@ -691,7 +705,7 @@ class MieFileReader:
                 "recording at offset 0x%X: detection is decisive "
                 "for %s (IRIG=%d STD=%d over %d record(s)) -- "
                 "decoding with the forced format anyway; drop "
-                "--time-format to auto-detect or pass --strict to "
+                "--input-time-format to auto-detect or pass --strict to "
                 "reject the mismatch",
                 resolved_format.name,
                 start_offset,
@@ -916,6 +930,33 @@ class MieFileReader:
                 read_u16(mm, offset + 4),
                 read_u16(mm, offset + 6),
             )
+            # L2-WRT-026 clause 4: under a calendar rendering, a backward day
+            # step means the recording crosses New Year while the whole decode
+            # uses one configured year, so every row after the wrap is dated a
+            # year early. Warn once and carry on -- the decoder deliberately
+            # does NOT auto-increment, because sync-loss corruption produces
+            # this same signal, and advancing the year on corrupt data would be
+            # a worse error than the one it fixed.
+            if self._calendar_year is not None and not irig.freerun:
+                if (
+                    state.last_irig_day is not None
+                    and irig.day < state.last_irig_day
+                    and not state.warned_day_rollover
+                ):
+                    state.warned_day_rollover = True
+                    logger.warning(
+                        "Day-of-year stepped back from %d to %d at 0x%X: this "
+                        "recording appears to cross a year boundary, but every row "
+                        "is dated %d. Rows after the wrap are a year early. Split "
+                        "the recording at the boundary and decode each part with "
+                        "its own --year",
+                        state.last_irig_day,
+                        irig.day,
+                        offset,
+                        self._calendar_year,
+                    )
+                state.last_irig_day = irig.day
+
             if irig.freerun:
                 logger.warning("Freerun timestamp at 0x%X", offset)
             elif not state.warned_irig_day and irig_day_advisory():
@@ -932,14 +973,34 @@ class MieFileReader:
                 # it sat in the default output of every run and crowded
                 # out the warnings that ARE observations (sync
                 # recovery, non-monotonic DELTA, a hit sort cap).
+                #
+                # L2-LOG-002: the same disclaimer, at a level that follows what
+                # the operator asked for. Under `doy` a skewed day is one field
+                # a human reads as "day 192" and can re-examine. Under a
+                # calendar rendering it is resolved into 2026-07-11 --
+                # something that looks like a fact, gets pasted into reports,
+                # and is correlated against systems with no way to know it is
+                # suspect. Choosing a calendar rendering IS the operator saying
+                # this field is load-bearing, which is when a standing caveat
+                # about it earns the default level's attention.
                 state.warned_irig_day = True
-                logger.info(
-                    "IRIG day-of-year decoded for this recording; the "
-                    "day-of-year field has a known firmware-dependent "
-                    "discrepancy on some DDC cards (hour/minute/second/"
-                    "microsecond are unaffected) -- see "
-                    "docs/VENDOR-CSV-DIFFS.md section 5"
-                )
+                if self._calendar_year is not None:
+                    logger.warning(
+                        "IRIG day-of-year is being resolved into calendar dates, "
+                        "and that field has a known firmware-dependent discrepancy "
+                        "on some DDC cards (hour/minute/second/microsecond are "
+                        "unaffected). Verify your card model against vendor CSV "
+                        "before relying on these dates -- see "
+                        "docs/VENDOR-CSV-DIFFS.md section 5"
+                    )
+                else:
+                    logger.info(
+                        "IRIG day-of-year decoded for this recording; the "
+                        "day-of-year field has a known firmware-dependent "
+                        "discrepancy on some DDC cards (hour/minute/second/"
+                        "microsecond are unaffected) -- see "
+                        "docs/VENDOR-CSV-DIFFS.md section 5"
+                    )
             return irig
         return decode_standard_timestamp(
             read_u16(mm, offset + 2),

@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{MieError, MieResult};
-use crate::models::{MAX_DATA_WORDS, MieMessage};
+use crate::models::{CalendarError, MAX_DATA_WORDS, MieMessage, TimeRender};
 use crate::{log_info, log_warn};
 
 // ── Path identity (L2-WRT-014) ────────────────────────────────────────
@@ -452,6 +452,9 @@ pub struct CsvWriter<W: Write> {
     out: W,
     rows_written: u64,
     destination: String,
+    /// L2-WRT-025: how the `TIME_STAMP` column is rendered. Defaults to
+    /// day-of-year; set with [`CsvWriter::with_time_render`].
+    time_render: TimeRender,
 }
 
 impl<W: Write> CsvWriter<W> {
@@ -465,9 +468,21 @@ impl<W: Write> CsvWriter<W> {
             out,
             rows_written: 0,
             destination: destination.into(),
+            time_render: TimeRender::doy(),
         };
         w.write_str(CSV_HEADER)?;
         Ok(w)
+    }
+
+    /// Select the `TIME_STAMP` rendering (L2-WRT-025).
+    ///
+    /// A builder rather than a `new` parameter so that every existing caller
+    /// keeps producing the vendor-compatible day-of-year form untouched --
+    /// which is the same reason `doy` is the CLI default (L1-OUT-004).
+    #[must_use]
+    pub fn with_time_render(mut self, render: TimeRender) -> Self {
+        self.time_render = render;
+        self
     }
 
     /// # Errors
@@ -476,7 +491,17 @@ impl<W: Write> CsvWriter<W> {
     /// downstream pipe arrives here with its kind preserved, so the CLI can
     /// treat it as a clean exit (L2-WRT-018).
     pub fn write_message(&mut self, msg: &MieMessage) -> MieResult<()> {
-        write_row(&mut self.out, msg).map_err(|source| MieError::WriterError {
+        // L2-WRT-025: the timestamp is rendered BEFORE any byte of the row is
+        // written, because a calendar rendering can fail where `doy` cannot --
+        // a day-of-year the configured year does not have (L2-WRT-026 clause
+        // 3). Resolving it first keeps that refusal from leaving a half-written
+        // line in the output.
+        let timestamp = msg.timestamp.format_with(self.time_render).map_err(|e| {
+            MieError::CalendarUnavailable {
+                detail: describe_calendar_error(e, msg.file_offset),
+            }
+        })?;
+        write_row(&mut self.out, msg, &timestamp).map_err(|source| MieError::WriterError {
             destination: self.destination.clone(),
             source,
         })?;
@@ -534,9 +559,36 @@ fn write_csv_field<W: Write>(out: &mut W, value: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn write_row<W: Write>(out: &mut W, msg: &MieMessage) -> std::io::Result<()> {
+/// Turn a [`CalendarError`] into the operator-facing `detail` of a
+/// [`MieError::CalendarUnavailable`], naming the record it came from.
+fn describe_calendar_error(err: CalendarError, file_offset: u64) -> String {
+    match err {
+        CalendarError::MissingYear => "no year was configured; set [output] year \
+             or pass --year YYYY"
+            .to_string(),
+        CalendarError::NoSuchDay { day, year } => format!(
+            "the record at offset 0x{file_offset:X} carries day-of-year {day}, which \
+             does not exist in {year} ({year} is not a leap year). The configured \
+             year is wrong for this recording"
+        ),
+        CalendarError::NotCalendarLocked => "this recording uses the Standard \
+             timestamp encoding, a free-running counter with no epoch. No year \
+             places it on a calendar"
+            .to_string(),
+        CalendarError::FreerunNotAnchored => format!(
+            "the record at offset 0x{file_offset:X} carries a freerun IRIG \
+             timestamp -- the card had no valid IRIG-B lock, so its day and time \
+             fields are relative rather than calendar-anchored"
+        ),
+    }
+}
+
+/// Write one CSV row. `timestamp` is rendered by the caller (see
+/// [`CsvWriter::write_message`]) so that a failed calendar resolution cannot
+/// leave a partly-written row behind.
+fn write_row<W: Write>(out: &mut W, msg: &MieMessage, timestamp: &str) -> std::io::Result<()> {
     // TIME_STAMP
-    out.write_all(msg.timestamp.format().as_bytes())?;
+    out.write_all(timestamp.as_bytes())?;
     out.write_all(b",")?;
 
     // RT
@@ -623,6 +675,10 @@ pub struct WriteOptions {
     /// `<destination>.partial` and treat the run as successful (exit 0)
     /// rather than unlinking the temp + propagating the error (exit 3).
     pub allow_partial: bool,
+    /// L2-WRT-025: how the `TIME_STAMP` column is rendered. Defaults to the
+    /// day-of-year form, so a caller that does not set it gets exactly the
+    /// vendor-compatible output every version before v3.0.0 produced.
+    pub time_render: TimeRender,
 }
 
 /// Outcome of a successful CSV write. `partial` is `Some(_)` when
@@ -731,7 +787,8 @@ where
             let mut atomic = AtomicCsvFile::create(path.to_path_buf())?.no_clobber(opts.no_clobber);
 
             let (count, partial_info) = {
-                let mut writer = CsvWriter::new(&mut atomic, path.display().to_string())?;
+                let mut writer = CsvWriter::new(&mut atomic, path.display().to_string())?
+                    .with_time_render(opts.time_render);
                 let mut partial_info: Option<(u64, u64)> = None;
                 for item in messages {
                     match item {
@@ -786,7 +843,8 @@ where
         None => {
             let stdout = std::io::stdout();
             let buf = BufWriter::new(stdout.lock());
-            let mut writer = CsvWriter::new(buf, "stdout".to_string())?;
+            let mut writer =
+                CsvWriter::new(buf, "stdout".to_string())?.with_time_render(opts.time_render);
             stream_into(&mut writer, messages)?;
             let n = writer.finish()?;
             log_info!("wrote {} rows to stdout", n);
@@ -833,7 +891,8 @@ where
     let mut errors_atomic: Option<AtomicCsvFile> = None;
 
     let (normal_count, error_count, partial_info) = {
-        let mut main = CsvWriter::new(&mut main_atomic, output.display().to_string())?;
+        let mut main = CsvWriter::new(&mut main_atomic, output.display().to_string())?
+            .with_time_render(opts.time_render);
         // The error writer is created lazily on first error row so a
         // clean file doesn't leave an empty errors CSV behind.
         let mut error_writer: Option<CsvWriter<&mut AtomicCsvFile>> = None;
@@ -864,7 +923,10 @@ where
                             source: io::Error::other("error output writer was not initialized"),
                         });
                     };
-                    error_writer = Some(CsvWriter::new(inner, error_path.display().to_string())?);
+                    error_writer = Some(
+                        CsvWriter::new(inner, error_path.display().to_string())?
+                            .with_time_render(opts.time_render),
+                    );
                 }
                 let Some(writer) = error_writer.as_mut() else {
                     return Err(MieError::WriterError {
@@ -1097,7 +1159,7 @@ mod tests {
                 ..sample_msg()
             };
             let mut buf = Vec::new();
-            write_row(&mut buf, &msg).unwrap();
+            write_row(&mut buf, &msg, &msg.timestamp.format()).unwrap();
             String::from_utf8(buf).unwrap()
         };
         // Plain value appears verbatim in the MUX cell (after CMD 797E).
@@ -1549,6 +1611,7 @@ mod tests {
             input_path: Some(p.clone()),
             no_clobber: false,
             allow_partial: false,
+            time_render: TimeRender::doy(),
         };
         // Empty iterator — should never reach the write because
         // preflight_output fails first.
@@ -1572,6 +1635,7 @@ mod tests {
             input_path: None,
             no_clobber: true,
             allow_partial: false,
+            time_render: TimeRender::doy(),
         };
         let result = write_csv(std::iter::empty(), Some(&p), opts);
         match result {
@@ -1615,6 +1679,7 @@ mod tests {
             input_path: Some(victim.clone()),
             no_clobber: false,
             allow_partial: false,
+            time_render: TimeRender::doy(),
         };
         let result = write_csv_split(std::iter::empty(), &dest, opts);
         match result {
@@ -1654,6 +1719,7 @@ mod tests {
                     input_path: Some(victim.clone()),
                     no_clobber: false,
                     allow_partial,
+                    time_render: TimeRender::doy(),
                 },
             )
         };
@@ -1700,6 +1766,7 @@ mod tests {
             input_path: Some(victim.clone()),
             no_clobber: false,
             allow_partial,
+            time_render: TimeRender::doy(),
         };
 
         // Confirm the isolation rather than trusting it: the other three
@@ -1788,6 +1855,7 @@ mod tests {
             input_path: Some(p.clone()),
             no_clobber: false,
             allow_partial: false,
+            time_render: TimeRender::doy(),
         };
         let result = write_csv_split(std::iter::empty(), &p, opts);
         match result {
@@ -1809,6 +1877,7 @@ mod tests {
             input_path: None,
             no_clobber: true,
             allow_partial: false,
+            time_render: TimeRender::doy(),
         };
         let result = write_csv_split(std::iter::empty(), &dest, opts);
         match result {
@@ -1919,6 +1988,7 @@ mod tests {
             input_path: None,
             no_clobber: false,
             allow_partial: true,
+            time_render: TimeRender::doy(),
         };
         let result = write_csv_split(messages, &dest, opts);
 
@@ -1963,6 +2033,7 @@ mod tests {
             input_path: None,
             no_clobber: false,
             allow_partial: true,
+            time_render: TimeRender::doy(),
         };
         let result = write_csv_split(messages, &dest, opts);
 
@@ -2000,6 +2071,7 @@ mod tests {
             input_path: None,
             no_clobber: true,
             allow_partial: false,
+            time_render: TimeRender::doy(),
         };
         match write_csv(messages, Some(&dest), opts) {
             Err(MieError::ClobberRefused { path }) => assert_eq!(path, dest),
@@ -2060,6 +2132,7 @@ mod tests {
             input_path: None,
             no_clobber: false,
             allow_partial: true,
+            time_render: TimeRender::doy(),
         };
         let outcome = write_csv(messages, Some(&dest), opts).unwrap();
         let partial = outcome.partial.expect("partial commit info");
@@ -2089,6 +2162,7 @@ mod tests {
             input_path: None,
             no_clobber: false,
             allow_partial: false,
+            time_render: TimeRender::doy(),
         };
         let err = write_csv(messages, Some(&dest), opts).unwrap_err();
         match err {

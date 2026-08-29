@@ -238,7 +238,7 @@ TEST_CASE("a valued flag given no value is a usage error", "[cli][L3-CPP-014]") 
     const char* const flags[] = {"--output",
                                  "--config",
                                  "--log-level",
-                                 "--time-format",
+                                 "--input-time-format",
                                  "--format",
                                  "--detect-records",
                                  "--lookahead-records",
@@ -271,7 +271,7 @@ TEST_CASE("--flag=value and --flag value are the same thing", "[cli][L3-CPP-014]
         const char* value;
     };
     const Case cases[] = {
-        {"--time-format", "irig"},
+        {"--input-time-format", "irig"},
         {"--format", "csv"},
         {"--detect-records", "4"},
         {"--lookahead-records", "2"},
@@ -471,8 +471,8 @@ TEST_CASE("help outranks a deferred diagnostic but not a missing value",
                 mie::cli::EXIT_OK);
         REQUIRE(out.find("USAGE") != std::string::npos);
 
-        REQUIRE(mie::cli::run(args("decode", input.str(), "--time-format", "bad", "--help")) ==
-                mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--input-time-format", "bad",
+                                   "--help")) == mie::cli::EXIT_OK);
         REQUIRE(mie::cli::run(args("count", input.str(), "--nonsense", "--help")) ==
                 mie::cli::EXIT_OK);
         REQUIRE(mie::cli::run(args("dump", input.str(), "--nonsense", "--help")) ==
@@ -820,7 +820,7 @@ TEST_CASE("exit codes classify the failure", "[cli][L3-CPP-016]") {
     // a USAGE error. It was EXIT_RUNTIME through v2.14.0 because the check ran
     // after the config merge rather than at parse time -- which put one
     // mistake on three different exit codes depending on where it was written
-    // (4 for --time-format, 1 for --format, 5 for the same value in a config
+    // (4 for --input-time-format, 1 for --format, 5 for the same value in a config
     // file). The config-file spelling is still 5; only this one moved.
     SECTION("an unsupported output format is a usage error") {
         const TempFile input("mie-cli-fmt.mie", valid_recording());
@@ -867,7 +867,7 @@ TEST_CASE("config supplies defaults that the CLI overrides", "[cli][L3-CPP-018]"
     SECTION("a config value is used when no flag contradicts it") {
         const TempFile config(
             "mie-cli-detect.toml",
-            std::string("[decode]\ndetect_records = 4\ntime_format = \"irig\"\n"));
+            std::string("[decode]\ndetect_records = 4\ninput_time_format = \"irig\"\n"));
         const TempPath out("mie-cli-detect.csv");
         REQUIRE(mie::cli::run(args("--config", config.str(), "decode", input.str(), "-o",
                                    out.str())) == mie::cli::EXIT_OK);

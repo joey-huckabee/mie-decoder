@@ -1699,3 +1699,297 @@ fn decode_help_advertises_delta_scope() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("--delta-scope"), "{stdout}");
 }
+
+// -- v3.0.0 timestamp rendering (L2-WRT-025 / L2-WRT-026 / L2-CLI-018/019) --
+
+/// The default decode must be byte-identical to what pre-v3.0.0 emitted --
+/// that is the whole point of `doy` being the default (L1-OUT-004), and it is
+/// what keeps a no-flag decode diffable against vendor CSV.
+///
+/// Requirements: L2-WRT-011, L2-WRT-025
+#[test]
+fn default_rendering_is_unchanged_day_of_year() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let out = run(["decode", input.to_str().unwrap()]);
+    assert_eq!(exit_code(&out), 0);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let row = stdout.lines().nth(1).expect("a data row");
+    assert!(
+        row.starts_with("192:15:54:50.456225,"),
+        "default rendering changed: {row}"
+    );
+}
+
+/// The same instant renders one day apart either side of a leap day, which is
+/// the whole reason a calendar rendering needs a year.
+///
+/// Requirements: L2-WRT-025, L2-WRT-026
+#[test]
+fn calendar_renderings_resolve_day_of_year_against_the_given_year() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let path = input.to_str().unwrap();
+
+    let cases = [
+        ("iso", "2026", None, "2026-07-11T15:54:50.456225Z"),
+        ("iso", "2024", None, "2024-07-10T15:54:50.456225Z"),
+        ("dom", "2026", None, "11:15:54:50.456225"),
+        ("dom", "2024", None, "10:15:54:50.456225"),
+        (
+            "iso",
+            "2026",
+            Some("--utc-offset=-05:00"),
+            "2026-07-11T15:54:50.456225-05:00",
+        ),
+        (
+            "iso",
+            "2026",
+            Some("--utc-offset=+05:30"),
+            "2026-07-11T15:54:50.456225+05:30",
+        ),
+    ];
+
+    for (format, year, extra, expected) in cases {
+        let mut args = vec![
+            "decode",
+            path,
+            "--output-time-format",
+            format,
+            "--year",
+            year,
+        ];
+        if let Some(flag) = extra {
+            args.push(flag);
+        }
+        let out = run(&args);
+        assert_eq!(exit_code(&out), 0, "{format} {year} {extra:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let row = stdout.lines().nth(1).expect("a data row");
+        assert!(
+            row.starts_with(&format!("{expected},")),
+            "{format} {year} {extra:?} rendered {row}"
+        );
+    }
+}
+
+/// A calendar rendering with no year from either source is refused before the
+/// output is opened, and the diagnostic names BOTH ways to supply one
+/// (L2-WRT-026 clause 1).
+///
+/// Requirements: L2-WRT-026, L2-CLI-018
+#[test]
+fn calendar_rendering_without_a_year_is_a_usage_error() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+
+    for format in ["iso", "dom"] {
+        let output = tmp.path().join(format!("out-{format}.csv"));
+        let out = run([
+            std::ffi::OsStr::new("decode"),
+            input.as_os_str(),
+            std::ffi::OsStr::new("-o"),
+            output.as_os_str(),
+            std::ffi::OsStr::new("--output-time-format"),
+            std::ffi::OsStr::new(format),
+        ]);
+        assert_eq!(exit_code(&out), 4, "{format} without a year must be usage");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("--year"), "must name the flag\n{stderr}");
+        assert!(
+            stderr.contains("[output] year"),
+            "must name the config key too\n{stderr}"
+        );
+        assert!(
+            !output.exists(),
+            "nothing may be written when the year is missing"
+        );
+    }
+}
+
+/// `doy` never needs a year, so nothing an operator runs today starts asking
+/// for one, even with a year sitting in a site config (L2-WRT-026 clause 5).
+///
+/// Requirements: L2-WRT-026
+#[test]
+fn doy_ignores_year_and_offset_rather_than_rejecting_them() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let out = run([
+        "decode",
+        input.to_str().unwrap(),
+        "--output-time-format",
+        "doy",
+        "--year",
+        "2024",
+        "--utc-offset=-05:00",
+    ]);
+    assert_eq!(exit_code(&out), 0);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let row = stdout.lines().nth(1).expect("a data row");
+    assert!(
+        row.starts_with("192:15:54:50.456225,"),
+        "an inert year/offset must not change doy: {row}"
+    );
+}
+
+/// Both new value-taking flags are range-checked at parse time, so a bad value
+/// is a usage error rather than a malformed cell far into the output.
+///
+/// Requirements: L2-CLI-018
+#[test]
+fn new_flag_values_are_validated_at_parse_time() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let path = input.to_str().unwrap();
+
+    let bad = [
+        ("--output-time-format", "elapsed"),
+        ("--output-time-format", ""),
+        ("--year", "0"),
+        ("--year", "10000"),
+        ("--year", "-1"),
+        ("--year", "twenty"),
+        ("--utc-offset", "+24:00"),
+        ("--utc-offset", "+05:60"),
+        ("--utc-offset", "+5:00"),
+        ("--utc-offset", "0500"),
+        ("--utc-offset", "PST"),
+    ];
+
+    for (flag, value) in bad {
+        let out = run(["decode", path, flag, value]);
+        assert_eq!(exit_code(&out), 4, "{flag} {value:?} should be rejected");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(flag),
+            "the diagnostic should name {flag}\n{stderr}"
+        );
+    }
+}
+
+/// `--time-format` was split in v3.0.0. Unlike `--inline-errors` it has a
+/// successor -- two of them -- so the diagnostic must say which is which. That
+/// is the one question a generic "unknown option" cannot answer (L2-CLI-019).
+///
+/// Requirements: L2-CLI-019
+#[test]
+fn retired_time_format_flag_names_both_replacements() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let output = tmp.path().join("out.csv");
+
+    // Both the space-separated and the joined spelling land on the arm.
+    for spelling in ["--time-format", "--time-format=irig"] {
+        let out = run([
+            std::ffi::OsStr::new("decode"),
+            input.as_os_str(),
+            std::ffi::OsStr::new("-o"),
+            output.as_os_str(),
+            std::ffi::OsStr::new(spelling),
+            std::ffi::OsStr::new("irig"),
+        ]);
+        assert_eq!(exit_code(&out), 4, "{spelling} must be a usage error");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        for expected in [
+            "--time-format",
+            "--input-time-format",
+            "--output-time-format",
+        ] {
+            assert!(
+                stderr.contains(expected),
+                "{spelling}: diagnostic should mention {expected}\n{stderr}"
+            );
+        }
+        assert!(!output.exists(), "no output on a retired-flag usage error");
+    }
+}
+
+/// Every new flag must appear in `decode --help`: the cross-implementation
+/// parity gate scrapes help text, so a flag the parser accepts but help does
+/// not advertise fails the conformance run.
+///
+/// Requirements: L2-CLI-018
+#[test]
+fn decode_help_advertises_the_timestamp_flags() {
+    let out = run(["decode", "--help"]);
+    assert_eq!(exit_code(&out), 0);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for flag in [
+        "--input-time-format",
+        "--output-time-format",
+        "--year",
+        "--utc-offset",
+    ] {
+        assert!(
+            stdout.contains(flag),
+            "help must advertise {flag}\n{stdout}"
+        );
+    }
+}
+
+/// The day-of-year advisory follows the rendering: `INFO` under `doy`, where a
+/// skewed day is visibly a day number, and `WARNING` under a calendar
+/// rendering, where the same skew is resolved into something that reads as a
+/// fact. The opt-out silences it either way.
+///
+/// Requirements: L2-LOG-001, L2-LOG-002
+#[test]
+fn day_of_year_advisory_escalates_under_a_calendar_rendering() {
+    let tmp = TempDir::new();
+    let input = tmp.write("rec.mie", &one_valid_record());
+    let path = input.to_str().unwrap();
+
+    // `doy` at the default level: silent (the advisory is INFO).
+    let quiet = run(["decode", path]);
+    let quiet_err = String::from_utf8_lossy(&quiet.stderr);
+    assert!(
+        !quiet_err.contains("day-of-year"),
+        "the advisory must stay out of a default doy decode\n{quiet_err}"
+    );
+
+    // `doy` at INFO: present, and at INFO.
+    let info = run(["--log-level", "INFO", "decode", path]);
+    let info_err = String::from_utf8_lossy(&info.stderr);
+    let advisory = info_err
+        .lines()
+        .find(|line| line.contains("day-of-year"))
+        .unwrap_or_else(|| panic!("expected the advisory at INFO\n{info_err}"));
+    assert!(advisory.contains("INFO"), "expected INFO, got: {advisory}");
+
+    // A calendar rendering at the DEFAULT level: present, and at WARN.
+    let calendar = run([
+        "decode",
+        path,
+        "--output-time-format",
+        "iso",
+        "--year",
+        "2026",
+    ]);
+    assert_eq!(exit_code(&calendar), 0);
+    let calendar_err = String::from_utf8_lossy(&calendar.stderr);
+    let escalated = calendar_err
+        .lines()
+        .find(|line| line.contains("day-of-year"))
+        .unwrap_or_else(|| panic!("expected the advisory at the default level\n{calendar_err}"));
+    assert!(
+        escalated.contains("WARN"),
+        "expected WARN under a calendar rendering, got: {escalated}"
+    );
+
+    // The opt-out still wins, under the calendar rendering too.
+    let opted_out = run([
+        "--no-irig-day-advisory",
+        "decode",
+        path,
+        "--output-time-format",
+        "iso",
+        "--year",
+        "2026",
+    ]);
+    let opted_out_err = String::from_utf8_lossy(&opted_out.stderr);
+    assert!(
+        !opted_out_err.contains("day-of-year"),
+        "the opt-out must suppress it at every level and rendering\n{opted_out_err}"
+    );
+}

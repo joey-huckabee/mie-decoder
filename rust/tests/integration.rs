@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mie_decoder::filter::{FilterConfig, FilterIterExt};
-use mie_decoder::models::{Bus, Direction, MessageFormat};
+use mie_decoder::models::{Bus, Direction, MessageFormat, TimeRender};
 use mie_decoder::reader::MieFileReader;
 use mie_decoder::writer::write_csv;
 
@@ -347,7 +347,7 @@ fn payload_extraction_does_not_overrun_into_next_record() {
         f.path(),
         ReaderOptions {
             strict: true,
-            time_format: TimestampFormat::Irig,
+            input_time_format: TimestampFormat::Irig,
             ..Default::default()
         },
     )
@@ -367,7 +367,7 @@ fn payload_extraction_does_not_overrun_into_next_record() {
     let reader = MieFileReader::with_options(
         f.path(),
         ReaderOptions {
-            time_format: TimestampFormat::Irig,
+            input_time_format: TimestampFormat::Irig,
             ..Default::default()
         },
     )
@@ -423,7 +423,7 @@ fn rt_to_rt_cmd2_overclaim_does_not_overrun() {
         f.path(),
         ReaderOptions {
             strict: true,
-            time_format: TimestampFormat::Irig,
+            input_time_format: TimestampFormat::Irig,
             ..Default::default()
         },
     )
@@ -438,7 +438,7 @@ fn rt_to_rt_cmd2_overclaim_does_not_overrun() {
     let reader = MieFileReader::with_options(
         f.path(),
         ReaderOptions {
-            time_format: TimestampFormat::Irig,
+            input_time_format: TimestampFormat::Irig,
             ..Default::default()
         },
     )
@@ -485,7 +485,7 @@ fn rt_to_rt_cmd_word_count_mismatch_rejected() {
         f.path(),
         ReaderOptions {
             strict: true,
-            time_format: TimestampFormat::Irig,
+            input_time_format: TimestampFormat::Irig,
             ..Default::default()
         },
     )
@@ -499,7 +499,7 @@ fn rt_to_rt_cmd_word_count_mismatch_rejected() {
     let reader = MieFileReader::with_options(
         f.path(),
         ReaderOptions {
-            time_format: TimestampFormat::Irig,
+            input_time_format: TimestampFormat::Irig,
             ..Default::default()
         },
     )
@@ -1194,7 +1194,7 @@ fn merge_rejects_standard_format_input() {
         MieFileReader::with_options(
             fa.path(),
             ReaderOptions {
-                time_format: TimestampFormat::Standard,
+                input_time_format: TimestampFormat::Standard,
                 ..Default::default()
             },
         )
@@ -1202,7 +1202,7 @@ fn merge_rejects_standard_format_input() {
         MieFileReader::with_options(
             fa.path(),
             ReaderOptions {
-                time_format: TimestampFormat::Standard,
+                input_time_format: TimestampFormat::Standard,
                 ..Default::default()
             },
         )
@@ -1489,6 +1489,7 @@ fn merge_allow_partial_writes_partial_on_file_failure() {
         input_path: None,
         no_clobber: false,
         allow_partial: true,
+        time_render: TimeRender::doy(),
     };
     let outcome = write_csv(merged, Some(out.path()), opts).unwrap();
     assert!(
@@ -1535,6 +1536,7 @@ fn merge_allow_partial_writes_partial_on_priming_failure() {
         input_path: None,
         no_clobber: false,
         allow_partial: true,
+        time_render: TimeRender::doy(),
     };
     let outcome = write_csv(merged, Some(out.path()), opts).unwrap();
     assert!(
@@ -1595,6 +1597,7 @@ fn merge_allow_partial_all_inputs_bad() {
         input_path: None,
         no_clobber: false,
         allow_partial: true,
+        time_render: TimeRender::doy(),
     };
     let outcome = write_csv(merged, Some(out.path()), opts).unwrap();
     assert!(
@@ -1633,6 +1636,7 @@ fn merge_allow_partial_bad_input_then_good() {
         input_path: None,
         no_clobber: false,
         allow_partial: true,
+        time_render: TimeRender::doy(),
     };
     let outcome = write_csv(merged, Some(out.path()), opts).unwrap();
     assert!(

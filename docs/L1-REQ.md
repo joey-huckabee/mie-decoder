@@ -139,6 +139,14 @@ Out-of-scope items are listed separately under **Non-Requirements**.
 
 **Verification Method**: Test (T)
 
+### L1-OUT-004
+
+**Statement**: Each implementation SHALL support operator-selectable rendering of the `TIME_STAMP` column. The default rendering SHALL be the day-of-year form, whose cell content is byte-identical to what L1-OUT-001 vendor compatibility requires, so that an invocation that selects no rendering explicitly remains vendor-diffable. Additional renderings MAY resolve the IRIG day-of-year field to a calendar date, but SHALL do so only from information supplied out of band: where the recording does not carry the year, or where its timestamps are not calendar-locked at all, the implementation SHALL refuse the request rather than emit a fabricated date.
+
+**Rationale**: An IRIG-B timestamp carries day-of-year, hour, minute, second and microsecond — but no year and no timezone. Analysts feeding decoded recordings into time-series tooling, or correlating them against systems that speak calendar dates, need an ISO-8601 rendering; an analyst reading a single recording is better served by the day-of-year form the DDC tool emits. Neither is the right answer for everyone, so the rendering becomes a choice rather than a constant. Keeping day-of-year as the default is what preserves L1-OUT-001: byte compatibility is a property of the default path, not of a flag combination the operator has to remember. The refusal clause exists because the failure mode is silent and consequential in the opposite direction from the usual one — a fabricated year produces a date that is well-formed, authoritative-looking, and wrong, which survives into incident reports in a way an empty cell never would. That is the same reasoning L1-DLT-001 applies to an uncalibrated `DELTA`, and it is applied here for the same reason.
+
+**Verification Method**: Test (T)
+
 ---
 
 ## L1-DLT: DELTA inter-arrival tracking

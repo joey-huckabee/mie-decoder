@@ -69,7 +69,7 @@ struct ReaderOptions {
     /// AUTO (the default) runs the L2-DEC-015 probe. An explicit choice is
     /// honoured even when the probe disagrees -- see `check_forced_format` in
     /// the implementation for what "disagrees" costs in each mode.
-    TimestampFormat time_format;
+    TimestampFormat input_time_format;
 
     /// L2-DEC-015 probe size: how many records auto-detection walks before
     /// committing. Clamped to at least 1 here; the CLI and config loader clamp
@@ -91,6 +91,15 @@ struct ReaderOptions {
     std::string mux_delimiter;
     /// 0-based field index; negative counts from the end.
     int64_t mux_field;
+
+    /// L2-WRT-026: the calendar year a calendar rendering will resolve
+    /// day-of-year against, or absent when the output rendering is `doy`.
+    ///
+    /// The reader has no rendering concern of its own; it takes this because
+    /// two of its diagnostics change meaning when the day-of-year field
+    /// becomes load-bearing -- the L2-LOG-002 advisory escalates to WARN, and a
+    /// backward day step becomes a year-rollover warning (clause 4).
+    Optional<int> calendar_year;
 
     ReaderOptions();
 };
@@ -163,10 +172,12 @@ class MieFileReader {
     platform::MappedFile mapping_;
     uint64_t file_size_;
     bool strict_;
-    TimestampFormat time_format_;
+    TimestampFormat input_time_format_;
     std::size_t detect_records_;
     std::size_t lookahead_records_;
     Optional<double> standard_tick_rate_hz_;
+    /// L2-WRT-026 clause 4 / L2-LOG-002. See `ReaderOptions::calendar_year`.
+    Optional<int> calendar_year_;
 
     /// L2-WRT-020: resolved once from the file name and shared by pointer onto
     /// every message, so carrying it stays O(1) per record no matter how many
@@ -296,6 +307,14 @@ class RecordIter {
 
     /// PRA-9: whether the one-time IRIG day-of-year advisory has fired.
     bool warned_irig_day_;
+    /// L2-WRT-026 clause 4 / L2-LOG-002: the calendar year in force, or
+    /// absent under `doy`.
+    Optional<int> calendar_year_;
+    /// Highest day-of-year seen so far from a calendar-locked record, for the
+    /// clause 4 rollover watch. Absent until the first such record.
+    Optional<int> last_irig_day_;
+    /// Whether the clause 4 rollover warning has fired for this input.
+    bool warned_day_rollover_;
 
     uint64_t msg_count_;
     uint64_t sync_losses_;

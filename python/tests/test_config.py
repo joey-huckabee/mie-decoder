@@ -188,7 +188,7 @@ class TestDecoderConfig:
     def test_defaults(self) -> None:
         config = DecoderConfig()
         assert config.log_level == "WARNING"
-        assert config.time_format == TimestampFormat.AUTO
+        assert config.input_time_format == TimestampFormat.AUTO
         assert config.strict is False
         assert config.filters.is_active is False
 
@@ -216,19 +216,19 @@ class TestDecoderConfig:
 
         ``TimestampFormat.AUTO`` and ``ErrorMode.SEPARATE`` are both ``0``. A
         truthiness-based override check silently discarded them, so
-        ``--time-format auto`` was a no-op against ``time_format = "irig"`` while
+        ``--input-time-format auto`` was a no-op against ``input_time_format = "irig"`` while
         Rust honored it — the two implementations then decoded the same file
         differently. Presence, not truthiness, decides (Rust ``Option<T>``).
         """
         config = DecoderConfig(
-            time_format=TimestampFormat.IRIG,
+            input_time_format=TimestampFormat.IRIG,
             error_mode=ErrorMode.INLINE,
         )
         updated = config.with_overrides(
-            time_format=TimestampFormat.AUTO,
+            input_time_format=TimestampFormat.AUTO,
             error_mode=ErrorMode.SEPARATE,
         )
-        assert updated.time_format == TimestampFormat.AUTO
+        assert updated.input_time_format == TimestampFormat.AUTO
         assert updated.error_mode == ErrorMode.SEPARATE
 
     @pytest.mark.requirement("L2-CFG-003")
@@ -245,9 +245,9 @@ class TestDecoderConfig:
     @pytest.mark.requirement("L2-CFG-003")
     def test_omitted_override_keeps_config_value(self) -> None:
         """An absent (``None``) override never resets a config-file value."""
-        config = DecoderConfig(time_format=TimestampFormat.IRIG, no_clobber=True)
-        updated = config.with_overrides(time_format=None, no_clobber=None)
-        assert updated.time_format == TimestampFormat.IRIG
+        config = DecoderConfig(input_time_format=TimestampFormat.IRIG, no_clobber=True)
+        updated = config.with_overrides(input_time_format=None, no_clobber=None)
+        assert updated.input_time_format == TimestampFormat.IRIG
         assert updated.no_clobber is True
 
 
@@ -278,17 +278,17 @@ class TestLoadConfig:
         assert 31 in config.filters.exclude_rts
 
     @pytest.mark.requirement("L2-DEC-013")
-    def test_load_with_time_format(self, tmp_path: Path) -> None:
+    def test_load_with_input_time_format(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "tf.toml"
-        cfg_file.write_text('[decode]\ntime_format = "irig"\n')
+        cfg_file.write_text('[decode]\ninput_time_format = "irig"\n')
         config = load_config(cfg_file)
-        assert config.time_format == TimestampFormat.IRIG
+        assert config.input_time_format == TimestampFormat.IRIG
 
     @pytest.mark.requirement("L2-CFG-010")
-    def test_invalid_time_format_raises(self, tmp_path: Path) -> None:
+    def test_invalid_input_time_format_raises(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "bad_tf.toml"
-        cfg_file.write_text('[decode]\ntime_format = "bogus"\n')
-        with pytest.raises(ValueError, match="Invalid time_format"):
+        cfg_file.write_text('[decode]\ninput_time_format = "bogus"\n')
+        with pytest.raises(ValueError, match="Invalid input_time_format"):
             load_config(cfg_file)
 
 
@@ -842,13 +842,13 @@ class TestSchemaValidation:
         assert config.filters.exclude_rts == {0, 31}
 
     @pytest.mark.requirement("L2-CFG-010")
-    def test_non_string_time_format_rejected(self, tmp_path: Path) -> None:
+    def test_non_string_input_time_format_rejected(self, tmp_path: Path) -> None:
         # TOML-valid but schema-invalid: an int where a string is expected must
         # be a clean config error (ValueError -> exit 5), not a leaked
         # AttributeError. Matches the Rust "must be a string" rejection.
         cfg = tmp_path / "tf_int.toml"
-        cfg.write_text("[decode]\ntime_format = 1\n")
-        with pytest.raises(ValueError, match=r"decode\.time_format"):
+        cfg.write_text("[decode]\ninput_time_format = 1\n")
+        with pytest.raises(ValueError, match=r"decode\.input_time_format"):
             load_config(cfg)
 
     @pytest.mark.requirement("L2-CFG-010")
@@ -907,7 +907,7 @@ class TestSchemaValidation:
     @pytest.mark.parametrize(
         "snippet",
         [
-            '[decode]\ntime_format = "irig"\n',
+            '[decode]\ninput_time_format = "irig"\n',
             "[decode]\ndetect_records = 8\n",
             "[decode]\nstandard_tick_rate_hz = 1000000.0\n",
             "[decode]\nstandard_tick_rate_hz = 1e6\n",  # exponent float is fine
@@ -978,7 +978,7 @@ class TestSchemaValidation:
     @pytest.mark.requirement("L2-DEC-017")
     def test_standard_tick_rate_hz_default_is_none(self, tmp_path: Path) -> None:
         cfg = tmp_path / "std.toml"
-        cfg.write_text('[decode]\ntime_format = "standard"\n')
+        cfg.write_text('[decode]\ninput_time_format = "standard"\n')
         config = load_config(cfg)
         assert config.standard_tick_rate_hz is None
 

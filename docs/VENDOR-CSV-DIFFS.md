@@ -23,6 +23,7 @@ The short version: by spec (`L1-OUT-001`) MIE-Decoder's first **44 columns are t
 | Placeholder columns `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP` | **Empty** (see §3) |
 | `MUX` column | **Populated from the file name by default** (L2-WRT-020); empty with `--no-mux` for a vendor-exact diff (see §3) |
 | IRIG `TIME_STAMP` day-of-year field | **Firmware-dependent discrepancy** on some DDC card models (see §5) |
+| `TIME_STAMP` **rendering** | **Match** at the default `--output-time-format doy`; `iso` and `dom` diverge deliberately (see §3c) |
 | `DELTA` on a **multi-file** decode | **Match** by default (`--delta-scope per-file`, since v2.11.0); `--delta-scope global` diverges deliberately (see §3b) |
 | **Row order** for records sharing one `TIME_STAMP` | **May differ** — we sort ties by `RT` then `MSG` (L1-OUT-003); the vendor writes capture order. Restore with `--max-sort-group 1` (see §3a) |
 
@@ -71,7 +72,7 @@ MIE-Decoder and the vendor tool for any clean (non-errored, non-spurious) record
 
 | Column | Format | Notes |
 |--------|--------|-------|
-| `TIME_STAMP` | `DAY:HH:MM:SS.uuuuuu` (IRIG) or `0xNNNNNNNN` (Standard) | Day-of-year on IRIG has a known firmware discrepancy — see §5. Otherwise identical. |
+| `TIME_STAMP` | `DAY:HH:MM:SS.uuuuuu` (IRIG) or `0xNNNNNNNN` (Standard) | **At the default `--output-time-format doy`.** Day-of-year on IRIG has a known firmware discrepancy — see §5; the `iso` / `dom` renderings are a deliberate departure — see §3c. Otherwise identical. |
 | `RT` | Integer 0–31, no padding | Empty for SPURIOUS_DATA. |
 | `MSG` | `<subaddress><T\|R>` (e.g. `11R`, `22T`) | Empty for SPURIOUS_DATA. |
 | `WD01` … `WD32` | 4-character uppercase hex, no `0x` prefix | Unused trailing columns are **empty cells** (not `0000`). |
@@ -202,6 +203,42 @@ apply to the ordinary one-file vendor comparison.
 
 ---
 
+## 3c. `TIME_STAMP` rendering (`--output-time-format`)
+
+Since v3.0.0 the `TIME_STAMP` column has a selectable rendering (`L2-WRT-025`).
+**The default is `doy`, the DDC vendor rendering, so a decode that selects
+nothing is unaffected by this section** — byte compatibility is deliberately a
+property of the plain invocation rather than of a flag combination an operator
+has to remember (`L1-OUT-004`).
+
+| `--output-time-format` | Column 1 | Vendor-comparable? |
+|---|---|---|
+| `doy` (default) | `192:15:54:50.456225` | **Yes** — byte-identical |
+| `iso` | `2026-07-11T15:54:50.456225Z` | No, by design |
+| `dom` | `11:15:54:50.456225` | No, by design |
+
+`iso` and `dom` are **the fifth documented exception** to the §1 byte-compat
+contract, and the only one an operator turns on deliberately. They exist because
+downstream tooling and cross-system correlation want calendar dates, which the
+day-of-year form cannot give; the DDC tool has no equivalent, so there is
+nothing to be compatible with. Selecting one is an explicit statement that this
+run is not for a vendor diff.
+
+Two practical consequences:
+
+- **A site config can silently void a diff.** `output_time_format` is an
+  ordinary configuration key, so a `--config` file that sets `iso` changes
+  column 1 on every row without appearing on the command line. §6 step 1 says
+  what to do about it.
+- **`--year` becomes load-bearing.** Under `doy` the day-of-year field is
+  printed verbatim and the known firmware discrepancy of §5 shows up as a
+  suspicious day number. Under `iso` or `dom` the same field is resolved into a
+  calendar date that reads as a fact. That is why the §5 advisory is emitted at
+  **WARNING** rather than `INFO` whenever a calendar rendering is active
+  (`L2-LOG-002`) — see §5a.
+
+---
+
 ## 4. Line endings
 
 Both implementations emit LF (`\n`) line endings on every platform, including Windows. The vendor tool's output may use CRLF on Windows builds. If your `diff` flags every line as different, normalize line endings first:
@@ -229,11 +266,23 @@ The MIE-Decoder LF-only choice is pinned by L2-WRT-012 and is intentional — ke
 
 To make this limitation visible at decode time, the decoder emits a **one-time `INFO` advisory** per decode, the first time it decodes a calendar-locked (non-freerun) IRIG record, pointing back to this section. Freerun recordings (where day-of-year carries no calendar meaning) do not trigger it.
 
-### 5a. Why the advisory is `INFO`, and how to turn it off
+### 5a. Why the advisory is `INFO` (and when it is not), and how to turn it off
 
 The advisory is a **standing disclaimer about card firmware, not a finding about your file.** The decoder never compares the decoded day-of-year against anything — it cannot, because the card model and firmware revision are not recorded in the `.mie` file. So it fires on every calendar-locked IRIG recording from every card, affected or not, and its text is identical every time.
 
 That is why it sits at `INFO` rather than `WARNING`. `WARNING` is reserved for things the decoder *observed about the input in front of it* — a sync recovery, a non-monotonic `DELTA` step, a hit sort-group cap, a skipped invalid record. At `WARNING` the advisory appeared in the default output of every single decode and competed with those. At `INFO` it is silent by default and still one `--log-level INFO` away.
+
+**One exception, since v3.0.0: it is emitted at `WARNING` when a calendar
+rendering is active** (`--output-time-format iso` or `dom`, `L2-LOG-002`). The
+reasoning above is unchanged — what changes is the consequence if the disclaimer
+turns out to apply. Under `doy` a firmware-skewed day is one field an analyst
+reads as "day 192", visibly a day number and easy to re-examine. Under a
+calendar rendering the same skew is resolved into `2026-07-11`, which looks like
+a fact, gets pasted into incident reports, and is correlated against systems with
+no way to know it is suspect. Selecting a calendar rendering *is* the operator
+stating that this field is load-bearing for them, which is exactly when a
+standing caveat about it earns the default level's attention. The opt-out below
+still suppresses it at every level and under every rendering.
 
 | What you want | How |
 |---|---|
@@ -245,7 +294,8 @@ The dedicated opt-out exists because the level alone cannot express *"we already
 
 **Do not use `--log-level ERROR` to silence it.** That works, but it also discards the sync-loss, sync-recovery, non-monotonic-`DELTA`, sort-cap and invalid-record warnings — the diagnostics that *are* about your recording, and the ones you most want during a decode you are troubleshooting. Prior versions of this document recommended it, before the dedicated switch existed.
 
-This is the only known column-content discrepancy. If you see day-of-year mismatch between MIE-Decoder output and vendor CSV for the same recording:
+This is the only known *unintended* column-content discrepancy -- the departures
+in §3a, §3b and §3c are deliberate and operator-selected. If you see a day-of-year mismatch between MIE-Decoder output and vendor CSV for the same recording:
 
 1. **Confirm both tools are looking at the same source file** (no transfer corruption).
 2. **Note the card model and firmware version** that produced the recording.
@@ -266,6 +316,8 @@ The end-to-end workflow when you want a hard validation that MIE-Decoder reprodu
    ```
 
    `--no-mux` leaves the `MUX` column empty like the vendor's other placeholders (§3), and `--max-sort-group 1` disables canonical row ordering so rows stay in capture order (§3a). Without those two flags a clean decode will still show expected differences, and you would be chasing documented behavior.
+
+   There is no third flag to pass: `--output-time-format` defaults to `doy`, the vendor rendering (§3c). But if the value is set in a site config file, **unset it or override it with `--output-time-format doy`** — a configured `iso` or `dom` changes column 1 on every row and turns the whole diff into noise.
 
    Inline error mode matches the vendor tool's behavior of mixing errored and SPURIOUS records into the main CSV. (Separate-mode comparisons would need you to merge MIE-Decoder's two files first.)
 
@@ -296,7 +348,10 @@ Any column-content mismatch that isn't:
 - The presence of the `ERROR` / `ERROR_CODE` columns at indices 45–46, which the vendor CSV does not have at all (§2), or
 - A row-order difference *within a single `TIME_STAMP`* that goes away under `--max-sort-group 1` (§3a), or
 - A line-ending CR/LF difference (§4), or
-- A day-of-year discrepancy on the IRIG `TIME_STAMP` (§5)
+- A day-of-year discrepancy on the IRIG `TIME_STAMP` (§5), or
+- A `DELTA` difference on a multi-file decode under `--delta-scope global` (§3b), or
+- A `TIME_STAMP` rendered as ISO-8601 or day-of-month because
+  `--output-time-format` / `[output] output_time_format` selected it (§3c)
 
 …is a violation of the L1-OUT-001 byte-compat contract and a bug in MIE-Decoder. To report it:
 

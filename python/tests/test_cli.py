@@ -113,6 +113,10 @@ class TestValidators:
 def _decode_ns(**overrides: object) -> argparse.Namespace:
     """A decode-args Namespace with every override field defaulted (None/False)."""
     base: dict[str, object] = {
+        "input_time_format": None,
+        "output_time_format": None,
+        "year": None,
+        "utc_offset": None,
         "time_format": None,
         "separate_errors": False,
         "no_clobber": False,
@@ -185,18 +189,18 @@ class TestBuildDecodeOverrides:
         assert ov["exclude_rts"] == [31]
         assert ov["include_rts"] == [15]
 
-    def test_time_format_and_simple_value_overrides(self) -> None:
+    def test_input_time_format_and_simple_value_overrides(self) -> None:
         from mie_decoder.models import ErrorMode, TimestampFormat
 
         ov = cli._build_decode_overrides(
             _decode_ns(
-                time_format="standard",
+                input_time_format="standard",
                 separate_errors=True,
                 strict=True,
                 format="csv",
             )
         )
-        assert ov["time_format"] == TimestampFormat.STANDARD
+        assert ov["input_time_format"] == TimestampFormat.STANDARD
         assert ov["error_mode"] == ErrorMode.SEPARATE
         assert ov["strict"] is True
         assert ov["output_format"] == "csv"
@@ -210,18 +214,19 @@ class TestBuildDecodeOverrides:
             ("Standard", "STANDARD"),
         ],
     )
-    def test_time_format_is_case_insensitive(self, spelling: str, expected: str) -> None:
+    def test_input_time_format_is_case_insensitive(self, spelling: str, expected: str) -> None:
         from mie_decoder.models import TimestampFormat
 
-        ov = cli._build_decode_overrides(_decode_ns(time_format=spelling))
-        assert ov["time_format"] == TimestampFormat[expected]
+        ov = cli._build_decode_overrides(_decode_ns(input_time_format=spelling))
+        assert ov["input_time_format"] == TimestampFormat[expected]
 
-    def test_time_format_invalid_raises_value_error(self) -> None:
+    def test_input_time_format_invalid_raises_value_error(self) -> None:
         # Build the namespace outside the `raises` block so only the call under
         # test can satisfy it -- otherwise a ValueError from the fixture helper
         # would pass this test for the wrong reason (S5778).
-        ns = _decode_ns(time_format="bogus")
-        with pytest.raises(ValueError, match="Invalid time_format"):
+        ns = _decode_ns(input_time_format="bogus")
+        # L2-CLI-018: a bad flag value names the FLAG, not the config key.
+        with pytest.raises(ValueError, match="invalid --input-time-format"):
             cli._build_decode_overrides(ns)
 
     def test_detect_and_lookahead_valid_bounds(self) -> None:
@@ -548,7 +553,7 @@ class TestFlagValueSyntax:
     """
 
     VALUED: tuple[tuple[str, str], ...] = (
-        ("--time-format", "irig"),
+        ("--input-time-format", "irig"),
         ("--format", "csv"),
         ("--detect-records", "4"),
         ("--lookahead-records", "2"),

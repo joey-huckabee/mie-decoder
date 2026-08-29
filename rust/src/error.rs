@@ -122,6 +122,15 @@ pub enum MieError {
         records_probed: u32,
     },
 
+    /// L2-WRT-026: a calendar rendering (`iso` / `dom`) was requested but the
+    /// recording cannot supply a calendar date -- it is Standard-format or
+    /// freerun IRIG (clause 2), or a record's day-of-year does not exist in the
+    /// configured year (clause 3). Raised before any row is written in the
+    /// first case and at the offending record in the second; `detail` names the
+    /// specific reason. Maps to exit class `2`, the "the file cannot satisfy
+    /// this request" class it shares with `TimestampFormatMismatch`.
+    CalendarUnavailable { detail: String },
+
     /// L1-EXIT-009: a multi-file merge cannot order its inputs on a common
     /// absolute timeline — one input is Standard-format, leads with a
     /// freerun IRIG record, or the set mixes timestamp formats. Raised
@@ -168,6 +177,7 @@ pub enum MieErrorKind {
     ClobberRefused,
     UnrecoverableSyncLoss,
     TimestampFormatMismatch,
+    CalendarUnavailable,
     IncompatibleMergeInputs,
     NonMonotonicInput,
 }
@@ -192,6 +202,7 @@ impl MieError {
             Self::ClobberRefused { .. } => MieErrorKind::ClobberRefused,
             Self::UnrecoverableSyncLoss { .. } => MieErrorKind::UnrecoverableSyncLoss,
             Self::TimestampFormatMismatch { .. } => MieErrorKind::TimestampFormatMismatch,
+            Self::CalendarUnavailable { .. } => MieErrorKind::CalendarUnavailable,
             Self::IncompatibleMergeInputs { .. } => MieErrorKind::IncompatibleMergeInputs,
             Self::NonMonotonicInput { .. } => MieErrorKind::NonMonotonicInput,
         }
@@ -365,8 +376,14 @@ impl fmt::Display for MieError {
                 f,
                 "Timestamp-format auto-detection is ambiguous starting at offset 0x{offset:X} \
                  (IRIG score: {irig_score}, Standard score: {std_score} over {records_probed} \
-                 record(s) probed). Pass --time-format irig or --time-format standard to \
+                 record(s) probed). Pass --input-time-format irig or --input-time-format standard to \
                  force the choice, or verify the file is actually an MIE recording."
+            ),
+            Self::CalendarUnavailable { detail } => write!(
+                f,
+                "Cannot render a calendar timestamp: {detail}. IRIG-B carries no year and \
+                 no timezone, so a calendar rendering is refused rather than guessed at. \
+                 Use --output-time-format doy to write the day-of-year form instead."
             ),
             Self::IncompatibleMergeInputs {
                 file_index,
@@ -488,6 +505,7 @@ mod tests {
             K::NoValidRecords,
             K::HomogeneousPayload,
             K::TimestampFormatMismatch,
+            K::CalendarUnavailable,
             K::IncompatibleMergeInputs,
             K::InputOutputCollision,
             K::ClobberRefused,
@@ -515,13 +533,14 @@ mod tests {
                 | K::ClobberRefused
                 | K::UnrecoverableSyncLoss
                 | K::TimestampFormatMismatch
+                | K::CalendarUnavailable
                 | K::IncompatibleMergeInputs
                 | K::NonMonotonicInput => {}
             }
         }
         let listed = RECORD.len() + FILE.len() + NEITHER.len();
         assert_eq!(
-            listed, 18,
+            listed, 19,
             "every MieErrorKind variant must appear in exactly one list; \
              add the new variant to RECORD, FILE or NEITHER (and to the \
              matching Python base class)"
@@ -618,6 +637,9 @@ mod tests {
                 prev_us: 0,
                 curr_us: 0,
             },
+            MieErrorKind::CalendarUnavailable => {
+                MieError::CalendarUnavailable { detail: "x".into() }
+            }
         }
     }
 

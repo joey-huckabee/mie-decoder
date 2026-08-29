@@ -209,9 +209,20 @@ multi-file merge — see [Merge](#merge-multi-file) below.
 
 ### Timestamp format & detection
 
+> **Two concerns, two flags (v3.0.0).** `--input-time-format` decides how the
+> bytes on disk are **parsed**; `--output-time-format` decides how the resulting
+> instant is **written** to the `TIME_STAMP` column. They are independent: any
+> input encoding can feed any rendering, subject to the calendar preconditions
+> below. Before v3.0.0 there was one `--time-format` flag, and it only ever did
+> the first job; passing it now is a usage error naming both replacements
+> (`L2-CLI-019`).
+
 | Flag | Value | Default | Description |
 |------|-------|---------|-------------|
-| `--time-format FORMAT` | `auto` \| `irig` \| `standard` | `auto` | Timestamp format (case-insensitive). `auto` probes the recording; `irig` / `standard` force the choice. Overrides `[decode] time_format`. |
+| `--input-time-format FORMAT` | `auto` \| `irig` \| `standard` | `auto` | How timestamps are **parsed** (case-insensitive). `auto` probes the recording; `irig` / `standard` force the choice. Overrides `[decode] input_time_format`. **Renamed from `--time-format` in v3.0.0.** |
+| `--output-time-format FORMAT` | `doy` \| `iso` \| `dom` | `doy` | How `TIME_STAMP` is **written** (case-insensitive, `L2-WRT-025`). `doy` is `DAY:HH:MM:SS.uuuuuu` — the DDC vendor rendering, and **the only setting that keeps output vendor-diffable**. `iso` is `YYYY-MM-DDTHH:MM:SS.uuuuuu` plus a zone designator. `dom` is `DD:HH:MM:SS.uuuuuu`, day of month, with the month **not** in the cell. `iso` and `dom` require a year. Mirrors `[output] output_time_format`. |
+| `--year YYYY` | int `1..=9999` | *(unset)* | Calendar year used to resolve the IRIG day-of-year field (`L2-WRT-026`). An MIE recording carries **no year** — day 192 is July 10 in a leap year and July 11 in a common one — so `iso` and `dom` require one and `doy` ignores it. There is no year the decoder could default to that would be right, so selecting a calendar rendering without one is a usage error (exit `4`) rather than a guess. Mirrors `[output] year`. |
+| `--utc-offset OFFSET` | `Z` \| `+HH:MM` \| `-HH:MM` | `Z` (UTC) | Zone designator for the `iso` rendering (`L2-WRT-025`). IRIG-B carries no timezone, so this states what the recording could not; it is applied as a **designator only** and never shifts the time fields. Ignored by `doy` and `dom`. Mirrors `[output] utc_offset`. |
 | `--standard-tick-rate-hz HZ` | float > 0 | *(unset)* | Standard-counter frequency in Hz. When set, Standard timestamps convert to microseconds and join DELTA tracking; unset leaves an empty `DELTA` for Standard records (`L2-DEC-017`). Mirrors `[decode] standard_tick_rate_hz`. |
 | `--detect-records N` | int `1..=32` | `8` | Records the `auto` timestamp-format probe walks before committing to IRIG vs Standard (`L2-DEC-015`). Mirrors `[decode] detect_records`. |
 | `--lookahead-records N` | int `1..=32` | `2` | Total records checked per sync validation (1 candidate + `N-1` look-ahead), used for header detection, continuous validation, and recovery (`L2-SYN-026`). Mirrors `[decode] lookahead_records`. |
@@ -319,7 +330,7 @@ mie-decoder dump <INPUT> [options]
 | `--records N` | int (accepts `0x…`) | *(all)* | Maximum number of records to dump (record mode). |
 
 `dump` consumes only the `[logging]` level from `--config`; the decode-time keys
-(`time_format`, filters, `strict`, …) do not apply to a hex dump.
+(`input_time_format`, filters, `strict`, …) do not apply to a hex dump.
 
 ---
 
@@ -341,7 +352,7 @@ mie-decoder decode rec.mie -o clean.csv --separate-errors
 
 # Force Standard timestamp format with a known counter rate (enables DELTA)
 mie-decoder decode rec.mie -o decoded.csv \
-  --time-format standard --standard-tick-rate-hz 1000000
+  --input-time-format standard --standard-tick-rate-hz 1000000
 
 # Multi-file, time-sorted merge; de-dup overlapping recorders
 mie-decoder decode a.mie b.mie c.mie -o merged.csv --collapse-duplicates

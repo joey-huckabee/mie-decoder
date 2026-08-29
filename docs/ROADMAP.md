@@ -26,8 +26,14 @@ checklist in `docs/MAINTAINER-GUIDE.md` section 11.
 
 | Version | Feature |
 |---------|---------|
-| 3.0 | Data word decoders, additional per-message-type CSVs. |
-| 4.0 | Apache Parquet output. |
+| 4.0 | Data word decoders, additional per-message-type CSVs. |
+| 5.0 | Apache Parquet output. |
+
+3.0 was taken by the timestamp-rendering split (`--input-time-format` /
+`--output-time-format`, `L2-WRT-025` / `L2-WRT-026`), which renumbered the two
+rows above. One breaking topic per major: the migration note for a flag rename
+and the one for a new output format have nothing to say to each other, and
+bundling them would have made both harder to read.
 
 ## Merge follow-ups
 
@@ -356,8 +362,8 @@ keep the two parsers byte-for-byte aligned via the parity corpus.
 
 ## Shared Commitments
 
-- **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format and key names are stable.
-- **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including the vendor placeholder columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`). `TERM_NAME`/`IM_GAP`/`RCV_GAP`/`XMT_GAP` remain empty. As of L2-WRT-020 the `MUX` *cell* is populated from the input file name by default (its column position is unchanged); `--no-mux` / `[mux] enabled = false` restores empty MUX for a byte-for-byte vendor diff.
+- **`config/default.toml` and TOML config support remain a first-class feature.** The Rust build ships a hand-rolled TOML loader for our config schema; the file format is stable, and key names are stable **within a major version**. The v3.0.0 rename of `decode.time_format` to `decode.input_time_format` is the first and so far only exception, and it was taken at a major bump precisely because this commitment exists: the retired key is *rejected* by name rather than ignored, so no configuration silently changes meaning across the boundary (`L2-CFG-012`).
+- **CSV column layout matches DDC vendor output byte-for-byte.** No reordering or renaming of columns, including the vendor placeholder columns (`MUX`, `TERM_NAME`, `IM_GAP`, `RCV_GAP`, `XMT_GAP`). `TERM_NAME`/`IM_GAP`/`RCV_GAP`/`XMT_GAP` remain empty. As of L2-WRT-020 the `MUX` *cell* is populated from the input file name by default (its column position is unchanged); `--no-mux` / `[mux] enabled = false` restores empty MUX for a byte-for-byte vendor diff. As of L2-WRT-025 the `TIME_STAMP` *cell* has a selectable rendering whose **default is the vendor form**, so this commitment continues to hold for an invocation that selects nothing; `iso` and `dom` depart from it deliberately and are documented as an exception in `VENDOR-CSV-DIFFS.md` §3c.
 - **Sync recovery semantics preserved.** N-record look-ahead (default `N = 2` per L2-SYN-005, configurable via L2-SYN-026), 64 KB scan cap, error records and SPURIOUS_DATA continuations remain valid records that pass validation.
 - **One validation implementation.** Header skip, normal forward decode, and post-loss recovery share the same validation rules through the boolean compatibility wrapper or the detailed failure API. There is no weaker fast path.
 - **Cross-implementation conformance.** Text-based fixtures under

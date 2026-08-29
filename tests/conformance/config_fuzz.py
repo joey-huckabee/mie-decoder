@@ -47,7 +47,15 @@ _SECTIONS = [
 # Keys: real identifiers plus a few that stress the key grammar.
 _KEYS = [
     "strict",
+    "input_time_format",
+    # The pre-v3.0.0 spelling, kept in the palette deliberately: it is a
+    # retired key the loaders must REJECT by name (L2-CFG-012), not an unknown
+    # key they warn about, and the fuzzer should be generating documents that
+    # exercise that distinction.
     "time_format",
+    "output_time_format",
+    "year",
+    "utc_offset",
     "error_mode",
     "detect_records",
     "standard_tick_rate_hz",
@@ -89,6 +97,17 @@ _VALUES = [
     "1e6",
     '"auto"',
     '"irig"',
+    # v3.0.0 rendering values: valid names for `output_time_format`, and
+    # nonsense for every other key, which is the point of a shared palette.
+    '"doy"',
+    '"iso"',
+    '"dom"',
+    # UTC-offset shapes, including the near-misses the grammar must refuse.
+    '"Z"',
+    '"-05:00"',
+    '"+24:00"',
+    '"+5:00"',
+    "2026",
     '"."',
     "[0, 31]",
     '["A", "B"]',

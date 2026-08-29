@@ -1,0 +1,6 @@
+# L2-CFG-012: the rendering, year and zone all supplied by configuration --
+# no CLI flags at all. A site sets this once and never types --year again.
+[output]
+output_time_format = "iso"
+year = 2026
+utc_offset = "Z"

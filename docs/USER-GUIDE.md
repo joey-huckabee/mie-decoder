@@ -219,7 +219,7 @@ Type filter accepts both symbolic names (`SPURIOUS_DATA`, `BC_TO_RT`, etc.) and 
 Some recordings use the **Standard** timestamp format — a 32-bit free-running counter — instead of IRIG. The counter ticks at a card-dependent rate that is **not stored in the file**, so the decoder cannot turn raw ticks into elapsed seconds on its own. By default, the `DELTA` column is therefore left empty for every Standard record:
 
 ```bash
-mie-decoder decode counter.mie --time-format standard -o out.csv
+mie-decoder decode counter.mie --input-time-format standard -o out.csv
 # TIME_STAMP in 0xNNNNNNNN form; DELTA column empty for all rows
 ```
 
@@ -227,7 +227,7 @@ If you know your card's counter frequency, pass it with `--standard-tick-rate-hz
 
 ```bash
 # Card runs a 1 MHz counter (1 tick = 1 microsecond):
-mie-decoder decode counter.mie --time-format standard --standard-tick-rate-hz 1000000 -o out.csv
+mie-decoder decode counter.mie --input-time-format standard --standard-tick-rate-hz 1000000 -o out.csv
 ```
 
 With calibration on, two consecutive records of the same RT/MSG that are 16 ticks apart show `DELTA = 0.000016` at 1 MHz; the first occurrence of each RT/MSG key is still `0.000000`. The rate must be greater than 0, and it has no effect on IRIG recordings.
@@ -238,9 +238,74 @@ The same setting is available in a config file as `decode.standard_tick_rate_hz`
 
 ```toml
 [decode]
-time_format = "standard"
+input_time_format = "standard"
 standard_tick_rate_hz = 1000000.0
 ```
+
+### Rendering timestamps as calendar dates
+
+By default `TIME_STAMP` is the day-of-year form the DDC vendor tool emits:
+
+```bash
+mie-decoder decode flight.mie -o out.csv
+# 192:15:54:50.456225,15,11R,...
+```
+
+If a downstream system wants calendar dates, `--output-time-format iso` gives
+you ISO-8601:
+
+```bash
+mie-decoder decode flight.mie -o out.csv --output-time-format iso --year 2026
+# 2026-07-11T15:54:50.456225Z,15,11R,...
+```
+
+**Why `--year` is required.** An IRIG-B timestamp carries day-of-year, hour,
+minute, second and microsecond — but no year. Day 192 is **July 10 in a leap
+year** and **July 11 in a common year**, so there is no year-free way to resolve
+it. The decoder will not guess: no default it could pick would be right (the
+system clock would date a 2019 archive with the year you decoded it), so a
+calendar rendering without a year is a usage error naming both ways to supply
+one.
+
+`--output-time-format dom` renders the day of month instead —
+`11:15:54:50.456225` — keeping the column the same shape as the default. Note
+the month is not in the cell, so the value is a day number you match against a
+calendar rather than a date the CSV identifies on its own.
+
+**Timezone.** IRIG-B carries none either. The `iso` rendering appends `Z` (UTC)
+by default; if your site's IRIG source is disciplined to something else, say so
+with `--utc-offset`:
+
+```bash
+mie-decoder decode flight.mie -o out.csv --output-time-format iso \
+    --year 2026 --utc-offset -05:00
+# 2026-07-11T15:54:50.456225-05:00,15,11R,...
+```
+
+The offset is a **designator only** — it never shifts the time fields.
+
+**When it is refused.** A calendar date is not always available, and the decoder
+refuses rather than inventing one (exit 2 in each case):
+
+- a **Standard** recording — a free-running counter has no epoch;
+- a **freerun IRIG** recording — the card had no IRIG-B lock, so its fields are
+  relative and would render as a perfectly ordinary, meaningless date;
+- **day-of-year 366 against a common year** — which fails the whole run, because
+  it means the year you supplied is not the year the recording is from.
+
+**In a config file**, so a site sets it once:
+
+```toml
+[output]
+output_time_format = "iso"
+year = 2026
+utc_offset = "Z"
+```
+
+> **This voids a vendor diff.** `doy` is the only rendering byte-comparable with
+> DDC vendor CSV. If you validate against vendor output, keep the default — and
+> if a site config sets `iso`, override it with `--output-time-format doy` for
+> that run. See [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md) §3c.
 
 ### Site-wide configuration
 
@@ -501,7 +566,7 @@ MIE-Decoder adds. Columns in order:
 
 | # | Column | Contents |
 |---|--------|----------|
-| 1 | `TIME_STAMP` | IRIG: `DAY:HH:MM:SS.uuuuuu` (e.g. `192:15:54:50.456225`). Standard: `0xNNNNNNNN` raw counter. |
+| 1 | `TIME_STAMP` | By default IRIG: `DAY:HH:MM:SS.uuuuuu` (e.g. `192:15:54:50.456225`); Standard: `0xNNNNNNNN` raw counter. `--output-time-format iso` renders `2026-07-11T15:54:50.456225Z` and `dom` renders `11:15:54:50.456225` instead — both need `--year`, because IRIG carries no year (see [Rendering timestamps as calendar dates](#rendering-timestamps-as-calendar-dates)). |
 | 2 | `RT` | Remote Terminal address (0–31), or empty for SPURIOUS_DATA. |
 | 3 | `MSG` | `<subaddress><T\|R>` (e.g. `11R` for SA 11 Receive, `22T` for SA 22 Transmit). Empty for SPURIOUS_DATA. |
 | 4–35 | `WD01`–`WD32` | Up to 32 data words, 4-character uppercase hex without `0x` prefix. Unused trailing columns are empty (not `0000`). |

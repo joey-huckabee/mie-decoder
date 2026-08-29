@@ -1,0 +1,5 @@
+# L2-CFG-012: the pre-v3.0.0 spelling. Must be REJECTED by name, not passed
+# over with the generic unknown-key WARN -- a warn-and-continue would discard
+# the operator's forced format and silently revert to auto-detection.
+[decode]
+time_format = "irig"

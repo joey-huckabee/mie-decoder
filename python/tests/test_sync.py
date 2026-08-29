@@ -290,7 +290,7 @@ class TestFindFirstRecord:
         header = b"\x00" * 20
         fpath = tmp_path / "headed.mie"
         fpath.write_bytes(header + single_receive_record * 2)
-        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        messages = list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))
         assert len(messages) == 2
 
     @pytest.mark.requirement("L2-SYN-006")
@@ -303,7 +303,7 @@ class TestFindFirstRecord:
         header = b"\xff\x00" * 36  # 72 bytes, type 0x7F each word
         fpath = tmp_path / "header_sim.mie"
         fpath.write_bytes(header + multi_record_data)
-        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        messages = list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))
         assert len(messages) == 3
 
 
@@ -339,7 +339,7 @@ class TestRecoverSync:
         data = good + corruption + single_receive_record * 2
         fpath = tmp_path / "corrupt.mie"
         fpath.write_bytes(data)
-        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        messages = list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))
         # All four genuine records survive. Through v2.11.1 this was 3: the
         # second pre-corruption record was discarded because its *successor*
         # boundary was corrupt, even though the record itself was complete and
@@ -370,7 +370,7 @@ class TestRecoverSync:
         fpath = tmp_path / "multi_recover.mie"
         fpath.write_bytes(data)
 
-        reader = MieFileReader(fpath, time_format=TimestampFormat.IRIG)
+        reader = MieFileReader(fpath, input_time_format=TimestampFormat.IRIG)
         messages = list(reader)
 
         assert len(messages) >= 2, "recovery should reach later blocks"
@@ -401,7 +401,7 @@ class TestRecoverSync:
         # record; that also discarded it. Now the corruption is reported where
         # it is, and the good records are kept.
         with pytest.raises(MieUnknownTypeWordError, match="Unknown message type"):
-            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+            list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.IRIG))
 
     @pytest.mark.requirement("L2-SYN-013")
     def test_debug_validation_context_is_bounded(
@@ -422,7 +422,7 @@ class TestRecoverSync:
             caplog.at_level(logging.DEBUG, logger="mie_decoder.reader"),
             pytest.raises(MieUnknownTypeWordError),
         ):
-            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+            list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.IRIG))
 
         context = [
             record.getMessage()
@@ -448,7 +448,7 @@ class TestRecoverSync:
         fpath.write_bytes(single_receive_record + invalid_day)
 
         with pytest.raises(MiePayloadError, match="IRIG day-of-year is out of range"):
-            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+            list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.IRIG))
 
 
 class TestSyncBoundsAndLogging:
@@ -489,7 +489,7 @@ class TestSyncBoundsAndLogging:
         fpath = tmp_path / "headered.mie"
         fpath.write_bytes(header + single_receive_record * 2)
         with caplog.at_level(logging.INFO, logger="mie_decoder"):
-            messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+            messages = list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))
         assert len(messages) == 2
         info_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
         assert any("header" in m.lower() for m in info_msgs), (

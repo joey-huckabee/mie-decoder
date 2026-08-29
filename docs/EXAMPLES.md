@@ -126,14 +126,14 @@ Filter axes use **OR logic** (a message is dropped if it matches ANY criterion) 
 Your recording uses the Standard (free-running counter) timestamp format, not IRIG. Decoded as-is, `TIME_STAMP` is a raw hex counter and `DELTA` is empty for every row — the counter's tick rate isn't stored in the file, so the decoder won't guess at elapsed time:
 
 ```bash
-mie-decoder decode counter.mie --time-format standard -o out.csv
+mie-decoder decode counter.mie --input-time-format standard -o out.csv
 # DELTA column blank on every row
 ```
 
 You know from the card's configuration that the counter runs at 1 MHz. Supply it and `DELTA` comes to life:
 
 ```bash
-mie-decoder decode counter.mie --time-format standard --standard-tick-rate-hz 1000000 -o out.csv
+mie-decoder decode counter.mie --input-time-format standard --standard-tick-rate-hz 1000000 -o out.csv
 ```
 
 Now each RT/MSG key gets `0.000000` on first sight and real elapsed seconds thereafter — e.g. two records of the same key 16 ticks apart show `DELTA = 0.000016`. The conversion is `round(raw_ticks × 1_000_000 / rate)`; the rate must be `> 0`.
@@ -143,7 +143,7 @@ Prefer to bake it into site config (handy when every recording from a given card
 ```toml
 # counter-card.toml
 [decode]
-time_format = "standard"
+input_time_format = "standard"
 standard_tick_rate_hz = 1000000.0
 ```
 
@@ -152,6 +152,65 @@ mie-decoder --config counter-card.toml decode counter.mie -o out.csv
 ```
 
 The flag overrides the config value if both are present (CLI > config > default). The setting is a no-op on IRIG recordings. See [`USER-GUIDE.md` → Calibrating Standard timestamps](USER-GUIDE.md#calibrating-standard-timestamps) for background on where the rate comes from.
+
+---
+
+## 5b. Emit ISO-8601 timestamps for a downstream system
+
+The analytics platform ingesting your CSVs wants calendar dates, not
+day-of-year. The recording is from **11 July 2026**:
+
+```bash
+mie-decoder decode flight.mie -o out.csv --output-time-format iso --year 2026
+```
+
+```
+TIME_STAMP,RT,MSG,WD01,...
+2026-07-11T15:54:50.456225Z,15,11R,0400,...
+```
+
+`--year` is not optional here, and it is not a preference. IRIG-B encodes
+day-of-year but **not the year**, and day 192 is July 10 in a leap year and July
+11 in a common one — so without a year there is no date to render. The decoder
+refuses rather than guessing:
+
+```bash
+mie-decoder decode flight.mie -o out.csv --output-time-format iso
+# Error: --output-time-format iso needs a calendar year, and an MIE recording
+#   does not carry one: IRIG-B encodes day-of-year but not the year.
+#   Set [output] year = YYYY in a config file or pass --year YYYY.
+echo $?   # 4 — and no output file was created
+```
+
+If your site's IRIG source is not UTC, say so; the offset is appended as a
+designator and never shifts the time fields:
+
+```bash
+mie-decoder decode flight.mie -o out.csv \
+    --output-time-format iso --year 2026 --utc-offset -05:00
+# 2026-07-11T15:54:50.456225-05:00,15,11R,...
+```
+
+Set it once for a whole site instead of typing it every run:
+
+```toml
+# site-iso.toml
+[output]
+output_time_format = "iso"
+year = 2026
+utc_offset = "Z"
+```
+
+```bash
+mie-decoder --config site-iso.toml decode flight.mie -o out.csv
+```
+
+**Two things to know before you turn this on.** It voids a vendor-CSV diff —
+`doy` is the only byte-comparable rendering (§11). And the decoder starts warning
+about the day-of-year field: it has a known firmware quirk on some DDC card
+models, which matters much more once it is being resolved into a date that reads
+as a fact rather than printed as a day number. See
+[`VENDOR-CSV-DIFFS.md` §5](VENDOR-CSV-DIFFS.md).
 
 ---
 

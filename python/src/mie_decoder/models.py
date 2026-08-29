@@ -148,11 +148,12 @@ _TIMESTAMP_FORMAT_BY_NAME: dict[str, TimestampFormat] = {
 
 
 def parse_timestamp_format(name: str) -> TimestampFormat:
-    """Parse a ``time_format`` name (``auto`` / ``irig`` / ``standard``).
+    """Parse an ``input_time_format`` name (``auto`` / ``irig`` / ``standard``).
 
     Matching is case-insensitive. This is the single source of truth shared by
-    the CLI (``--time-format``) and the config loader (``decode.time_format``) so
-    the two can never disagree on which spellings are accepted.
+    the CLI (``--input-time-format``) and the config loader
+    (``decode.input_time_format``) so the two can never disagree on which
+    spellings are accepted.
 
     Raises:
         ValueError: if ``name`` is not one of the recognized formats. The message
@@ -163,8 +164,172 @@ def parse_timestamp_format(name: str) -> TimestampFormat:
     """
     fmt = _TIMESTAMP_FORMAT_BY_NAME.get(name.lower())
     if fmt is None:
-        raise ValueError(f"Invalid time_format: {name!r}. Valid: auto, irig, standard")
+        raise ValueError(f"Invalid input_time_format: {name!r}. Valid: auto, irig, standard")
     return fmt
+
+
+@unique
+class OutputTimeFormat(IntEnum):
+    """Rendering selected for the ``TIME_STAMP`` CSV column (L2-WRT-025).
+
+    This is the *output* half of what used to be one ``time_format`` setting.
+    :class:`TimestampFormat` decides how the bytes on disk are parsed;
+    ``OutputTimeFormat`` decides how the resulting instant is written down. The
+    two are independent, subject to the calendar preconditions of L2-WRT-026.
+
+    Values:
+        DOY: ``DAY:HH:MM:SS.uuuuuu`` -- the DDC vendor rendering, and the
+            default. Byte-identical to what every version before v3.0.0 emitted.
+        ISO: ``YYYY-MM-DDTHH:MM:SS.uuuuuu`` plus a zone designator.
+        DOM: ``DD:HH:MM:SS.uuuuuu`` -- day of month, with the month
+            deliberately absent from the cell.
+    """
+
+    DOY = 0
+    ISO = 1
+    DOM = 2
+
+    def needs_calendar(self) -> bool:
+        """Whether this rendering resolves day-of-year to a calendar date.
+
+        Returns:
+            True for ``ISO`` and ``DOM``, which carry the L2-WRT-026
+            preconditions (a year is required; the recording must be
+            calendar-locked). False for ``DOY``, which needs nothing.
+        """
+        return self in (OutputTimeFormat.ISO, OutputTimeFormat.DOM)
+
+
+_OUTPUT_TIME_FORMAT_BY_NAME: dict[str, OutputTimeFormat] = {
+    "doy": OutputTimeFormat.DOY,
+    "iso": OutputTimeFormat.ISO,
+    "dom": OutputTimeFormat.DOM,
+}
+
+
+def parse_output_time_format(name: str) -> OutputTimeFormat:
+    """Parse an ``output_time_format`` name (``doy`` / ``iso`` / ``dom``).
+
+    Matching is case-insensitive, mirroring :func:`parse_timestamp_format`, and
+    shared by the CLI (``--output-time-format``) and the config loader
+    (``output.output_time_format``).
+
+    Raises:
+        ValueError: if ``name`` is not one of the recognized renderings.
+
+    Returns:
+        The matching :class:`OutputTimeFormat` member.
+    """
+    fmt = _OUTPUT_TIME_FORMAT_BY_NAME.get(name.lower())
+    if fmt is None:
+        raise ValueError(f"Invalid output_time_format: {name!r}. Valid: doy, iso, dom")
+    return fmt
+
+
+#: Inclusive bounds on a configured calendar year (L2-WRT-026 clause 1).
+#:
+#: The upper bound is four digits because the ``iso`` rendering formats the year
+#: as exactly ``YYYY``; a five-digit year would widen column 1 without warning.
+#: The lower bound is 1 because year 0 does not exist in the proleptic
+#: Gregorian numbering this decoder uses.
+YEAR_MIN = 1
+YEAR_MAX = 9999
+
+
+class CalendarUnavailableError(Exception):
+    """A calendar rendering could not be produced for one timestamp.
+
+    Raised by the ``format_with`` methods and converted by the writer into
+    :class:`~mie_decoder.exceptions.MieCalendarUnavailableError`. Two of the
+    three L2-WRT-026 preconditions are checked before the first row is written
+    (a missing year at CLI parse time, a Standard recording once the format
+    resolves), so the case that normally reaches here is a day-of-year the
+    configured year does not have.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class TimeRender:
+    """Everything the ``TIME_STAMP`` formatter needs beyond the timestamp.
+
+    Resolved once per decode from the merged configuration (L2-WRT-025) and
+    carried unchanged through the writer.
+
+    Attributes:
+        format: Which of the three renderings to produce.
+        year: Calendar year for the day-of-year resolution. Required by ``ISO``
+            and ``DOM``; ignored by ``DOY`` (L2-WRT-026 clause 5). ``None``
+            means no year was configured, which the CLI refuses up front for a
+            calendar rendering.
+        utc_offset_minutes: Offset from UTC in minutes, used only by ``ISO``.
+            Zero renders as ``Z``.
+    """
+
+    format: OutputTimeFormat = OutputTimeFormat.DOY
+    year: int | None = None
+    utc_offset_minutes: int = 0
+
+
+#: The default rendering: day-of-year, no calendar resolution. What ``dump``
+#: uses unconditionally, and what every pre-v3.0.0 decode produced.
+DOY_RENDER = TimeRender()
+
+#: Days in each month of a common year, January first.
+_COMMON_YEAR_MONTH_LENGTHS = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
+
+def is_leap_year(year: int) -> bool:
+    """Proleptic Gregorian leap-year test (L2-WRT-025).
+
+    Divisible by 4, except centuries, which must also be divisible by 400.
+    Hand-rolled rather than delegated to :mod:`datetime` so that all three
+    implementations compute it identically -- C++11 has no date type at all, and
+    one shared rule is easier to hold aligned than three library behaviours that
+    merely agree today.
+
+    Returns:
+        True if ``year`` has 366 days.
+    """
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
+def day_of_year_to_month_day(year: int, day_of_year: int) -> tuple[int, int] | None:
+    """Resolve a 1-based day-of-year to ``(month, day_of_month)``, both 1-based.
+
+    Returns:
+        The resolved pair, or ``None`` when the day does not exist in that year:
+        day 366 of a common year, day 0, or anything above 366. That is the
+        L2-WRT-026 clause 3 condition, which the caller turns into a refusal
+        rather than rolling forward into the next January.
+    """
+    leap = is_leap_year(year)
+    year_length = 366 if leap else 365
+    if day_of_year <= 0 or day_of_year > year_length:
+        return None
+
+    remaining = day_of_year
+    for index, base_length in enumerate(_COMMON_YEAR_MONTH_LENGTHS):
+        # February is the only month whose length depends on the year.
+        length = base_length + 1 if index == 1 and leap else base_length
+        if remaining <= length:
+            return index + 1, remaining
+        remaining -= length
+    # Unreachable: the month lengths sum to year_length, which bounds
+    # day_of_year above.
+    return None  # pragma: no cover
+
+
+def format_utc_offset(minutes: int) -> str:
+    """Render a UTC offset in minutes as an ISO-8601 designator.
+
+    Returns:
+        ``Z`` at zero, otherwise ``+HH:MM`` / ``-HH:MM``.
+    """
+    if minutes == 0:
+        return "Z"
+    sign = "-" if minutes < 0 else "+"
+    magnitude = abs(minutes)
+    return f"{sign}{magnitude // 60:02d}:{magnitude % 60:02d}"
 
 
 @unique
@@ -359,6 +524,58 @@ class IrigTimestamp:
         micro = self.microsecond % 1_000_000
         return f"{self.day}:{self.hour:02d}:{self.minute:02d}:{self.second:02d}.{micro:06d}"
 
+    def format_with(self, render: TimeRender) -> str:
+        """Format under the selected rendering (L2-WRT-025).
+
+        ``DOY`` is infallible and byte-identical to :meth:`format`. The calendar
+        renderings resolve ``day`` against ``render.year`` and refuse rather
+        than approximate when that resolution has no answer -- day 366 of a
+        common year does not become January 1st (L2-WRT-026 clause 3).
+
+        Every rendering emits exactly six microsecond digits; L2-DEC-014 is not
+        relaxed by the wider cell.
+
+        Raises:
+            CalendarUnavailableError: when a calendar rendering cannot be resolved --
+                no year was configured, the timestamp is freerun, or the
+                day-of-year does not exist in that year.
+
+        Returns:
+            The rendered ``TIME_STAMP`` cell.
+        """
+        if render.format is OutputTimeFormat.DOY:
+            return self.format()
+
+        # L2-WRT-026 clause 2: a freerun record's fields are relative, so
+        # resolving them against a year would produce a date that looks
+        # entirely ordinary and means nothing.
+        if self.freerun:
+            raise CalendarUnavailableError(
+                "the record carries a freerun IRIG timestamp -- the card had no valid "
+                "IRIG-B lock, so its day and time fields are relative rather than "
+                "calendar-anchored"
+            )
+        if render.year is None:
+            raise CalendarUnavailableError(
+                "no year was configured; set [output] year or pass --year YYYY"
+            )
+
+        resolved = day_of_year_to_month_day(render.year, self.day)
+        if resolved is None:
+            raise CalendarUnavailableError(
+                f"the record carries day-of-year {self.day}, which does not exist in "
+                f"{render.year} ({render.year} is not a leap year). The configured year "
+                f"is wrong for this recording"
+            )
+        month, day_of_month = resolved
+
+        micro = self.microsecond % 1_000_000
+        time_part = f"{self.hour:02d}:{self.minute:02d}:{self.second:02d}.{micro:06d}"
+        if render.format is OutputTimeFormat.ISO:
+            zone = format_utc_offset(render.utc_offset_minutes)
+            return f"{render.year:04d}-{month:02d}-{day_of_month:02d}T{time_part}{zone}"
+        return f"{day_of_month:02d}:{time_part}"
+
 
 #: 2**64 — the largest microsecond count the Rust and C++ implementations
 #: can represent. Beyond it all three decline rather than disagree.
@@ -445,6 +662,27 @@ class StandardTimestamp:
             The raw counter as ``0x`` followed by eight uppercase hex digits.
         """
         return f"0x{self.raw_value:08X}"
+
+    def format_with(self, render: TimeRender) -> str:
+        """Format under the selected rendering (L2-WRT-025).
+
+        Under ``DOY`` this is :meth:`format`. Under a calendar rendering it
+        refuses (L2-WRT-026 clause 2): a free-running counter has no epoch, so
+        no year can place it on a calendar, and quietly emitting raw hex into a
+        column the operator asked to be ISO-8601 would be its own kind of lie.
+
+        Raises:
+            CalendarUnavailableError: under ``ISO`` or ``DOM``.
+
+        Returns:
+            The raw counter rendering, under ``DOY``.
+        """
+        if render.format.needs_calendar():
+            raise CalendarUnavailableError(
+                "this recording uses the Standard timestamp encoding, a free-running "
+                "counter with no epoch. No year places it on a calendar"
+            )
+        return self.format()
 
 
 #: Union type for timestamps.

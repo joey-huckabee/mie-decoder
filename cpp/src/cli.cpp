@@ -25,7 +25,7 @@ namespace cli {
 
 namespace {
 
-const char* const kVersion = "2.18.0";
+const char* const kVersion = "3.0.0";
 
 const char* const kHelp =
     "mie-decoder -- DDC MIL-STD-1553 MIE binary decoder\n"
@@ -52,7 +52,18 @@ const char* const kHelp =
     "DECODE OPTIONS:\n"
     "    -o, --output <PATH>          Destination CSV; omit it to write stdout\n"
     "    --strict                     Reject on the first anomaly\n"
-    "    --time-format <F>            auto, irig, standard\n"
+    "    --input-time-format <F>      How timestamps are PARSED: auto, irig,\n"
+    "                                 standard\n"
+    "    --output-time-format <F>     How TIME_STAMP is WRITTEN: doy (default,\n"
+    "                                 the vendor rendering), iso, dom. iso and\n"
+    "                                 dom need a year. L2-WRT-025\n"
+    "    --year <YYYY>                Calendar year for the IRIG day-of-year\n"
+    "                                 field, 1-9999. An MIE file carries no\n"
+    "                                 year, so iso and dom require one; doy\n"
+    "                                 ignores it. L2-WRT-026\n"
+    "    --utc-offset <O>             Zone for the iso rendering: Z (default,\n"
+    "                                 UTC), +HH:MM or -HH:MM. IRIG-B carries\n"
+    "                                 no timezone. L2-WRT-025\n"
     "    --separate-errors            Errored rows to <stem>_errors.csv\n"
     "    --allow-partial              Commit <dest>.partial on sync loss\n"
     "    --no-clobber                 Refuse to overwrite the destination\n"
@@ -136,7 +147,8 @@ int exit_code_for(const MieError& error) {
     switch (error.kind()) {
         case KIND_NO_VALID_RECORDS:
         case KIND_HOMOGENEOUS_PAYLOAD:
-        case KIND_TIMESTAMP_FORMAT_MISMATCH: return EXIT_NO_RECORDS;
+        case KIND_TIMESTAMP_FORMAT_MISMATCH:
+        case KIND_CALENDAR_UNAVAILABLE: return EXIT_NO_RECORDS;
         default: return EXIT_RUNTIME;
     }
 }
@@ -370,6 +382,30 @@ std::size_t parse_ranged(const std::string& text, const char* flag, std::size_t 
     return static_cast<std::size_t>(value);
 }
 
+/// L2-CLI-019: what `--time-format` says now that it has been split in two.
+///
+/// The message names both replacements and states which concern each covers,
+/// because the operator's intent is still expressible and the only open
+/// question is which of the two they meant -- exactly what a generic "unknown
+/// option" cannot answer.
+const char* const kRetiredTimeFormatMessage =
+    "--time-format was split in v3.0.0 and is no longer accepted. Use "
+    "--input-time-format auto|irig|standard to choose how timestamps are PARSED "
+    "from the file, or --output-time-format doy|iso|dom to choose how they are "
+    "WRITTEN to the CSV.";
+
+/// L2-CLI-018: `--year YYYY`, range-checked at parse time so a bad value is a
+/// usage error rather than a malformed cell far into the output.
+int parse_year_argument(const std::string& text) {
+    const int64_t value = parse_integer(text, "--year");
+    if (value < YEAR_MIN || value > YEAR_MAX) {
+        throw usage_error(std::string("invalid --year: \"") + text + "\"; valid range: [" +
+                          text::decimal(static_cast<uint64_t>(YEAR_MIN)) + ", " +
+                          text::decimal(static_cast<uint64_t>(YEAR_MAX)) + "]");
+    }
+    return static_cast<int>(value);
+}
+
 double parse_tick_rate(const std::string& text) {
     if (text.empty()) {
         throw usage_error("--standard-tick-rate-hz requires a value");
@@ -546,13 +582,37 @@ DecodeArgs parse_decode(ArgReader& reader) {
                                   "\"");
             }
             args.overrides.delta_scope = scope;
-        } else if (reader.take_value("--time-format", value)) {
+        } else if (reader.take_value("--input-time-format", value)) {
             TimestampFormat format = TIMESTAMP_AUTO;
             if (!timestamp_format_from_name(value, format)) {
-                throw usage_error("--time-format must be auto, irig or standard, got \"" + value +
+                throw usage_error("--input-time-format must be auto, irig or standard, got \"" +
+                                  value + "\"");
+            }
+            args.overrides.input_time_format = format;
+        } else if (reader.take_value("--output-time-format", value)) {
+            OutputTimeFormat rendering = OUTPUT_TIME_DOY;
+            if (!output_time_format_from_name(value, rendering)) {
+                throw usage_error("--output-time-format must be doy, iso or dom, got \"" + value +
                                   "\"");
             }
-            args.overrides.time_format = format;
+            args.overrides.output_time_format = rendering;
+        } else if (reader.take_value("--year", value)) {
+            args.overrides.year = parse_year_argument(value);
+        } else if (reader.take_value("--utc-offset", value)) {
+            int minutes = 0;
+            if (!parse_utc_offset(value, minutes)) {
+                throw usage_error("invalid --utc-offset: \"" + value +
+                                  "\"; valid: Z, or +HH:MM / -HH:MM with HH in [0, 23] and "
+                                  "MM in [0, 59]");
+            }
+            args.overrides.utc_offset_minutes = minutes;
+        } else if (reader.take_value("--time-format", value)) {
+            // L2-CLI-019: `--time-format` was split in v3.0.0. This arm exists
+            // so the diagnostic can name both replacements -- the generic
+            // unknown-option path below would report only that the flag is
+            // unrecognised, which is the one thing an operator hitting this
+            // already knows.
+            throw usage_error(kRetiredTimeFormatMessage);
         } else if (reader.take_value("--format", value)) {
             // L1-EXIT-007: validated here, with every other flag value, so an
             // unsupported format is a USAGE error (exit 4). It used to be
@@ -801,14 +861,43 @@ DecoderConfig resolve_config(const GlobalArgs& globals) {
 ReaderOptions reader_options(const DecoderConfig& config) {
     ReaderOptions options;
     options.strict = config.strict;
-    options.time_format = config.time_format;
+    options.input_time_format = config.input_time_format;
     options.detect_records = config.detect_records;
     options.lookahead_records = config.lookahead_records;
     options.standard_tick_rate_hz = config.standard_tick_rate_hz;
     options.mux_enabled = config.mux_enabled;
     options.mux_delimiter = config.mux_delimiter;
     options.mux_field = config.mux_field;
+    // Present only when a calendar rendering is actually in force, so a year
+    // left in a site config does not change the reader's diagnostics for a
+    // `doy` run (L2-WRT-026 clause 5).
+    if (output_time_format_needs_calendar(config.output_time_format)) {
+        options.calendar_year = config.year;
+    }
     return options;
+}
+
+/// Resolve the merged configuration into a `TimeRender`, enforcing the
+/// L2-WRT-026 clause 1 precondition.
+///
+/// The check lives here rather than in either loader because neither can answer
+/// it alone: a config file may set the rendering and the CLI supply the year, or
+/// the reverse. It runs before the output is opened, so a run that cannot
+/// produce the requested dates writes nothing at all.
+TimeRender resolve_time_render(const DecoderConfig& config) {
+    if (output_time_format_needs_calendar(config.output_time_format) && !config.year.has_value()) {
+        throw usage_error(
+            std::string("--output-time-format ") +
+            output_time_format_name(config.output_time_format) +
+            " needs a calendar year, and an MIE recording does not carry one: IRIG-B encodes "
+            "day-of-year but not the year. Set [output] year = YYYY in a config file or pass "
+            "--year YYYY. (--output-time-format doy needs no year.)");
+    }
+    TimeRender render;
+    render.format = config.output_time_format;
+    render.year = config.year;
+    render.utc_offset_minutes = config.utc_offset_minutes;
+    return render;
 }
 
 /// Sync recoveries across every input.
@@ -1085,6 +1174,10 @@ int run_decode(const Streams& streams, const GlobalArgs& globals, DecodeArgs& ar
     WriteOptions write_options;
     write_options.no_clobber = config.no_clobber;
     write_options.allow_partial = config.allow_partial;
+    // L2-WRT-026 clause 1: a calendar rendering needs a year, and whether one
+    // was supplied is a question about the *resolved* pair -- either source may
+    // have provided it -- so it is asked here, before the output is opened.
+    write_options.time_render = resolve_time_render(config);
     // So `-o -` lands on the same stream everything else reports on.
     write_options.stdout_stream = streams.out;
     // The writer's own guard takes ONE input path, so it covers the single-input

@@ -4,7 +4,7 @@ Loads configuration from TOML files and merges with CLI arguments.
 CLI arguments always take precedence over file-based configuration.
 
 Configuration sources (in priority order, highest first):
-    1. CLI arguments (``--log-level``, ``--time-format``, ``--exclude-types``, etc.)
+    1. CLI arguments (``--log-level``, ``--input-time-format``, ``--exclude-types``, etc.)
     2. User-specified config file (``--config path/to/config.toml``)
     3. Built-in defaults (equivalent to ``config/default.toml``)
 
@@ -36,12 +36,16 @@ from mie_decoder.merge import (
     MAX_COLLAPSE_SURVIVORS_MIN,
 )
 from mie_decoder.models import (
+    YEAR_MAX,
+    YEAR_MIN,
     Bus,
     DeltaScope,
     ErrorMode,
     MessageType,
+    OutputTimeFormat,
     TimestampFormat,
     parse_delta_scope,
+    parse_output_time_format,
     parse_timestamp_format,
 )
 from mie_decoder.order import (
@@ -89,7 +93,7 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
     {
         ("logging", "level"),
         ("logging", "irig_day_advisory"),
-        ("decode", "time_format"),
+        ("decode", "input_time_format"),
         ("decode", "strict"),
         ("decode", "error_mode"),
         ("decode", "allow_partial"),
@@ -99,6 +103,9 @@ _KNOWN_SHARED_KEYS: frozenset[tuple[str, str]] = frozenset(
         ("output", "format"),
         ("output", "no_clobber"),
         ("output", "max_sort_group"),
+        ("output", "output_time_format"),
+        ("output", "year"),
+        ("output", "utc_offset"),
         ("mux", "enabled"),
         ("mux", "delimiter"),
         ("mux", "field"),
@@ -565,7 +572,7 @@ class DecoderConfig:
             so at the default WARNING level it is already silent -- this
             exists so a site that has validated its card model against
             vendor CSV can also keep it out of a ``--log-level INFO`` run.
-        time_format: Timestamp format (auto/irig/standard).
+        input_time_format: Timestamp format (auto/irig/standard).
         strict: If True, raise on invalid records instead of skipping.
         error_mode: How errored messages appear in output.
         filters: Message filtering configuration.
@@ -576,12 +583,24 @@ class DecoderConfig:
 
     log_level: str = "WARNING"
     irig_day_advisory: bool = True
-    time_format: TimestampFormat = TimestampFormat.AUTO
+    input_time_format: TimestampFormat = TimestampFormat.AUTO
     strict: bool = False
     error_mode: ErrorMode = ErrorMode.INLINE
     filters: FilterConfig = field(default_factory=FilterConfig)
     output_format: str = "csv"
     no_clobber: bool = False
+    #: L2-WRT-025: which rendering the TIME_STAMP column uses. Defaults to
+    #: ``doy`` -- the DDC vendor rendering -- so a decode that selects nothing
+    #: stays byte-comparable against vendor CSV.
+    output_time_format: OutputTimeFormat = OutputTimeFormat.DOY
+    #: L2-WRT-026: calendar year used to resolve the IRIG day-of-year field.
+    #: Required by ``iso`` / ``dom``, inert under ``doy``. An MIE file carries
+    #: no year, so None -- "not supplied" -- is the only honest default, and a
+    #: calendar rendering with None here is refused rather than guessed at.
+    year: int | None = None
+    #: L2-WRT-025: offset from UTC in minutes for the ``iso`` zone
+    #: designator. Zero renders as ``Z``.
+    utc_offset_minutes: int = 0
     allow_partial: bool = False
     #: L2-DEC-015: number of records the timestamp-format auto-detect
     #: probe walks before committing to IRIG vs Standard. Range
@@ -647,12 +666,15 @@ class DecoderConfig:
         return DecoderConfig(
             log_level=self._override_present(kwargs, "log_level"),
             irig_day_advisory=self._override_present(kwargs, "irig_day_advisory"),
-            time_format=self._override_present(kwargs, "time_format"),
+            input_time_format=self._override_present(kwargs, "input_time_format"),
             strict=self._override_present(kwargs, "strict"),
             error_mode=self._override_present(kwargs, "error_mode"),
             filters=self._merge_filter_overrides(kwargs),
             output_format=self._override_present(kwargs, "output_format"),
             no_clobber=self._override_present(kwargs, "no_clobber"),
+            output_time_format=self._override_present(kwargs, "output_time_format"),
+            year=self._override_present(kwargs, "year"),
+            utc_offset_minutes=self._override_present(kwargs, "utc_offset_minutes"),
             allow_partial=self._override_present(kwargs, "allow_partial"),
             detect_records=self._override_present(kwargs, "detect_records"),
             lookahead_records=self._override_present(kwargs, "lookahead_records"),
@@ -675,9 +697,9 @@ class DecoderConfig:
         Presence — not truthiness — is the test, mirroring Rust's
         ``Option<T>``-based ``DecoderConfig::with_overrides`` (``rust/src/config.rs``)
         exactly. An earlier truthiness-based variant silently **dropped** any
-        override whose value was falsy, which made ``--time-format auto``
+        override whose value was falsy, which made ``--input-time-format auto``
         (``TimestampFormat.AUTO == 0``) a no-op against a config file that set
-        ``time_format = "irig"`` — the config value won, Rust used ``auto``, and
+        ``input_time_format = "irig"`` — the config value won, Rust used ``auto``, and
         the two implementations decoded the same file differently. The same trap
         applied to ``ErrorMode.SEPARATE == 0`` and to any empty-string value.
 
@@ -873,12 +895,16 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     irig_day_advisory = _require_bool(
         "logging", "irig_day_advisory", logging_section.get("irig_day_advisory", True)
     )
-    time_format = _load_time_format(decode_section)
+    _reject_retired_time_format_key(decode_section)
+    input_time_format = _load_time_format(decode_section)
     strict = _require_bool("decode", "strict", decode_section.get("strict", False))
     error_mode = _load_error_mode(decode_section)
     filters = _load_filter_section(_require_table(data, "filter"))
     output_format = _load_output_format(output_section)
     no_clobber = _require_bool("output", "no_clobber", output_section.get("no_clobber", False))
+    output_time_format = _load_output_time_format(output_section)
+    year = _load_year(output_section)
+    utc_offset_minutes = _load_utc_offset(output_section)
     max_sort_group = _require_int_range(
         "output.max_sort_group",
         output_section.get("max_sort_group", DEFAULT_MAX_SORT_GROUP),
@@ -913,12 +939,15 @@ def load_config(path: str | Path | None = None) -> DecoderConfig:
     config = DecoderConfig(
         log_level=log_level,
         irig_day_advisory=irig_day_advisory,
-        time_format=time_format,
+        input_time_format=input_time_format,
         strict=strict,
         error_mode=error_mode,
         filters=filters,
         output_format=output_format,
         no_clobber=no_clobber,
+        output_time_format=output_time_format,
+        year=year,
+        utc_offset_minutes=utc_offset_minutes,
         allow_partial=allow_partial,
         detect_records=detect_records,
         lookahead_records=lookahead_records,
@@ -960,8 +989,127 @@ def _load_logging_level(logging_section: dict[str, Any]) -> str:
     return log_level
 
 
+def _reject_retired_time_format_key(decode_section: dict[str, Any]) -> None:
+    """Reject the pre-v3.0.0 ``decode.time_format`` key by name (L2-CFG-012).
+
+    Left to the generic unknown-key rule this would only WARN (L2-CFG-009) --
+    and a WARN is the wrong answer for a *rename*, because the operator's
+    explicit choice would be discarded while the run reported success, silently
+    reverting a forced format to auto-detection.
+
+    Presence is tested rather than type-checked so that a wrong-typed value
+    (``time_format = 1``) reports the rename too, instead of a type error about
+    a key that no longer exists.
+
+    Raises:
+        ValueError: whenever the retired key is present.
+    """
+    if "time_format" in decode_section:
+        raise ValueError(
+            "decode.time_format was renamed in v3.0.0. Use decode.input_time_format to "
+            "choose how timestamps are PARSED (auto, irig, standard); use "
+            "output.output_time_format to choose how they are WRITTEN (doy, iso, dom)."
+        )
+
+
+def _load_output_time_format(output_section: dict[str, Any]) -> OutputTimeFormat:
+    """`[output] output_time_format` (L2-CFG-012 / L2-WRT-025).
+
+    Returns:
+        The parsed :class:`OutputTimeFormat`, defaulting to ``DOY``.
+
+    Raises:
+        ValueError: if the value is not a string, or names no known rendering.
+    """
+    raw = output_section.get("output_time_format", "doy")
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"Invalid [output] output_time_format: expected string, got {type(raw).__name__}"
+        )
+    return parse_output_time_format(raw)
+
+
+def _load_year(output_section: dict[str, Any]) -> int | None:
+    """`[output] year` (L2-CFG-012 / L2-WRT-026 clause 1).
+
+    Validated here but NOT required here: a config may legitimately set a year
+    it never uses, and a calendar rendering may legitimately take its year from
+    the CLI instead. Whether one is actually needed is a question about the
+    resolved pair, asked once both sources have merged (see
+    ``cli._resolve_time_render``).
+
+    Returns:
+        The validated year, or ``None`` when the key is absent.
+
+    Raises:
+        ValueError: if the value is not an integer or falls outside
+            ``[YEAR_MIN, YEAR_MAX]``.
+    """
+    if "year" not in output_section:
+        return None
+    raw = output_section["year"]
+    # bool is an int subclass; `year = true` is a mistake, not a year.
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(f"Invalid [output] year: expected integer, got {type(raw).__name__}")
+    year = int(raw)
+    if not YEAR_MIN <= year <= YEAR_MAX:
+        raise ValueError(f"Invalid output.year: {year}. Valid range: [{YEAR_MIN}, {YEAR_MAX}]")
+    return year
+
+
+def _load_utc_offset(output_section: dict[str, Any]) -> int:
+    """`[output] utc_offset` (L2-CFG-012 / L2-WRT-025).
+
+    Returns:
+        The offset in minutes east of UTC; ``0`` when the key is absent.
+
+    Raises:
+        ValueError: if the value is not a string or does not match the grammar.
+    """
+    if "utc_offset" not in output_section:
+        return 0
+    raw = output_section["utc_offset"]
+    if not isinstance(raw, str):
+        raise ValueError(f"Invalid [output] utc_offset: expected string, got {type(raw).__name__}")
+    return parse_utc_offset(raw)
+
+
+def parse_utc_offset(text: str) -> int:
+    """Parse a UTC offset designator into minutes east of UTC (L2-CFG-012).
+
+    Accepts ``Z`` (case-insensitively) for zero, or a signed ``+HH:MM`` /
+    ``-HH:MM``. The shape is checked exactly rather than leniently: ``+5:00``,
+    ``+0500`` and a trailing-space variant are all rejected, because a zone that
+    parsed loosely here would silently shift every ISO timestamp in the file.
+
+    Returns:
+        The offset in minutes; negative west of UTC.
+
+    Raises:
+        ValueError: if the text does not match the grammar or is out of range.
+    """
+    if text.lower() == "z":
+        return 0
+
+    invalid = ValueError(
+        f"Invalid output.utc_offset: {text!r}. Valid: Z, or +HH:MM / -HH:MM "
+        f"with HH in [0, 23] and MM in [0, 59]"
+    )
+    if len(text) != 6 or text[3] != ":" or text[0] not in "+-":
+        raise invalid
+    hours_text, minutes_text = text[1:3], text[4:6]
+    if not (hours_text.isascii() and hours_text.isdigit()):
+        raise invalid
+    if not (minutes_text.isascii() and minutes_text.isdigit()):
+        raise invalid
+    hours, minutes = int(hours_text), int(minutes_text)
+    if hours > 23 or minutes > 59:
+        raise invalid
+    return (-1 if text[0] == "-" else 1) * (hours * 60 + minutes)
+
+
 def _load_time_format(decode_section: dict[str, Any]) -> TimestampFormat:
-    """`[decode] time_format`.
+    """`[decode] input_time_format`.
 
     Returns:
         The parsed :class:`TimestampFormat`.
@@ -969,9 +1117,11 @@ def _load_time_format(decode_section: dict[str, Any]) -> TimestampFormat:
     Raises:
         ValueError: if the value is not a string, or names no known format.
     """
-    raw = decode_section.get("time_format", "auto")
+    raw = decode_section.get("input_time_format", "auto")
     if not isinstance(raw, str):
-        raise ValueError(f"Invalid decode.time_format: expected string, got {type(raw).__name__}")
+        raise ValueError(
+            f"Invalid decode.input_time_format: expected string, got {type(raw).__name__}"
+        )
     return parse_timestamp_format(raw)
 
 

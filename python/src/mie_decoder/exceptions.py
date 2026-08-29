@@ -15,7 +15,8 @@ Exception hierarchy::
     │   ├── MieClobberRefusedError
     │   ├── MieIncompatibleMergeInputsError
     │   ├── MieHomogeneousPayloadError
-    │   └── MieTimestampFormatMismatchError
+    │   ├── MieTimestampFormatMismatchError
+    │   └── MieCalendarUnavailableError
     ├── MieRecordError
     │   ├── MieInvalidTypeWordError
     │   ├── MieUnknownTypeWordError
@@ -416,9 +417,37 @@ class MieTimestampFormatMismatchError(MieFileError):
             f"Timestamp-format auto-detection is ambiguous starting at "
             f"offset 0x{offset:X} (IRIG score: {irig_score}, Standard "
             f"score: {std_score} over {records_probed} record(s) "
-            f"probed). Pass --time-format irig or --time-format "
+            f"probed). Pass --input-time-format irig or --input-time-format "
             f"standard to force the choice, or verify the file is "
             f"actually an MIE recording."
+        )
+
+
+class MieCalendarUnavailableError(MieFileError):
+    """Raised when a calendar rendering cannot be produced (L2-WRT-026).
+
+    A calendar rendering (``iso`` / ``dom``) was requested but the recording
+    cannot supply a calendar date: it is Standard-format or freerun IRIG
+    (clause 2), or a record's day-of-year does not exist in the configured year
+    (clause 3). Raised before any row is written in the first case and at the
+    offending record in the second.
+
+    Maps to exit class 2 in the CLI -- "the file cannot satisfy this request",
+    the class it shares with :class:`MieTimestampFormatMismatchError`. Day 366
+    against a common year lands here rather than being a per-record error
+    because it says the *configured year* is wrong, which makes every date in
+    the run suspect, not just that one row.
+
+    Attributes:
+        detail: The specific reason, named for the operator.
+    """
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(
+            f"Cannot render a calendar timestamp: {detail}. IRIG-B carries no year "
+            f"and no timezone, so a calendar rendering is refused rather than guessed "
+            f"at. Use --output-time-format doy to write the day-of-year form instead."
         )
 
 

@@ -29,7 +29,7 @@ CORPUS: list[tuple[str, str, str]] = [
     ("flat-strict", "[decode]\nstrict = true\n", "accept"),
     ("comment-only", "# just a comment\n", "accept"),
     ("empty-file", "", "accept"),
-    ("string-value", '[decode]\ntime_format = "irig"\n', "accept"),
+    ("string-value", '[decode]\ninput_time_format = "irig"\n', "accept"),
     ("int-value", "[decode]\ndetect_records = 8\n", "accept"),
     ("float-value", "[decode]\nstandard_tick_rate_hz = 1000000.0\n", "accept"),
     ("bool-value", "[output]\nno_clobber = true\n", "accept"),
@@ -97,7 +97,27 @@ CORPUS: list[tuple[str, str, str]] = [
         "reject",
     ),
     ("section-as-scalar", "decode = true\n", "reject"),
-    ("non-string-enum", "[decode]\ntime_format = 1\n", "reject"),
+    ("non-string-enum", "[decode]\ninput_time_format = 1\n", "reject"),
+    # L2-CFG-012: the pre-v3.0.0 spelling. Rejected by NAME rather than left to
+    # the unknown-key WARN, because silently discarding a forced format would
+    # revert the decode to auto-detection without saying so. Renaming the key
+    # above without adding this would have quietly turned `non-string-enum`
+    # into a no-op unknown-key case.
+    ("retired-time-format-key", '[decode]\ntime_format = "irig"\n', "reject"),
+    # The three v3.0.0 rendering keys (L2-CFG-012).
+    # A calendar rendering needs a year, so `iso` ALONE is a refusal, not an
+    # acceptance (L2-WRT-026 clause 1). Both spellings are pinned here because
+    # the pair is the interesting part: the key is valid, the configuration is
+    # not, and the two implementations must agree on which is which.
+    ("output-time-format", '[output]\noutput_time_format = "iso"\nyear = 2026\n', "accept"),
+    ("output-time-format-without-year", '[output]\noutput_time_format = "iso"\n', "reject"),
+    ("output-time-format-doy", '[output]\noutput_time_format = "doy"\n', "accept"),
+    ("output-time-format-bad", '[output]\noutput_time_format = "elapsed"\n', "reject"),
+    ("output-year", "[output]\nyear = 2026\n", "accept"),
+    ("output-year-out-of-range", "[output]\nyear = 10000\n", "reject"),
+    ("output-year-non-int", '[output]\nyear = "2026"\n', "reject"),
+    ("output-utc-offset", '[output]\nutc_offset = "-05:00"\n', "accept"),
+    ("output-utc-offset-bad", '[output]\nutc_offset = "+24:00"\n', "reject"),
     ("quoted-key", '[decode]\n"stri.ct" = true\n', "reject"),
     ("trailing-after-header", "[decode] junk\nstrict = true\n", "reject"),
     ("unterminated-section", "[decode\nstrict = true\n", "reject"),

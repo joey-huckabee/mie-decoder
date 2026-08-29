@@ -131,22 +131,37 @@ Every record carries a timestamp in one of two on-the-wire formats. By default
 the tool **auto-detects** which, by probing the first records and scoring how
 well each interpretation produces valid commands.
 
-| Timestamp | `TIME_STAMP` column | `DELTA` column |
+| Timestamp | `TIME_STAMP` column (default `doy`) | `DELTA` column |
 |---|---|---|
 | **IRIG** (48-bit, absolute) | `DAY:HH:MM:SS.uuuuuu` | Microsecond gaps |
 | **Standard** (32-bit free-running counter) | Raw hex ticks | **Empty** — the tick rate isn't in the file |
 | **Standard + `--standard-tick-rate-hz N`** | Raw hex ticks | Real microsecond gaps (you supplied the rate) |
 | **Freerun IRIG** (no calendar anchor) | Relative IRIG fields | Present, but not wall-clock |
 
+**Rendering the column as a calendar date** (`--output-time-format`, since
+v3.0.0). The default `doy` is the table above and the vendor rendering. `iso`
+(`2026-07-11T15:54:50.456225Z`) and `dom` (`11:15:54:50.456225`) resolve the
+day-of-year against a year you supply with `--year`, because the file has none —
+day 192 is July 10 in a leap year and July 11 in a common one.
+
+| Scenario | Outcome |
+|---|---|
+| `iso` / `dom` with no year from config or CLI | **Exit 4**, naming both ways to supply one. Nothing is written. |
+| `iso` / `dom` on a **Standard** recording | **Exit 2** — a free-running counter has no epoch. Use `doy`. |
+| `iso` / `dom` on a **freerun IRIG** recording | **Exit 2** — the fields are relative, and would render as a plausible but meaningless date. |
+| Day-of-year 366 with a common `--year` | **Exit 2** for the whole run — the configured year is wrong, so every date is suspect. |
+| Recording crosses New Year | One WARN per input; rows after the wrap are a year early. Split at the boundary and decode each part with its own `--year`. |
+| A year or offset set while `doy` is active | Ignored, not an error — the same way `standard_tick_rate_hz` is inert outside Standard. |
+
 **Auto-detection outcomes** — the probe is scored (`L2-DEC-015/016`):
 
 - **Decisive / marginal** — one format clearly wins; the tool uses it (an INFO log
-  notes the choice; a marginal call hints you can force `--time-format` if wrong).
+  notes the choice; a marginal call hints you can force `--input-time-format` if wrong).
 - **Ambiguous** — neither format is convincing. **Strict** mode stops with exit 2
   (`TimestampFormatMismatch`); **lenient** mode logs one WARN and proceeds with
   its best guess (IRIG wins ties — it's the common case in flight test).
 
-Force a format with `--time-format irig|standard` to skip the probe entirely.
+Force a format with `--input-time-format irig|standard` to skip the probe entirely.
 Day-of-year has a known per-card firmware quirk — see
 [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md).
 

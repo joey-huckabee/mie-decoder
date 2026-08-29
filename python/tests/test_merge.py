@@ -122,8 +122,8 @@ def test_merge_rejects_standard_format_input(tmp_path: Path) -> None:
     # Forcing Standard makes the records decode as Standard timestamps, which
     # have no shared epoch → not mergeable.
     readers = [
-        MieFileReader(fa, time_format=TimestampFormat.STANDARD),
-        MieFileReader(fa, time_format=TimestampFormat.STANDARD),
+        MieFileReader(fa, input_time_format=TimestampFormat.STANDARD),
+        MieFileReader(fa, input_time_format=TimestampFormat.STANDARD),
     ]
     with pytest.raises(MieIncompatibleMergeInputsError):
         merge_readers(readers)

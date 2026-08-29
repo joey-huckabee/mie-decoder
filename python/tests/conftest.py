@@ -292,6 +292,26 @@ def multi_record_data() -> bytes:
 
 
 @pytest.fixture
+def standard_timestamp_data() -> bytes:
+    """A Standard-format (free-running counter) recording.
+
+    Read from the shared conformance fixture rather than rebuilt here, so the
+    bytes stay identical to what the cross-implementation oracle uses.
+    """
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "tests"
+        / "conformance"
+        / "inputs"
+        / "standard-timestamps.hex"
+    )
+    hex_text = "".join(
+        line.split("#", 1)[0].strip() for line in source.read_text(encoding="utf-8").splitlines()
+    )
+    return bytes.fromhex(hex_text)
+
+
+@pytest.fixture
 def tmp_mie_file(tmp_path: Path, multi_record_data: bytes) -> Path:
     """Write multi-record test data to a temporary .mie file."""
     fpath = tmp_path / "test.mie"
