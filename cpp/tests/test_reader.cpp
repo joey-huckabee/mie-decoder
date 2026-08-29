@@ -200,7 +200,7 @@ Walk walk_words(const std::vector<uint16_t>& words) {
 mie::ReaderOptions strict_options() {
     mie::ReaderOptions options;
     options.strict = true;
-    options.time_format = mie::TIMESTAMP_IRIG;
+    options.input_time_format = mie::TIMESTAMP_IRIG;
     return options;
 }
 
@@ -409,7 +409,7 @@ TEST_CASE("a forced format is honoured", "[reader][L2-DEC-013]") {
     }
 
     mie::ReaderOptions options;
-    options.time_format = mie::TIMESTAMP_STANDARD;
+    options.input_time_format = mie::TIMESTAMP_STANDARD;
     const Walk walk = walk_words(words, options);
     REQUIRE(walk.messages.size() == 5);
     CHECK(walk.messages[0].timestamp.is_standard());
@@ -428,7 +428,7 @@ TEST_CASE("a forced format that the recording contradicts is kept, with a warnin
     }
 
     mie::ReaderOptions options;
-    options.time_format = mie::TIMESTAMP_STANDARD;
+    options.input_time_format = mie::TIMESTAMP_STANDARD;
 
     SECTION("lenient decodes with the forced format") {
         const LogCapture capture(mie::log::LEVEL_WARN);
@@ -461,7 +461,7 @@ TEST_CASE("an ambiguous auto-detection is rejected in strict mode and guessed in
 
     SECTION("strict rejects") {
         mie::ReaderOptions options;
-        options.strict = true;  // time_format stays AUTO, which is the point
+        options.strict = true;  // input_time_format stays AUTO, which is the point
         const Walk walk = walk_words(words, options);
         CHECK(walk.threw);
         CHECK(walk.kind == mie::KIND_TIMESTAMP_FORMAT_MISMATCH);
@@ -910,7 +910,7 @@ TEST_CASE("an uncalibrated Standard counter has no DELTA", "[reader][L2-RDR-019]
     }
 
     mie::ReaderOptions options;
-    options.time_format = mie::TIMESTAMP_STANDARD;
+    options.input_time_format = mie::TIMESTAMP_STANDARD;
     const Walk walk = walk_words(words, options);
     REQUIRE(walk.messages.size() == 5);
     for (std::size_t i = 0; i < walk.messages.size(); ++i) {
@@ -928,7 +928,7 @@ TEST_CASE("a calibrated Standard counter participates in DELTA",
     }
 
     mie::ReaderOptions options;
-    options.time_format = mie::TIMESTAMP_STANDARD;
+    options.input_time_format = mie::TIMESTAMP_STANDARD;
     options.standard_tick_rate_hz = 1000000.0;  // one tick per microsecond
     const Walk walk = walk_words(words, options);
     REQUIRE(walk.messages.size() == 4);

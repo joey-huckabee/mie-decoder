@@ -482,18 +482,18 @@ class TestDetectTimestampFormat:
         from mie_decoder.models import TimestampFormat
         from mie_decoder.reader import MieFileReader
 
-        reader = MieFileReader(tmp_mie_file, time_format=TimestampFormat.IRIG)
+        reader = MieFileReader(tmp_mie_file, input_time_format=TimestampFormat.IRIG)
         messages = list(reader)
         assert len(messages) == 3
         assert messages[0].timestamp.format() == "192:15:54:50.456225"
 
     @pytest.mark.requirement("L2-DEC-013")
-    def test_cli_time_format_irig(self, tmp_mie_file: Path, tmp_path: Path) -> None:
-        """CLI --time-format irig should work."""
+    def test_cli_input_time_format_irig(self, tmp_mie_file: Path, tmp_path: Path) -> None:
+        """CLI --input-time-format irig should work."""
         from mie_decoder.cli import main
 
         out = tmp_path / "irig.csv"
-        rc = main(["decode", str(tmp_mie_file), "-o", str(out), "--time-format", "irig"])
+        rc = main(["decode", str(tmp_mie_file), "-o", str(out), "--input-time-format", "irig"])
         assert rc == 0
         assert out.exists()
 

@@ -1,0 +1,3 @@
+# L2-CFG-012: not one of doy / iso / dom.
+[output]
+output_time_format = "elapsed"

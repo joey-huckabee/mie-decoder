@@ -168,7 +168,7 @@ class TestMieFileReader:
         fpath = tmp_path / "bad_record.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV * 2 + bad_record)
         with pytest.raises(MieDecoderError):
-            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+            list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.IRIG))
 
     @pytest.mark.requirement("L2-DEC-009")
     def test_payload_extraction_does_not_overrun_into_next_record(self, tmp_path: Path) -> None:
@@ -198,11 +198,11 @@ class TestMieFileReader:
 
         # Strict: the over-declaration is rejected, not decoded into an overrun.
         with pytest.raises(MiePayloadError):
-            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+            list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.IRIG))
 
         # Lenient: R1 is skipped; R2 decodes intact at its true offset,
         # proving R1 consumed nothing beyond its 20-byte declared extent.
-        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        messages = list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))
         assert len(messages) == 1
         assert messages[0].file_offset == 20
         assert messages[0].command_word is not None
@@ -252,11 +252,11 @@ class TestMieFileReader:
         # Strict: extraction completes without a raw struct.error (bounded
         # reads), then L2-SYN-027 rejects the Cmd1/Cmd2 mismatch.
         with pytest.raises(MiePayloadError):
-            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+            list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.IRIG))
 
         # Lenient: R1 is skipped; R2 decodes intact at its true offset, proving
         # R1's Cmd2 over-claim consumed nothing beyond its 20-byte extent.
-        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        messages = list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))
         assert len(messages) == 1
         assert messages[0].file_offset == 20
         assert messages[0].command_word is not None
@@ -295,9 +295,9 @@ class TestMieFileReader:
         fpath.write_bytes(data)
 
         with pytest.raises(MiePayloadError):
-            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+            list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.IRIG))
 
-        messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+        messages = list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))
         assert len(messages) == 1
         assert messages[0].file_offset == 26
         assert messages[0].command_word is not None
@@ -322,7 +322,7 @@ class TestMieFileReader:
         fpath = tmp_path / "irig_day.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV * 3)  # 3 non-freerun IRIG records
         with caplog.at_level(logging.INFO, logger="mie_decoder.reader"):
-            messages = list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))
+            messages = list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))
         assert len(messages) == 3
         advisories = [r for r in caplog.records if "day-of-year" in r.getMessage()]
         assert len(advisories) == 1, (
@@ -346,7 +346,7 @@ class TestMieFileReader:
         fpath = tmp_path / "irig_day.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV)
         with caplog.at_level(logging.WARNING, logger="mie_decoder.reader"):
-            assert len(list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))) == 1
+            assert len(list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))) == 1
         assert not [r for r in caplog.records if "day-of-year" in r.getMessage()]
 
     @pytest.mark.requirement("L2-LOG-001")
@@ -366,7 +366,7 @@ class TestMieFileReader:
         set_irig_day_advisory(False)
         try:
             with caplog.at_level(logging.INFO, logger="mie_decoder.reader"):
-                assert len(list(MieFileReader(fpath, time_format=TimestampFormat.IRIG))) == 1
+                assert len(list(MieFileReader(fpath, input_time_format=TimestampFormat.IRIG))) == 1
         finally:
             # Module-level state: restore it or every later test in the process
             # runs with the advisory off.
@@ -416,7 +416,7 @@ class TestMieFileReader:
         fpath = tmp_path / "forced_mismatch.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV * 2)
         with pytest.raises(MieTimestampFormatMismatchError):
-            list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.STANDARD))
+            list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.STANDARD))
 
     @pytest.mark.requirement("L2-DEC-013")
     def test_forced_format_mismatch_lenient_proceeds(self, tmp_path: Path) -> None:
@@ -428,7 +428,7 @@ class TestMieFileReader:
         fpath.write_bytes(RECORD_RT15_SA11_RCV * 2)
         # Does not raise; records may be skipped on invariant violations,
         # but the stream completes.
-        list(MieFileReader(fpath, time_format=TimestampFormat.STANDARD))
+        list(MieFileReader(fpath, input_time_format=TimestampFormat.STANDARD))
 
     @pytest.mark.requirement("L2-DEC-013")
     def test_forced_format_matching_is_not_flagged(self, tmp_path: Path) -> None:
@@ -438,7 +438,7 @@ class TestMieFileReader:
 
         fpath = tmp_path / "forced_match.mie"
         fpath.write_bytes(RECORD_RT15_SA11_RCV * 2)
-        messages = list(MieFileReader(fpath, strict=True, time_format=TimestampFormat.IRIG))
+        messages = list(MieFileReader(fpath, strict=True, input_time_format=TimestampFormat.IRIG))
         assert len(messages) == 2
 
     @pytest.mark.requirement("L2-RDR-004")
@@ -1019,7 +1019,7 @@ class TestAtomicWriteSafety:
                 str(rec),
                 "-o",
                 str(out),
-                "--time-format",
+                "--input-time-format",
                 "standard",
                 "--standard-tick-rate-hz",
                 "1000000",
@@ -1038,7 +1038,7 @@ class TestAtomicWriteSafety:
                 str(rec),
                 "-o",
                 str(out2),
-                "--time-format",
+                "--input-time-format",
                 "standard",
             ]
         )
@@ -1594,7 +1594,7 @@ class TestCliEndToEnd:
         from mie_decoder.cli import main
 
         bad = tmp_path / "bad.toml"
-        bad.write_text('[decode]\ntime_format = "potato"\n')
+        bad.write_text('[decode]\ninput_time_format = "potato"\n')
         # Config load fails before the input file is opened, so the input
         # path need not exist.
         rc = main(["--config", str(bad), "decode", str(tmp_path / "missing.mie")])

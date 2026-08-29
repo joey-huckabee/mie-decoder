@@ -64,7 +64,7 @@ TEST_CASE("a default configuration is the documented no-config behaviour", "[con
     // path.
     const mie::DecoderConfig config;
     CHECK(config.log_level == "WARNING");
-    CHECK(config.time_format == mie::TIMESTAMP_AUTO);
+    CHECK(config.input_time_format == mie::TIMESTAMP_AUTO);
     CHECK_FALSE(config.strict);
     CHECK(config.error_mode == mie::ERROR_MODE_INLINE);
     CHECK(config.output_format == "csv");
@@ -117,7 +117,7 @@ TEST_CASE("an unknown logging.level is refused at load time", "[config][L2-CFG-0
 TEST_CASE("decode keys map onto their fields", "[config][L2-CFG-001]") {
     const mie::DecoderConfig config = must_load(
         "[decode]\n"
-        "time_format = \"irig\"\n"
+        "input_time_format = \"irig\"\n"
         "strict = true\n"
         "error_mode = \"separate\"\n"
         "allow_partial = true\n"
@@ -125,7 +125,7 @@ TEST_CASE("decode keys map onto their fields", "[config][L2-CFG-001]") {
         "lookahead_records = 4\n"
         "standard_tick_rate_hz = 1000000.0\n");
 
-    CHECK(config.time_format == mie::TIMESTAMP_IRIG);
+    CHECK(config.input_time_format == mie::TIMESTAMP_IRIG);
     CHECK(config.strict);
     CHECK(config.error_mode == mie::ERROR_MODE_SEPARATE);
     CHECK(config.allow_partial);
@@ -173,12 +173,12 @@ TEST_CASE("the tick rate must be finite and positive", "[config][L2-DEC-017]") {
     must_fail("[decode]\nstandard_tick_rate_hz = 0\n");
 }
 
-TEST_CASE("time_format and error_mode take only their documented spellings",
+TEST_CASE("input_time_format and error_mode take only their documented spellings",
           "[config][L2-CFG-010]") {
-    CHECK(must_load("[decode]\ntime_format = \"AUTO\"\n").time_format == mie::TIMESTAMP_AUTO);
-    CHECK(must_load("[decode]\ntime_format = \"Standard\"\n").time_format ==
+    CHECK(must_load("[decode]\ninput_time_format = \"AUTO\"\n").input_time_format == mie::TIMESTAMP_AUTO);
+    CHECK(must_load("[decode]\ninput_time_format = \"Standard\"\n").input_time_format ==
           mie::TIMESTAMP_STANDARD);
-    must_fail("[decode]\ntime_format = \"gps\"\n");
+    must_fail("[decode]\ninput_time_format = \"gps\"\n");
 
     CHECK(must_load("[decode]\nerror_mode = \"INLINE\"\n").error_mode == mie::ERROR_MODE_INLINE);
     must_fail("[decode]\nerror_mode = \"merged\"\n");
@@ -294,7 +294,7 @@ TEST_CASE("bus names resolve case-insensitively", "[config]") {
 
 TEST_CASE("a wrong-typed value names the section, key and wanted type", "[config][L2-CFG-010]") {
     CHECK(must_fail("[decode]\nstrict = 1\n") == "[decode] strict must be a boolean");
-    CHECK(must_fail("[decode]\ntime_format = true\n") == "[decode] time_format must be a string");
+    CHECK(must_fail("[decode]\ninput_time_format = true\n") == "[decode] input_time_format must be a string");
     CHECK(must_fail("[output]\nmax_sort_group = \"64\"\n") ==
           "[output] max_sort_group must be an integer");
     CHECK(must_fail("[output]\nmax_sort_group = true\n") ==
@@ -434,7 +434,7 @@ TEST_CASE("every override field is wired", "[config][L2-CFG-002]") {
     // one is set to something distinguishable from the default.
     mie::ConfigOverrides o;
     o.log_level = std::string("DEBUG");
-    o.time_format = mie::TIMESTAMP_STANDARD;
+    o.input_time_format = mie::TIMESTAMP_STANDARD;
     o.strict = true;
     o.error_mode = mie::ERROR_MODE_SEPARATE;
     o.output_format = std::string("csv");
@@ -453,7 +453,7 @@ TEST_CASE("every override field is wired", "[config][L2-CFG-002]") {
 
     const mie::DecoderConfig merged = mie::with_overrides(mie::DecoderConfig(), o);
     CHECK(merged.log_level == "DEBUG");
-    CHECK(merged.time_format == mie::TIMESTAMP_STANDARD);
+    CHECK(merged.input_time_format == mie::TIMESTAMP_STANDARD);
     CHECK(merged.strict);
     CHECK(merged.error_mode == mie::ERROR_MODE_SEPARATE);
     CHECK(merged.no_clobber);
@@ -494,7 +494,7 @@ TEST_CASE("the config parity corpus lands in the expected class", "[config][L2-C
         {"flat-strict", "[decode]\nstrict = true\n", true},
         {"comment-only", "# just a comment\n", true},
         {"empty-file", "", true},
-        {"string-value", "[decode]\ntime_format = \"irig\"\n", true},
+        {"string-value", "[decode]\ninput_time_format = \"irig\"\n", true},
         {"int-value", "[decode]\ndetect_records = 8\n", true},
         {"float-value", "[decode]\nstandard_tick_rate_hz = 1000000.0\n", true},
         {"bool-value", "[output]\nno_clobber = true\n", true},

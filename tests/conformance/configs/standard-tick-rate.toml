@@ -7,5 +7,5 @@
 # This also exercises the Rust hand-rolled TOML parser's float support
 # added for this key (`1000000.0` parses as a float, not an int).
 [decode]
-time_format = "standard"
+input_time_format = "standard"
 standard_tick_rate_hz = 1000000.0

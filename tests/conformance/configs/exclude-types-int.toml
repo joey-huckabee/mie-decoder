@@ -4,7 +4,7 @@
 # `exclude-transmit.toml` oracle (expected/config-filter.csv), so int 4 must
 # produce byte-for-byte the same output as the name "RT_TO_BC".
 [decode]
-time_format = "irig"
+input_time_format = "irig"
 
 [filter]
 exclude_types = [4]

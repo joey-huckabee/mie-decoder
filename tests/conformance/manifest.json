@@ -50,7 +50,7 @@
       "input": "inputs/standard-timestamps.hex",
       "expected": "expected/standard-timestamps.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "standard"
       ]
     },
@@ -59,7 +59,7 @@
       "input": "inputs/standard-timestamps.hex",
       "expected": "expected/standard-tick-calibrated.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "standard",
         "--standard-tick-rate-hz",
         "1000000"
@@ -75,7 +75,7 @@
       "name": "standard-tick-rate-unrepresentable",
       "input": "inputs/standard-timestamps.hex",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "standard",
         "--standard-tick-rate-hz",
         "1e-300"
@@ -107,7 +107,7 @@
       "input": "inputs/mode-code-no-data.hex",
       "expected": "expected/mode-code-no-data.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "irig"
       ]
     },
@@ -116,7 +116,7 @@
       "input": "inputs/mode-code-tx-no-data.hex",
       "expected": "expected/mode-code-tx-no-data.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "irig"
       ]
     },
@@ -125,7 +125,7 @@
       "input": "inputs/mode-code-rx-data.hex",
       "expected": "expected/mode-code-rx-data.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "irig"
       ]
     },
@@ -134,7 +134,7 @@
       "input": "inputs/mode-code-bcast-no-data.hex",
       "expected": "expected/mode-code-bcast-no-data.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "irig"
       ]
     },
@@ -143,7 +143,7 @@
       "input": "inputs/mode-code-bcast-data.hex",
       "expected": "expected/mode-code-bcast-data.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "irig"
       ]
     },
@@ -152,7 +152,7 @@
       "input": "inputs/receive-broadcast.hex",
       "expected": "expected/receive-broadcast.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "irig"
       ]
     },
@@ -161,7 +161,7 @@
       "input": "inputs/rt-to-rt-broadcast.hex",
       "expected": "expected/rt-to-rt-broadcast.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "irig"
       ]
     },
@@ -332,7 +332,7 @@
     {
       "name": "config-error-invalid-value",
       "input": "inputs/standard-timestamps.hex",
-      "config": "configs/invalid-time-format.toml",
+      "config": "configs/invalid-input-time-format.toml",
       "expected_exit": 5
     },
     {
@@ -368,7 +368,7 @@
     {
       "name": "config-error-non-string-value",
       "input": "inputs/standard-timestamps.hex",
-      "config": "configs/non-string-time-format.toml",
+      "config": "configs/non-string-input-time-format.toml",
       "expected_exit": 5
     },
     {
@@ -378,11 +378,11 @@
       "expected_exit": 5
     },
     {
-      "name": "time-format-uppercase-cli",
+      "name": "input-time-format-uppercase-cli",
       "input": "inputs/mode-code-no-data.hex",
       "expected": "expected/mode-code-no-data.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "IRIG"
       ]
     },
@@ -391,7 +391,7 @@
       "input": "inputs/basic-multi-record.hex",
       "config": "configs/strict.toml",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "standard"
       ],
       "expected_exit": 2
@@ -522,7 +522,7 @@
       "input": "inputs/standard-mode-code-rx-data.hex",
       "expected": "expected/standard-mode-code-data.csv",
       "args": [
-        "--time-format",
+        "--input-time-format",
         "standard"
       ]
     },
@@ -725,7 +725,7 @@
       "name": "flag-eq-form-numeric",
       "input": "inputs/standard-timestamps.hex",
       "args": [
-        "--time-format=standard",
+        "--input-time-format=standard",
         "--standard-tick-rate-hz=1000000"
       ],
       "expected": "expected/standard-tick-calibrated.csv"
@@ -992,6 +992,205 @@
       "input": "inputs/basic-multi-record.hex",
       "config": "configs/collapse-cap-out-of-range.toml",
       "expected_exit": 5
+    },
+    {
+      "name": "output-time-format-doy-explicit",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/basic-multi-record.csv",
+      "args": [
+        "--output-time-format",
+        "doy"
+      ]
+    },
+    {
+      "name": "output-time-format-iso-common-year",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/output-time-format-iso-common-year.csv",
+      "args": [
+        "--output-time-format",
+        "iso",
+        "--year",
+        "2026"
+      ]
+    },
+    {
+      "name": "output-time-format-iso-leap-year",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/output-time-format-iso-leap-year.csv",
+      "args": [
+        "--output-time-format",
+        "iso",
+        "--year",
+        "2024"
+      ]
+    },
+    {
+      "name": "output-time-format-iso-utc-offset",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/output-time-format-iso-utc-offset.csv",
+      "args": [
+        "--output-time-format",
+        "iso",
+        "--year",
+        "2026",
+        "--utc-offset=-05:00"
+      ]
+    },
+    {
+      "name": "output-time-format-dom-common-year",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/output-time-format-dom-common-year.csv",
+      "args": [
+        "--output-time-format",
+        "dom",
+        "--year",
+        "2026"
+      ]
+    },
+    {
+      "name": "output-time-format-dom-leap-year",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/output-time-format-dom-leap-year.csv",
+      "args": [
+        "--output-time-format",
+        "dom",
+        "--year",
+        "2024"
+      ]
+    },
+    {
+      "name": "output-time-format-uppercase-cli",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/output-time-format-iso-common-year.csv",
+      "args": [
+        "--output-time-format",
+        "ISO",
+        "--year",
+        "2026"
+      ]
+    },
+    {
+      "name": "output-time-format-doy-ignores-year",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/basic-multi-record.csv",
+      "args": [
+        "--output-time-format",
+        "doy",
+        "--year",
+        "2024",
+        "--utc-offset=-05:00"
+      ]
+    },
+    {
+      "name": "output-time-format-from-config",
+      "input": "inputs/basic-multi-record.hex",
+      "expected": "expected/output-time-format-iso-common-year.csv",
+      "config": "configs/iso-rendering.toml"
+    },
+    {
+      "name": "calendar-rendering-without-year",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 4,
+      "expected_stderr_contains": "--year",
+      "args": [
+        "--output-time-format",
+        "iso"
+      ]
+    },
+    {
+      "name": "calendar-rendering-on-standard-recording",
+      "input": "inputs/standard-timestamps.hex",
+      "expected_exit": 2,
+      "expected_stderr_contains": "free-running counter",
+      "args": [
+        "--output-time-format",
+        "iso",
+        "--year",
+        "2026"
+      ]
+    },
+    {
+      "name": "calendar-rendering-on-freerun-recording",
+      "input": "inputs/merge-freerun.hex",
+      "expected_exit": 2,
+      "expected_stderr_contains": "freerun",
+      "args": [
+        "--output-time-format",
+        "iso",
+        "--year",
+        "2026"
+      ]
+    },
+    {
+      "name": "year-out-of-range-cli",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 4,
+      "expected_stderr_contains": "--year",
+      "args": [
+        "--output-time-format",
+        "dom",
+        "--year",
+        "10000"
+      ]
+    },
+    {
+      "name": "utc-offset-invalid-cli",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 4,
+      "expected_stderr_contains": "--utc-offset",
+      "args": [
+        "--output-time-format",
+        "iso",
+        "--year",
+        "2026",
+        "--utc-offset",
+        "+24:00"
+      ]
+    },
+    {
+      "name": "output-time-format-invalid-cli",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 4,
+      "expected_stderr_contains": "--output-time-format",
+      "args": [
+        "--output-time-format",
+        "elapsed"
+      ]
+    },
+    {
+      "name": "retired-time-format-flag",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 4,
+      "expected_stderr_contains": "--input-time-format",
+      "args": [
+        "--time-format",
+        "irig"
+      ]
+    },
+    {
+      "name": "retired-time-format-config-key",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 5,
+      "expected_stderr_contains": "decode.input_time_format",
+      "config": "configs/retired-time-format-key.toml"
+    },
+    {
+      "name": "invalid-output-time-format-config",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 5,
+      "config": "configs/invalid-output-time-format.toml"
+    },
+    {
+      "name": "year-out-of-range-config",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 5,
+      "config": "configs/invalid-year.toml"
+    },
+    {
+      "name": "utc-offset-invalid-config",
+      "input": "inputs/basic-multi-record.hex",
+      "expected_exit": 5,
+      "config": "configs/invalid-utc-offset.toml"
     }
   ]
 }

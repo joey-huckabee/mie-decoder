@@ -1,0 +1,4 @@
+# L2-CFG-012: hours out of range. The grammar is checked exactly, because a
+# zone that parsed loosely would silently shift every ISO timestamp.
+[output]
+utc_offset = "+24:00"

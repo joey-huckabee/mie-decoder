@@ -63,6 +63,7 @@ const Classification kContract[] = {
     {mie::KIND_NO_VALID_RECORDS, false, false},
     {mie::KIND_HOMOGENEOUS_PAYLOAD, false, false},
     {mie::KIND_TIMESTAMP_FORMAT_MISMATCH, false, false},
+    {mie::KIND_CALENDAR_UNAVAILABLE, false, false},
     {mie::KIND_WRITER_ERROR, false, false},
     {mie::KIND_INPUT_OUTPUT_COLLISION, false, false},
     {mie::KIND_CLOBBER_REFUSED, false, false},
@@ -88,6 +89,7 @@ std::vector<mie::MieError> every_error() {
     all.push_back(mie::MieError::unrecoverable_sync_loss(0x1234, 3));
     all.push_back(mie::MieError::no_valid_records("/tmp/x.mie", 65536));
     all.push_back(mie::MieError::homogeneous_payload("/tmp/x.mie", 0x40, 4));
+    all.push_back(mie::MieError::calendar_unavailable("no year was configured"));
     all.push_back(mie::MieError::timestamp_format_mismatch(0x40, 3, 2, 8));
     all.push_back(mie::MieError::writer_error("out.csv", "No space left on device", 28));
     all.push_back(mie::MieError::input_output_collision("/tmp/x.mie"));
@@ -366,7 +368,7 @@ TEST_CASE("the ambiguity message reports both scores", "[error][message]") {
     CHECK(mie::MieError::timestamp_format_mismatch(0x40, 3, 2, 8).message() ==
           "Timestamp-format auto-detection is ambiguous starting at offset 0x40 "
           "(IRIG score: 3, Standard score: 2 over 8 record(s) probed). "
-          "Pass --time-format irig or --time-format standard to force the choice, "
+          "Pass --input-time-format irig or --input-time-format standard to force the choice, "
           "or verify the file is actually an MIE recording.");
 
     SECTION("a negative score is rendered with its sign") {

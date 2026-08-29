@@ -43,7 +43,7 @@ mie::ReaderOptions irig_options() {
     mie::ReaderOptions options;
     // Pinned rather than auto-detected: these fixtures are small, and an
     // ambiguous probe would make the test about detection instead of merging.
-    options.time_format = mie::TIMESTAMP_IRIG;
+    options.input_time_format = mie::TIMESTAMP_IRIG;
     return options;
 }
 
@@ -499,7 +499,7 @@ TEST_CASE("a merge rejects inputs that cannot share a timeline", "[merge][L3-CPP
         const TempFile standard("mie-merge-standard.mie", mie_test::finish(words));
 
         mie::ReaderOptions standard_options;
-        standard_options.time_format = mie::TIMESTAMP_STANDARD;
+        standard_options.input_time_format = mie::TIMESTAMP_STANDARD;
 
         mie::MieFileReader reader_a;
         mie::MieFileReader reader_b;
