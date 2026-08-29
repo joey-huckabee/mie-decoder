@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "mie-decoder"
-version = "2.18.0"
+version = "3.0.0"
 dependencies = [
  "memmap2",
 ]

@@ -17,6 +17,135 @@ shared behavior) holds at any compatible version pair. See
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-08-28
+
+### Changed — BREAKING
+
+- **`--time-format` has been split into `--input-time-format` and
+  `--output-time-format`, and the config key `decode.time_format` is now
+  `decode.input_time_format`.** The old flag selected how timestamps were
+  *parsed* from the file and said nothing about how they were *written* to the
+  CSV. Once the `TIME_STAMP` rendering became selectable (below), one flag named
+  `--time-format` could not honestly carry both concerns, so each is now named
+  for the job it does.
+
+  **`--input-time-format`** takes the same values (`auto` / `irig` / `standard`),
+  has the same default, and behaves identically. Only the name changed.
+
+  Rationale: whichever concern kept the old name would have made the other look
+  like an afterthought, and an operator reaching for "the timestamp flag" from
+  memory would have had even odds of getting the wrong one. Naming the two
+  symmetrically — input versus output — makes that mistake impossible to make
+  silently.
+
+  **Migration.**
+
+  | Before | After |
+  |---|---|
+  | `decode rec.mie --time-format irig` | `decode rec.mie --input-time-format irig` |
+  | `[decode] time_format = "irig"` | `[decode] input_time_format = "irig"` |
+  | *(no equivalent)* | `--output-time-format doy` — the default, and what every pre-v3.0.0 decode emitted |
+
+  `--time-format` is **not** accepted as a deprecated alias: passing it is a
+  usage error (exit `4`) whose diagnostic names *both* replacements and states
+  which concern each covers. That is deliberately more than the
+  `--inline-errors` removal in v2.8.0 got, and for a specific reason — that flag
+  had no successor, so a generic "unknown option" lost nothing, whereas here the
+  operator's intent is still fully expressible and the only open question is
+  which of two flags they meant. The generic message cannot answer it; this one
+  does.
+
+  **The retired config key is rejected, not ignored** (exit `5`, diagnostic
+  naming the replacement). An unknown key is normally a WARN, which is right for
+  a key from a newer version — but for a *renamed* one it would discard the
+  operator's explicit choice while reporting success, silently reverting a
+  forced timestamp format to auto-detection. Auto-detection is right often
+  enough that the loss would not be noticed until it wasn't.
+
+  Note this breaks the **CLI and config** contract, not the library API. As in
+  v2.8.0, `cargo-semver-checks` cannot see this class of change; the version
+  decision is a human one.
+
+### Added
+
+- **`--output-time-format doy|iso|dom` and `[output] output_time_format`:
+  operator-selectable rendering of the `TIME_STAMP` column** (`L1-OUT-004`,
+  `L2-WRT-025`).
+
+  | Value | Rendering | Example |
+  |---|---|---|
+  | `doy` (default) | `DAY:HH:MM:SS.uuuuuu` | `192:15:54:50.456225` |
+  | `iso` | `YYYY-MM-DDTHH:MM:SS.uuuuuu` + zone | `2026-07-11T15:54:50.456225Z` |
+  | `dom` | `DD:HH:MM:SS.uuuuuu` | `11:15:54:50.456225` |
+
+  **`doy` is the default and is byte-identical to what every previous version
+  emitted**, so an invocation that selects nothing is unaffected and remains
+  diffable against DDC vendor CSV. `iso` and `dom` depart from that deliberately
+  and are documented as an exception in `docs/VENDOR-CSV-DIFFS.md` §3c.
+
+  `dom` does not identify a date on its own — the month is deliberately not in
+  the cell. That buys a column the same width and shape as `doy`; use `iso` when
+  the date must be recoverable from the CSV alone.
+
+- **`--year YYYY` and `[output] year`** (`L2-WRT-026`). An IRIG-B timestamp
+  carries day-of-year but **no year**, and day 192 is July 10 in a leap year and
+  July 11 in a common one — so `iso` and `dom` require one and `doy` ignores it.
+  There is no year the decoder could default to that would be right: the system
+  clock would date a 2019 archive with the year it was decoded in, and a file's
+  mtime does not survive a copy. Selecting a calendar rendering without a year is
+  therefore a usage error (exit `4`) naming both the config key and the flag,
+  never a guess.
+
+- **`--utc-offset Z|+HH:MM|-HH:MM` and `[output] utc_offset`** (`L2-WRT-025`).
+  IRIG-B carries no timezone either. The `iso` rendering appends `Z` by default;
+  this states what the recording could not, and is applied as a designator only —
+  the time fields are never shifted.
+
+- **Refusals rather than fabricated dates** (`L2-WRT-026`). A calendar rendering
+  is declined, before any row is written, with the new `CalendarUnavailable` /
+  `MieCalendarUnavailableError` class (exit `2`) when the recording cannot supply
+  a date: a **Standard** recording (a free-running counter has no epoch), a
+  **freerun IRIG** recording (the fields are relative, and would render as a
+  perfectly ordinary meaningless date), or a record carrying **day-of-year 366
+  against a common year**. The last fails the whole run rather than the row,
+  because it says the configured *year* is wrong, which makes every date in the
+  output suspect.
+
+- **A year-rollover warning.** A recording that crosses midnight on 31 December
+  has its day-of-year wrap while one configured year applies throughout, so rows
+  after the wrap are dated a year early. The decoder emits one WARN per input and
+  carries on; it deliberately does **not** auto-increment, because sync-loss
+  corruption produces the same backward step and advancing the year on corrupt
+  data would be the worse error.
+
+### Changed
+
+- **The IRIG day-of-year advisory is emitted at `WARNING` when a calendar
+  rendering is active**, and stays at `INFO` under `doy` (`L2-LOG-002`). The
+  reasoning of `L2-LOG-001` is unchanged — it is a standing disclaimer about card
+  firmware, not an observation about the file. What changes is the consequence if
+  it applies: under `doy` a firmware-skewed day is one field a human reads as
+  "day 192" and can re-examine, while under `iso` it is resolved into
+  `2026-07-11`, which looks like a fact and gets correlated against systems with
+  no way to know it is suspect. Selecting a calendar rendering *is* the operator
+  saying that field is load-bearing for them. `--no-irig-day-advisory` /
+  `[logging] irig_day_advisory = false` still suppresses it at every level.
+
+### Maintenance
+
+- Requirements added: `L1-OUT-004`, `L2-WRT-025`, `L2-WRT-026`, `L2-CFG-012`,
+  `L2-CLI-018`, `L2-CLI-019`, `L2-LOG-002`. `L2-WRT-011` is rescoped to state
+  what the *default* rendering emits, so "vendor-compatible" remains a property
+  of an invocation that passes no rendering flag.
+- The roadmap's 3.0 and 4.0 milestones (data-word decoders, Parquet) shift to 4.0
+  and 5.0. One breaking topic per major: a flag-rename migration note and a
+  new-output-format one have nothing to say to each other.
+- The shared conformance suite gains 20 cases covering the three renderings
+  byte-exactly, the six refusal paths, and both halves of the rename; the
+  config-parity corpus and the config fuzzer palette gain the new keys and the
+  retired one. Renaming the key without adding the retired-key case would have
+  quietly turned an existing parity case into a no-op unknown-key test.
+
 ## [2.18.0] — 2026-08-27
 
 ### Changed
@@ -5318,7 +5447,8 @@ Both implementations ship from the same commit at v1.0.0.
 - The CHANGELOG starts here. Earlier history exists in `git log` but is
   not retroactively documented as separate entries.
 
-[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v2.18.0...HEAD
+[Unreleased]: https://github.com/joey-huckabee/mie-decoder/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.18.0...v3.0.0
 [2.18.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.17.0...v2.18.0
 [2.17.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.16.0...v2.17.0
 [2.16.0]: https://github.com/joey-huckabee/mie-decoder/compare/v2.15.1...v2.16.0

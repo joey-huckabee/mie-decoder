@@ -25,7 +25,7 @@
 cmake_minimum_required(VERSION 3.15)
 
 project(mie_decoder
-    VERSION 2.18.0
+    VERSION 3.0.0
     DESCRIPTION "DDC MIL-STD-1553 MIE binary decoder"
     LANGUAGES CXX
 )
