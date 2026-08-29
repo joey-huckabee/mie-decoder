@@ -111,8 +111,8 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-DEC-013
 
 **Parent**: L1-CFG-001
-**Statement**: An explicit `--time-format` CLI flag or `decode.time_format` configuration value SHALL bypass auto-detection and force the chosen format for the entire decode. The forced format SHALL nonetheless be sanity-checked against the L2-DEC-015 detection probe before iteration begins: when the probe is **Decisive** (per L2-DEC-016) for the *other* format, the forced selection is an obviously-wrong selection and SHALL surface the timestamp-format-mismatch class (`MieError::TimestampFormatMismatch` / `MieTimestampFormatMismatchError`, shared with L2-DEC-016, exit code `2`) in strict mode, or a single WARN in lenient mode after which decoding proceeds with the forced format. A **Marginal** or **Ambiguous** probe SHALL NOT be flagged — those are exactly the cases where forcing is the legitimate operator override of a detection the heuristic cannot make confidently.
-**Rationale**: Operators sometimes know the format ahead of time (e.g., from the recording campaign's documentation) and want to skip the auto-detect heuristic — but a typo such as `--time-format standard` on an IRIG recording would otherwise emit garbage timestamps for the whole file silently. Gating the check on a *Decisive* probe catches that mistake while never overriding the operator in the marginal/ambiguous cases where forcing exists precisely to correct a misdetection; lenient mode preserves the forced result with a warning so an intentional override still works.
+**Statement**: An explicit `--input-time-format` CLI flag or `decode.input_time_format` configuration value SHALL bypass auto-detection and force the chosen format for the entire decode. The forced format SHALL nonetheless be sanity-checked against the L2-DEC-015 detection probe before iteration begins: when the probe is **Decisive** (per L2-DEC-016) for the *other* format, the forced selection is an obviously-wrong selection and SHALL surface the timestamp-format-mismatch class (`MieError::TimestampFormatMismatch` / `MieTimestampFormatMismatchError`, shared with L2-DEC-016, exit code `2`) in strict mode, or a single WARN in lenient mode after which decoding proceeds with the forced format. A **Marginal** or **Ambiguous** probe SHALL NOT be flagged — those are exactly the cases where forcing is the legitimate operator override of a detection the heuristic cannot make confidently.
+**Rationale**: Operators sometimes know the format ahead of time (e.g., from the recording campaign's documentation) and want to skip the auto-detect heuristic — but a typo such as `--input-time-format standard` on an IRIG recording would otherwise emit garbage timestamps for the whole file silently. Gating the check on a *Decisive* probe catches that mistake while never overriding the operator in the marginal/ambiguous cases where forcing exists precisely to correct a misdetection; lenient mode preserves the forced result with a warning so an intentional override still works.
 **Verification Method**: Test (T)
 
 #### L2-DEC-014
@@ -133,7 +133,7 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 
 **Parent**: L1-DEC-002
 **Statement**: When the L2-DEC-015 probe completes with an indecisive result — specifically, when the winning aggregate score is below a low-confidence threshold (`max_score < 4` over the probe set) OR the margin between the two candidate scores is below a minimum-margin threshold (`|irig_score - std_score| < 3`) — a `MieTimestampFormatMismatch` error class SHALL be defined. In strict mode (`--strict` or `decode.strict = true`), this condition SHALL halt decoding with exit class `2` (the "wrong file type" class shared with `MieNoValidRecordsError` and `MieHomogeneousPayloadError` per `L1-EXIT-002`). In lenient mode (the default), the chosen format from L2-DEC-015 SHALL still be used (preserving backwards compatibility on borderline files that decoded acceptably before this requirement landed), but a single WARN SHALL be logged describing the indecisive outcome and naming both candidate scores so the operator can see how marginal the call was.
-**Rationale**: The probe in L2-DEC-015 strengthens the common case (clear winner) without addressing the genuinely-ambiguous case (no clear winner). The strict-mode error gives operators who care about correctness a loud failure to act on (e.g., `--time-format` override or "this isn't an MIE recording"). The lenient-mode WARN preserves the current decode-and-hope behavior while making the ambiguity visible. The thresholds are intentionally conservative: they fire only when the probe genuinely could not distinguish, not when the call is decisive but the absolute score is low because of a small probe set.
+**Rationale**: The probe in L2-DEC-015 strengthens the common case (clear winner) without addressing the genuinely-ambiguous case (no clear winner). The strict-mode error gives operators who care about correctness a loud failure to act on (e.g., `--input-time-format` override or "this isn't an MIE recording"). The lenient-mode WARN preserves the current decode-and-hope behavior while making the ambiguity visible. The thresholds are intentionally conservative: they fire only when the probe genuinely could not distinguish, not when the call is decisive but the absolute score is low because of a small probe set.
 **Verification Method**: Test (T)
 
 #### L2-DEC-017
@@ -614,8 +614,8 @@ auto-generated [`TRACE-MATRIX.md`](TRACE-MATRIX.md), are the source of truth.)
 #### L2-WRT-011
 
 **Parent**: L1-OUT-001
-**Statement**: IRIG timestamp text SHALL use `DAY:HH:MM:SS.uuuuuu` formatting.
-**Rationale**: This is the DDC vendor convention. Zero-padded fields keep column alignment under monospace rendering.
+**Statement**: Under the default day-of-year rendering (`doy`, L2-WRT-025), IRIG timestamp text SHALL use `DAY:HH:MM:SS.uuuuuu` formatting. This is the rendering against which L1-OUT-001 vendor compatibility is defined; the alternative renderings of L2-WRT-025 are opt-in and depart from it deliberately.
+**Rationale**: This is the DDC vendor convention. Zero-padded fields keep column alignment under monospace rendering. The scoping clause was added when rendering became operator-selectable (L1-OUT-004): this requirement continues to state what the *default* emits, so that "vendor-compatible" remains a property of an invocation that passes no rendering flag at all.
 **Verification Method**: Test (T)
 
 #### L2-WRT-012
@@ -738,6 +738,34 @@ No portable single call does this. `rename(2)` replaces, and so does Windows' `M
 
 **Verification Method**: Test (T)
 
+#### L2-WRT-025
+
+**Parent**: L1-OUT-004
+**Statement**: The `TIME_STAMP` rendering SHALL be selectable from exactly three values, resolved per L2-CFG-003 from `--output-time-format` / `[output] output_time_format` and defaulting to `doy`:
+
+- **`doy`** — IRIG renders `DAY:HH:MM:SS.uuuuuu` per L2-WRT-011; Standard renders `0x` followed by eight uppercase hex digits. This is the default, and its bytes SHALL be identical to those emitted before this requirement existed.
+- **`iso`** — IRIG renders `YYYY-MM-DDTHH:MM:SS.uuuuuu` followed by a zone designator, where `YYYY` is the resolved year (L2-WRT-026), `MM-DD` is the calendar date of that year's day-of-year, and the designator is `Z` when the resolved UTC offset is zero and `+HH:MM` / `-HH:MM` otherwise.
+- **`dom`** — IRIG renders `DD:HH:MM:SS.uuuuuu`, where `DD` is the day of month of the same resolved calendar date, zero-padded to two digits. The month is deliberately not represented in the cell.
+
+All three SHALL emit exactly six microsecond digits; L2-DEC-014 applies unchanged and is not relaxed by the wider cell. Day-of-year resolution SHALL use proleptic Gregorian leap rules — a year is a leap year when divisible by 4, except centuries, which must be divisible by 400. The rendering SHALL NOT participate in ordering: the canonical row order of L1-OUT-003 and the merge heap key of L2-MRG-004 SHALL continue to be computed from absolute microseconds and never from rendered text.
+
+**Rationale**: Three renderings rather than an operator-supplied format string, because every one of the three has different *preconditions* — `doy` needs nothing, `iso` and `dom` need a year, `iso` additionally carries a zone claim — and a free-form template would let an operator write a specifier the recording cannot satisfy with no place to say so. `doy` is the default because L1-OUT-001 byte compatibility has to be a property of the plain invocation. `dom` keeps the field count and punctuation of `doy`, so an operator reading a familiar layout gets a day number that matches a wall calendar without the column changing shape; the deliberate cost, recorded here so it is not later mistaken for an oversight, is that the cell alone does not identify a date — day `10` of an unstated month — and the month must come from the campaign context. The explicit leap-year rule exists because the same day-of-year renders one day apart across leap and common years, which is the defect this requirement's test matrix is built around. The ordering clause is stated because the failure it forbids is easy to reach by accident: sorting the rendered string would order `10:...` before `192:...` and silently reshuffle a file the moment the rendering changed.
+**Verification Method**: Test (T)
+
+#### L2-WRT-026
+
+**Parent**: L1-OUT-004
+**Statement**: The calendar renderings of L2-WRT-025 (`iso`, `dom`) carry preconditions, and each unmet precondition SHALL be refused rather than approximated:
+
+1. **A year is required.** It is resolved per L2-CFG-003 from `--year` / `[output] year` and SHALL be an integer in `[1, 9999]`. When a calendar rendering is selected and neither source supplies a year, the implementation SHALL reject the invocation as a usage error (exit `4`) before the output is opened, naming **both** the configuration key and the CLI flag in the diagnostic. It SHALL NOT infer a year from the system clock, from the input file's filesystem timestamps, or from its name.
+2. **The recording must be calendar-locked.** When a calendar rendering is selected and the resolved timestamp format is Standard, or the first record's IRIG timestamp carries the freerun bit, the implementation SHALL surface the calendar-unavailable class (`MieError::CalendarUnavailable` / `MieCalendarUnavailableError`, exit class `2` per L1-EXIT-002) before any row is written. Both conditions are determinable before the first row: format resolution completes before iteration (L2-DEC-011, L2-DEC-015) and freerun is a bit of the first record's timestamp.
+3. **Day 366 against a common year** SHALL surface the same calendar-unavailable class, in strict and lenient mode alike, rather than rolling into January or emitting an alternative rendering for the one record.
+4. **Year rollover SHALL warn, not adjust.** When a calendar rendering is active and a record's day-of-year is strictly less than that of a previous record from the same input, the implementation SHALL emit a single WARN per input naming the configured year, and SHALL continue to use that year unchanged for every record.
+5. **Inert under `doy`.** A configured `year` or `utc_offset` while `doy` is active SHALL have no effect and SHALL NOT be an error.
+
+**Rationale**: Each clause closes a way to produce a well-formed, authoritative-looking, wrong date. Clause 1 refuses to guess: a system-clock fallback dates a 2019 archive with the year it was decoded in, and a file-mtime fallback is destroyed by any copy, rsync or checkout — both fail silently and both fail *later*, in whatever consumed the CSV. Clause 3 fails the whole run rather than the row because day 366 against a common year does not indicate one bad record; it indicates the configured year is wrong, which makes every date in the file suspect. Clause 4 declines to auto-increment because a backward day step is produced by corruption as readily as by a genuine New Year crossing, and the decoder cannot distinguish them — advancing the year on corruption would date a damaged record a year into the future, which is worse than the off-by-one-year it would have fixed. Clause 5 follows `standard_tick_rate_hz`, which is likewise inert outside the format it calibrates (L2-DEC-017): an inert key is not an operator error, and rejecting one would make a single site config unusable across mixed recordings.
+**Verification Method**: Test (T)
+
 ---
 
 ## L2-CFG: Configuration
@@ -812,6 +840,18 @@ No portable single call does this. `rename(2)` replaces, and so does Windows' `M
 **Rationale**: The tick rate is the one piece of timing information the file cannot supply, so it must come from configuration. Validating it at load time (per L2-CFG-010) keeps a bad rate from silently producing garbage microseconds far from the config that introduced it. Accepting an integer as well as a float lets operators write the natural `1000000` instead of being forced to `1000000.0`.
 **Verification Method**: Test (T)
 
+#### L2-CFG-012
+
+**Parent**: L1-CFG-001
+**Statement**: The configuration schema SHALL accept three optional keys governing timestamp rendering, all in the `[output]` section: `output_time_format` (string, one of `doy`/`iso`/`dom`, matched case-insensitively, default `doy`); `year` (integer in `[1, 9999]`, unset by default); and `utc_offset` (string, either `Z` or a signed `+HH:MM` / `-HH:MM` with `HH` in `[0, 23]` and `MM` in `[0, 59]`, default `+00:00`). Each SHALL be validated at load time per L2-CFG-010, with the diagnostic naming the offending key.
+
+The `decode.time_format` key of earlier versions SHALL NOT be silently ignored. The generic unknown-key rule of L2-CFG-009 is a WARN, which would leave a configuration that forced a timestamp format quietly resolving to `auto`; implementations SHALL therefore special-case the retired key and reject it at load time (the same class and exit `5` as any other invalid configuration value), with a diagnostic naming `decode.input_time_format` as its replacement.
+
+**Rationale**: The keys are validated at load time for the reason L2-CFG-010 gives generally — a bad value should be reported next to the configuration that introduced it, not as a malformed cell hundreds of thousands of rows later. `year` is deliberately schema-optional rather than defaulted: there is no year a decoder could supply that would be right, so "unset" has to be representable, and the requirement to supply one lives with the rendering that needs it (L2-WRT-026) rather than with the schema.
+
+The retired-key clause exists because the unknown-key WARN is exactly the wrong behaviour for a *rename*. For a genuinely unknown key, warn-and-continue is right: a config written for a newer version should still run. For a key that has moved, warn-and-continue means the operator's explicit instruction is discarded while the run reports success — a recording forced to `irig` would silently revert to auto-detection, and auto-detection is right often enough that the loss would not be noticed until it wasn't. A rename must fail where it is written down, not degrade quietly.
+**Verification Method**: Test (T)
+
 ### L2-CFG schema reference
 
 The table below pins the accepted TOML keys, their types, valid ranges, and unknown-value handling. This schema is normative for `L2-CFG-001`, `L2-CFG-008`, `L2-CFG-009`, `L2-CFG-010`, and `L2-CFG-011`.
@@ -820,7 +860,7 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 |-----|------|--------------|------------------------|
 | `logging.level` | string | one of `DEBUG`/`INFO`/`WARNING`/`WARN`/`ERROR`/`CRITICAL`/`OFF` (case-insensitive); `CRITICAL`/`OFF` silence all output | reject at load time |
 | `logging.irig_day_advisory` | bool | TOML boolean only (see L2-LOG-001) | reject non-bool |
-| `decode.time_format` | string | one of `auto`/`irig`/`standard` | reject at load time |
+| `decode.input_time_format` | string | one of `auto`/`irig`/`standard` | reject at load time |
 | `decode.strict` | bool | TOML boolean only (not coerced from strings) | reject non-bool |
 | `decode.error_mode` | string | one of `separate`/`inline` | reject at load time |
 | `decode.allow_partial` | bool | TOML boolean only (see L1-EXIT-004) | reject non-bool |
@@ -829,6 +869,9 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 | `decode.standard_tick_rate_hz` | float (int coerced) | finite and `> 0` (see L2-DEC-017); unset = no calibration | reject non-finite/non-positive at load time |
 | `output.format` | string | `csv` is the only currently valid value | reject at load time |
 | `output.no_clobber` | bool | TOML boolean only (see L2-WRT-017) | reject non-bool |
+| `output.output_time_format` | string | one of `doy`/`iso`/`dom` (see L2-WRT-025); default `doy` | reject at load time |
+| `output.year` | int | `[1, 9999]` (see L2-WRT-026); unset = no year | reject out-of-range at load time |
+| `output.utc_offset` | string | `Z`, or `+HH:MM` / `-HH:MM` with `HH` in `[0, 23]` and `MM` in `[0, 59]` (see L2-WRT-025); default `+00:00` | reject at load time |
 | `filter.exclude_types` | array of string\|int | per-element validated against `L2-CFG-007` | reject at load time |
 | `filter.exclude_rts` | array of int | each in `[0, 31]` (1553 RT range) | reject out-of-range at load time |
 | `filter.exclude_buses` | array of string | each in `{A, B}` | reject at load time |
@@ -848,6 +891,14 @@ The table below pins the accepted TOML keys, their types, valid ranges, and unkn
 
 The separate opt-out exists because the level alone cannot express "I have already validated this". A site that has diffed its card model's day-of-year against vendor CSV (the workflow in `VENDOR-CSV-DIFFS.md` §6) has answered the question the advisory asks, permanently; it should be able to run at `--log-level INFO` for genuine troubleshooting without that one known-noise line. Suppression is deliberately *not* achievable by raising the level, since `--log-level ERROR` would also discard the observational warnings that matter.
 
+**Verification Method**: Test (T)
+
+#### L2-LOG-002
+
+**Parent**: L1-LOG-001
+**Statement**: When a calendar rendering (`iso` or `dom`, L2-WRT-025) is active, the L2-LOG-001 day-of-year advisory SHALL be emitted at `WARNING` rather than `INFO`, on the same one-per-decode cadence and on the same trigger. The `--no-irig-day-advisory` / `[logging] irig_day_advisory = false` opt-out SHALL continue to suppress it outright at every level, unchanged.
+
+**Rationale**: L2-LOG-001 demoted this advisory to `INFO` on the grounds that it is an unconditional disclaimer rather than an observation about the file in front of it, and that reasoning is unaffected here — what changes is the consequence if the disclaimer turns out to apply. Under `doy` a firmware-skewed day-of-year is one field an analyst reads as "day 192", visibly a day number and easy to re-examine. Under a calendar rendering the same skew is resolved into `2026-07-11`, which looks like a fact, gets pasted into incident reports, and is correlated against other systems that have no way to know it is suspect. Selecting a calendar rendering is the operator stating that the day-of-year field is load-bearing for them, which is precisely the condition under which a standing caveat about that field earns the default level's attention. The opt-out is untouched because a site that has validated its card model against vendor CSV has answered the question at any rendering.
 **Verification Method**: Test (T)
 
 ---
@@ -1041,9 +1092,36 @@ The split between the two halves is `argparse`'s, and it is a real distinction r
 
 Version is **global-only**: recognised before the subcommand and an unknown option after it, in every implementation. Help is accepted both places. Version matching is case-insensitive (`--VERSION`); help matching is **not** (`--HELP` is a usage error). That asymmetry is deliberate and is shared by all three.
 
-**Known divergence** (one, and not levelled): **`--max-sort-group abc --help`** exits `0` in Rust and C++ and `4` in Python. `argparse` wires that flag's conversion into parsing via `type=int`, so the failure is immediate there, while `--time-format` and the filter flags are validated after `parse_args` and therefore let help win. That is an implementation accident of which validations live inside `argparse`, not a rule; reproducing it elsewhere would mean copying a list rather than a principle.
+**Known divergence** (one, and not levelled): **`--max-sort-group abc --help`** exits `0` in Rust and C++ and `4` in Python. `argparse` wires that flag's conversion into parsing via `type=int`, so the failure is immediate there, while `--input-time-format` and the filter flags are validated after `parse_args` and therefore let help win. That is an implementation accident of which validations live inside `argparse`, not a rule; reproducing it elsewhere would mean copying a list rather than a principle.
 
 C++ was the outlier on six shapes until its help/version scan was replaced. It ran over the whole argument vector, so it could not tell a help token apart from one being consumed as a flag's **value** (`--log-level -h` printed help), and did not know where the subcommand began (`decode rec.mie --version` printed the version). Both are now resolved positionally, and the deferred-versus-consumption split is expressed the same way as in Rust: the argument reader abandons the rest of the line when a flag cannot take its value, so the "is help pending" test answers `false` there.
+**Verification Method**: Test (T)
+
+#### L2-CLI-018
+
+**Parent**: L1-CLI-001
+**Statement**: The `decode` command SHALL accept four timestamp flags, each in both the space-separated and the `=`-joined form, each overriding its configuration key per L2-CFG-003:
+
+| Flag | Value | Overrides |
+|---|---|---|
+| `--input-time-format` | `auto` \| `irig` \| `standard`, case-insensitive | `decode.input_time_format` |
+| `--output-time-format` | `doy` \| `iso` \| `dom`, case-insensitive | `output.output_time_format` |
+| `--year` | integer in `[1, 9999]` | `output.year` |
+| `--utc-offset` | `Z`, or `+HH:MM` / `-HH:MM` | `output.utc_offset` |
+
+All four SHALL be rejected at parse time on an invalid value as a usage error (exit `4`) naming the flag, on the same path as `--detect-records` and `--lookahead-records`. All four SHALL be `decode`-only: `count` and `dump` SHALL reject them as unknown options, consistent with `dump` consuming only `[logging] level` and `count` taking no flags at all.
+**Rationale**: `--input-time-format` is `--time-format` renamed, and the rename is the point: the old name claimed a generality it never had. It selected how the *bytes* were parsed and said nothing about how the column was *rendered*, so once rendering became selectable (L1-OUT-004) one flag named `--time-format` could not honestly carry both concerns, and whichever concern it kept would leave the other looking like an afterthought. Naming the two symmetrically — input versus output — makes it impossible to reach for the wrong one from memory, which the alternatives (`--time-format` retained for one side, a differently-shaped name for the other) did not.
+
+Keeping all four on `decode` follows the existing division rather than inventing one: `dump` is a pre-decode hex tool that resolves no timestamp format at all and renders its `Time:` line as day-of-year unconditionally, so a rendering flag there would advertise a choice it could not honour.
+**Verification Method**: Test (T)
+
+#### L2-CLI-019
+
+**Parent**: L1-CLI-001
+**Statement**: The retired `--time-format` flag SHALL be rejected as a usage error (exit `4`), SHALL NOT be accepted as a deprecated alias for either replacement, and SHALL NOT write any output. Its diagnostic SHALL be produced by an explicit arm naming **both** `--input-time-format` and `--output-time-format` and stating which concern each covers — not by the generic unknown-option path, which would report only that the flag is unrecognised.
+**Rationale**: The `--inline-errors` removal in v2.8.0 established that a retired flag fails loudly rather than aliasing, and that stays right: a script still passing `--time-format irig` is asserting something about parsing that it must keep asserting, and silently dropping it would resolve the format by auto-detection instead — right often enough that the loss would go unnoticed until it wasn't.
+
+But this is a rename, not a removal, and the two deserve different diagnostics. `--inline-errors` had no successor to point at, so the generic "unknown option" message lost nothing. Here the operator's intent is still fully expressible and the only open question is *which* of two flags they meant — the one question the generic message cannot answer, and the one an operator hitting this at 2am most needs answered. Naming both replacements and what each does turns a lookup in the changelog into a fix on the spot. This is new machinery in all three parsers, which is why it is specified rather than left to each implementation's unknown-option arm.
 **Verification Method**: Test (T)
 
 ---
