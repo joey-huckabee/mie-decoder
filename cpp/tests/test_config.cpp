@@ -175,7 +175,8 @@ TEST_CASE("the tick rate must be finite and positive", "[config][L2-DEC-017]") {
 
 TEST_CASE("input_time_format and error_mode take only their documented spellings",
           "[config][L2-CFG-010]") {
-    CHECK(must_load("[decode]\ninput_time_format = \"AUTO\"\n").input_time_format == mie::TIMESTAMP_AUTO);
+    CHECK(must_load("[decode]\ninput_time_format = \"AUTO\"\n").input_time_format ==
+          mie::TIMESTAMP_AUTO);
     CHECK(must_load("[decode]\ninput_time_format = \"Standard\"\n").input_time_format ==
           mie::TIMESTAMP_STANDARD);
     must_fail("[decode]\ninput_time_format = \"gps\"\n");
@@ -294,7 +295,8 @@ TEST_CASE("bus names resolve case-insensitively", "[config]") {
 
 TEST_CASE("a wrong-typed value names the section, key and wanted type", "[config][L2-CFG-010]") {
     CHECK(must_fail("[decode]\nstrict = 1\n") == "[decode] strict must be a boolean");
-    CHECK(must_fail("[decode]\ninput_time_format = true\n") == "[decode] input_time_format must be a string");
+    CHECK(must_fail("[decode]\ninput_time_format = true\n") ==
+          "[decode] input_time_format must be a string");
     CHECK(must_fail("[output]\nmax_sort_group = \"64\"\n") ==
           "[output] max_sort_group must be an integer");
     CHECK(must_fail("[output]\nmax_sort_group = true\n") ==

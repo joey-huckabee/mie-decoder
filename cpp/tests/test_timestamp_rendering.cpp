@@ -193,6 +193,19 @@ TEST_CASE("every day of both year kinds resolves in ascending order", "[models][
             int day = 0;
             INFO("year " << year << " day-of-year " << doy);
             REQUIRE(mie::day_of_year_to_month_day(year, doy, month, day));
+            // Checked rather than assumed, with plain control flow rather
+            // than a Catch2 assertion. Two reasons, and both matter: a
+            // resolver returning month 0 or 13 would otherwise corrupt the
+            // tally silently and surface as a confusing day-COUNT mismatch
+            // instead of pointing at the real fault -- and clang-tidy's
+            // ArrayBound analyser cannot see that REQUIRE throws, so it reads
+            // the index below as unbounded. An `if` that stops the iteration
+            // satisfies both the reader and the analyser.
+            if (month < 1 || month > 12 || day < 1) {
+                FAIL("year " << year << " day-of-year " << doy << " resolved to month " << month
+                             << " day " << day << ", outside the calendar");
+                break;
+            }
             const bool ascending =
                 month > previous_month || (month == previous_month && day > previous_day);
             CHECK(ascending);
@@ -648,7 +661,7 @@ TEST_CASE("the day-of-year advisory escalates under a calendar rendering",
     const TempFile input("mie-ts-in", recording_on_day_192());
 
     {
-        mie_test::LogCapture capture(mie::log::LEVEL_DEBUG);
+        const mie_test::LogCapture capture(mie::log::LEVEL_DEBUG);
         Args argv;
         argv.push_back("--log-level");
         argv.push_back("INFO");
@@ -665,7 +678,7 @@ TEST_CASE("the day-of-year advisory escalates under a calendar rendering",
 
     // A calendar rendering, at the DEFAULT level: present, and at WARN.
     {
-        mie_test::LogCapture capture(mie::log::LEVEL_DEBUG);
+        const mie_test::LogCapture capture(mie::log::LEVEL_DEBUG);
         Args argv;
         argv.push_back("decode");
         argv.push_back(input.str());
@@ -683,7 +696,7 @@ TEST_CASE("the day-of-year advisory escalates under a calendar rendering",
 
     // The opt-out still wins, under the calendar rendering too.
     {
-        mie_test::LogCapture capture(mie::log::LEVEL_DEBUG);
+        const mie_test::LogCapture capture(mie::log::LEVEL_DEBUG);
         Args argv;
         argv.push_back("--no-irig-day-advisory");
         argv.push_back("decode");

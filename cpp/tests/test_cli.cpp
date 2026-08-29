@@ -471,8 +471,8 @@ TEST_CASE("help outranks a deferred diagnostic but not a missing value",
                 mie::cli::EXIT_OK);
         REQUIRE(out.find("USAGE") != std::string::npos);
 
-        REQUIRE(mie::cli::run(args("decode", input.str(), "--input-time-format", "bad", "--help")) ==
-                mie::cli::EXIT_OK);
+        REQUIRE(mie::cli::run(args("decode", input.str(), "--input-time-format", "bad",
+                                   "--help")) == mie::cli::EXIT_OK);
         REQUIRE(mie::cli::run(args("count", input.str(), "--nonsense", "--help")) ==
                 mie::cli::EXIT_OK);
         REQUIRE(mie::cli::run(args("dump", input.str(), "--nonsense", "--help")) ==
