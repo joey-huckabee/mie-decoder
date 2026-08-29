@@ -165,7 +165,7 @@ The full enumeration of 11 supported transaction shapes (10 message formats plus
 
 ## 5. Timestamps
 
-The MIE format supports two timestamp encodings. Which one a file uses is set at recording time and is the same for every record in the file (L2-DEC-011). The decoder auto-detects across the first records (L2-DEC-015); the `--time-format` CLI flag or `decode.time_format` config key can force a specific format.
+The MIE format supports two timestamp encodings. Which one a file uses is set at recording time and is the same for every record in the file (L2-DEC-011). The decoder auto-detects across the first records (L2-DEC-015); the `--input-time-format` CLI flag or `decode.input_time_format` config key can force a specific format.
 
 ### 5.1 IRIG (48-bit, 3 words)
 
@@ -209,7 +209,7 @@ Standard timestamps render in CSV as `0x` + 8 uppercase hex characters (e.g., `0
 
 ### 5.3 Auto-detection (L2-DEC-011, L2-DEC-012, L2-DEC-015, L2-DEC-016)
 
-When `time_format = "auto"` (the default), the decoder probes the Command Word position at both candidate offsets (after a 2-word Standard timestamp vs after a 3-word IRIG timestamp) and scores which produces a plausible MIL-STD-1553 Command Word. The winning format is locked for the rest of the file (L2-DEC-011: no per-record re-detection).
+When `input_time_format = "auto"` (the default), the decoder probes the Command Word position at both candidate offsets (after a 2-word Standard timestamp vs after a 3-word IRIG timestamp) and scores which produces a plausible MIL-STD-1553 Command Word. The winning format is locked for the rest of the file (L2-DEC-011: no per-record re-detection).
 
 **Multi-record probe (L2-DEC-015).** The probe walks up to *N* records by default (configurable via `decode.detect_records` in TOML or `--detect-records N` on the CLI, range `1..=32`, default `8`) and aggregates per-record scoring across the set. Probing multiple records strengthens detection on borderline files where the first record alone scores ambiguously — for example, a `wc=7` record whose Command Word happens to look plausible at both candidate offsets — and a later record whose Cmd Word position only fits one format disambiguates the call.
 
@@ -226,7 +226,7 @@ When `time_format = "auto"` (the default), the decoder probes the Command Word p
 | Bucket | Condition | Behavior |
 |--------|-----------|----------|
 | **Decisive** | `max_score ≥ 8` AND `margin ≥ 6` | INFO log with score breakdown; chosen format used silently. |
-| **Marginal** | passes the floor (`max_score ≥ 4` AND `margin ≥ 3`) but not Decisive | INFO log with score breakdown + hint to `--time-format` if the call is wrong. |
+| **Marginal** | passes the floor (`max_score ≥ 4` AND `margin ≥ 3`) but not Decisive | INFO log with score breakdown + hint to `--input-time-format` if the call is wrong. |
 | **Ambiguous** | `max_score < 4` OR `margin < 3` | **Strict mode**: `MieTimestampFormatMismatchError` / exit class 2 (the "wrong file type" class shared with `NoValidRecords` and `HomogeneousPayload`). **Lenient mode (default)**: single WARN with the score breakdown, then proceed with the chosen format (back-compat for borderline files that decoded acceptably under earlier single-record detection). |
 
 When both formats score equally, **IRIG wins** (L2-DEC-012). Flight-test recordings overwhelmingly use IRIG; this tie-break preserves the most common path.
@@ -477,6 +477,14 @@ Only records sharing a timestamp are reordered, and only relative to each other 
 
 ### `TIME_STAMP`
 
+The rendering is selectable since v3.0.0 (`L2-WRT-025`). The **default is
+`doy`**, described first below and the only one that is byte-compatible with
+vendor CSV; the two calendar renderings are opt-in via `--output-time-format` /
+`[output] output_time_format` and require a year, because an IRIG-B timestamp
+does not carry one.
+
+#### `doy` (default)
+
 **IRIG format:** `DAY:HH:MM:SS.uuuuuu`
 
 - DAY: Day of year (unpadded integer, 1–366).
@@ -490,6 +498,47 @@ Only records sharing a timestamp are reordered, and only relative to each other 
 **Standard format:** `0x` + 8 uppercase hex digits (the raw 32-bit counter).
 
 **Example:** `0x000186A0`
+
+#### `iso`
+
+**Format:** `YYYY-MM-DDTHH:MM:SS.uuuuuu` followed by a zone designator — `Z` when
+the configured UTC offset is zero, otherwise `+HH:MM` / `-HH:MM`.
+
+**Example:** `2026-07-11T15:54:50.456225Z`
+
+`YYYY` is the operator-supplied year (`--year` / `[output] year`); `MM-DD` is the
+proleptic-Gregorian calendar date of that year's day-of-year.
+
+#### `dom`
+
+**Format:** `DD:HH:MM:SS.uuuuuu` — the day of month of the same resolved date,
+zero-padded to two digits.
+
+**Example:** `11:15:54:50.456225`
+
+The month is **deliberately not in the cell.** That keeps the column the same
+width and shape as `doy`, at the cost of the value not identifying a date on its
+own: day 11 of a month you know from the recording campaign, not from the CSV.
+
+#### Why a year is required, and what happens without one
+
+Day-of-year 192 is **July 10 in a leap year** and **July 11 in a common year**.
+Nothing in the file resolves that: IRIG-B encodes day-of-year, hour, minute,
+second and microsecond, and no year at all. So `iso` and `dom` require a year and
+`doy` does not, and a calendar rendering selected without one is a usage error
+(exit `4`) rather than a guess (`L2-WRT-026`).
+
+Three conditions are refused rather than approximated, each with exit class `2`:
+
+| Condition | Why |
+|---|---|
+| Standard-format recording | A free-running counter has no epoch; no year places it on a calendar. |
+| Freerun IRIG record | The card had no IRIG-B lock, so the fields are relative — they would render as a perfectly ordinary date that means nothing. |
+| Day 366 against a common year | The date does not exist. It is refused for the whole run, not the row: it means the *configured year* is wrong, so every date in the output is suspect. |
+
+All three renderings emit exactly six microsecond digits (`L2-DEC-014`), and none
+of them affects row ordering — the canonical order of `L1-OUT-003` is computed
+from absolute microseconds, never from the rendered text.
 
 ### `RT`
 

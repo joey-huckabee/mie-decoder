@@ -20,7 +20,7 @@ level = "WARNING"                # DEBUG | INFO | WARNING | WARN | ERROR | CRITI
 irig_day_advisory = true         # emit the one-time IRIG day-of-year advisory (INFO)
 
 [decode]
-time_format       = "auto"       # auto | irig | standard
+input_time_format = "auto"       # auto | irig | standard (how bytes are PARSED)
 strict            = false        # true | false
 error_mode        = "inline"     # inline | separate
 allow_partial     = false        # true | false
@@ -29,9 +29,12 @@ lookahead_records = 2            # sync look-ahead depth, [1, 32]
 # standard_tick_rate_hz = 1000000.0   # Standard counter Hz (unset = empty DELTA)
 
 [output]
-format         = "csv"           # csv (the only value currently supported)
-no_clobber     = false           # true | false
-max_sort_group = 4096            # 1..=1048576 (1 disables row reordering)
+format             = "csv"       # csv (the only value currently supported)
+no_clobber         = false       # true | false
+max_sort_group     = 4096        # 1..=1048576 (1 disables row reordering)
+output_time_format = "doy"       # doy | iso | dom (how TIME_STAMP is WRITTEN)
+# year             = 2026        # 1..=9999; required by iso/dom, ignored by doy
+utc_offset         = "+00:00"    # Z | +HH:MM | -HH:MM (iso zone designator)
 
 [mux]
 enabled   = true                 # populate MUX from the file name (--no-mux disables)
@@ -55,7 +58,7 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 |-----|------|---------|--------------|-----------|
 | `logging.level` | string | `"WARNING"` | `--log-level` | L2-CFG-001, L1-LOG-001 |
 | `logging.irig_day_advisory` | bool | `true` | `--no-irig-day-advisory` | L2-LOG-001 |
-| `decode.time_format` | string | `"auto"` | `--time-format` | L2-CFG-001, L2-DEC-013 |
+| `decode.input_time_format` | string | `"auto"` | `--input-time-format` | L2-CFG-001, L2-DEC-013 |
 | `decode.strict` | bool | `false` | `--strict` | L2-CFG-001, L1-MODE-001 |
 | `decode.error_mode` | string | `"inline"` | `--separate-errors` (sets `separate`) | L2-CFG-001, L1-ERR-001 |
 | `decode.allow_partial` | bool | `false` | `--allow-partial` | L2-CFG-001, L1-EXIT-004 |
@@ -65,6 +68,9 @@ exclude_subaddresses = []        # array of integers in [0, 31]
 | `output.format` | string | `"csv"` | `--format` | L2-CFG-001 |
 | `output.no_clobber` | bool | `false` | `--no-clobber` | L2-CFG-001, L2-WRT-017 |
 | `output.max_sort_group` | int | `4096` | `--max-sort-group` | L2-WRT-022, L1-OUT-003 |
+| `output.output_time_format` | string | `"doy"` | `--output-time-format` | L2-CFG-012, L2-WRT-025 |
+| `output.year` | int | unset | `--year` | L2-CFG-012, L2-WRT-026 |
+| `output.utc_offset` | string | `"+00:00"` | `--utc-offset` | L2-CFG-012, L2-WRT-025 |
 | `mux.enabled` | bool | `true` | `--no-mux` (sets `false`) | L2-WRT-020 |
 | `mux.delimiter` | string | `"."` | `--mux-delimiter` | L2-WRT-020 |
 | `mux.field` | int | `4` | `--mux-field` | L2-WRT-020 |
@@ -176,9 +182,20 @@ time (`"false"` and `0` are both errors, not `false`).
 
 ## `[decode]`
 
-### `time_format`
+### `input_time_format`
 
-**Type:** string · **Default:** `"auto"` · **CLI:** `--time-format <auto|irig|standard>`
+**Type:** string · **Default:** `"auto"` · **CLI:** `--input-time-format <auto|irig|standard>`
+
+> **Renamed in v3.0.0.** This key was `decode.time_format`. The old name is
+> **rejected** at load time (exit `5`) rather than passed over with the usual
+> unknown-key WARN: warn-and-continue is right for a key from a newer version,
+> but for a *renamed* one it would discard the operator's explicit choice while
+> reporting success -- a forced format would silently revert to auto-detection,
+> which is right often enough that the loss would not be noticed until it wasn't
+> (L2-CFG-012).
+
+This key governs **parsing** only. How the `TIME_STAMP` column is *written* is a
+separate choice -- see [`output_time_format`](#output_time_format).
 
 Selects the timestamp format used by the binary file. DDC recording cards support two formats, configured at recording time. All records in a single file use the same format (L2-DEC-011).
 
@@ -190,7 +207,7 @@ Selects the timestamp format used by the binary file. DDC recording cards suppor
 
 **Tie-break (L2-DEC-012):** When `"auto"` and both formats score equally, IRIG is selected. Flight-test recordings overwhelmingly use IRIG; this tie-break preserves the most common path.
 
-**Validation:** rejected at load time if not one of the three values. The name is matched case-insensitively (`IRIG`, `Auto`, and `standard` are all accepted), identically on the CLI and in the config file. An explicit `irig` or `standard` is still sanity-checked against the L2-DEC-015 detection probe — pointing the decoder at an IRIG file with `--time-format standard` surfaces a distinct error class in strict mode when the probe is decisive for the other format (L2-DEC-013).
+**Validation:** rejected at load time if not one of the three values. The name is matched case-insensitively (`IRIG`, `Auto`, and `standard` are all accepted), identically on the CLI and in the config file. An explicit `irig` or `standard` is still sanity-checked against the L2-DEC-015 detection probe — pointing the decoder at an IRIG file with `--input-time-format standard` surfaces a distinct error class in strict mode when the probe is decisive for the other format (L2-DEC-013).
 
 ### `strict`
 
@@ -253,12 +270,12 @@ microseconds = round(raw_ticks × 1_000_000 / standard_tick_rate_hz)
 
 — and Standard records then participate in per-RT/MSG `DELTA` tracking on exactly the same terms as IRIG records (first occurrence `0.000000`, subsequent gaps in seconds, empty on a non-monotonic step). Rounding is half-away-from-zero and is identical across the Rust and Python implementations.
 
-This setting has no effect on IRIG recordings (IRIG already carries absolute time) and no effect when `time_format` resolves to anything other than `standard`.
+This setting has no effect on IRIG recordings (IRIG already carries absolute time) and no effect when `input_time_format` resolves to anything other than `standard`.
 
 **Example.** Two consecutive records of the same RT/MSG 16 ticks apart, decoded with a 1 MHz rate, yield a `DELTA` of `0.000016`:
 
 ```bash
-mie-decoder decode rec.mie -o out.csv --time-format standard --standard-tick-rate-hz 1000000
+mie-decoder decode rec.mie -o out.csv --input-time-format standard --standard-tick-rate-hz 1000000
 ```
 
 **Validation:** must be a finite number strictly greater than `0`. A non-positive or non-finite value is rejected — at load time for the TOML key (L2-CFG-011) and at parse time for the CLI flag (L2-CLI-012) — so a bad rate can never silently produce meaningless timing.
@@ -275,7 +292,7 @@ Output file format. `csv` is currently the only valid value. Reserved for future
 
 A config-file value is validated at load time (exit `5`); a `--format` value on the CLI is validated at **parse** time and an unsupported value is a usage error (exit `4`), like any other invalid flag value.
 
-Through v2.14.0 the CLI form surfaced as a runtime error (exit `1`) because the check ran after the config layer had merged the override. That put one mistake on three different exit codes depending on where it was written — `4` for a bad `--time-format`, `1` for a bad `--format`, `5` for the same value in a config file — and contradicted L1-EXIT-007. Only the middle one was wrong; the config-file spelling is unchanged.
+Through v2.14.0 the CLI form surfaced as a runtime error (exit `1`) because the check ran after the config layer had merged the override. That put one mistake on three different exit codes depending on where it was written — `4` for a bad `--input-time-format`, `1` for a bad `--format`, `5` for the same value in a config file — and contradicted L1-EXIT-007. Only the middle one was wrong; the config-file spelling is unchanged.
 
 **Validation:** rejected at load time if not `csv` (config file, exit `5`) or at parse time (CLI flag, exit `4`).
 
@@ -318,6 +335,56 @@ Rows are always written in canonical order (L1-OUT-003): ascending `TIME_STAMP`,
 **On overflow** the stage writes the buffered run in **arrival order**, emits exactly one WARN naming the timestamp and the cap, and continues. No record is dropped and the decode does not fail — the ordering guarantee is simply suspended for that run. The motivating case is a corrupt or misconfigured recording whose timestamps all decode to the same value, which would otherwise buffer the entire file.
 
 **Validation:** TOML integer only (a bool or string is rejected); out-of-range values are rejected at load time (exit `5`). An out-of-range `--max-sort-group` is a usage error (exit `4`), matching `--detect-records`.
+
+### `output_time_format`
+
+**Type:** string · **Default:** `"doy"` · **CLI:** `--output-time-format <doy|iso|dom>`
+
+Selects how the `TIME_STAMP` column is **written** (L2-WRT-025). This is the output half of what was one `time_format` key before v3.0.0: [`input_time_format`](#input_time_format) decides how the bytes on disk are parsed, this decides how the resulting instant is written down. The two are independent.
+
+| Value | Rendering | Example | Needs a year? |
+|-------|-----------|---------|---------------|
+| `"doy"` | `DAY:HH:MM:SS.uuuuuu` | `192:15:54:50.456225` | No |
+| `"iso"` | `YYYY-MM-DDTHH:MM:SS.uuuuuu` + zone | `2026-07-11T15:54:50.456225Z` | Yes |
+| `"dom"` | `DD:HH:MM:SS.uuuuuu` | `11:15:54:50.456225` | Yes |
+
+`doy` is the DDC vendor rendering and the default, which is what keeps a decode that selects nothing **vendor-diffable** (L1-OUT-004). The other two are opt-in and depart from that deliberately; see [`VENDOR-CSV-DIFFS.md`](VENDOR-CSV-DIFFS.md).
+
+> **`dom` does not identify a date on its own.** The month is deliberately not in the cell — the value is a day number you match against a calendar, and the month comes from the recording campaign. That trade buys a column the same width and shape as `doy`; if you need the date to be recoverable from the CSV alone, use `iso`.
+
+Standard-format (free-running counter) recordings render as raw hex under `doy` and are **refused** under `iso` / `dom`, as are freerun IRIG recordings — see [`year`](#year) below.
+
+All three renderings emit exactly six microsecond digits; the wider ISO cell does not relax L2-DEC-014.
+
+**Validation:** rejected at load time if not one of the three values, matched case-insensitively.
+
+### `year`
+
+**Type:** int · **Default:** unset · **CLI:** `--year <YYYY>` · **Range:** `[1, 9999]`
+
+The calendar year used to resolve the IRIG day-of-year field for the `iso` and `dom` renderings (L2-WRT-026). Ignored entirely by `doy`, which prints the day-of-year field verbatim.
+
+**An IRIG-B timestamp carries day-of-year, hour, minute, second and microsecond — but not the year.** Day 192 is **July 10 in a leap year** and **July 11 in a common year**, so a calendar rendering genuinely cannot resolve a date without being told which year the recording is from. This is arithmetic, not policy.
+
+There is no year the decoder could default to that would be right — the system clock would date a 2019 archive with the year you happened to decode it, and a file's modification time does not survive a copy — so the key is left unset and selecting a calendar rendering without one is a **usage error (exit `4`)** naming both this key and the CLI flag.
+
+**Day 366 against a common year** is refused for the whole run (exit `2`) rather than rolled into January: that condition does not mean one bad record, it means the configured year is wrong, which makes every date in the output suspect.
+
+**Year rollover.** A recording that crosses midnight on 31 December has its day-of-year wrap while the whole decode uses one year, so rows after the wrap are dated a year early. The decoder emits one WARN per input naming the configured year and carries on; it deliberately does **not** auto-increment, because sync-loss corruption produces the same backward step and advancing the year on corrupt data would be the worse error. Split the recording at the boundary and decode each part with its own year.
+
+**Validation:** rejected at load time if not an integer, or outside `[1, 9999]`. The upper bound is four digits because `iso` formats the year as exactly `YYYY`; a five-digit year would widen column 1 without warning.
+
+### `utc_offset`
+
+**Type:** string · **Default:** `"+00:00"` (UTC) · **CLI:** `--utc-offset <Z|+HH:MM|-HH:MM>`
+
+The zone designator appended by the `iso` rendering (L2-WRT-025). Ignored by `doy` and `dom`.
+
+**IRIG-B carries no timezone.** This key states what the recording could not, so set it to whatever your site's IRIG source is disciplined to. It is applied as a **designator only** — the time fields are never shifted. An offset of `+00:00` renders as `Z`.
+
+> **The default asserts UTC.** Most IRIG installations are UTC-disciplined, which is why that is the default — but a site running local time and leaving this unset gets an ISO stamp that is confidently wrong by a fixed offset on every row, with nothing in the CSV to say so. Set it explicitly if your site is not UTC.
+
+**Validation:** rejected at load time unless it is `Z` (case-insensitive) or a signed `+HH:MM` / `-HH:MM` with `HH` in `[0, 23]` and `MM` in `[0, 59]`. The shape is checked exactly: `+5:00`, `+0500` and a trailing-space variant are all rejected, because a zone that parsed loosely would silently shift every ISO timestamp in the file.
 
 ---
 

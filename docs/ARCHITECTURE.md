@@ -497,7 +497,7 @@ CLI arguments > config file > built-in defaults (L2-CFG-003). Filter arrays merg
         ▼
   DecoderConfig               Final merged, fully-validated config
     ├── log_level             logging.level
-    ├── time_format           decode.time_format
+    ├── input_time_format           decode.input_time_format
     ├── strict                decode.strict
     ├── error_mode            decode.error_mode
     ├── allow_partial         decode.allow_partial      (L2-WRT-016)
@@ -524,7 +524,7 @@ CLI arguments > config file > built-in defaults (L2-CFG-003). Filter arrays merg
 An override is applied when it is **present**, not when it is truthy — Rust
 models that with `Option<T>` and Python matches it by testing for `None`. A
 truthiness test would silently drop a zero-valued override such as
-`--time-format auto` (`TimestampFormat::Auto == 0`).
+`--input-time-format auto` (`TimestampFormat::Auto == 0`).
 
 For the full schema reference (every key, its type, valid values, validation behavior, CLI override), see [`CONFIG-REFERENCE.md`](CONFIG-REFERENCE.md).
 
