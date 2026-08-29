@@ -125,11 +125,12 @@ pub enum TimestampFormat {
 }
 
 impl TimestampFormat {
-    /// Parse a `time_format` name (`auto` / `irig` / `standard`)
+    /// Parse an `input_time_format` name (`auto` / `irig` / `standard`)
     /// case-insensitively. The single source of truth shared by the CLI
-    /// (`--time-format`) and the config loader (`decode.time_format`) so the two
-    /// can never disagree on which spellings are accepted. Returns `None` for an
-    /// unrecognized name; each caller formats its own error type.
+    /// (`--input-time-format`) and the config loader
+    /// (`decode.input_time_format`) so the two can never disagree on which
+    /// spellings are accepted. Returns `None` for an unrecognized name; each
+    /// caller formats its own error type.
     pub(crate) fn from_name_ci(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "auto" => Some(Self::Auto),
@@ -138,6 +139,165 @@ impl TimestampFormat {
             _ => None,
         }
     }
+}
+
+/// Rendering selected for the `TIME_STAMP` CSV column (L2-WRT-025).
+///
+/// This is the *output* half of what used to be one `--time-format` flag.
+/// [`TimestampFormat`] decides how the bytes on disk are parsed;
+/// `OutputTimeFormat` decides how the resulting instant is written down. The
+/// two are independent: any input encoding can feed any rendering, subject to
+/// the calendar preconditions of L2-WRT-026.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum OutputTimeFormat {
+    /// `DAY:HH:MM:SS.uuuuuu` -- the DDC vendor rendering, and the default.
+    /// Byte-identical to what every version before v3.0.0 emitted.
+    #[default]
+    Doy = 0,
+    /// `YYYY-MM-DDTHH:MM:SS.uuuuuu` plus a zone designator.
+    Iso = 1,
+    /// `DD:HH:MM:SS.uuuuuu` -- day of month, with the month deliberately
+    /// absent from the cell.
+    Dom = 2,
+}
+
+impl OutputTimeFormat {
+    /// Parse an `output_time_format` name case-insensitively. Shared by the CLI
+    /// (`--output-time-format`) and the config loader
+    /// (`output.output_time_format`), mirroring [`TimestampFormat::from_name_ci`].
+    pub(crate) fn from_name_ci(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "doy" => Some(Self::Doy),
+            "iso" => Some(Self::Iso),
+            "dom" => Some(Self::Dom),
+            _ => None,
+        }
+    }
+
+    /// The canonical lowercase spelling, for diagnostics and log lines.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Doy => "doy",
+            Self::Iso => "iso",
+            Self::Dom => "dom",
+        }
+    }
+
+    /// Whether this rendering resolves day-of-year to a calendar date, and so
+    /// carries the preconditions of L2-WRT-026 (a year is required; the
+    /// recording must be calendar-locked).
+    #[must_use]
+    pub fn needs_calendar(self) -> bool {
+        matches!(self, Self::Iso | Self::Dom)
+    }
+}
+
+/// Everything the `TIME_STAMP` formatter needs beyond the timestamp itself
+/// (L2-WRT-025). Resolved once per decode from the merged configuration and
+/// carried unchanged through the writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TimeRender {
+    /// Which of the three renderings to produce.
+    pub format: OutputTimeFormat,
+    /// Calendar year for the day-of-year resolution. Required by `Iso` and
+    /// `Dom`; ignored by `Doy` (L2-WRT-026 clause 5). `None` means no year was
+    /// configured, which the CLI refuses up front for a calendar rendering.
+    pub year: Option<u16>,
+    /// Offset from UTC in minutes, used only by `Iso`. Zero renders as `Z`.
+    pub utc_offset_minutes: i16,
+}
+
+impl TimeRender {
+    /// The default rendering: day-of-year, no calendar resolution. This is what
+    /// `dump` uses unconditionally and what every pre-v3.0.0 decode produced.
+    #[must_use]
+    pub fn doy() -> Self {
+        Self::default()
+    }
+}
+
+/// Why a calendar rendering could not be produced (L2-WRT-026).
+///
+/// Two of the three preconditions are checked before the first row is written
+/// -- a missing year at CLI parse time, a non-calendar-locked recording once
+/// the format resolves -- so the only variant that normally reaches a formatter
+/// is [`Self::NoSuchDay`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarError {
+    /// A calendar rendering was selected with no year resolved from either the
+    /// configuration or the CLI.
+    MissingYear,
+    /// The day-of-year does not exist in the configured year -- day 366 of a
+    /// common year, or a day outside `1..=366` entirely.
+    NoSuchDay { day: u16, year: u16 },
+    /// The recording uses the Standard encoding: a free-running counter with
+    /// no epoch and no calendar meaning, whatever year is configured.
+    NotCalendarLocked,
+    /// The IRIG timestamp is freerun -- the card had no valid IRIG-B lock, so
+    /// its day/hour/minute/second fields are relative, not calendar-anchored.
+    /// They would render as a plausible date that means nothing.
+    FreerunNotAnchored,
+}
+
+/// Inclusive bounds on a configured calendar year (L2-WRT-026 clause 1).
+///
+/// The upper bound is four digits because the `iso` rendering formats the year
+/// as exactly `YYYY`; a five-digit year would widen column 1 without warning.
+/// The lower bound is 1 because year 0 does not exist in the proleptic
+/// Gregorian numbering this decoder uses.
+pub const YEAR_MIN: u16 = 1;
+/// See [`YEAR_MIN`].
+pub const YEAR_MAX: u16 = 9999;
+
+/// Days in each month of a common year, January first.
+const COMMON_YEAR_MONTH_LENGTHS: [u16; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/// Proleptic Gregorian leap-year test (L2-WRT-025): divisible by 4, except
+/// centuries, which must also be divisible by 400.
+///
+/// Hand-rolled rather than delegated to a date library so that all three
+/// implementations compute it identically -- C++11 has no date type at all, and
+/// a shared rule stated once is easier to hold aligned than three library
+/// behaviours that merely agree today.
+#[must_use]
+pub fn is_leap_year(year: u16) -> bool {
+    year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400))
+}
+
+/// Resolve a 1-based day-of-year to `(month, day_of_month)`, both 1-based.
+///
+/// Returns `None` when the day does not exist in that year: day `366` of a
+/// common year, day `0`, or anything above `366`. That is the L2-WRT-026
+/// clause 3 condition, and the caller turns it into a refusal rather than
+/// rolling forward into the next January.
+#[must_use]
+pub fn day_of_year_to_month_day(year: u16, day_of_year: u16) -> Option<(u8, u8)> {
+    let leap = is_leap_year(year);
+    let year_length = if leap { 366 } else { 365 };
+    if day_of_year == 0 || day_of_year > year_length {
+        return None;
+    }
+
+    let mut remaining = day_of_year;
+    for (index, &base_length) in COMMON_YEAR_MONTH_LENGTHS.iter().enumerate() {
+        // February is the only month whose length depends on the year.
+        let length = if index == 1 && leap {
+            base_length + 1
+        } else {
+            base_length
+        };
+        if remaining <= length {
+            // Both fit in u8: month is 1..=12 and day is 1..=31.
+            #[allow(clippy::cast_possible_truncation)]
+            return Some(((index + 1) as u8, remaining as u8));
+        }
+        remaining -= length;
+    }
+    // Unreachable: the month lengths sum to `year_length`, which bounds
+    // `day_of_year` above.
+    None
 }
 
 /// How errored messages are routed in CSV output.
@@ -317,6 +477,75 @@ impl IrigTimestamp {
             u = micro
         )
     }
+
+    /// Format under the selected rendering (L2-WRT-025).
+    ///
+    /// [`OutputTimeFormat::Doy`] is infallible and byte-identical to
+    /// [`Self::format`]. The calendar renderings resolve `day` against
+    /// `render.year` and refuse rather than approximate when that resolution
+    /// has no answer -- day 366 of a common year does not become January 1st
+    /// (L2-WRT-026 clause 3).
+    ///
+    /// Every rendering emits exactly six microsecond digits; L2-DEC-014 is not
+    /// relaxed by the wider cell.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CalendarError`] when a calendar rendering cannot be resolved:
+    /// no year was configured, the timestamp is freerun, or the day-of-year
+    /// does not exist in that year. `Doy` never fails.
+    pub fn format_with(&self, render: TimeRender) -> Result<String, CalendarError> {
+        let micro = self.microsecond % 1_000_000;
+        let (year, month, day_of_month) = match render.format {
+            OutputTimeFormat::Doy => return Ok(self.format()),
+            _ => {
+                // L2-WRT-026 clause 2: a freerun record's fields are relative,
+                // so resolving them against a year would produce a date that
+                // looks entirely ordinary and means nothing.
+                if self.freerun {
+                    return Err(CalendarError::FreerunNotAnchored);
+                }
+                let year = render.year.ok_or(CalendarError::MissingYear)?;
+                let (month, day_of_month) =
+                    day_of_year_to_month_day(year, self.day).ok_or(CalendarError::NoSuchDay {
+                        day: self.day,
+                        year,
+                    })?;
+                (year, month, day_of_month)
+            }
+        };
+
+        Ok(if render.format == OutputTimeFormat::Iso {
+            format!(
+                "{year:04}-{month:02}-{day_of_month:02}T{h:02}:{m:02}:{s:02}.{u:06}{zone}",
+                h = self.hour,
+                m = self.minute,
+                s = self.second,
+                u = micro,
+                zone = format_utc_offset(render.utc_offset_minutes)
+            )
+        } else {
+            format!(
+                "{day_of_month:02}:{h:02}:{m:02}:{s:02}.{u:06}",
+                h = self.hour,
+                m = self.minute,
+                s = self.second,
+                u = micro
+            )
+        })
+    }
+}
+
+/// Render a UTC offset in minutes as an ISO-8601 designator: `Z` at zero,
+/// otherwise `+HH:MM` / `-HH:MM`.
+#[must_use]
+pub fn format_utc_offset(minutes: i16) -> String {
+    if minutes == 0 {
+        return "Z".to_string();
+    }
+    let sign = if minutes < 0 { '-' } else { '+' };
+    let abs = minutes.unsigned_abs();
+    format!("{sign}{hh:02}:{mm:02}", hh = abs / 60, mm = abs % 60)
 }
 
 /// Standard-format timestamp decoded from a 2-word free-running counter.
@@ -382,6 +611,24 @@ impl StandardTimestamp {
     pub fn format(&self) -> String {
         format!("0x{:08X}", self.raw_value)
     }
+
+    /// A free-running counter has no calendar meaning under any rendering, so
+    /// this is [`Self::format`] whatever `render` selects.
+    ///
+    /// Under `doy` this is [`Self::format`]. Under a calendar rendering it
+    /// refuses (L2-WRT-026 clause 2): a free-running counter has no epoch, so
+    /// no year can place it on a calendar, and quietly emitting raw hex into a
+    /// column the operator asked to be ISO-8601 would be its own kind of lie.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CalendarError::NotCalendarLocked`] under `Iso` or `Dom`.
+    pub fn format_with(&self, render: TimeRender) -> Result<String, CalendarError> {
+        if render.format.needs_calendar() {
+            return Err(CalendarError::NotCalendarLocked);
+        }
+        Ok(self.format())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -413,6 +660,21 @@ impl Timestamp {
         match self {
             Self::Irig(t) => t.format(),
             Self::Standard(t) => t.format(),
+        }
+    }
+
+    /// Format under the selected rendering (L2-WRT-025), dispatching on the
+    /// variant. This is what the CSV writer calls; [`Self::format`] remains the
+    /// day-of-year rendering that L2-WRT-011 pins and that `dump` uses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CalendarError`] for whichever variant declines; see
+    /// [`IrigTimestamp::format_with`] and [`StandardTimestamp::format_with`].
+    pub fn format_with(&self, render: TimeRender) -> Result<String, CalendarError> {
+        match self {
+            Self::Irig(t) => t.format_with(render),
+            Self::Standard(t) => t.format_with(render),
         }
     }
 }
@@ -951,5 +1213,370 @@ mod tests {
             file_offset: 0,
             mux: None,
         }
+    }
+
+    // -- Calendar resolution and the three renderings (L2-WRT-025/026) ------
+
+    /// Requirements: L2-WRT-025
+    #[test]
+    fn leap_year_rule_is_proleptic_gregorian() {
+        // Divisible by 4 -> leap, except centuries, which need 400.
+        for year in [1996u16, 2000, 2004, 2020, 2024, 2028, 1600] {
+            assert!(is_leap_year(year), "{year} should be a leap year");
+        }
+        for year in [1900u16, 1999, 2001, 2025, 2026, 2027, 2100, 2200, 2300] {
+            assert!(!is_leap_year(year), "{year} should be a common year");
+        }
+    }
+
+    /// The same day-of-year lands on different calendar days either side of a
+    /// leap day. This is the whole reason a calendar rendering needs a year,
+    /// and the example is the one from the format documentation.
+    ///
+    /// Requirements: L2-WRT-025, L2-WRT-026
+    #[test]
+    fn day_of_year_192_shifts_by_one_across_leap_and_common_years() {
+        assert_eq!(day_of_year_to_month_day(2024, 192), Some((7, 10)));
+        assert_eq!(day_of_year_to_month_day(2028, 192), Some((7, 10)));
+        assert_eq!(day_of_year_to_month_day(2025, 192), Some((7, 11)));
+        assert_eq!(day_of_year_to_month_day(2026, 192), Some((7, 11)));
+    }
+
+    /// Requirements: L2-WRT-025
+    #[test]
+    fn day_of_year_resolves_at_month_boundaries() {
+        // Common year: day 59 is Feb 28, 60 is Mar 1.
+        assert_eq!(day_of_year_to_month_day(2026, 1), Some((1, 1)));
+        assert_eq!(day_of_year_to_month_day(2026, 31), Some((1, 31)));
+        assert_eq!(day_of_year_to_month_day(2026, 32), Some((2, 1)));
+        assert_eq!(day_of_year_to_month_day(2026, 59), Some((2, 28)));
+        assert_eq!(day_of_year_to_month_day(2026, 60), Some((3, 1)));
+        assert_eq!(day_of_year_to_month_day(2026, 365), Some((12, 31)));
+
+        // Leap year: 60 is the leap day itself, and everything after shifts.
+        assert_eq!(day_of_year_to_month_day(2024, 59), Some((2, 28)));
+        assert_eq!(day_of_year_to_month_day(2024, 60), Some((2, 29)));
+        assert_eq!(day_of_year_to_month_day(2024, 61), Some((3, 1)));
+        assert_eq!(day_of_year_to_month_day(2024, 366), Some((12, 31)));
+    }
+
+    /// Day 366 exists only in a leap year. It must not silently roll into the
+    /// next January (L2-WRT-026 clause 3).
+    ///
+    /// Requirements: L2-WRT-026
+    #[test]
+    fn day_366_has_no_date_in_a_common_year() {
+        assert_eq!(day_of_year_to_month_day(2026, 366), None);
+        assert_eq!(day_of_year_to_month_day(1900, 366), None);
+        assert_eq!(day_of_year_to_month_day(2024, 366), Some((12, 31)));
+
+        // Out of range in either direction, in either kind of year.
+        for year in [2024u16, 2026] {
+            assert_eq!(day_of_year_to_month_day(year, 0), None);
+            assert_eq!(day_of_year_to_month_day(year, 367), None);
+            assert_eq!(day_of_year_to_month_day(year, u16::MAX), None);
+        }
+    }
+
+    /// Every day of both year kinds resolves, in order, with each month
+    /// receiving exactly its own length. Cheap enough to run exhaustively, and
+    /// it catches an off-by-one in the accumulator that spot checks would miss.
+    ///
+    /// Requirements: L2-WRT-025
+    #[test]
+    fn every_day_of_year_resolves_in_ascending_order() {
+        for year in [2024u16, 2026] {
+            let leap = is_leap_year(year);
+            let length = if leap { 366 } else { 365 };
+            let mut seen_per_month = [0u16; 13];
+            let mut previous = (0u8, 0u8);
+
+            for day in 1..=length {
+                let resolved = day_of_year_to_month_day(year, day)
+                    .unwrap_or_else(|| panic!("day {day} of {year} did not resolve"));
+                assert!(
+                    resolved > previous,
+                    "day {day} of {year} resolved to {resolved:?}, not after {previous:?}"
+                );
+                previous = resolved;
+                seen_per_month[resolved.0 as usize] += 1;
+            }
+
+            for (index, &base) in COMMON_YEAR_MONTH_LENGTHS.iter().enumerate() {
+                let expected = if index == 1 && leap { base + 1 } else { base };
+                assert_eq!(
+                    seen_per_month[index + 1],
+                    expected,
+                    "month {} of {year} had the wrong number of days",
+                    index + 1
+                );
+            }
+        }
+    }
+
+    /// Requirements: L2-WRT-025
+    #[test]
+    fn utc_offset_renders_z_at_zero_and_signed_hhmm_otherwise() {
+        assert_eq!(format_utc_offset(0), "Z");
+        assert_eq!(format_utc_offset(-300), "-05:00");
+        assert_eq!(format_utc_offset(330), "+05:30");
+        assert_eq!(format_utc_offset(60), "+01:00");
+        assert_eq!(format_utc_offset(-1), "-00:01");
+        assert_eq!(format_utc_offset(1439), "+23:59");
+    }
+
+    fn sample_irig() -> IrigTimestamp {
+        IrigTimestamp {
+            day: 192,
+            hour: 15,
+            minute: 54,
+            second: 50,
+            microsecond: 456_225,
+            freerun: false,
+        }
+    }
+
+    /// The default rendering must stay byte-identical to what `format()`
+    /// produced before rendering became selectable -- that is what keeps a
+    /// no-flag decode vendor-diffable (L1-OUT-004).
+    ///
+    /// Requirements: L2-WRT-011, L2-WRT-025
+    #[test]
+    fn doy_rendering_is_unaffected_by_year_or_offset() {
+        let ts = sample_irig();
+        let expected = "192:15:54:50.456225";
+        assert_eq!(ts.format(), expected);
+        assert_eq!(ts.format_with(TimeRender::doy()).unwrap(), expected);
+
+        // A year and an offset are inert under `doy` (L2-WRT-026 clause 5).
+        let noisy = TimeRender {
+            format: OutputTimeFormat::Doy,
+            year: Some(2024),
+            utc_offset_minutes: -300,
+        };
+        assert_eq!(ts.format_with(noisy).unwrap(), expected);
+    }
+
+    /// Requirements: L2-WRT-025
+    #[test]
+    fn iso_and_dom_render_the_resolved_calendar_date() {
+        let ts = sample_irig();
+
+        let iso_leap = TimeRender {
+            format: OutputTimeFormat::Iso,
+            year: Some(2024),
+            utc_offset_minutes: 0,
+        };
+        assert_eq!(
+            ts.format_with(iso_leap).unwrap(),
+            "2024-07-10T15:54:50.456225Z"
+        );
+
+        let iso_common = TimeRender {
+            format: OutputTimeFormat::Iso,
+            year: Some(2026),
+            utc_offset_minutes: 0,
+        };
+        assert_eq!(
+            ts.format_with(iso_common).unwrap(),
+            "2026-07-11T15:54:50.456225Z"
+        );
+
+        let iso_offset = TimeRender {
+            format: OutputTimeFormat::Iso,
+            year: Some(2026),
+            utc_offset_minutes: -300,
+        };
+        assert_eq!(
+            ts.format_with(iso_offset).unwrap(),
+            "2026-07-11T15:54:50.456225-05:00"
+        );
+
+        let dom_leap = TimeRender {
+            format: OutputTimeFormat::Dom,
+            year: Some(2024),
+            utc_offset_minutes: 0,
+        };
+        assert_eq!(ts.format_with(dom_leap).unwrap(), "10:15:54:50.456225");
+
+        let dom_common = TimeRender {
+            format: OutputTimeFormat::Dom,
+            year: Some(2026),
+            utc_offset_minutes: 0,
+        };
+        assert_eq!(ts.format_with(dom_common).unwrap(), "11:15:54:50.456225");
+    }
+
+    /// Every rendering emits exactly six microsecond digits; the wider ISO cell
+    /// does not relax L2-DEC-014.
+    ///
+    /// Requirements: L2-DEC-014, L2-WRT-025
+    #[test]
+    fn all_renderings_emit_exactly_six_microsecond_digits() {
+        for micro in [0u32, 1, 999_999, 1_000_000, 1_234_567] {
+            let ts = IrigTimestamp {
+                microsecond: micro,
+                ..sample_irig()
+            };
+            for format in [
+                OutputTimeFormat::Doy,
+                OutputTimeFormat::Iso,
+                OutputTimeFormat::Dom,
+            ] {
+                let rendered = ts
+                    .format_with(TimeRender {
+                        format,
+                        year: Some(2026),
+                        utc_offset_minutes: 0,
+                    })
+                    .unwrap();
+                let fraction = rendered.split('.').next_back().unwrap();
+                // ISO appends a zone designator after the fraction.
+                let digits = fraction.chars().take_while(char::is_ascii_digit).count();
+                assert_eq!(digits, 6, "{format:?} rendered {rendered:?}");
+            }
+        }
+    }
+
+    /// Requirements: L2-WRT-026
+    #[test]
+    fn calendar_renderings_refuse_rather_than_approximate() {
+        let leap_day = IrigTimestamp {
+            day: 366,
+            ..sample_irig()
+        };
+
+        for format in [OutputTimeFormat::Iso, OutputTimeFormat::Dom] {
+            // No year resolved at all.
+            assert_eq!(
+                sample_irig().format_with(TimeRender {
+                    format,
+                    year: None,
+                    utc_offset_minutes: 0,
+                }),
+                Err(CalendarError::MissingYear)
+            );
+
+            // Day 366 against a common year has no date to render.
+            assert_eq!(
+                leap_day.format_with(TimeRender {
+                    format,
+                    year: Some(2026),
+                    utc_offset_minutes: 0,
+                }),
+                Err(CalendarError::NoSuchDay {
+                    day: 366,
+                    year: 2026
+                })
+            );
+
+            // The same record renders fine once the year actually has that day.
+            assert!(
+                leap_day
+                    .format_with(TimeRender {
+                        format,
+                        year: Some(2024),
+                        utc_offset_minutes: 0,
+                    })
+                    .is_ok()
+            );
+        }
+
+        // `doy` never needs a calendar and so never refuses.
+        assert!(leap_day.format_with(TimeRender::doy()).is_ok());
+    }
+
+    /// A Standard counter renders as raw hex under `doy` and REFUSES the
+    /// calendar renderings -- it has no epoch, so no year can place it on a
+    /// calendar, and emitting hex into a column the operator asked to be
+    /// ISO-8601 would be its own kind of lie (L2-WRT-026 clause 2).
+    ///
+    /// Requirements: L2-WRT-025, L2-WRT-026
+    #[test]
+    fn standard_counter_refuses_calendar_renderings() {
+        let ts = Timestamp::Standard(StandardTimestamp {
+            raw_value: 100_000,
+            upper_word: 0x0001,
+            lower_word: 0x86A0,
+        });
+
+        assert_eq!(ts.format_with(TimeRender::doy()).unwrap(), "0x000186A0");
+
+        for format in [OutputTimeFormat::Iso, OutputTimeFormat::Dom] {
+            assert_eq!(
+                ts.format_with(TimeRender {
+                    format,
+                    year: Some(2026),
+                    utc_offset_minutes: 0,
+                }),
+                Err(CalendarError::NotCalendarLocked),
+                "{format:?} must refuse a free-running counter"
+            );
+        }
+    }
+
+    /// A freerun IRIG record has calendar-shaped fields that are not
+    /// calendar-anchored, which makes it the most dangerous case of the three:
+    /// it would render as a perfectly ordinary date (L2-WRT-026 clause 2).
+    ///
+    /// Requirements: L2-WRT-026
+    #[test]
+    fn freerun_irig_refuses_calendar_renderings() {
+        let freerun = IrigTimestamp {
+            freerun: true,
+            ..sample_irig()
+        };
+
+        // `doy` is unaffected -- it prints the fields without interpreting them.
+        assert_eq!(
+            freerun.format_with(TimeRender::doy()).unwrap(),
+            "192:15:54:50.456225"
+        );
+
+        for format in [OutputTimeFormat::Iso, OutputTimeFormat::Dom] {
+            assert_eq!(
+                freerun.format_with(TimeRender {
+                    format,
+                    year: Some(2026),
+                    utc_offset_minutes: 0,
+                }),
+                Err(CalendarError::FreerunNotAnchored),
+                "{format:?} must refuse a freerun timestamp"
+            );
+            // The same instant, calendar-locked, renders fine -- so the refusal
+            // is about the freerun bit and nothing else.
+            assert!(
+                sample_irig()
+                    .format_with(TimeRender {
+                        format,
+                        year: Some(2026),
+                        utc_offset_minutes: 0,
+                    })
+                    .is_ok()
+            );
+        }
+    }
+
+    /// Requirements: L2-CLI-018, L2-CFG-012
+    #[test]
+    fn output_time_format_names_parse_case_insensitively() {
+        for (name, expected) in [
+            ("doy", OutputTimeFormat::Doy),
+            ("DOY", OutputTimeFormat::Doy),
+            ("Iso", OutputTimeFormat::Iso),
+            ("ISO", OutputTimeFormat::Iso),
+            ("dom", OutputTimeFormat::Dom),
+            ("DoM", OutputTimeFormat::Dom),
+        ] {
+            assert_eq!(OutputTimeFormat::from_name_ci(name), Some(expected));
+        }
+        for name in ["", "day", "iso8601", "doy ", "elapsed"] {
+            assert_eq!(OutputTimeFormat::from_name_ci(name), None);
+        }
+
+        assert_eq!(OutputTimeFormat::default(), OutputTimeFormat::Doy);
+        assert!(!OutputTimeFormat::Doy.needs_calendar());
+        assert!(OutputTimeFormat::Iso.needs_calendar());
+        assert!(OutputTimeFormat::Dom.needs_calendar());
     }
 }

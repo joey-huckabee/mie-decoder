@@ -167,7 +167,12 @@ class AtomicCsvSink : public CsvSink {
 class CsvWriter {
   public:
     /// Writes the header immediately. Throws MieError if that fails.
+    ///
+    /// `render` selects the TIME_STAMP rendering (L2-WRT-025); it defaults to
+    /// day-of-year so an existing caller keeps the vendor-compatible output
+    /// unchanged -- the same reason `doy` is the CLI default (L1-OUT-004).
     explicit CsvWriter(CsvSink& sink);
+    CsvWriter(CsvSink& sink, const TimeRender& render);
 
     /// Format and emit one row. Throws MieError on a write failure.
     void write_message(const MieMessage& message);
@@ -190,6 +195,8 @@ class CsvWriter {
 
     CsvSink* sink_;
     uint64_t rows_written_;
+    /// L2-WRT-025: how the TIME_STAMP column is rendered.
+    TimeRender render_;
 };
 
 /// Write one field with RFC4180 minimal quoting, matching Python's
@@ -207,6 +214,13 @@ std::string csv_quote(const std::string& value);
 /// here, and a test that asserts on a string does not need a file.
 std::string format_row(const MieMessage& message);
 
+/// The formatted row for `message` under `render` (L2-WRT-025).
+///
+/// Throws `MieError::calendar_unavailable` when a calendar rendering cannot be
+/// resolved for this record (L2-WRT-026). The timestamp is resolved before any
+/// other column is appended, so a refusal cannot leave a half-built row.
+std::string format_row(const MieMessage& message, const TimeRender& render);
+
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------
@@ -223,6 +237,10 @@ struct WriteOptions {
     /// what was decoded as `<destination>.partial` and call the run successful
     /// rather than unlinking the temp and failing.
     bool allow_partial;
+    /// L2-WRT-025: how the TIME_STAMP column is rendered. Defaults to the
+    /// day-of-year form, so a caller that does not set it gets exactly the
+    /// vendor-compatible output every version before v3.0.0 produced.
+    TimeRender time_render;
     /// Where a destination-less write goes. Defaults to the process's stdout;
     /// ignored when a destination path is given.
     std::FILE* stdout_stream;

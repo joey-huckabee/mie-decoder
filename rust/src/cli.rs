@@ -16,7 +16,7 @@ use crate::dump::{hex_dump_raw_to_stdout, hex_dump_records_to_stdout};
 use crate::error::MieError;
 use crate::filter::FilterIterExt;
 use crate::log::{self, Level};
-use crate::models::{ErrorMode, TimestampFormat};
+use crate::models::{ErrorMode, OutputTimeFormat, TimeRender, TimestampFormat, YEAR_MAX, YEAR_MIN};
 use crate::order::OrderIterExt;
 use crate::reader::{MieFileReader, ReaderOptions};
 use crate::writer::{WriteOptions, write_csv, write_csv_split};
@@ -67,7 +67,24 @@ DECODE OPTIONS:
                                         loss, write a <output>.partial
                                         file and exit 0 instead of 3
                                         (L1-EXIT-004)
-  --time-format auto|irig|standard      Default auto (case-insensitive)
+  --input-time-format auto|irig|standard
+                                        How timestamps are PARSED from the
+                                        file. Default auto (case-insensitive)
+  --output-time-format doy|iso|dom      How TIME_STAMP is WRITTEN to the CSV.
+                                        doy (default) DAY:HH:MM:SS.uuuuuu, the
+                                        vendor rendering; iso
+                                        YYYY-MM-DDTHH:MM:SS.uuuuuu plus zone;
+                                        dom DD:HH:MM:SS.uuuuuu. iso and dom
+                                        need a year. L2-WRT-025
+  --year YYYY                           Calendar year used to resolve the IRIG
+                                        day-of-year field (range 1..=9999). An
+                                        MIE file carries no year, so iso and
+                                        dom require one; doy ignores it.
+                                        L2-WRT-026
+  --utc-offset Z|+HH:MM|-HH:MM          Zone designator for the iso rendering
+                                        (default Z, meaning UTC). IRIG-B
+                                        carries no timezone, so this states
+                                        what the recording could not. L2-WRT-025
   --detect-records N                    Records probed by timestamp-
                                         format auto-detection (1..=32,
                                         default 8). L2-DEC-015.
@@ -163,7 +180,13 @@ struct DecodeArgs {
     separate_errors: bool,
     no_clobber: bool,
     allow_partial: bool,
-    time_format: Option<TimestampFormat>,
+    input_time_format: Option<TimestampFormat>,
+    /// L2-CLI-018: which rendering the `TIME_STAMP` column uses.
+    output_time_format: Option<OutputTimeFormat>,
+    /// L2-WRT-026: calendar year for the `iso` / `dom` renderings.
+    year: Option<u16>,
+    /// L2-WRT-025: UTC offset in minutes for the `iso` zone designator.
+    utc_offset_minutes: Option<i16>,
     detect_records: Option<usize>,
     lookahead_records: Option<usize>,
     standard_tick_rate_hz: Option<f64>,
@@ -276,7 +299,8 @@ impl CliError {
         let code = match e.kind() {
             crate::error::MieErrorKind::NoValidRecords
             | crate::error::MieErrorKind::HomogeneousPayload
-            | crate::error::MieErrorKind::TimestampFormatMismatch => exit_code::NO_RECORDS,
+            | crate::error::MieErrorKind::TimestampFormatMismatch
+            | crate::error::MieErrorKind::CalendarUnavailable => exit_code::NO_RECORDS,
             _ => exit_code::RUNTIME,
         };
         Self {
@@ -800,8 +824,31 @@ fn parse_decode(iter: &mut ArgIter<'_>) -> Result<DecodeArgs, ParseError> {
             "--strict" if a.bare() => args.strict = Some(true),
             "--no-mux" if a.bare() => args.no_mux = true,
             "--collapse-duplicates" if a.bare() => args.collapse_duplicates = true,
+            "--input-time-format" => {
+                args.input_time_format = Some(parse_input_time_format_arg(
+                    &a.value("--input-time-format", iter)?,
+                )?);
+            }
+            "--output-time-format" => {
+                args.output_time_format = Some(parse_output_time_format_arg(
+                    &a.value("--output-time-format", iter)?,
+                )?);
+            }
+            "--year" => {
+                args.year = Some(parse_year_arg(&a.value("--year", iter)?)?);
+            }
+            "--utc-offset" => {
+                args.utc_offset_minutes =
+                    Some(parse_utc_offset_arg(&a.value("--utc-offset", iter)?)?);
+            }
+            // L2-CLI-019: `--time-format` was split in v3.0.0. This arm exists
+            // so the diagnostic can name both replacements -- the generic
+            // unknown-option path below would report only that the flag is
+            // unrecognised, which is the one thing an operator hitting this
+            // already knows. Matched with no `a.bare()` guard so the joined
+            // form (`--time-format=irig`) lands here too.
             "--time-format" => {
-                args.time_format = Some(parse_time_format_arg(&a.value("--time-format", iter)?)?);
+                return Err(ParseError::Other(RETIRED_TIME_FORMAT_MESSAGE.to_string()));
             }
             "--detect-records" => {
                 args.detect_records =
@@ -1012,10 +1059,51 @@ fn parse_dump(iter: &mut ArgIter<'_>) -> Result<DumpArgs, ParseError> {
     Ok(args)
 }
 
-fn parse_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
+fn parse_input_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
     TimestampFormat::from_name_ci(s)
-        .ok_or_else(|| format!("invalid --time-format: {s:?}; valid: auto, irig, standard"))
+        .ok_or_else(|| format!("invalid --input-time-format: {s:?}; valid: auto, irig, standard"))
 }
+
+fn parse_output_time_format_arg(s: &str) -> Result<OutputTimeFormat, String> {
+    OutputTimeFormat::from_name_ci(s)
+        .ok_or_else(|| format!("invalid --output-time-format: {s:?}; valid: doy, iso, dom"))
+}
+
+/// L2-CLI-018: `--year YYYY`, range-checked at parse time so a bad value is a
+/// usage error rather than a malformed cell a hundred thousand rows later.
+fn parse_year_arg(s: &str) -> Result<u16, String> {
+    let invalid = || format!("invalid --year: {s:?}; valid range: [{YEAR_MIN}, {YEAR_MAX}]");
+    // Parsed as `u32` first so that an out-of-range four-plus-digit year
+    // reports the range rather than an integer-overflow message.
+    let value: u32 = s.parse().map_err(|_| invalid())?;
+    match u16::try_from(value) {
+        Ok(y) if (YEAR_MIN..=YEAR_MAX).contains(&y) => Ok(y),
+        _ => Err(invalid()),
+    }
+}
+
+/// L2-CLI-018: `--utc-offset Z|+HH:MM|-HH:MM`, shared with the config loader's
+/// grammar so the two spellings cannot drift.
+fn parse_utc_offset_arg(s: &str) -> Result<i16, String> {
+    crate::config::parse_utc_offset(s).map_err(|_| {
+        format!(
+            "invalid --utc-offset: {s:?}; valid: Z, or +HH:MM / -HH:MM \
+             with HH in [0, 23] and MM in [0, 59]"
+        )
+    })
+}
+
+/// L2-CLI-019: what `--time-format` says now that it has been split in two.
+///
+/// The message names both replacements and states which concern each covers,
+/// because the operator's intent is still expressible and the only open
+/// question is which of the two they meant -- exactly what a generic "unknown
+/// option" cannot answer.
+const RETIRED_TIME_FORMAT_MESSAGE: &str = "\
+--time-format was split in v3.0.0 and is no longer accepted. Use \
+--input-time-format auto|irig|standard to choose how timestamps are PARSED \
+from the file, or --output-time-format doy|iso|dom to choose how they are \
+WRITTEN to the CSV.";
 
 /// L1-EXIT-007: validate `--format` where every other flag value is validated
 /// -- at parse time, so an unsupported value is a **usage** error (exit `4`).
@@ -1023,7 +1111,7 @@ fn parse_time_format_arg(s: &str) -> Result<TimestampFormat, String> {
 /// This used to be checked after the config layer had merged CLI overrides,
 /// which made `--format json` a *runtime* error (exit `1`) and put the CLI in
 /// direct contradiction with L1-EXIT-007's "invalid flag value SHALL exit 4".
-/// The three exit codes for one mistake were: `4` for a bad `--time-format`,
+/// The three exit codes for one mistake were: `4` for a bad `--input-time-format`,
 /// `1` for a bad `--format`, and `5` for the same value in a config file.
 /// Only the middle one was wrong.
 ///
@@ -1211,18 +1299,50 @@ fn resolve_config(globals: &GlobalArgs) -> Result<DecoderConfig, CliError> {
 /// Open the input file and configure the reader from `cfg`. The
 /// String-flavored error type is what every subcommand runner returns,
 /// so the conversion is folded in here.
+/// Resolve the merged configuration into a [`TimeRender`], enforcing the
+/// L2-WRT-026 clause 1 precondition.
+///
+/// The check lives here rather than in either loader because neither can answer
+/// it alone: a config file may set the rendering and the CLI supply the year,
+/// or the reverse. It runs before the output is opened, so a run that cannot
+/// produce the requested dates writes nothing at all.
+fn resolve_time_render(cfg: &DecoderConfig) -> Result<TimeRender, CliError> {
+    if cfg.output_time_format.needs_calendar() && cfg.year.is_none() {
+        return Err(CliError::usage(format!(
+            "--output-time-format {} needs a calendar year, and an MIE recording \
+             does not carry one: IRIG-B encodes day-of-year but not the year. \
+             Set [output] year = YYYY in a config file or pass --year YYYY. \
+             (--output-time-format doy needs no year.)",
+            cfg.output_time_format.as_str()
+        )));
+    }
+    Ok(TimeRender {
+        format: cfg.output_time_format,
+        year: cfg.year,
+        utc_offset_minutes: cfg.utc_offset_minutes,
+    })
+}
+
 fn open_reader(path: &Path, cfg: &DecoderConfig) -> Result<MieFileReader, CliError> {
     MieFileReader::with_options(
         path,
         ReaderOptions {
             strict: cfg.strict,
-            time_format: cfg.time_format,
+            input_time_format: cfg.input_time_format,
             detect_records: cfg.detect_records,
             lookahead_records: cfg.lookahead_records,
             standard_tick_rate_hz: cfg.standard_tick_rate_hz,
             mux_enabled: cfg.mux_enabled,
             mux_delimiter: cfg.mux_delimiter.clone(),
             mux_field: cfg.mux_field,
+            // `Some(_)` only when a calendar rendering is actually in force, so
+            // a `year` left in a site config does not change the reader's
+            // diagnostics for a `doy` run (L2-WRT-026 clause 5).
+            calendar_year: if cfg.output_time_format.needs_calendar() {
+                cfg.year
+            } else {
+                None
+            },
         },
     )
     .map_err(|e| CliError::runtime(format_mie_error(e)))
@@ -1238,7 +1358,7 @@ fn build_config_overrides(
 ) -> ConfigOverrides {
     ConfigOverrides {
         irig_day_advisory,
-        time_format: args.time_format,
+        input_time_format: args.input_time_format,
         strict: args.strict,
         // `--separate-errors` opts into the split-file mode; its absence leaves
         // the config value intact (the built-in default is now Inline).
@@ -1248,6 +1368,9 @@ fn build_config_overrides(
             None
         },
         output_format: args.output_format.clone(),
+        output_time_format: args.output_time_format,
+        year: args.year,
+        utc_offset_minutes: args.utc_offset_minutes,
         // A CLI flag flips the option on; absence leaves the config value intact
         // (Some(false) would clobber a `true` from the config).
         no_clobber: if args.no_clobber { Some(true) } else { None },
@@ -1420,6 +1543,12 @@ fn run_decode(globals: GlobalArgs, mut args: DecodeArgs) -> Result<ExitCode, Cli
             cfg.allow_partial,
         )?;
     }
+    // L2-WRT-026 clause 1: a calendar rendering needs a year, and whether one
+    // was supplied is a question about the *resolved* pair -- either source may
+    // have provided it -- so it is asked here, after the merge, and before the
+    // output is opened.
+    let time_render = resolve_time_render(&cfg)?;
+
     let write_opts = WriteOptions {
         input_path: if merge_requested {
             None
@@ -1428,6 +1557,7 @@ fn run_decode(globals: GlobalArgs, mut args: DecodeArgs) -> Result<ExitCode, Cli
         },
         no_clobber: cfg.no_clobber,
         allow_partial: cfg.allow_partial,
+        time_render,
     };
 
     // One input → the single-file path; two or more → the time-sorted k-way
@@ -1560,7 +1690,12 @@ where
         match output {
             None => {
                 crate::log_warn!("stdout output forces inline error mode");
-                write_csv(messages, None, WriteOptions::default())
+                // The whole options struct is forwarded, not a fresh default.
+                // Only the rendering actually applies to a stream -- `write_csv`
+                // ignores the path-safety fields on its stdout branch -- but
+                // rebuilding a default here silently dropped `time_render`, and
+                // would silently drop the next option added too.
+                write_csv(messages, None, write_opts)
             }
             Some(out) => write_csv_split(messages, out, write_opts).inspect(|outcome| {
                 log_info!(
@@ -1639,6 +1774,18 @@ fn classify_decode_exit(
             log_info!("decode exit class: no-records (timestamp-format-mismatch)");
             ExitCode::from(exit_code::NO_RECORDS)
         }
+        Err(e @ MieError::CalendarUnavailable { .. }) => {
+            // L2-WRT-026 + L1-EXIT-002: the operator asked for a rendering the
+            // recording cannot supply. Same class as TimestampFormatMismatch
+            // and for the same reason -- the flag and the file disagree, and
+            // the file wins. Day 366 against a common year lands here too: it
+            // says the configured year is wrong, which makes every date in the
+            // run suspect, not just the one record.
+            log_error!("{e}");
+            eprintln!("Error: {e}");
+            log_info!("decode exit class: no-records (calendar-unavailable)");
+            ExitCode::from(exit_code::NO_RECORDS)
+        }
         Err(e @ MieError::UnrecoverableSyncLoss { .. }) => {
             log_error!("{e}");
             eprintln!("Error: {e}");
@@ -1708,7 +1855,7 @@ fn run_count(globals: GlobalArgs, input: PathBuf) -> Result<(), CliError> {
 }
 
 fn run_dump(globals: GlobalArgs, args: DumpArgs) -> Result<(), CliError> {
-    // dump only consumes log_level from config; time_format / strict /
+    // dump only consumes log_level from config; input_time_format / strict /
     // filters don't apply to a hex view. We still call resolve_config
     // so a malformed config errors out consistently with the other
     // subcommands.
@@ -1771,7 +1918,7 @@ mod tests {
     /// It was a runtime error (exit `1`) through v2.14.0 because the check ran
     /// after the config layer merged CLI overrides. That put one mistake on
     /// three different exit codes depending on where it was written: `4` for a
-    /// bad `--time-format`, `1` for a bad `--format`, `5` for the same value in
+    /// bad `--input-time-format`, `1` for a bad `--format`, `5` for the same value in
     /// a config file. Only the middle one was wrong; the config-file spelling
     /// is still `5` (L2-CFG-010).
     /// Requirements: L2-CLI-011
@@ -1797,28 +1944,28 @@ mod tests {
         assert!(parse_decode(&mut args(&["--format", "csv", "rec.mie"])).is_ok());
     }
 
-    /// `--time-format` accepts any letter case (auto/irig/standard), matching
+    /// `--input-time-format` accepts any letter case (auto/irig/standard), matching
     /// the config loader; an unrecognized value is a usage error.
     /// Requirements: L2-CLI-001
     #[test]
-    fn time_format_arg_is_case_insensitive() {
+    fn input_time_format_arg_is_case_insensitive() {
         assert_eq!(
-            parse_time_format_arg("IRIG").unwrap(),
+            parse_input_time_format_arg("IRIG").unwrap(),
             TimestampFormat::Irig
         );
         assert_eq!(
-            parse_time_format_arg("Irig").unwrap(),
+            parse_input_time_format_arg("Irig").unwrap(),
             TimestampFormat::Irig
         );
         assert_eq!(
-            parse_time_format_arg("AUTO").unwrap(),
+            parse_input_time_format_arg("AUTO").unwrap(),
             TimestampFormat::Auto
         );
         assert_eq!(
-            parse_time_format_arg("Standard").unwrap(),
+            parse_input_time_format_arg("Standard").unwrap(),
             TimestampFormat::Standard
         );
-        assert!(parse_time_format_arg("bogus").is_err());
+        assert!(parse_input_time_format_arg("bogus").is_err());
     }
 
     /// Requirements: L2-CLI-008, L3-RS-008
@@ -2240,7 +2387,7 @@ mod tests {
     fn every_valued_flag_accepts_both_spellings() {
         let cases: &[(&str, &str)] = &[
             ("--output", "out.csv"),
-            ("--time-format", "irig"),
+            ("--input-time-format", "irig"),
             ("--format", "csv"),
             ("--detect-records", "4"),
             ("--lookahead-records", "2"),
@@ -2528,7 +2675,7 @@ mod tests {
     /// Requirements: L2-CLI-005, L2-CLI-011, L1-EXIT-008
     #[test]
     fn run_count_propagates_config_load_error() {
-        let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
+        let bad = write_temp_file(".toml", b"[decode]\ninput_time_format = \"potato\"\n");
         let globals = GlobalArgs {
             log_level: None,
             irig_day_advisory: None,
@@ -2541,7 +2688,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(e.code, exit_code::CONFIG, "config error should exit 5");
                 assert!(
-                    e.message.contains("Invalid time_format"),
+                    e.message.contains("Invalid input_time_format"),
                     "expected config error, got: {}",
                     e.message
                 );
@@ -2553,7 +2700,7 @@ mod tests {
     /// Requirements: L2-CLI-005, L2-CLI-011, L1-EXIT-008
     #[test]
     fn run_dump_propagates_config_load_error() {
-        let bad = write_temp_file(".toml", b"[decode]\ntime_format = \"potato\"\n");
+        let bad = write_temp_file(".toml", b"[decode]\ninput_time_format = \"potato\"\n");
         let globals = GlobalArgs {
             log_level: None,
             irig_day_advisory: None,
@@ -2569,7 +2716,7 @@ mod tests {
             Err(e) => {
                 assert_eq!(e.code, exit_code::CONFIG, "config error should exit 5");
                 assert!(
-                    e.message.contains("Invalid time_format"),
+                    e.message.contains("Invalid input_time_format"),
                     "expected config error, got: {}",
                     e.message
                 );

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from mie_decoder import __version__
 from mie_decoder.exceptions import (
+    MieCalendarUnavailableError,
     MieClobberRefusedError,
     MieDecoderError,
     MieFileError,
@@ -56,7 +57,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from mie_decoder.config import DecoderConfig
-    from mie_decoder.models import ErrorMode, MieMessage
+    from mie_decoder.models import ErrorMode, MieMessage, TimeRender
     from mie_decoder.reader import MieFileReader
     from mie_decoder.writer import WriteOptions, WriteOutcome
 
@@ -118,6 +119,68 @@ class _UsageErrorParser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         self.print_usage(sys.stderr)
         self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
+
+
+#: L2-CLI-019: what ``--time-format`` says now that it has been split in two.
+#:
+#: The message names both replacements and states which concern each covers,
+#: because the operator's intent is still expressible and the only open question
+#: is which of the two they meant -- exactly what a generic "unrecognized
+#: arguments" cannot answer.
+RETIRED_TIME_FORMAT_MESSAGE = (
+    "--time-format was split in v3.0.0 and is no longer accepted. Use "
+    "--input-time-format auto|irig|standard to choose how timestamps are PARSED "
+    "from the file, or --output-time-format doy|iso|dom to choose how they are "
+    "WRITTEN to the CSV."
+)
+
+
+def _parse_year_arg(value: str) -> int:
+    """Parse and range-check ``--year`` (L2-CLI-018).
+
+    Validated at parse time so a bad value is a usage error rather than a
+    malformed cell a hundred thousand rows later.
+
+    Raises:
+        ValueError: if the value is not an integer in ``[YEAR_MIN, YEAR_MAX]``.
+
+    Returns:
+        The validated year.
+    """
+    from mie_decoder.models import YEAR_MAX, YEAR_MIN
+
+    message = f"invalid --year: {value!r}; valid range: [{YEAR_MIN}, {YEAR_MAX}]"
+    # Rejected rather than passed to int(): a leading sign or underscore would
+    # otherwise be accepted here and nowhere else.
+    if not (value.isascii() and value.isdigit()):
+        raise ValueError(message)
+    year = int(value)
+    if not YEAR_MIN <= year <= YEAR_MAX:
+        raise ValueError(message)
+    return year
+
+
+def _parse_utc_offset_arg(value: str) -> int:
+    """Parse ``--utc-offset`` (L2-CLI-018).
+
+    Delegates to the config loader's grammar so the CLI and TOML spellings
+    cannot drift.
+
+    Raises:
+        ValueError: if the value does not match the grammar.
+
+    Returns:
+        The offset in minutes east of UTC.
+    """
+    from mie_decoder.config import parse_utc_offset
+
+    try:
+        return parse_utc_offset(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid --utc-offset: {value!r}; valid: Z, or +HH:MM / -HH:MM "
+            f"with HH in [0, 23] and MM in [0, 59]"
+        ) from exc
 
 
 def _nonneg_int(value: str) -> int:
@@ -333,13 +396,55 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output CSV file path. If omitted, writes to stdout.",
     )
     decode_parser.add_argument(
-        "--time-format",
+        "--input-time-format",
         metavar="FORMAT",
         default=None,
         help=(
-            "Timestamp format (auto, irig, standard; case-insensitive). "
-            "Overrides config file. Default: auto."
+            "How timestamps are PARSED from the file (auto, irig, standard; "
+            "case-insensitive). Overrides config file. Default: auto."
         ),
+    )
+    decode_parser.add_argument(
+        "--output-time-format",
+        metavar="FORMAT",
+        default=None,
+        help=(
+            "How TIME_STAMP is WRITTEN to the CSV (doy, iso, dom; "
+            "case-insensitive). doy (default) DAY:HH:MM:SS.uuuuuu, the vendor "
+            "rendering; iso YYYY-MM-DDTHH:MM:SS.uuuuuu plus zone; dom "
+            "DD:HH:MM:SS.uuuuuu. iso and dom require a year. L2-WRT-025."
+        ),
+    )
+    decode_parser.add_argument(
+        "--year",
+        metavar="YYYY",
+        default=None,
+        help=(
+            "Calendar year used to resolve the IRIG day-of-year field "
+            "(range 1..9999). An MIE file carries no year, so iso and dom "
+            "require one; doy ignores it. L2-WRT-026."
+        ),
+    )
+    decode_parser.add_argument(
+        "--utc-offset",
+        metavar="OFFSET",
+        default=None,
+        help=(
+            "Zone designator for the iso rendering (Z, +HH:MM or -HH:MM; "
+            "default Z, meaning UTC). IRIG-B carries no timezone, so this "
+            "states what the recording could not. L2-WRT-025."
+        ),
+    )
+    # L2-CLI-019: --time-format was split in v3.0.0. Declared with
+    # help=SUPPRESS so it is NOT advertised (the cross-implementation parity
+    # gate scrapes --help), but is still recognised -- which is the only way to
+    # give the operator a diagnostic naming both replacements instead of
+    # argparse's generic "unrecognized arguments".
+    decode_parser.add_argument(
+        "--time-format",
+        metavar="FORMAT",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     # Filter flags take ONE value each, comma-separable and repeatable
     # (`--exclude-rts 15,31` == `--exclude-rts 15 --exclude-rts 31`),
@@ -638,7 +743,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Max number of records to dump (record mode; decimal or 0x hex). Default: all.",
     )
     # dump only consumes [logging] level from the global --config; the
-    # other decode-time keys (time_format, filters, strict, etc.) don't
+    # other decode-time keys (input_time_format, filters, strict, etc.) don't
     # apply to a hex dump.
 
     return parser
@@ -816,7 +921,7 @@ def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
     (there is no "off" form on the CLI). ``--separate-errors`` flips error_mode to
     SEPARATE; the default IS inline.
 
-    Two of these do carry a validation: ``--time-format`` (via
+    Two of these do carry a validation: ``--input-time-format`` (via
     ``parse_timestamp_format``) and ``--format``. Both are value-set checks that
     belong at parse time, because an invalid flag value is a usage error
     (exit 4, L1-EXIT-007) rather than a runtime or configuration one.
@@ -829,11 +934,39 @@ def _simple_overrides(args: argparse.Namespace) -> dict[str, object]:
         ValueError: if a flag's value is outside its accepted set. The caller
             maps this to EXIT_USAGE.
     """
-    from mie_decoder.models import ErrorMode, parse_timestamp_format
+    from mie_decoder.models import (
+        ErrorMode,
+        parse_output_time_format,
+        parse_timestamp_format,
+    )
 
     overrides: dict[str, object] = {}
+    # L2-CLI-019: refuse the retired spelling before anything else, so the
+    # pointer is what the operator sees rather than a downstream complaint.
     if args.time_format is not None:
-        overrides["time_format"] = parse_timestamp_format(args.time_format)
+        raise ValueError(RETIRED_TIME_FORMAT_MESSAGE)
+    # L2-CLI-018: the diagnostic names the FLAG, not the config key. The
+    # shared parsers phrase their message for the TOML side, so each is wrapped
+    # here -- an operator who typed a flag should be told which flag was wrong.
+    if args.input_time_format is not None:
+        try:
+            overrides["input_time_format"] = parse_timestamp_format(args.input_time_format)
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid --input-time-format: {args.input_time_format!r}; "
+                f"valid: auto, irig, standard"
+            ) from exc
+    if args.output_time_format is not None:
+        try:
+            overrides["output_time_format"] = parse_output_time_format(args.output_time_format)
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid --output-time-format: {args.output_time_format!r}; valid: doy, iso, dom"
+            ) from exc
+    if args.year is not None:
+        overrides["year"] = _parse_year_arg(args.year)
+    if args.utc_offset is not None:
+        overrides["utc_offset_minutes"] = _parse_utc_offset_arg(args.utc_offset)
     if args.separate_errors:
         overrides["error_mode"] = ErrorMode.SEPARATE
     if args.no_clobber:
@@ -984,6 +1117,37 @@ def _build_decode_overrides(args: argparse.Namespace) -> dict[str, object]:
     return overrides
 
 
+def _resolve_time_render(config: DecoderConfig) -> TimeRender:
+    """Resolve the merged configuration into a :class:`TimeRender`.
+
+    Enforces the L2-WRT-026 clause 1 precondition. The check lives here rather
+    than in either loader because neither can answer it alone: a config file may
+    set the rendering and the CLI supply the year, or the reverse. It runs
+    before the output is opened, so a run that cannot produce the requested
+    dates writes nothing at all.
+
+    Raises:
+        ValueError: when a calendar rendering has no year from either source.
+
+    Returns:
+        The resolved rendering.
+    """
+    from mie_decoder.models import TimeRender
+
+    if config.output_time_format.needs_calendar() and config.year is None:
+        raise ValueError(
+            f"--output-time-format {config.output_time_format.name.lower()} needs a "
+            f"calendar year, and an MIE recording does not carry one: IRIG-B encodes "
+            f"day-of-year but not the year. Set [output] year = YYYY in a config file "
+            f"or pass --year YYYY. (--output-time-format doy needs no year.)"
+        )
+    return TimeRender(
+        format=config.output_time_format,
+        year=config.year,
+        utc_offset_minutes=config.utc_offset_minutes,
+    )
+
+
 def _open_reader(path: Path, config: DecoderConfig) -> MieFileReader:
     """Open one input file with reader options from ``config`` (mirrors
     ``open_reader`` in ``rust/src/cli.rs``). Raises ``MieFileError`` on a
@@ -996,7 +1160,7 @@ def _open_reader(path: Path, config: DecoderConfig) -> MieFileReader:
 
     return MieFileReader(
         path,
-        time_format=config.time_format,
+        input_time_format=config.input_time_format,
         strict=config.strict,
         detect_records=config.detect_records,
         lookahead_records=config.lookahead_records,
@@ -1004,6 +1168,10 @@ def _open_reader(path: Path, config: DecoderConfig) -> MieFileReader:
         mux_enabled=config.mux_enabled,
         mux_delimiter=config.mux_delimiter,
         mux_field=config.mux_field,
+        # Some(_) only when a calendar rendering is actually in force, so a
+        # year left in a site config does not change the reader's diagnostics
+        # for a doy run (L2-WRT-026 clause 5).
+        calendar_year=config.year if config.output_time_format.needs_calendar() else None,
     )
 
 
@@ -1168,6 +1336,10 @@ _SIMPLE_DECODE_ERRORS: tuple[
     (MieNoValidRecordsError, EXIT_NO_RECORDS, "no-records"),
     (MieHomogeneousPayloadError, EXIT_NO_RECORDS, "no-records"),
     (MieTimestampFormatMismatchError, EXIT_NO_RECORDS, "no-records (timestamp-format-mismatch)"),
+    # L2-WRT-026 + L1-EXIT-002: the operator asked for a rendering the recording
+    # cannot supply. Same class as the format mismatch and for the same reason --
+    # the flag and the file disagree, and the file wins.
+    (MieCalendarUnavailableError, EXIT_NO_RECORDS, "no-records (calendar-unavailable)"),
     (MieNonMonotonicInputError, EXIT_RUNTIME, "non-monotonic-input (strict)"),
 )
 
@@ -1370,10 +1542,20 @@ def _run_decode(args: argparse.Namespace) -> int:
 
     from mie_decoder.writer import WriteOptions
 
+    # L2-WRT-026 clause 1: a calendar rendering needs a year, and whether one
+    # was supplied is a question about the *resolved* pair -- either source may
+    # have provided it -- so it is asked here, after the merge, and before the
+    # output is opened.
+    try:
+        time_render = _resolve_time_render(config)
+    except ValueError as exc:
+        return _report_error("usage", exc, EXIT_USAGE)
+
     write_opts = WriteOptions(
         input_path=None if merge_requested else input_paths[0],
         no_clobber=config.no_clobber,
         allow_partial=config.allow_partial,
+        time_render=time_render,
     )
 
     # ── Build the message stream and write it ──────────────────────
@@ -1426,7 +1608,7 @@ def _run_count(args: argparse.Namespace) -> int:
     try:
         reader = MieFileReader(
             args.input,
-            time_format=config.time_format,
+            input_time_format=config.input_time_format,
             strict=config.strict,
             detect_records=config.detect_records,
             lookahead_records=config.lookahead_records,
@@ -1482,7 +1664,7 @@ def _run_dump(args: argparse.Namespace) -> int:
     from mie_decoder.dump import hex_dump_raw, hex_dump_records
     from mie_decoder.writer import is_broken_pipe
 
-    # dump only consumes log_level from config (time_format, strict,
+    # dump only consumes log_level from config (input_time_format, strict,
     # filters, etc. don't apply to a raw / record hex dump). Load so
     # the TOML [logging] level is honored — same precedence as decode.
     # Mirrors the Rust dump path's resolve_config call.

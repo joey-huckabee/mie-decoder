@@ -170,12 +170,13 @@ void extract_payload(const uint8_t* data, std::size_t size, std::size_t p, Messa
 
 ReaderOptions::ReaderOptions()
     : strict(false),
-      time_format(TIMESTAMP_AUTO),
+      input_time_format(TIMESTAMP_AUTO),
       detect_records(decode::DEFAULT_DETECT_RECORDS),
       lookahead_records(sync::DEFAULT_LOOKAHEAD_RECORDS),
       mux_enabled(decode::DEFAULT_MUX_ENABLED),
       mux_delimiter(decode::DEFAULT_MUX_DELIMITER),
-      mux_field(decode::DEFAULT_MUX_FIELD) {}
+      mux_field(decode::DEFAULT_MUX_FIELD),
+      calendar_year() {}
 
 // ---------------------------------------------------------------------------
 // MieFileReader
@@ -184,7 +185,7 @@ ReaderOptions::ReaderOptions()
 MieFileReader::MieFileReader()
     : file_size_(0),
       strict_(false),
-      time_format_(TIMESTAMP_AUTO),
+      input_time_format_(TIMESTAMP_AUTO),
       detect_records_(decode::DEFAULT_DETECT_RECORDS),
       lookahead_records_(sync::DEFAULT_LOOKAHEAD_RECORDS),
       sync_losses_(0),
@@ -220,14 +221,15 @@ void MieFileReader::open(const std::string& path, const ReaderOptions& options) 
     file_size_ = mapping_.size();
 
     strict_ = options.strict;
-    time_format_ = options.time_format;
+    input_time_format_ = options.input_time_format;
     detect_records_ = options.detect_records > 0 ? options.detect_records : 1;
     lookahead_records_ = options.lookahead_records > 0 ? options.lookahead_records : 1;
     standard_tick_rate_hz_ = options.standard_tick_rate_hz;
+    calendar_year_ = options.calendar_year;
 
     MIE_LOG_DEBUG("reader opened " + path_ + " (" + dec(file_size_) +
                   " bytes, strict=" + (strict_ ? "true" : "false") +
-                  ", time_format=" + timestamp_format_name(time_format_) +
+                  ", input_time_format=" + timestamp_format_name(input_time_format_) +
                   ", detect_records=" + dec(detect_records_) + ")");
 
     // L2-WRT-020: resolve MUX once, from the file NAME. Once per file, not once
@@ -244,7 +246,7 @@ void MieFileReader::open(const std::string& path, const ReaderOptions& options) 
 }
 
 TimestampFormat MieFileReader::default_resolved_format() const {
-    return time_format_ == TIMESTAMP_AUTO ? TIMESTAMP_IRIG : time_format_;
+    return input_time_format_ == TIMESTAMP_AUTO ? TIMESTAMP_IRIG : input_time_format_;
 }
 
 TimestampFormat MieFileReader::resolve_format_for_hit(const sync::ScanHit& hit,
@@ -268,7 +270,7 @@ TimestampFormat MieFileReader::resolve_format_for_hit(const sync::ScanHit& hit,
         return default_resolved_format();
     }
 
-    if (time_format_ == TIMESTAMP_AUTO) {
+    if (input_time_format_ == TIMESTAMP_AUTO) {
         return resolve_auto_format(hit, error);
     }
     return check_forced_format(hit, error);
@@ -291,21 +293,21 @@ TimestampFormat MieFileReader::resolve_auto_format(const sync::ScanHit& hit,
         case decode::CONFIDENCE_MARGINAL:
             MIE_LOG_INFO(std::string("auto-detected timestamp format: ") +
                          timestamp_format_name(outcome.format) + " (Marginal: " + scores +
-                         ") -- pass --time-format to force the choice if this is wrong");
+                         ") -- pass --input-time-format to force the choice if this is wrong");
             break;
         case decode::CONFIDENCE_AMBIGUOUS:
             if (strict_) {
                 MIE_LOG_ERROR("timestamp-format auto-detection is ambiguous in " + path_ +
                               " starting at offset " + hex(hit.offset) + ": " + scores +
                               " -- strict mode rejects ambiguous files; pass "
-                              "--time-format to force the choice");
+                              "--input-time-format to force the choice");
                 error.reset(new MieError(MieError::timestamp_format_mismatch(
                     static_cast<uint64_t>(hit.offset), outcome.irig_score, outcome.std_score,
                     static_cast<uint32_t>(outcome.records_probed))));
             } else {
                 MIE_LOG_WARN(std::string("auto-detected timestamp format: ") +
                              timestamp_format_name(outcome.format) + " (Ambiguous: " + scores +
-                             ") -- using best guess; pass --time-format to force the "
+                             ") -- using best guess; pass --input-time-format to force the "
                              "choice or --strict to reject ambiguous files");
             }
             break;
@@ -320,12 +322,12 @@ TimestampFormat MieFileReader::check_forced_format(const sync::ScanHit& hit,
 
     // L2-DEC-013: only a DECISIVE probe for the other format counts as a
     // contradiction. A marginal or ambiguous disagreement is exactly the case
-    // the operator passed --time-format to settle, so overriding them there
+    // the operator passed --input-time-format to settle, so overriding them there
     // would defeat the flag.
     const bool contradicts =
-        outcome.confidence == decode::CONFIDENCE_DECISIVE && outcome.format != time_format_;
+        outcome.confidence == decode::CONFIDENCE_DECISIVE && outcome.format != input_time_format_;
     if (!contradicts) {
-        return time_format_;
+        return input_time_format_;
     }
 
     const std::string scores = "IRIG=" + text::decimal_signed(outcome.irig_score) +
@@ -334,27 +336,27 @@ TimestampFormat MieFileReader::check_forced_format(const sync::ScanHit& hit,
 
     if (strict_) {
         MIE_LOG_ERROR(std::string("forced timestamp format ") +
-                      timestamp_format_name(time_format_) + " contradicts the recording in " +
+                      timestamp_format_name(input_time_format_) + " contradicts the recording in " +
                       path_ + " at offset " + hex(hit.offset) + ": detection is decisive for " +
                       timestamp_format_name(outcome.format) + " (" + scores +
-                      ") -- strict mode rejects the mismatch; drop --time-format to "
+                      ") -- strict mode rejects the mismatch; drop --input-time-format to "
                       "auto-detect");
         error.reset(new MieError(MieError::timestamp_format_mismatch(
             static_cast<uint64_t>(hit.offset), outcome.irig_score, outcome.std_score,
             static_cast<uint32_t>(outcome.records_probed))));
     } else {
-        MIE_LOG_WARN(std::string("forced timestamp format ") + timestamp_format_name(time_format_) +
-                     " contradicts the recording at offset " + hex(hit.offset) +
-                     ": detection is decisive for " + timestamp_format_name(outcome.format) + " (" +
-                     scores +
-                     ") -- decoding with the forced format anyway; drop --time-format to "
-                     "auto-detect or pass --strict to reject the mismatch");
+        MIE_LOG_WARN(
+            std::string("forced timestamp format ") + timestamp_format_name(input_time_format_) +
+            " contradicts the recording at offset " + hex(hit.offset) +
+            ": detection is decisive for " + timestamp_format_name(outcome.format) + " (" + scores +
+            ") -- decoding with the forced format anyway; drop --input-time-format to "
+            "auto-detect or pass --strict to reject the mismatch");
     }
 
     // The forced format is kept either way. In strict mode the error stops
     // iteration before it matters; in lenient mode the operator asked for this
     // format and gets it.
-    return time_format_;
+    return input_time_format_;
 }
 
 bool MieFileReader::diagnose_no_records(const Optional<TimestampFormat>& format_hint,
@@ -417,8 +419,8 @@ RecordIter MieFileReader::iter() {
     // Absent tells the sync helpers to scan format-agnostically; present pins
     // the expected layout.
     Optional<TimestampFormat> format_hint;
-    if (time_format_ != TIMESTAMP_AUTO) {
-        format_hint = time_format_;
+    if (input_time_format_ != TIMESTAMP_AUTO) {
+        format_hint = input_time_format_;
     }
 
     const uint8_t* data = mapping_.data();
@@ -463,6 +465,9 @@ RecordIter::RecordIter(MieFileReader& owner)
       prev_was_error_(false),
       delta_tracker_(owner.standard_tick_rate_hz_),
       warned_irig_day_(false),
+      calendar_year_(owner.calendar_year_),
+      last_irig_day_(),
+      warned_day_rollover_(false),
       msg_count_(0),
       sync_losses_(0),
       mux_(owner.mux_) {}
@@ -480,6 +485,9 @@ RecordIter::RecordIter(RecordIter&& other) noexcept
       prev_was_error_(other.prev_was_error_),
       delta_tracker_(std::move(other.delta_tracker_)),
       warned_irig_day_(other.warned_irig_day_),
+      calendar_year_(other.calendar_year_),
+      last_irig_day_(other.last_irig_day_),
+      warned_day_rollover_(other.warned_day_rollover_),
       msg_count_(other.msg_count_),
       sync_losses_(other.sync_losses_),
       mux_(std::move(other.mux_)) {
@@ -705,6 +713,29 @@ bool RecordIter::decode_timestamp_at(TimestampFormat resolved, Timestamp& out) {
         return false;
     }
     const IrigTimestamp irig = decode::decode_irig_timestamp(upper, middle, lower);
+
+    // L2-WRT-026 clause 4: under a calendar rendering, a backward day step
+    // means the recording crosses New Year while the whole decode uses one
+    // configured year, so every row after the wrap is dated a year early. WARN
+    // once and carry on -- the decoder deliberately does NOT auto-increment,
+    // because sync-loss corruption produces this same signal, and advancing the
+    // year on corrupt data would be a worse error than the one it fixed.
+    if (calendar_year_.has_value() && !irig.freerun) {
+        const int day = static_cast<int>(irig.day);
+        if (last_irig_day_.has_value() && day < last_irig_day_.value() && !warned_day_rollover_) {
+            warned_day_rollover_ = true;
+            MIE_LOG_WARN(
+                "day-of-year stepped back from " +
+                text::decimal(static_cast<uint64_t>(last_irig_day_.value())) + " to " +
+                text::decimal(static_cast<uint64_t>(day)) + " at " + hex(offset_) +
+                ": this recording appears to cross a year boundary, but every row is dated " +
+                text::decimal(static_cast<uint64_t>(calendar_year_.value())) +
+                ". Rows after the wrap are a year early. Split the recording at the boundary "
+                "and decode each part with its own --year");
+        }
+        last_irig_day_ = day;
+    }
+
     if (irig.freerun) {
         MIE_LOG_WARN("freerun timestamp at " + hex(offset_));
     } else if (!warned_irig_day_ && log::irig_day_advisory()) {
@@ -720,11 +751,29 @@ bool RecordIter::decode_timestamp_at(TimestampFormat resolved, Timestamp& out) {
         // so it fires on every calendar-locked IRIG file from every card. At
         // WARN it sat in the default output of every run and crowded out the
         // warnings that ARE observations.
+        //
+        // L2-LOG-002: the same disclaimer, at a level that follows what the
+        // operator asked for. Under `doy` a skewed day is one field a human
+        // reads as "day 192" and can re-examine. Under a calendar rendering it
+        // is resolved into 2026-07-11 -- something that looks like a fact, gets
+        // pasted into reports, and is correlated against systems with no way to
+        // know it is suspect. Choosing a calendar rendering IS the operator
+        // saying this field is load-bearing, which is when a standing caveat
+        // about it earns the default level's attention.
         warned_irig_day_ = true;
-        MIE_LOG_INFO(
-            "IRIG day-of-year decoded for this recording; the day-of-year field has a known "
-            "firmware-dependent discrepancy on some DDC cards (hour/minute/second/microsecond "
-            "are unaffected) -- see docs/VENDOR-CSV-DIFFS.md section 5");
+        if (calendar_year_.has_value()) {
+            MIE_LOG_WARN(
+                "IRIG day-of-year is being resolved into calendar dates, and that field has a "
+                "known firmware-dependent discrepancy on some DDC cards "
+                "(hour/minute/second/microsecond are unaffected). Verify your card model "
+                "against vendor CSV before relying on these dates -- see "
+                "docs/VENDOR-CSV-DIFFS.md section 5");
+        } else {
+            MIE_LOG_INFO(
+                "IRIG day-of-year decoded for this recording; the day-of-year field has a known "
+                "firmware-dependent discrepancy on some DDC cards (hour/minute/second/microsecond "
+                "are unaffected) -- see docs/VENDOR-CSV-DIFFS.md section 5");
+        }
     }
     out = Timestamp::from_irig(irig);
     return true;

@@ -43,6 +43,84 @@ const char* timestamp_format_name(TimestampFormat fmt) {
     return "Auto";
 }
 
+const char* output_time_format_name(OutputTimeFormat fmt) {
+    switch (fmt) {
+        case OUTPUT_TIME_ISO: return "iso";
+        case OUTPUT_TIME_DOM: return "dom";
+        case OUTPUT_TIME_DOY: return "doy";
+    }
+    return "doy";
+}
+
+bool output_time_format_from_name(const std::string& name, OutputTimeFormat& out) {
+    if (text::equals_ignoring_ascii_case(name, "doy")) {
+        out = OUTPUT_TIME_DOY;
+        return true;
+    }
+    if (text::equals_ignoring_ascii_case(name, "iso")) {
+        out = OUTPUT_TIME_ISO;
+        return true;
+    }
+    if (text::equals_ignoring_ascii_case(name, "dom")) {
+        out = OUTPUT_TIME_DOM;
+        return true;
+    }
+    return false;
+}
+
+bool output_time_format_needs_calendar(OutputTimeFormat fmt) {
+    return fmt == OUTPUT_TIME_ISO || fmt == OUTPUT_TIME_DOM;
+}
+
+TimeRender::TimeRender() : format(OUTPUT_TIME_DOY), year(), utc_offset_minutes(0) {}
+
+bool is_leap_year(int year) { return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0); }
+
+namespace {
+
+/// Days in each month of a common year, January first.
+const int kCommonYearMonthLengths[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+}  // namespace
+
+bool day_of_year_to_month_day(int year, int day_of_year, int& month, int& day_of_month) {
+    const bool leap = is_leap_year(year);
+    const int year_length = leap ? 366 : 365;
+    if (day_of_year <= 0 || day_of_year > year_length) {
+        return false;
+    }
+
+    int remaining = day_of_year;
+    for (int index = 0; index < 12; ++index) {
+        // February is the only month whose length depends on the year.
+        const int length = kCommonYearMonthLengths[index] + ((index == 1 && leap) ? 1 : 0);
+        if (remaining <= length) {
+            month = index + 1;
+            day_of_month = remaining;
+            return true;
+        }
+        remaining -= length;
+    }
+    // Unreachable: the month lengths sum to year_length, which bounds
+    // day_of_year above.
+    return false;
+}
+
+std::string format_utc_offset(int minutes) {
+    if (minutes == 0) {
+        return "Z";
+    }
+    const bool negative = minutes < 0;
+    const int magnitude = negative ? -minutes : minutes;
+    std::string out;
+    out.reserve(6);
+    out += negative ? '-' : '+';
+    out += text::decimal_padded(static_cast<uint32_t>(magnitude / 60), 2);
+    out += ':';
+    out += text::decimal_padded(static_cast<uint32_t>(magnitude % 60), 2);
+    return out;
+}
+
 bool is_valid_message_type(uint8_t code) {
     switch (code) {
         case MESSAGE_TYPE_MODE_COMMAND:
@@ -195,6 +273,59 @@ std::string IrigTimestamp::format() const {
     return out;
 }
 
+CalendarError IrigTimestamp::format_with(const TimeRender& render, std::string& out) const {
+    if (render.format == OUTPUT_TIME_DOY) {
+        out = format();
+        return CALENDAR_OK;
+    }
+
+    // L2-WRT-026 clause 2: a freerun record's fields are relative, so resolving
+    // them against a year would produce a date that looks entirely ordinary and
+    // means nothing.
+    if (freerun) {
+        return CALENDAR_FREERUN;
+    }
+    if (!render.year.has_value()) {
+        return CALENDAR_MISSING_YEAR;
+    }
+
+    const int year = render.year.value();
+    int month = 0;
+    int day_of_month = 0;
+    if (!day_of_year_to_month_day(year, static_cast<int>(day), month, day_of_month)) {
+        return CALENDAR_NO_SUCH_DAY;
+    }
+
+    std::string time_part;
+    time_part.reserve(16);
+    time_part += text::decimal_padded(hour, 2);
+    time_part += ':';
+    time_part += text::decimal_padded(minute, 2);
+    time_part += ':';
+    time_part += text::decimal_padded(second, 2);
+    time_part += '.';
+    time_part += text::decimal_padded(microsecond % 1000000u, 6);
+
+    std::string rendered;
+    rendered.reserve(32);
+    if (render.format == OUTPUT_TIME_ISO) {
+        rendered += text::decimal_padded(static_cast<uint32_t>(year), 4);
+        rendered += '-';
+        rendered += text::decimal_padded(static_cast<uint32_t>(month), 2);
+        rendered += '-';
+        rendered += text::decimal_padded(static_cast<uint32_t>(day_of_month), 2);
+        rendered += 'T';
+        rendered += time_part;
+        rendered += format_utc_offset(render.utc_offset_minutes);
+    } else {
+        rendered += text::decimal_padded(static_cast<uint32_t>(day_of_month), 2);
+        rendered += ':';
+        rendered += time_part;
+    }
+    out = rendered;
+    return CALENDAR_OK;
+}
+
 bool IrigTimestamp::operator==(const IrigTimestamp& other) const {
     return day == other.day && hour == other.hour && minute == other.minute &&
            second == other.second && microsecond == other.microsecond && freerun == other.freerun;
@@ -243,6 +374,14 @@ bool StandardTimestamp::to_microseconds(double tick_rate_hz, uint64_t& out) cons
 
 std::string StandardTimestamp::format() const { return "0x" + text::hex_upper(raw_value, 8); }
 
+CalendarError StandardTimestamp::format_with(const TimeRender& render, std::string& out) const {
+    if (output_time_format_needs_calendar(render.format)) {
+        return CALENDAR_NOT_LOCKED;
+    }
+    out = format();
+    return CALENDAR_OK;
+}
+
 bool StandardTimestamp::operator==(const StandardTimestamp& other) const {
     return raw_value == other.raw_value && upper_word == other.upper_word &&
            lower_word == other.lower_word;
@@ -288,6 +427,19 @@ std::string Timestamp::format() const {
         return standard.format();
     }
     return std::string();
+}
+
+CalendarError Timestamp::format_with(const TimeRender& render, std::string& out) const {
+    if (format_kind == TIMESTAMP_IRIG) {
+        return irig.format_with(render, out);
+    }
+    if (format_kind == TIMESTAMP_STANDARD) {
+        return standard.format_with(render, out);
+    }
+    // TIMESTAMP_AUTO is not a layout, so there is nothing to render. `format()`
+    // returns an empty string here for the same reason.
+    out = std::string();
+    return CALENDAR_OK;
 }
 
 bool Timestamp::operator==(const Timestamp& other) const {

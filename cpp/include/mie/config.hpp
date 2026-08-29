@@ -101,13 +101,25 @@ struct DecoderConfig {
     /// its card model against vendor CSV can also keep it out of a
     /// `--log-level INFO` run.
     bool irig_day_advisory;
-    TimestampFormat time_format;
+    TimestampFormat input_time_format;
     bool strict;
     ErrorMode error_mode;
     FilterConfig filters;
     std::string output_format;
     /// L2-WRT-017. Defaults to false (overwrite permitted).
     bool no_clobber;
+    /// L2-WRT-025: which rendering the TIME_STAMP column uses. Defaults to
+    /// `doy` -- the DDC vendor rendering -- so a decode that selects nothing
+    /// stays byte-comparable against vendor CSV.
+    OutputTimeFormat output_time_format;
+    /// L2-WRT-026: calendar year used to resolve the IRIG day-of-year field.
+    /// Required by `iso` / `dom`, inert under `doy`. An MIE file carries no
+    /// year, so "absent" is the only honest default, and a calendar rendering
+    /// with no year is refused rather than guessed at.
+    Optional<int> year;
+    /// L2-WRT-025: offset from UTC in minutes for the `iso` zone designator.
+    /// Zero renders as `Z`.
+    int utc_offset_minutes;
     /// L1-EXIT-004: commit `<destination>.partial` and exit 0 rather than
     /// unlinking and failing, on an unrecoverable mid-file sync loss.
     bool allow_partial;
@@ -134,14 +146,24 @@ struct DecoderConfig {
 /// CLI-supplied overrides. Absent means "not supplied", which is why every
 /// field is an Optional rather than carrying a sentinel: `--strict=false` and
 /// "no --strict flag" are different instructions.
+/// Parse a UTC offset designator into minutes east of UTC (L2-CFG-012).
+///
+/// Accepts `Z` (case-insensitively), or a signed `+HH:MM` / `-HH:MM`. Shared by
+/// the config loader (`output.utc_offset`) and the CLI (`--utc-offset`) so the
+/// two spellings cannot drift. Returns false for anything else.
+bool parse_utc_offset(const std::string& text, int& out);
+
 struct ConfigOverrides {
     Optional<std::string> log_level;
     Optional<bool> irig_day_advisory;
-    Optional<TimestampFormat> time_format;
+    Optional<TimestampFormat> input_time_format;
     Optional<bool> strict;
     Optional<ErrorMode> error_mode;
     Optional<std::string> output_format;
     Optional<bool> no_clobber;
+    Optional<OutputTimeFormat> output_time_format;
+    Optional<int> year;
+    Optional<int> utc_offset_minutes;
     Optional<bool> allow_partial;
     Optional<std::size_t> detect_records;
     Optional<std::size_t> lookahead_records;

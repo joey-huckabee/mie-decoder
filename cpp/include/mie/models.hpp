@@ -98,8 +98,8 @@ const char* timestamp_format_name(TimestampFormat fmt);
 
 /// Parse `auto` / `irig` / `standard` case-insensitively.
 ///
-/// One source of truth shared by the CLI (`--time-format`) and the config
-/// loader (`decode.time_format`), so the two cannot drift on which spellings
+/// One source of truth shared by the CLI (`--input-time-format`) and the config
+/// loader (`decode.input_time_format`), so the two cannot drift on which spellings
 /// they accept. Returns false for an unrecognised name.
 bool timestamp_format_from_name(const std::string& name, TimestampFormat& out);
 
@@ -153,6 +153,111 @@ const char* ddc_error_description(uint16_t code);
 /// aligned across implementations.
 const char* ddc_error_description_or_unknown(uint16_t code);
 
+// --- Output timestamp rendering (L2-WRT-025) ------------------------------
+
+/// Rendering selected for the `TIME_STAMP` CSV column (L2-WRT-025).
+///
+/// The *output* half of what used to be one `input_time_format` setting.
+/// `TimestampFormat` decides how the bytes on disk are parsed; this decides how
+/// the resulting instant is written down. The two are independent, subject to
+/// the calendar preconditions of L2-WRT-026.
+enum OutputTimeFormat {
+    /// `DAY:HH:MM:SS.uuuuuu` -- the DDC vendor rendering, and the default.
+    /// Byte-identical to what every version before v3.0.0 emitted.
+    OUTPUT_TIME_DOY = 0,
+    /// `YYYY-MM-DDTHH:MM:SS.uuuuuu` plus a zone designator.
+    OUTPUT_TIME_ISO = 1,
+    /// `DD:HH:MM:SS.uuuuuu` -- day of month, month deliberately absent.
+    OUTPUT_TIME_DOM = 2
+};
+
+/// "doy" / "iso" / "dom" -- the canonical lowercase spelling, for diagnostics.
+const char* output_time_format_name(OutputTimeFormat fmt);
+
+/// Parse `doy` / `iso` / `dom` case-insensitively.
+///
+/// Shared by the CLI (`--output-time-format`) and the config loader
+/// (`output.output_time_format`), mirroring `timestamp_format_from_name`.
+/// Returns false for an unrecognised name; each caller formats its own error.
+bool output_time_format_from_name(const std::string& name, OutputTimeFormat& out);
+
+/// Whether a rendering resolves day-of-year to a calendar date, and so carries
+/// the L2-WRT-026 preconditions (a year is required; the recording must be
+/// calendar-locked).
+bool output_time_format_needs_calendar(OutputTimeFormat fmt);
+
+/// Inclusive bounds on a configured calendar year (L2-WRT-026 clause 1).
+///
+/// The upper bound is four digits because the `iso` rendering formats the year
+/// as exactly `YYYY`; a five-digit year would widen column 1 without warning.
+/// The lower bound is 1 because year 0 does not exist in the proleptic
+/// Gregorian numbering this decoder uses.
+const int YEAR_MIN = 1;
+const int YEAR_MAX = 9999;
+
+/// Everything the `TIME_STAMP` formatter needs beyond the timestamp itself
+/// (L2-WRT-025). Resolved once per decode from the merged configuration.
+///
+/// Written with a constructor rather than default member initialisers: this
+/// tree is C++11 as accepted by GCC 4.8.5, where a class with an NSDMI is not
+/// an aggregate and cannot be brace-initialised (ADR-0001).
+struct TimeRender {
+    /// Which of the three renderings to produce.
+    OutputTimeFormat format;
+    /// Calendar year for the day-of-year resolution. Required by ISO and DOM,
+    /// ignored by DOY (L2-WRT-026 clause 5). Absent means no year was
+    /// configured, which the CLI refuses up front for a calendar rendering.
+    Optional<int> year;
+    /// Offset from UTC in minutes, used only by ISO. Zero renders as `Z`.
+    int utc_offset_minutes;
+
+    /// The default rendering: day-of-year, no calendar resolution. What `dump`
+    /// uses unconditionally, and what every pre-v3.0.0 decode produced.
+    TimeRender();
+};
+
+/// Why a calendar rendering could not be produced (L2-WRT-026).
+///
+/// Two of the preconditions are checked before the first row is written -- a
+/// missing year at CLI parse time, a Standard recording once the format
+/// resolves -- so the case that normally reaches a formatter is a day-of-year
+/// the configured year does not have.
+enum CalendarError {
+    CALENDAR_OK = 0,
+    /// A calendar rendering was selected with no year resolved.
+    CALENDAR_MISSING_YEAR = 1,
+    /// The day-of-year does not exist in the configured year.
+    CALENDAR_NO_SUCH_DAY = 2,
+    /// The recording uses the Standard encoding: a free-running counter with
+    /// no epoch and no calendar meaning, whatever year is configured.
+    CALENDAR_NOT_LOCKED = 3,
+    /// The IRIG timestamp is freerun -- the card had no valid IRIG-B lock, so
+    /// its fields are relative. They would render as a plausible date that
+    /// means nothing.
+    CALENDAR_FREERUN = 4
+};
+
+/// Proleptic Gregorian leap-year test (L2-WRT-025): divisible by 4, except
+/// centuries, which must also be divisible by 400.
+///
+/// Hand-rolled rather than delegated to a date library so that all three
+/// implementations compute it identically -- C++11 has no date type at all, and
+/// a shared rule stated once is easier to hold aligned than three library
+/// behaviours that merely agree today.
+bool is_leap_year(int year);
+
+/// Resolve a 1-based day-of-year to `(month, day_of_month)`, both 1-based.
+///
+/// Returns false when the day does not exist in that year: day 366 of a common
+/// year, day 0, or anything above 366. That is the L2-WRT-026 clause 3
+/// condition, which the caller turns into a refusal rather than rolling
+/// forward into the next January.
+bool day_of_year_to_month_day(int year, int day_of_year, int& month, int& day_of_month);
+
+/// Render a UTC offset in minutes as an ISO-8601 designator: `Z` at zero,
+/// otherwise `+HH:MM` / `-HH:MM`.
+std::string format_utc_offset(int minutes);
+
 // --- Timestamps -----------------------------------------------------------
 
 /// IRIG timestamp, decoded from a 3-word binary field.
@@ -179,6 +284,20 @@ struct IrigTimestamp {
     /// validation, still gets a well-formed string rather than a seven-digit
     /// field that would shift every subsequent CSV column.
     std::string format() const;
+
+    /// Format under the selected rendering (L2-WRT-025).
+    ///
+    /// DOY is infallible and byte-identical to `format()`. The calendar
+    /// renderings resolve `day` against `render.year` and refuse rather than
+    /// approximate when that resolution has no answer -- day 366 of a common
+    /// year does not become January 1st (L2-WRT-026 clause 3).
+    ///
+    /// Every rendering emits exactly six microsecond digits; L2-DEC-014 is not
+    /// relaxed by the wider cell.
+    ///
+    /// Returns CALENDAR_OK and fills `out` on success; otherwise returns the
+    /// reason and leaves `out` untouched.
+    CalendarError format_with(const TimeRender& render, std::string& out) const;
 
     bool operator==(const IrigTimestamp& other) const;
     bool operator!=(const IrigTimestamp& other) const { return !(*this == other); }
@@ -210,6 +329,12 @@ struct StandardTimestamp {
 
     /// `0xNNNNNNNN`.
     std::string format() const;
+
+    /// Under DOY this is `format()`. Under a calendar rendering it refuses
+    /// (L2-WRT-026 clause 2): a free-running counter has no epoch, so no year
+    /// can place it on a calendar, and quietly emitting raw hex into a column
+    /// the operator asked to be ISO-8601 would be its own kind of lie.
+    CalendarError format_with(const TimeRender& render, std::string& out) const;
 
     bool operator==(const StandardTimestamp& other) const;
     bool operator!=(const StandardTimestamp& other) const { return !(*this == other); }
@@ -243,6 +368,11 @@ struct Timestamp {
     bool to_microseconds(const Optional<double>& tick_rate_hz, uint64_t& out) const;
 
     std::string format() const;
+
+    /// Format under the selected rendering (L2-WRT-025), dispatching on the
+    /// discriminant. This is what the CSV writer calls; `format()` remains the
+    /// day-of-year rendering that L2-WRT-011 pins and that `dump` uses.
+    CalendarError format_with(const TimeRender& render, std::string& out) const;
 
     bool operator==(const Timestamp& other) const;
     bool operator!=(const Timestamp& other) const { return !(*this == other); }

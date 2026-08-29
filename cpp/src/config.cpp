@@ -35,11 +35,14 @@ const char* ConfigError::what() const throw() { return message_->c_str(); }
 DecoderConfig::DecoderConfig()
     : log_level("WARNING"),
       irig_day_advisory(true),
-      time_format(TIMESTAMP_AUTO),
+      input_time_format(TIMESTAMP_AUTO),
       strict(false),
       error_mode(ERROR_MODE_INLINE),
       output_format("csv"),
       no_clobber(false),
+      output_time_format(OUTPUT_TIME_DOY),
+      year(),
+      utc_offset_minutes(0),
       allow_partial(false),
       detect_records(decode::DEFAULT_DETECT_RECORDS),
       lookahead_records(sync::DEFAULT_LOOKAHEAD_RECORDS),
@@ -74,7 +77,7 @@ bool is_known_key(const std::string& section, const std::string& key) {
     static const Pair known[] = {
         {"logging", "level"},
         {"logging", "irig_day_advisory"},
-        {"decode", "time_format"},
+        {"decode", "input_time_format"},
         {"decode", "strict"},
         {"decode", "error_mode"},
         {"decode", "allow_partial"},
@@ -84,6 +87,9 @@ bool is_known_key(const std::string& section, const std::string& key) {
         {"output", "format"},
         {"output", "no_clobber"},
         {"output", "max_sort_group"},
+        {"output", "output_time_format"},
+        {"output", "year"},
+        {"output", "utc_offset"},
         {"mux", "enabled"},
         {"mux", "delimiter"},
         {"mux", "field"},
@@ -225,6 +231,43 @@ double require_positive_finite(double value, const std::string& key) {
 
 }  // namespace
 
+/// Parse a UTC offset designator into minutes east of UTC (L2-CFG-012).
+///
+/// Accepts `Z` (case-insensitively) for zero, or a signed `+HH:MM` / `-HH:MM`.
+/// The shape is checked exactly rather than leniently: `+5:00`, `+0500` and a
+/// trailing-space variant are all rejected, because a zone that parsed loosely
+/// here would silently shift every ISO timestamp in the file.
+///
+/// Digits are classified with an explicit ASCII range rather than `<cctype>`:
+/// this tree is never locale-sensitive, and `scripts/assert-locale-free.sh`
+/// enforces it.
+bool parse_utc_offset(const std::string& text, int& out) {
+    if (text::equals_ignoring_ascii_case(text, "z")) {
+        out = 0;
+        return true;
+    }
+    if (text.size() != 6 || text[3] != ':') {
+        return false;
+    }
+    if (text[0] != '+' && text[0] != '-') {
+        return false;
+    }
+    const std::size_t digit_positions[4] = {1, 2, 4, 5};
+    for (std::size_t i = 0; i < 4; ++i) {
+        const char c = text[digit_positions[i]];
+        if (c < '0' || c > '9') {
+            return false;
+        }
+    }
+    const int hours = (text[1] - '0') * 10 + (text[2] - '0');
+    const int minutes = (text[4] - '0') * 10 + (text[5] - '0');
+    if (hours > 23 || minutes > 59) {
+        return false;
+    }
+    out = (text[0] == '-' ? -1 : 1) * (hours * 60 + minutes);
+    return true;
+}
+
 uint8_t parse_type_name(const std::string& name) {
     const std::string trimmed = text::trim_ascii_blank(name);
     struct Named {
@@ -344,14 +387,26 @@ void apply_logging(const toml::Document& doc, DecoderConfig& config) {
 }
 
 void apply_decode(const toml::Document& doc, DecoderConfig& config) {
+    // L2-CFG-012: `decode.time_format` was renamed in v3.0.0. Left to the
+    // generic unknown-key rule it would only WARN (L2-CFG-009) -- and a WARN is
+    // the wrong answer for a rename, because the operator's explicit choice
+    // would be discarded while the run reported success, silently reverting a
+    // forced format to auto-detection. Tested by presence rather than by type,
+    // so a wrong-typed value reports the rename too.
+    if (doc.contains("decode", "time_format")) {
+        throw ConfigError(
+            "decode.time_format was renamed in v3.0.0. Use decode.input_time_format to "
+            "choose how timestamps are PARSED (auto, irig, standard); use "
+            "output.output_time_format to choose how they are WRITTEN (doy, iso, dom).");
+    }
     std::string text_value;
-    if (get_string(doc, "decode", "time_format", text_value)) {
+    if (get_string(doc, "decode", "input_time_format", text_value)) {
         TimestampFormat format = TIMESTAMP_AUTO;
         if (!timestamp_format_from_name(text_value, format)) {
-            throw ConfigError("Invalid time_format: " + quoted(text_value) +
+            throw ConfigError("Invalid input_time_format: " + quoted(text_value) +
                               ". Valid: auto, irig, standard");
         }
-        config.time_format = format;
+        config.input_time_format = format;
     }
     bool flag = false;
     if (get_bool(doc, "decode", "strict", flag)) {
@@ -402,6 +457,35 @@ void apply_output(const toml::Document& doc, DecoderConfig& config) {
     if (get_int(doc, "output", "max_sort_group", number)) {
         config.max_sort_group = require_int_range(number, "output.max_sort_group",
                                                   MAX_SORT_GROUP_MIN, MAX_SORT_GROUP_MAX);
+    }
+    // L2-CFG-012 / L2-WRT-025: which rendering the TIME_STAMP column uses.
+    std::string rendering;
+    if (get_string(doc, "output", "output_time_format", rendering)) {
+        OutputTimeFormat selected = OUTPUT_TIME_DOY;
+        if (!output_time_format_from_name(rendering, selected)) {
+            throw ConfigError("Invalid output_time_format: " + quoted(rendering) +
+                              ". Valid: doy, iso, dom");
+        }
+        config.output_time_format = selected;
+    }
+    // L2-WRT-026 clause 1: the year is validated here but NOT required here --
+    // a config may set a year it never uses, and a calendar rendering may take
+    // its year from the CLI instead. Whether one is needed is a question about
+    // the resolved pair, asked once both sources have merged.
+    int64_t year_value = 0;
+    if (get_int(doc, "output", "year", year_value)) {
+        config.year =
+            static_cast<int>(require_int_range(year_value, "output.year", YEAR_MIN, YEAR_MAX));
+    }
+    std::string offset_text;
+    if (get_string(doc, "output", "utc_offset", offset_text)) {
+        int minutes = 0;
+        if (!parse_utc_offset(offset_text, minutes)) {
+            throw ConfigError("Invalid output.utc_offset: " + quoted(offset_text) +
+                              ". Valid: Z, or +HH:MM / -HH:MM with HH in [0, 23] and "
+                              "MM in [0, 59]");
+        }
+        config.utc_offset_minutes = minutes;
     }
 }
 
@@ -605,8 +689,8 @@ DecoderConfig with_overrides(const DecoderConfig& base, const ConfigOverrides& o
     if (overrides.irig_day_advisory.has_value()) {
         out.irig_day_advisory = overrides.irig_day_advisory.value();
     }
-    if (overrides.time_format.has_value()) {
-        out.time_format = overrides.time_format.value();
+    if (overrides.input_time_format.has_value()) {
+        out.input_time_format = overrides.input_time_format.value();
     }
     if (overrides.strict.has_value()) {
         out.strict = overrides.strict.value();
@@ -616,6 +700,17 @@ DecoderConfig with_overrides(const DecoderConfig& base, const ConfigOverrides& o
     }
     if (overrides.output_format.has_value()) {
         out.output_format = overrides.output_format.value();
+    }
+    if (overrides.output_time_format.has_value()) {
+        out.output_time_format = overrides.output_time_format.value();
+    }
+    // Stored as an Optional: "no year supplied" has to stay expressible, so an
+    // absent override must not overwrite a configured year (L2-WRT-026).
+    if (overrides.year.has_value()) {
+        out.year = overrides.year.value();
+    }
+    if (overrides.utc_offset_minutes.has_value()) {
+        out.utc_offset_minutes = overrides.utc_offset_minutes.value();
     }
     if (overrides.no_clobber.has_value()) {
         out.no_clobber = overrides.no_clobber.value();

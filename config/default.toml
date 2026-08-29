@@ -65,10 +65,10 @@ irig_day_advisory = true
 
 [decode]
 # ──────────────────────────────────────────────────────────────────────────
-# Timestamp format used in the binary file.
+# How timestamps are PARSED from the binary file.
 #
-# DDC recording cards support two timestamp formats, configured at
-# recording time. All records in a single file use the same format.
+# DDC recording cards support two timestamp encodings, configured at
+# recording time. All records in a single file use the same one.
 #
 #   auto     — Auto-detect by probing the Command Word at both possible
 #              offsets across the first records and scoring which produces
@@ -81,9 +81,18 @@ irig_day_advisory = true
 #              relative timing only. Tick rate is card-dependent and not
 #              encoded in the file.
 #
+# This key governs PARSING only. How the TIME_STAMP column is WRITTEN is a
+# separate choice — see [output] output_time_format.
+#
+# RENAMED IN v3.0.0: this key was `time_format`. The old name is rejected
+# (not ignored), because silently discarding a forced format would revert
+# the decode to auto-detection without saying so.
+#
+# CLI override: --input-time-format
+#
 # Default: "auto"
 # ──────────────────────────────────────────────────────────────────────────
-time_format = "auto"
+input_time_format = "auto"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Strict decoding mode.
@@ -145,8 +154,8 @@ allow_partial = false
 # ──────────────────────────────────────────────────────────────────────────
 # Timestamp-format auto-detection probe size.
 #
-# Only used when time_format = "auto". The decoder probes this many records
-# from the start of the record stream, scoring each one as IRIG and as
+# Only used when input_time_format = "auto". The decoder probes this many
+# records from the start of the record stream, scoring each one as IRIG and as
 # Standard, then commits to whichever wins (IRIG on a tie). Higher values
 # make the IRIG-vs-Standard call more robust on recordings whose leading
 # records score weakly, at a small startup cost; the walk is bounded by the
@@ -290,6 +299,80 @@ format = "csv"
 # Default: false
 # ──────────────────────────────────────────────────────────────────────────
 no_clobber = false
+
+# ──────────────────────────────────────────────────────────────────────────
+# How the TIME_STAMP column is WRITTEN (L2-WRT-025).
+#
+# This is the OUTPUT half of what was one `time_format` key before v3.0.0.
+# [decode] input_time_format decides how the bytes on disk are parsed; this
+# decides how the resulting instant is written down. The two are independent.
+#
+#   doy — DAY:HH:MM:SS.uuuuuu, e.g. 192:15:54:50.456225
+#         The DDC vendor rendering, and the DEFAULT. Needs nothing else.
+#         This is the only setting that keeps output byte-comparable against
+#         vendor CSV (see docs/VENDOR-CSV-DIFFS.md).
+#   iso — YYYY-MM-DDTHH:MM:SS.uuuuuu plus a zone designator,
+#         e.g. 2026-07-11T15:54:50.456225Z
+#         Requires `year` below. Zone comes from `utc_offset` (default UTC).
+#   dom — DD:HH:MM:SS.uuuuuu, e.g. 11:15:54:50.456225
+#         Day of month. Requires `year`. NOTE the month is not in the cell:
+#         the value identifies a day within a month you must know from the
+#         recording campaign, not a date on its own.
+#
+# Standard-format (free-running counter) recordings render as raw hex under
+# `doy` and are REFUSED under `iso`/`dom` — a counter has no calendar date.
+# The same applies to freerun IRIG recordings.
+#
+# CLI override: --output-time-format
+#
+# Default: "doy"
+# ──────────────────────────────────────────────────────────────────────────
+output_time_format = "doy"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Calendar year used to resolve the IRIG day-of-year field (L2-WRT-026).
+#
+# An IRIG-B timestamp carries day-of-year, hour, minute, second and
+# microsecond — but NOT the year. Day 192 is July 10 in a leap year and
+# July 11 in a common year, so `iso` and `dom` cannot resolve a date without
+# being told which year the recording is from.
+#
+# There is no year the decoder could default to that would be right: the
+# system clock would date a 2019 archive with the year you decoded it, and a
+# file's mtime does not survive a copy. So this is left unset, and selecting
+# `iso` or `dom` without it is an error (exit 4) rather than a guess.
+#
+# Ignored entirely by `doy`, which prints the day-of-year field verbatim.
+#
+# If a record's day-of-year does not exist in the configured year — day 366
+# against a common year — the decode is refused rather than rolled into
+# January: that condition means the configured year is wrong, which makes
+# every date in the output suspect, not just that one row.
+#
+# Range: 1–9999. CLI override: --year
+#
+# Default: unset
+# ──────────────────────────────────────────────────────────────────────────
+# year = 2026
+
+# ──────────────────────────────────────────────────────────────────────────
+# Zone designator for the `iso` rendering (L2-WRT-025).
+#
+# IRIG-B carries no timezone. This key states what the recording could not,
+# so set it to whatever your site's IRIG source is disciplined to. It is
+# applied as a designator only — the time fields are never shifted.
+#
+#   "Z"       — UTC. The default, and correct for most IRIG installations.
+#   "+HH:MM"  — east of UTC, e.g. "+05:30"
+#   "-HH:MM"  — west of UTC, e.g. "-05:00"
+#
+# An offset of +00:00 renders as "Z". Ignored by `doy` and `dom`.
+#
+# CLI override: --utc-offset
+#
+# Default: "+00:00" (UTC)
+# ──────────────────────────────────────────────────────────────────────────
+utc_offset = "+00:00"
 
 # ──────────────────────────────────────────────────────────────────────────
 # Canonical row order: equal-timestamp run cap (L1-OUT-003 / L2-WRT-022).

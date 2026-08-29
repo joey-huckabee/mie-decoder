@@ -41,10 +41,10 @@ pub struct MieFileReader {
     mmap: Mmap,
     file_size: u64,
     strict: bool,
-    time_format: TimestampFormat,
+    input_time_format: TimestampFormat,
     /// L2-DEC-015: number of records the auto-detect probe walks
     /// before committing to IRIG vs Standard. Ignored when
-    /// `time_format` is anything other than `Auto`. Default
+    /// `input_time_format` is anything other than `Auto`. Default
     /// `DEFAULT_DETECT_RECORDS` (8).
     detect_records: usize,
     /// L2-SYN-026: total number of records `validate_record` checks
@@ -77,14 +77,17 @@ pub struct MieFileReader {
     /// zero-record decode to emit the `empty-recording` exit class and write a
     /// header-only CSV at exit 0. Reset at the start of each `iter()` call.
     empty_recording: AtomicBool,
+    /// L2-WRT-026 clause 4 / L2-LOG-002: the calendar year in force, or `None`
+    /// under the `doy` rendering. See `ReaderOptions::calendar_year`.
+    calendar_year: Option<u16>,
 }
 
-/// Builder-style options. `strict=false`, `time_format=Auto`,
+/// Builder-style options. `strict=false`, `input_time_format=Auto`,
 /// `detect_records=DEFAULT_DETECT_RECORDS` by default.
 #[derive(Debug, Clone)]
 pub struct ReaderOptions {
     pub strict: bool,
-    pub time_format: TimestampFormat,
+    pub input_time_format: TimestampFormat,
     /// L2-DEC-015 probe size. Number of records auto-detection
     /// walks before committing to a format. Clamped to [1, 32]
     /// upstream by config / CLI parsing.
@@ -108,19 +111,28 @@ pub struct ReaderOptions {
     /// 0-based field index for MUX extraction; negative counts from the end
     /// (default `4`).
     pub mux_field: i64,
+    /// L2-WRT-026: the calendar year a calendar rendering will resolve
+    /// day-of-year against, or `None` when the output rendering is `doy`.
+    ///
+    /// The reader has no rendering concern of its own; it takes this because
+    /// two of its diagnostics change meaning when the day-of-year field becomes
+    /// load-bearing -- the L2-LOG-002 advisory escalates to WARN, and a
+    /// backward day step becomes a year-rollover warning (clause 4).
+    pub calendar_year: Option<u16>,
 }
 
 impl Default for ReaderOptions {
     fn default() -> Self {
         Self {
             strict: false,
-            time_format: TimestampFormat::Auto,
+            input_time_format: TimestampFormat::Auto,
             detect_records: DEFAULT_DETECT_RECORDS,
             lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
             standard_tick_rate_hz: None,
             mux_enabled: DEFAULT_MUX_ENABLED,
             mux_delimiter: DEFAULT_MUX_DELIMITER.to_string(),
             mux_field: DEFAULT_MUX_FIELD,
+            calendar_year: None,
         }
     }
 }
@@ -175,11 +187,11 @@ impl MieFileReader {
         })?;
 
         log_debug!(
-            "reader opened {} ({} bytes, strict={}, time_format={:?}, detect_records={})",
+            "reader opened {} ({} bytes, strict={}, input_time_format={:?}, detect_records={})",
             path.display(),
             file_size,
             opts.strict,
-            opts.time_format,
+            opts.input_time_format,
             opts.detect_records
         );
 
@@ -198,13 +210,14 @@ impl MieFileReader {
             mmap,
             file_size,
             strict: opts.strict,
-            time_format: opts.time_format,
+            input_time_format: opts.input_time_format,
             detect_records: opts.detect_records.max(1),
             lookahead_records: opts.lookahead_records.max(1),
             standard_tick_rate_hz: opts.standard_tick_rate_hz,
             mux,
             sync_losses: AtomicU64::new(0),
             empty_recording: AtomicBool::new(false),
+            calendar_year: opts.calendar_year,
         })
     }
 
@@ -236,7 +249,7 @@ impl MieFileReader {
     /// The format iteration falls back to when detection never runs (Auto with
     /// no records found → IRIG placeholder; otherwise the explicit choice).
     fn default_resolved_format(&self) -> TimestampFormat {
-        match self.time_format {
+        match self.input_time_format {
             TimestampFormat::Auto => TimestampFormat::Irig,
             explicit => explicit,
         }
@@ -272,7 +285,7 @@ impl MieFileReader {
                 }),
             );
         }
-        if self.time_format == TimestampFormat::Auto {
+        if self.input_time_format == TimestampFormat::Auto {
             self.resolve_auto_format(data, hit)
         } else {
             self.check_forced_format(data, hit)
@@ -304,7 +317,7 @@ impl MieFileReader {
                 log_info!(
                     "auto-detected timestamp format: {:?} \
                      (Marginal: IRIG={} STD={} over {} record(s)) -- \
-                     pass --time-format to force the choice if this is wrong",
+                     pass --input-time-format to force the choice if this is wrong",
                     outcome.format,
                     outcome.irig_score,
                     outcome.std_score,
@@ -317,7 +330,7 @@ impl MieFileReader {
                     "timestamp-format auto-detection is ambiguous in {} \
                      starting at offset 0x{:X}: IRIG={} STD={} over {} \
                      record(s) -- strict mode rejects ambiguous files; \
-                     pass --time-format to force the choice",
+                     pass --input-time-format to force the choice",
                     self.path.display(),
                     hit.offset,
                     outcome.irig_score,
@@ -335,7 +348,7 @@ impl MieFileReader {
                 log_warn!(
                     "auto-detected timestamp format: {:?} \
                      (Ambiguous: IRIG={} STD={} over {} record(s)) -- \
-                     using best guess; pass --time-format to force the \
+                     using best guess; pass --input-time-format to force the \
                      choice or --strict to reject ambiguous files",
                     outcome.format,
                     outcome.irig_score,
@@ -348,7 +361,7 @@ impl MieFileReader {
         (outcome.format, err)
     }
 
-    /// L2-DEC-013: the format was forced via `--time-format`. If the probe is
+    /// L2-DEC-013: the format was forced via `--input-time-format`. If the probe is
     /// *Decisive* about the OTHER format the forced choice is wrong; strict mode
     /// rejects, lenient WARNs and proceeds. The forced format is always kept.
     fn check_forced_format(
@@ -358,7 +371,7 @@ impl MieFileReader {
     ) -> (TimestampFormat, Option<MieError>) {
         let outcome = probe_timestamp_format(data, hit.offset, self.detect_records);
         let contradicts = outcome.confidence == DetectionConfidence::Decisive
-            && outcome.format != self.time_format;
+            && outcome.format != self.input_time_format;
         let err = if !contradicts {
             None
         } else if self.strict {
@@ -366,8 +379,8 @@ impl MieFileReader {
                 "forced timestamp format {:?} contradicts the recording in {} \
                  at offset 0x{:X}: detection is decisive for {:?} (IRIG={} \
                  STD={} over {} record(s)) -- strict mode rejects the mismatch; \
-                 drop --time-format to auto-detect",
-                self.time_format,
+                 drop --input-time-format to auto-detect",
+                self.input_time_format,
                 self.path.display(),
                 hit.offset,
                 outcome.format,
@@ -386,9 +399,9 @@ impl MieFileReader {
                 "forced timestamp format {:?} contradicts the recording at \
                  offset 0x{:X}: detection is decisive for {:?} (IRIG={} STD={} \
                  over {} record(s)) -- decoding with the forced format anyway; \
-                 drop --time-format to auto-detect or pass --strict to reject \
+                 drop --input-time-format to auto-detect or pass --strict to reject \
                  the mismatch",
-                self.time_format,
+                self.input_time_format,
                 hit.offset,
                 outcome.format,
                 outcome.irig_score,
@@ -397,7 +410,7 @@ impl MieFileReader {
             );
             None
         };
-        (self.time_format, err)
+        (self.input_time_format, err)
     }
 
     /// No first record found: classify as an empty recording (opens on the
@@ -484,10 +497,10 @@ impl MieFileReader {
         // `find_first_record` and `diagnose_header_scan_failure`: None
         // tells those helpers to scan format-agnostically; Some pins the
         // expected layout.
-        let format_hint = if self.time_format == TimestampFormat::Auto {
+        let format_hint = if self.input_time_format == TimestampFormat::Auto {
             None
         } else {
-            Some(self.time_format)
+            Some(self.input_time_format)
         };
 
         let data: &[u8] = &self.mmap;
@@ -506,7 +519,7 @@ impl MieFileReader {
         let mut early_done = false;
         // The format used for the whole decode. Defaults per
         // `default_resolved_format`; rewritten by the L2-DEC-015 probe when a
-        // real start offset is found under time_format=Auto.
+        // real start offset is found under input_time_format=Auto.
         let mut resolved_format = self.default_resolved_format();
 
         let pending_error = match start_offset {
@@ -551,6 +564,9 @@ impl MieFileReader {
             sync_losses_atomic: &self.sync_losses,
             path_for_log: &self.path,
             mux: self.mux.clone(),
+            calendar_year: self.calendar_year,
+            last_irig_day: None,
+            warned_day_rollover: false,
         }
     }
 }
@@ -615,6 +631,15 @@ pub struct RecordIter<'a> {
     path_for_log: &'a Path,
     /// L2-WRT-020 per-file MUX value, cloned (refcount bump) onto each message.
     mux: Option<Arc<str>>,
+    /// L2-WRT-026 clause 4 / L2-LOG-002: the calendar year in force, or `None`
+    /// under `doy`. Threaded from the reader; see `ReaderOptions::calendar_year`.
+    calendar_year: Option<u16>,
+    /// Highest day-of-year seen so far from a calendar-locked record, for the
+    /// L2-WRT-026 clause 4 rollover watch. `None` until the first such record.
+    last_irig_day: Option<u16>,
+    /// Whether the clause 4 rollover WARN has already fired for this input.
+    /// One per decode, like every other observational warning here.
+    warned_day_rollover: bool,
 }
 
 fn log_validation_context(data: &[u8], offset: usize) {
@@ -914,6 +939,35 @@ impl RecordIter<'_> {
                 let middle = read_u16(self.data, self.offset + 4)?;
                 let lower = read_u16(self.data, self.offset + 6)?;
                 let irig = decode_irig_timestamp(upper, middle, lower);
+                // L2-WRT-026 clause 4: under a calendar rendering, a backward
+                // day step means the recording crosses New Year while the whole
+                // decode uses one configured year, so every row after the wrap
+                // is dated a year early. WARN once and carry on -- the decoder
+                // deliberately does NOT auto-increment, because sync-loss
+                // corruption produces this same signal, and advancing the year
+                // on corrupt data would be a worse error than the one it fixed.
+                if let Some(year) = self.calendar_year
+                    && !irig.freerun
+                {
+                    if let Some(previous) = self.last_irig_day
+                        && irig.day < previous
+                        && !self.warned_day_rollover
+                    {
+                        self.warned_day_rollover = true;
+                        log_warn!(
+                            "day-of-year stepped back from {} to {} at 0x{:X}: this recording \
+                             appears to cross a year boundary, but every row is dated {}. \
+                             Rows after the wrap are a year early. Split the recording at the \
+                             boundary and decode each part with its own --year",
+                            previous,
+                            irig.day,
+                            self.offset,
+                            year
+                        );
+                    }
+                    self.last_irig_day = Some(irig.day);
+                }
+
                 if irig.freerun {
                     log_warn!("freerun timestamp at 0x{:X}", self.offset);
                 } else if !self.warned_irig_day && crate::log::irig_day_advisory() {
@@ -927,12 +981,32 @@ impl RecordIter<'_> {
                     // every run and crowded out the WARNs that ARE observations
                     // (sync recovery, non-monotonic DELTA, a hit sort cap).
                     self.warned_irig_day = true;
-                    log_info!(
-                        "IRIG day-of-year decoded for this recording; the day-of-year field \
-                         has a known firmware-dependent discrepancy on some DDC cards \
-                         (hour/minute/second/microsecond are unaffected) -- see \
-                         docs/VENDOR-CSV-DIFFS.md section 5"
-                    );
+                    // L2-LOG-002: the same disclaimer, at a level that follows
+                    // what the operator asked for. Under `doy` a skewed day is
+                    // one field a human reads as "day 192" and can re-examine.
+                    // Under a calendar rendering it is resolved into
+                    // 2026-07-11 -- something that looks like a fact, gets
+                    // pasted into reports, and is correlated against systems
+                    // with no way to know it is suspect. Choosing a calendar
+                    // rendering IS the operator saying this field is
+                    // load-bearing, which is when a standing caveat about it
+                    // earns the default level's attention.
+                    if self.calendar_year.is_some() {
+                        log_warn!(
+                            "IRIG day-of-year is being resolved into calendar dates, and that \
+                             field has a known firmware-dependent discrepancy on some DDC cards \
+                             (hour/minute/second/microsecond are unaffected). Verify your card \
+                             model against vendor CSV before relying on these dates -- see \
+                             docs/VENDOR-CSV-DIFFS.md section 5"
+                        );
+                    } else {
+                        log_info!(
+                            "IRIG day-of-year decoded for this recording; the day-of-year field \
+                             has a known firmware-dependent discrepancy on some DDC cards \
+                             (hour/minute/second/microsecond are unaffected) -- see \
+                             docs/VENDOR-CSV-DIFFS.md section 5"
+                        );
+                    }
                 }
                 Some(Timestamp::Irig(irig))
             }
@@ -1500,13 +1574,14 @@ mod tests {
             f.path(),
             ReaderOptions {
                 strict: true,
-                time_format: TimestampFormat::Auto,
+                input_time_format: TimestampFormat::Auto,
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
                 standard_tick_rate_hz: None,
                 mux_enabled: false,
                 mux_delimiter: ".".to_string(),
                 mux_field: 4,
+                calendar_year: None,
             },
         )
         .unwrap();
@@ -1561,13 +1636,14 @@ mod tests {
             f.path(),
             ReaderOptions {
                 strict: true,
-                time_format: TimestampFormat::Standard,
+                input_time_format: TimestampFormat::Standard,
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
                 standard_tick_rate_hz: None,
                 mux_enabled: false,
                 mux_delimiter: ".".to_string(),
                 mux_field: 4,
+                calendar_year: None,
             },
         )
         .unwrap();
@@ -1594,13 +1670,14 @@ mod tests {
             f.path(),
             ReaderOptions {
                 strict: false,
-                time_format: TimestampFormat::Standard,
+                input_time_format: TimestampFormat::Standard,
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
                 standard_tick_rate_hz: None,
                 mux_enabled: false,
                 mux_delimiter: ".".to_string(),
                 mux_field: 4,
+                calendar_year: None,
             },
         )
         .unwrap();
@@ -1637,13 +1714,14 @@ mod tests {
             f.path(),
             ReaderOptions {
                 strict: true,
-                time_format: TimestampFormat::Irig,
+                input_time_format: TimestampFormat::Irig,
                 detect_records: DEFAULT_DETECT_RECORDS,
                 lookahead_records: DEFAULT_LOOKAHEAD_RECORDS,
                 standard_tick_rate_hz: None,
                 mux_enabled: false,
                 mux_delimiter: ".".to_string(),
                 mux_field: 4,
+                calendar_year: None,
             },
         )
         .unwrap();
@@ -1687,7 +1765,7 @@ mod tests {
             f.path(),
             ReaderOptions {
                 strict: true,
-                time_format: TimestampFormat::Irig,
+                input_time_format: TimestampFormat::Irig,
                 ..Default::default()
             },
         )
@@ -1720,7 +1798,7 @@ mod tests {
         let reader = MieFileReader::with_options(
             f.path(),
             ReaderOptions {
-                time_format: TimestampFormat::Irig,
+                input_time_format: TimestampFormat::Irig,
                 ..Default::default()
             },
         )

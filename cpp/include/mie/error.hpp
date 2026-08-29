@@ -61,6 +61,7 @@ enum MieErrorKind {
     KIND_CLOBBER_REFUSED,
     KIND_UNRECOVERABLE_SYNC_LOSS,
     KIND_TIMESTAMP_FORMAT_MISMATCH,
+    KIND_CALENDAR_UNAVAILABLE,
     KIND_INCOMPATIBLE_MERGE_INPUTS,
     KIND_NON_MONOTONIC_INPUT
 };
@@ -85,6 +86,15 @@ class MieError : public std::exception {
                                         uint32_t sample_records);
     static MieError timestamp_format_mismatch(uint64_t offset, int32_t irig_score,
                                               int32_t std_score, uint32_t records_probed);
+
+    /// L2-WRT-026: a calendar rendering (`iso` / `dom`) was requested but the
+    /// recording cannot supply a calendar date -- it is Standard-format or
+    /// freerun IRIG (clause 2), or a record's day-of-year does not exist in the
+    /// configured year (clause 3). `detail` names the specific reason.
+    ///
+    /// Exit class 2, the "the file cannot satisfy this request" class it shares
+    /// with `timestamp_format_mismatch`.
+    static MieError calendar_unavailable(const std::string& detail);
 
     // --- Record-level failures -------------------------------------------
 

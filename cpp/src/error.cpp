@@ -62,6 +62,7 @@ const char* error_kind_name(MieErrorKind kind) {
         case KIND_CLOBBER_REFUSED: return "ClobberRefused";
         case KIND_UNRECOVERABLE_SYNC_LOSS: return "UnrecoverableSyncLoss";
         case KIND_TIMESTAMP_FORMAT_MISMATCH: return "TimestampFormatMismatch";
+        case KIND_CALENDAR_UNAVAILABLE: return "CalendarUnavailable";
         case KIND_INCOMPATIBLE_MERGE_INPUTS: return "IncompatibleMergeInputs";
         case KIND_NON_MONOTONIC_INPUT: return "NonMonotonicInput";
         default: return "Unknown";
@@ -111,15 +112,24 @@ MieError MieError::homogeneous_payload(const std::string& path, uint64_t offset,
 
 MieError MieError::timestamp_format_mismatch(uint64_t offset, int32_t irig_score, int32_t std_score,
                                              uint32_t records_probed) {
-    MieError e(KIND_TIMESTAMP_FORMAT_MISMATCH,
-               "Timestamp-format auto-detection is ambiguous starting at offset 0x" +
-                   text::hex_upper(offset, 1) +
-                   " (IRIG score: " + text::decimal_signed(irig_score) + ", Standard score: " +
-                   text::decimal_signed(std_score) + " over " + text::decimal(records_probed) +
-                   " record(s) probed). Pass --time-format irig or --time-format standard to "
-                   "force the choice, or verify the file is actually an MIE recording.");
+    MieError e(
+        KIND_TIMESTAMP_FORMAT_MISMATCH,
+        "Timestamp-format auto-detection is ambiguous starting at offset 0x" +
+            text::hex_upper(offset, 1) + " (IRIG score: " + text::decimal_signed(irig_score) +
+            ", Standard score: " + text::decimal_signed(std_score) + " over " +
+            text::decimal(records_probed) +
+            " record(s) probed). Pass --input-time-format irig or --input-time-format standard to "
+            "force the choice, or verify the file is actually an MIE recording.");
     e.offset_ = offset;
     return e;
+}
+
+MieError MieError::calendar_unavailable(const std::string& detail) {
+    return MieError(KIND_CALENDAR_UNAVAILABLE,
+                    "Cannot render a calendar timestamp: " + detail +
+                        ". IRIG-B carries no year and no timezone, so a calendar rendering is "
+                        "refused rather than guessed at. Use --output-time-format doy to write "
+                        "the day-of-year form instead.");
 }
 
 // --- Record-level ---------------------------------------------------------

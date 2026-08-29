@@ -179,14 +179,58 @@ std::string csv_quote(const std::string& value) {
     return out;
 }
 
-std::string format_row(const MieMessage& message) {
+namespace {
+
+/// Turn a CalendarError into the operator-facing detail of a
+/// `MieError::calendar_unavailable`, naming the record it came from.
+std::string describe_calendar_error(CalendarError error, const MieMessage& message,
+                                    const TimeRender& render) {
+    switch (error) {
+        case CALENDAR_MISSING_YEAR:
+            return "no year was configured; set [output] year or pass --year YYYY";
+        case CALENDAR_NO_SUCH_DAY: {
+            const std::string year_text =
+                render.year.has_value() ? text::decimal(static_cast<uint64_t>(render.year.value()))
+                                        : std::string("the configured year");
+            return "the record at offset 0x" + text::hex_upper(message.file_offset, 1) +
+                   " carries day-of-year " + text::decimal(message.timestamp.irig.day) +
+                   ", which does not exist in " + year_text + " (" + year_text +
+                   " is not a leap year). The configured year is wrong for this recording";
+        }
+        case CALENDAR_NOT_LOCKED:
+            return "this recording uses the Standard timestamp encoding, a free-running "
+                   "counter with no epoch. No year places it on a calendar";
+        case CALENDAR_FREERUN:
+            return "the record at offset 0x" + text::hex_upper(message.file_offset, 1) +
+                   " carries a freerun IRIG timestamp -- the card had no valid IRIG-B lock, "
+                   "so its day and time fields are relative rather than calendar-anchored";
+        case CALENDAR_OK:
+        default: return "unknown";
+    }
+}
+
+}  // namespace
+
+std::string format_row(const MieMessage& message) { return format_row(message, TimeRender()); }
+
+std::string format_row(const MieMessage& message, const TimeRender& render) {
     std::string row;
     // A 46-column row runs a couple of hundred bytes with a full payload.
     // Reserved once so a row costs at most one allocation.
     row.reserve(256);
 
     // TIME_STAMP
-    row += message.timestamp.format();
+    //
+    // L2-WRT-025: resolved BEFORE any other column is appended, because a
+    // calendar rendering can fail where `doy` cannot -- a day-of-year the
+    // configured year does not have (L2-WRT-026 clause 3). Resolving it first
+    // keeps that refusal from leaving a half-built row.
+    std::string timestamp;
+    const CalendarError calendar = message.timestamp.format_with(render, timestamp);
+    if (calendar != CALENDAR_OK) {
+        throw MieError::calendar_unavailable(describe_calendar_error(calendar, message, render));
+    }
+    row += timestamp;
     row += ',';
 
     // RT -- empty for a record with no Command Word.
@@ -258,7 +302,12 @@ std::string format_row(const MieMessage& message) {
 // CsvWriter
 // ---------------------------------------------------------------------------
 
-CsvWriter::CsvWriter(CsvSink& sink) : sink_(&sink), rows_written_(0) {
+CsvWriter::CsvWriter(CsvSink& sink) : sink_(&sink), rows_written_(0), render_() {
+    emit(CSV_HEADER, std::char_traits<char>::length(CSV_HEADER));
+}
+
+CsvWriter::CsvWriter(CsvSink& sink, const TimeRender& render)
+    : sink_(&sink), rows_written_(0), render_(render) {
     emit(CSV_HEADER, std::char_traits<char>::length(CSV_HEADER));
 }
 
@@ -272,7 +321,7 @@ void CsvWriter::emit(const char* bytes, std::size_t length) {
 void CsvWriter::emit(const std::string& text) { emit(text.data(), text.size()); }
 
 void CsvWriter::write_message(const MieMessage& message) {
-    emit(format_row(message));
+    emit(format_row(message, render_));
     rows_written_ += 1;
 }
 
@@ -288,7 +337,8 @@ uint64_t CsvWriter::finish() {
 // Entry points
 // ---------------------------------------------------------------------------
 
-WriteOptions::WriteOptions() : no_clobber(false), allow_partial(false), stdout_stream(stdout) {}
+WriteOptions::WriteOptions()
+    : no_clobber(false), allow_partial(false), time_render(), stdout_stream(stdout) {}
 
 PartialCommit::PartialCommit() : offset(0), sync_losses(0) {}
 
@@ -424,7 +474,7 @@ WriteOutcome write_csv(MessageSource& messages, const Optional<std::string>& out
 
     if (!output.has_value()) {
         StdoutCsvSink sink(options.stdout_stream);
-        CsvWriter writer(sink);
+        CsvWriter writer(sink, options.time_render);
         MieMessage message;
         // allow_partial is ignored here, deliberately: a truncated stdout
         // stream is exactly what the consumer would have seen anyway, and there
@@ -446,7 +496,7 @@ WriteOutcome write_csv(MessageSource& messages, const Optional<std::string>& out
     PartialStop stop;
     uint64_t rows = 0;
     try {
-        CsvWriter writer(sink);
+        CsvWriter writer(sink, options.time_render);
         MieMessage message;
         while (pull(messages, message, options, stop)) {
             writer.write_message(message);
@@ -518,7 +568,7 @@ WriteOutcome write_csv_split(MessageSource& messages, const std::string& output,
             }
             if (errors_writer.get() == nullptr) {
                 errors_sink.create(errors_path, options.no_clobber);
-                errors_writer.reset(new CsvWriter(errors_sink));
+                errors_writer.reset(new CsvWriter(errors_sink, options.time_render));
             }
             errors_writer->write_message(message);
         }
